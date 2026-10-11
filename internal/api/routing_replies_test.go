@@ -42,7 +42,7 @@ func (f *fakeReplies) SubmitRoutingReply(ctx context.Context, req RoutingReplyRe
 			return RoutingReplyReceipt{}, err
 		}
 		reply, _, err := f.db.CreateRoutingReply(ctx, store.NewRoutingReply{From: caller, ParentID: req.ParentID, Body: req.Body,
-			TargetSessionID: "s1", Actor: caller.URN()})
+			TargetSessionID: "s1", Actor: caller.URN(), Metadata: req.Metadata})
 		if err != nil {
 			return RoutingReplyReceipt{}, err
 		}

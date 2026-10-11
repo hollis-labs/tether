@@ -121,3 +121,18 @@ func (s *Server) guardAs(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r)
 	}
 }
+
+// senderMetadata returns the daemon-stamped sender keys of m, for carrying onto
+// a stored reply. Nil when the request had no verified principal.
+func senderMetadata(m map[string]string) map[string]string {
+	var out map[string]string
+	for _, k := range []string{MetaFromVerification, MetaFromUnverified, MetaFromPrincipal} {
+		if v, ok := m[k]; ok {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}

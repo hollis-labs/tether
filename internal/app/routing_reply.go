@@ -780,7 +780,7 @@ func (s *Service) SubmitRoutingReply(ctx context.Context, req api.RoutingReplyRe
 		logicalAgent = row.LogicalAgentID
 	}
 	in := store.NewRoutingReply{From: caller, ParentID: parent.ID, ThreadID: parent.ThreadID, Body: req.Body,
-		TargetSessionID: target, LogicalAgentID: logicalAgent, Actor: caller.URN(), Interrupt: req.Interrupt, IdempotencyKey: req.IdempotencyKey}
+		TargetSessionID: target, LogicalAgentID: logicalAgent, Actor: caller.URN(), Interrupt: req.Interrupt, IdempotencyKey: req.IdempotencyKey, Metadata: req.Metadata}
 
 	if !req.Interrupt {
 		reply, created, err := s.Store.CreateRoutingReply(ctx, in)

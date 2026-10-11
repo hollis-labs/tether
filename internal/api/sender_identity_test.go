@@ -12,6 +12,7 @@ import (
 
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -269,4 +270,77 @@ func TestSenderIdentity_AsVerification(t *testing.T) {
 			t.Fatalf("unexpected audit events %v", h.eventNames())
 		}
 	})
+}
+
+// A routed reply sent through POST /messages or notify keeps the stamped
+// sender verification on the stored and returned reply (acceptance 5).
+func TestSenderIdentity_RoutedReplyCarriesVerification(t *testing.T) {
+	for _, route := range []string{"/messages", "/messages/notify"} {
+		for _, tc := range []struct {
+			name, from, state string
+			unverified        string
+		}{
+			{"stamped", "", "stamped", ""},
+			{"verified", "msg://session/local/s9", "verified", ""},
+			{"unverified", "msg://agent/local/impersonated", "unverified", "true"},
+		} {
+			t.Run(route+"/"+tc.name, func(t *testing.T) {
+				svc := &fakeReplies{}
+				db, err := store.Open(filepath.Join(t.TempDir(), "reply.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = db.Close() })
+				svc.db = db
+				api := NewHandler(Deps{MessageStore: db.MessagingStore(), Channels: channels.New(db, nil), RoutingReplies: svc, Service: &fakeLaunchService{}, IdentityMode: identity.Observe})
+				parent := routedMessage(t, db)
+				p := identity.Principal{ID: "msg://session/local/s9", Kind: "session", SessionID: "s9", Addresses: []string{"msg://session/local/s9"}}
+				body := map[string]any{"kind": "response", "in_reply_to": parent.ID, "payload": map[string]string{"body": "go"}, "metadata": map[string]string{"from_unverified": "false"}}
+				if tc.from != "" {
+					body["from"] = tc.from
+				}
+				if route == "/messages/notify" {
+					body["to"] = parent.From.URN()
+				}
+				w := postAs(identity.WithPrincipal(context.Background(), p), api, route, body, nil)
+				if w.Code != http.StatusCreated {
+					t.Fatalf("status %d %s", w.Code, w.Body)
+				}
+				var out struct {
+					messaging.Envelope
+					Message messaging.Envelope `json:"message"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+					t.Fatal(err)
+				}
+				for _, md := range []map[string]string{out.Metadata, out.Message.Metadata} {
+					if md == nil {
+						continue
+					}
+					if md[MetaFromVerification] != tc.state || md[MetaFromPrincipal] != p.ID || md[MetaFromUnverified] != tc.unverified {
+						t.Fatalf("response metadata = %v", md)
+					}
+				}
+				if out.Metadata == nil && out.Message.Metadata == nil {
+					t.Fatalf("no envelope metadata in %s", w.Body)
+				}
+				stored, err := db.MessagingStore().Get(context.Background(), svc.lastReplyID(t, db, parent.ID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if stored.Metadata[MetaFromVerification] != tc.state || stored.Metadata[MetaFromUnverified] != tc.unverified {
+					t.Fatalf("stored metadata = %v", stored.Metadata)
+				}
+			})
+		}
+	}
+}
+
+func (f *fakeReplies) lastReplyID(t *testing.T, db *store.Store, parent string) string {
+	t.Helper()
+	var id string
+	if err := db.DB().QueryRow(`SELECT id FROM messages WHERE in_reply_to=? ORDER BY created_at DESC LIMIT 1`, parent).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

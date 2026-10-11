@@ -70,6 +70,10 @@ type RoutingReplyRequest struct {
 	// false), exactly as channels treat it (observe mode, ADR 0045).
 	Caller   identity.Principal
 	Verified bool
+	// Metadata is the daemon-stamped sender verification (MetaFrom* keys) of
+	// the POST /messages or notify envelope the reply arrived as; the stored
+	// reply carries it so a receiver can tell stamped from unverified senders.
+	Metadata map[string]string
 }
 
 // RoutingReplyReceipt is the 202 body: the reply was accepted and queued.
@@ -176,14 +180,14 @@ func (s *Server) handleMessageReply(w http.ResponseWriter, r *http.Request, id s
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
 		return
 	}
-	if receipt, ok := s.submitReply(w, r, id, in.Body, in.Interrupt, ""); ok {
+	if receipt, ok := s.submitReply(w, r, id, in.Body, in.Interrupt, "", nil); ok {
 		writeJSON(w, http.StatusAccepted, receipt)
 	}
 }
 
 // submitReply submits the reply and reports the receipt, or writes the error
 // response itself and reports false.
-func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, body string, interrupt bool, fallbackCaller string) (RoutingReplyReceipt, bool) {
+func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, body string, interrupt bool, fallbackCaller string, meta map[string]string) (RoutingReplyReceipt, bool) {
 	caller, verified, err := replyCaller(r, fallbackCaller)
 	if err != nil {
 		writeReplyError(w, err)
@@ -196,7 +200,7 @@ func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, b
 	}
 	receipt, err := s.RoutingReplies.SubmitRoutingReply(r.Context(), RoutingReplyRequest{
 		ParentID: parentID, Body: body, Interrupt: interrupt, Caller: caller, Verified: verified,
-		IdempotencyKey: key,
+		IdempotencyKey: key, Metadata: meta,
 	})
 	if err != nil {
 		writeReplyError(w, err)
@@ -291,7 +295,7 @@ func (s *Server) routeReplyEnvelope(w http.ResponseWriter, r *http.Request, env 
 			"a reply to a routed message is delivered to its sender session "+parent.From.URN()+"; omit to or set it to that address")
 		return messaging.Envelope{}, RoutingReplyReceipt{}, false
 	}
-	receipt, ok := s.submitReply(w, r, parent.ID, replyText(env.Payload), false, env.From.URN())
+	receipt, ok := s.submitReply(w, r, parent.ID, replyText(env.Payload), false, env.From.URN(), senderMetadata(env.Metadata))
 	if !ok {
 		return messaging.Envelope{}, RoutingReplyReceipt{}, false
 	}
