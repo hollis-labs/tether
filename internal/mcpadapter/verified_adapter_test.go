@@ -106,7 +106,7 @@ func TestVerifiedAdapter_NativeSDKResolvesAdmittedCallerContext(t *testing.T) {
 		seen <- snapshot
 		return "ok", nil
 	}}, Reads("test native attribution"))
-	forged := callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{ID: "imposter"}), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "imposter", SessionID: "forged-session"})
+	forged := callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{ID: "imposter"}), callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: "imposter", SessionID: "forged-session"})
 	st, ct := mcpsdk.NewInMemoryTransports()
 	ss, err := server.SDKServer().Connect(forged, st, nil)
 	if err != nil {

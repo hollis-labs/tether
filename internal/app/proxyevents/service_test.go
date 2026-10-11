@@ -45,7 +45,7 @@ func (b *testBus) Publish(_ context.Context, e events.Event) error {
 
 func TestQueryRecordsPreservesLegacyJSONAndNil(t *testing.T) {
 	stamp := time.Date(2026, 10, 2, 1, 2, 3, 4, time.FixedZone("offset", 3600))
-	row := store.ProxyEvent{ID: 12, SessionID: "own", Server: "server", ToolName: "tool", ArgsSchemaFP: "fp", DurationMs: 7, OK: false, Error: "failure", Timestamp: stamp, Attribution: callcontext.Snapshot{Verified: true, SessionID: "own", PrincipalID: "session:own"}, ClaimedSessionID: "other"}
+	row := store.ProxyEvent{ID: 12, SessionID: "own", Server: "server", ToolName: "tool", ArgsSchemaFP: "fp", DurationMs: 7, OK: false, Error: "failure", Timestamp: stamp, Attribution: callcontext.Snapshot{Verified: true, SessionResolved: true, SessionID: "own", PrincipalID: "session:own"}, ClaimedSessionID: "other"}
 	q := Query{ServerID: "server", ToolName: "tool", SessionID: "own", Limit: 50, Since: stamp, ErrorsOnly: true}
 	for _, rows := range [][]store.ProxyEvent{nil, {}, {row}} {
 		st := &testRows{rows: rows}
@@ -91,7 +91,7 @@ func TestIngestTrustedAttributionAndPublishOrder(t *testing.T) {
 		snapshot callcontext.Snapshot
 		session  string
 	}{
-		{"session", callcontext.Snapshot{Verified: true, PrincipalID: "session:own", SessionID: "own"}, "own"},
+		{"session", callcontext.Snapshot{Verified: true, SessionResolved: true, PrincipalID: "session:own", SessionID: "own"}, "own"},
 		{"operator", callcontext.Snapshot{PrincipalID: "operator", PrincipalKind: "operator"}, ""},
 		{"anonymous", callcontext.Snapshot{}, "other"},
 	} {

@@ -37,7 +37,7 @@ func TestTelemetryDaemonRecorderPreservesResolvedContextAndMetadata(t *testing.T
 	sink := make(wiringEventSink, 1)
 	recorder := NewDaemonToolCallRecorder(ctx, sink, db)
 	defer func() { cancel(); <-recorder.done }()
-	call := events.ToolCallEvent{ToolName: "read", Attribution: callcontext.Snapshot{Verified: true, PrincipalID: "resolved-principal"}, ToolCallDetails: events.ToolCallDetails{Profile: "reader", DiscoveryMode: "search", ArgsBytes: 12, ResultBytes: 24, ErrorClass: events.ToolErrorDenied, ErrorTruncated: true, GatewayMs: 3, ForwardMs: 4, TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef"}}
+	call := events.ToolCallEvent{ToolName: "read", Attribution: callcontext.Snapshot{Verified: true, SessionResolved: true, PrincipalID: "resolved-principal"}, ToolCallDetails: events.ToolCallDetails{Profile: "reader", DiscoveryMode: "search", ArgsBytes: 12, ResultBytes: 24, ErrorClass: events.ToolErrorDenied, ErrorTruncated: true, GatewayMs: 3, ForwardMs: 4, TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef"}}
 	raw, _ := json.Marshal(call)
 	if err := recorder.Publish(ctx, events.Event{Kind: events.EventTypeToolCallEnd, PayloadJSON: string(raw)}); err != nil {
 		t.Fatal(err)

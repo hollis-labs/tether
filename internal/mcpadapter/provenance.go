@@ -65,7 +65,7 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 	r.applyContextMeta(ctx, params)
 	snapshot, hasSnapshot := callcontext.FromContext(ctx)
 	sessionID := sessionIDFromContext(ctx)
-	if hasSnapshot && snapshot.Verified {
+	if hasSnapshot && snapshot.SessionResolved {
 		sessionID = snapshot.SessionID
 	}
 	var prov *ProvenanceEnvelope
@@ -73,7 +73,7 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 	if sessionID != "" {
 		var wsID string
 		var lookupFailed bool
-		if hasSnapshot && snapshot.Verified {
+		if hasSnapshot && snapshot.SessionResolved {
 			wsID = snapshot.WorkstreamID
 		} else if r.workstreamResolver != nil {
 			var err error
@@ -147,7 +147,7 @@ func (r *ProxyRouter) applyContextMeta(ctx context.Context, params *mcpsdk.CallT
 			fields[k] = v
 		}
 	}
-	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.Verified && snapshot.Source == "daemon" && snapshot.SessionID != "" {
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.SessionResolved && snapshot.Source == "daemon" && snapshot.SessionID != "" {
 		raw, _ := json.Marshal(ContextEnvelope{SchemaVersion: ContextSchemaVersion, Snapshot: snapshot})
 		var stamp map[string]any
 		_ = json.Unmarshal(raw, &stamp)

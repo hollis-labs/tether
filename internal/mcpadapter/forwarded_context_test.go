@@ -25,7 +25,7 @@ func (f contextRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error)
 func sessionEgressContext(id string) context.Context {
 	p := identity.Principal{ID: "principal:" + id, Kind: "session", SessionID: id}
 	ctx := identity.WithPrincipal(context.Background(), p)
-	return withForwardedToolCall(callcontext.WithSnapshot(ctx, callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind, SessionID: id, AgentURN: "msg://agent/" + id, WorkstreamID: "w:" + id}))
+	return withForwardedToolCall(callcontext.WithSnapshot(ctx, callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind, SessionID: id, AgentURN: "msg://agent/" + id, WorkstreamID: "w:" + id}))
 }
 
 func TestForwardedContextAdmissionAndIsolation(t *testing.T) {
@@ -46,7 +46,7 @@ func TestForwardedContextAdmissionAndIsolation(t *testing.T) {
 	unsafeSnapshot, _ := callcontext.FromContext(verified)
 	unsafeSnapshot.WorkstreamID = "bad\r\nheader"
 	unsafeFields := callcontext.WithSnapshot(verified, unsafeSnapshot)
-	snapshotOnly := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "forged", PrincipalKind: "session", SessionID: "one"})
+	snapshotOnly := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: "forged", PrincipalKind: "session", SessionID: "one"})
 	mismatched := identity.WithPrincipal(verified, identity.Principal{ID: "other", Kind: "session", SessionID: "one"})
 	operator := identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator"})
 	operator = callcontext.WithSnapshot(operator, callcontext.Snapshot{Source: "daemon", PrincipalID: identity.OperatorID, PrincipalKind: "operator"})
@@ -59,7 +59,7 @@ func TestForwardedContextAdmissionAndIsolation(t *testing.T) {
 		{"anonymous", http.MethodPost, context.Background(), ""},
 		{"unsafe-fields", http.MethodPost, unsafeFields, ""},
 		{"oversized-fields", http.MethodPost, sessionEgressContext(strings.Repeat("a", 513)), ""},
-		{"initialize", http.MethodPost, callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{ID: "principal:one", Kind: "session", SessionID: "one"}), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "principal:one", PrincipalKind: "session", SessionID: "one"}), ""},
+		{"initialize", http.MethodPost, callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{ID: "principal:one", Kind: "session", SessionID: "one"}), callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: "principal:one", PrincipalKind: "session", SessionID: "one"}), ""},
 		{"snapshot-only", http.MethodPost, snapshotOnly, ""},
 		{"mismatch", http.MethodPost, mismatched, ""},
 		{"operator", http.MethodPost, operator, ""},

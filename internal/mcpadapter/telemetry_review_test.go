@@ -58,7 +58,7 @@ func TestTelemetryStdioKeepsPresentedCredentialIdentity(t *testing.T) {
 			if principal.ID == "" && want != (callcontext.Snapshot{}) {
 				t.Fatal("anonymous caller acquired identity", want)
 			}
-			if want.PrincipalID != principal.ID || want.Verified != (principal.Kind == "session") {
+			if want.PrincipalID != principal.ID || want.Verified != (principal.ID != "") || want.SessionResolved != (principal.Kind == "session") {
 				t.Fatal("fixture credential resolution", want)
 			}
 			if len(capture.calls) != 2 {

@@ -67,7 +67,7 @@ func TestServiceRecordsVerifiedMetadataAndTypedOutcome(t *testing.T) {
 	secrets := &redact.Set{}
 	secrets.Add("canary-secret")
 	s := Service{Publisher: publisher, Secrets: secrets}
-	ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, PrincipalID: "principal", AgentURN: "agent", WorkstreamID: "work"})
+	ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, SessionResolved: true, PrincipalID: "principal", AgentURN: "agent", WorkstreamID: "work"})
 	ctx, o := s.Start(ctx, Call{Name: "read", Server: "upstream", ArgsBytes: 42, Profile: "reader", Mode: "search"})
 	finish := Forward(ctx)
 	finish()

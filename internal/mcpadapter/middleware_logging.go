@@ -71,10 +71,10 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 	sessionID := sessionIDFromContext(ctx)
 	attribution, _ := callcontext.FromContext(ctx)
 	claimed := callcontext.ClaimedSession(ctx)
-	if claimed == attribution.SessionID && attribution.Verified {
+	if claimed == attribution.SessionID && attribution.SessionResolved {
 		claimed = ""
 	}
-	if claimed == "" && !attribution.Verified {
+	if claimed == "" && !attribution.SessionResolved {
 		claimed = sessionID
 	}
 	server := serverIDFromContext(ctx)

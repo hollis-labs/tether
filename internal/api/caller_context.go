@@ -26,7 +26,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 	if !ok {
 		return callcontext.Snapshot{}
 	}
-	out := callcontext.Snapshot{Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind}
+	out := callcontext.Snapshot{Verified: p.Verified, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind}
 	if p.Kind != "session" || p.SessionID == "" || sessions == nil {
 		return out
 	}
@@ -34,7 +34,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 	if err != nil || row == nil || row.ID != p.SessionID {
 		return out
 	}
-	out.Verified = true
+	out.SessionResolved = true
 	out.SessionID, out.WorkstreamID = row.ID, row.WorkstreamID.String
 	out.LaunchID, out.ProjectID, out.LogicalAgentID = row.LaunchID, row.ProjectID, row.LogicalAgentID
 	if bindings != nil && row.LogicalAgentID != "" {

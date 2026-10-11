@@ -214,7 +214,7 @@ func (s *Service) Ingest(ctx context.Context, req ProxyEventIngestRequest, resol
 		return &Error{Code: "bad_request", Message: msg}
 	}
 	req.Attribution = resolve()
-	if req.SessionID != "" && (!req.Attribution.Verified || req.SessionID != req.Attribution.SessionID) {
+	if req.SessionID != "" && (!req.Attribution.SessionResolved || req.SessionID != req.Attribution.SessionID) {
 		req.ClaimedSessionID = req.SessionID
 	}
 	if req.Attribution.PrincipalID != "" {

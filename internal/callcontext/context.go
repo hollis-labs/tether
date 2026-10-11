@@ -5,16 +5,22 @@ package callcontext
 import "context"
 
 type Snapshot struct {
-	Verified       bool   `json:"verified"`
-	Source         string `json:"source,omitempty"`
-	PrincipalID    string `json:"principal_id,omitempty"`
-	PrincipalKind  string `json:"principal_kind,omitempty"`
-	SessionID      string `json:"session_id,omitempty"`
-	AgentURN       string `json:"agent_urn,omitempty"`
-	WorkstreamID   string `json:"workstream_id,omitempty"`
-	LaunchID       string `json:"launch_id,omitempty"`
-	ProjectID      string `json:"project_id,omitempty"`
-	LogicalAgentID string `json:"logical_agent_id,omitempty"`
+	// Verified is identity.Principal.Verified: a bearer credential resolved to
+	// a principal row, of any kind. SessionResolved is the narrower fact that
+	// the principal is a session whose row was found; session-scoped fields
+	// (SessionID, workstream, launch, project, agent) are trustworthy only
+	// when it is true.
+	Verified        bool   `json:"verified"`
+	SessionResolved bool   `json:"session_resolved,omitempty"`
+	Source          string `json:"source,omitempty"`
+	PrincipalID     string `json:"principal_id,omitempty"`
+	PrincipalKind   string `json:"principal_kind,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	AgentURN        string `json:"agent_urn,omitempty"`
+	WorkstreamID    string `json:"workstream_id,omitempty"`
+	LaunchID        string `json:"launch_id,omitempty"`
+	ProjectID       string `json:"project_id,omitempty"`
+	LogicalAgentID  string `json:"logical_agent_id,omitempty"`
 }
 
 type contextKey struct{}
