@@ -99,7 +99,8 @@ Provision limits are validated and retained on host members, but budget/timeout
 are not enforced by session Start here. Enforce them before activation, alongside
 recording original granted scopes for recovery launches.
 
-Team sessions retain the catalog logical_agent_id for sandbox policy, while
+Team sessions get a derived per-create logical_agent_id (`<agent>#<key hash>`;
+plan.CatalogAgentID keeps the catalog agent for sandbox policy), while
 skipping the ordinary actor binding lease. Legacy ordinary lookups still key on
 that logical ID alone: legacyNewestRunningSession in wake.go can select a team
 session, as can GetLatestCheckpointForAgent and DetachedSessionIDForAgent for

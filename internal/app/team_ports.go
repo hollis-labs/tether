@@ -2,13 +2,17 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/substrate/mesh"
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -154,6 +158,14 @@ func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchI
 			return nil, err
 		}
 		plan.TeamMember = true
+		// Each keyed team create gets its own logical id; sandbox and launch
+		// policy keep resolving from the catalog agent.
+		sum := sha256.Sum256([]byte(key))
+		plan.CatalogAgentID = plan.LogicalAgentID
+		plan.LogicalAgentID += "#" + hex.EncodeToString(sum[:6])
+		if err := s.Store.UpsertLogicalAgent(agent.LogicalAgent{ID: plan.LogicalAgentID, Name: plan.LogicalAgentID, Role: "team member of " + plan.CatalogAgentID}, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return nil, err
+		}
 		if err := applyTeamBootContext(plan, boot); err != nil {
 			return nil, err
 		}

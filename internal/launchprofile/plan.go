@@ -13,10 +13,13 @@ type Plan struct {
 	LogicalAgentID string           `json:"logical_agent_id"`
 	// TeamMember is set only by the internal team create path. Catalog identity
 	// still resolves sandbox policy; the enrollment adapter owns actor binding.
-	TeamMember    bool   `json:"team_member,omitempty"`
-	ProviderID    string `json:"provider_id"`
-	ProviderBrand string `json:"provider_brand,omitempty"`
-	RuntimeKind   string `json:"runtime_kind,omitempty"`
+	TeamMember bool `json:"team_member,omitempty"`
+	// CatalogAgentID is the catalog agent a team member's derived
+	// LogicalAgentID ("<agent>#<slot>") was launched from. Empty otherwise.
+	CatalogAgentID string `json:"catalog_agent_id,omitempty"`
+	ProviderID     string `json:"provider_id"`
+	ProviderBrand  string `json:"provider_brand,omitempty"`
+	RuntimeKind    string `json:"runtime_kind,omitempty"`
 	// ResumeProviderSessionID is set only by explicit or boot recovery. LaunchSession
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.
@@ -135,4 +138,13 @@ func (p *Plan) EffectiveWorkRoot() string {
 		return p.RepoRoot
 	}
 	return ""
+}
+
+// CatalogAgent is the catalog agent id for sandbox and launch-policy lookups:
+// LogicalAgentID except for team members, whose logical id is derived per slot.
+func (p *Plan) CatalogAgent() string {
+	if p.CatalogAgentID != "" {
+		return p.CatalogAgentID
+	}
+	return p.LogicalAgentID
 }
