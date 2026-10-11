@@ -69,8 +69,8 @@ func writeProviderSessionLost(w http.ResponseWriter, err error) bool {
 
 // writeTurnActiveOrUnknown answers a turn/start that hosted Codex refuses
 // because a turn is already running or the state of the previous turn is
-// unresolved. The shim cannot tell the two apart, so this is a 409 that says
-// so rather than a 500 or a plain "busy". Matched on the stable code, not the
+// unresolved. The code does not say which applies, so this is a 409 that
+// says so rather than a 500 or a plain "busy". Matched on the stable code, not the
 // concrete type, so api needs no shimcodex import.
 func writeTurnActiveOrUnknown(w http.ResponseWriter, err error) bool {
 	var coded interface{ ErrorCode() string }

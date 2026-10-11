@@ -29,8 +29,9 @@ const (
 
 	// CodeTurnActiveOrUnknown (409) means hosted Codex refused a new turn
 	// because a turn is still active OR the previous turn's state is unknown
-	// (not yet resolved). The two cannot be told apart, so callers must not
-	// treat it as plain "busy". The new turn was not started.
+	// (not yet resolved). The code does not say which applies, so callers
+	// must not assume plain "busy" and must not auto-retry. The new turn was
+	// not started.
 	CodeTurnActiveOrUnknown = "turn_active_or_unknown"
 
 	// CodeTurnFailed (502) means the session's agent process ran the turn
