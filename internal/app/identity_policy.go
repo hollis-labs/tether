@@ -58,9 +58,9 @@ func (p *IdentityPolicy) finding(ctx context.Context, caller identity.Principal,
 		event = refused
 	}
 	// Anonymous, claim-only traffic is not audited in observe mode: it must not
-	// allocate audit rows (middleware.go). Enforce refusals are always recorded
-	// when there is a principal to attribute.
-	if p.Audit != nil && caller.ID != "" {
+	// allocate audit rows (middleware.go). An enforce refusal is audited when
+	// there is a principal to attribute.
+	if p.Audit != nil && caller.ID != "" && (caller.Verified || p.enforcing()) {
 		auth := "claimed"
 		if caller.Verified {
 			auth = "verified"

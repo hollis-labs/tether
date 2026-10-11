@@ -255,3 +255,37 @@ func TestChannelPolicyForOtherCallers(t *testing.T) {
 		t.Fatalf("unverified read: %v", err)
 	}
 }
+
+func TestAnonymousClaimsAreNotAuditedInObserve(t *testing.T) {
+	h := newReplyHarness(t)
+	parent := h.routed("s1")
+	h.rt.setAlive("s1", true, agentsessions.LiveStateProcessing)
+	sink := &auditSink{}
+	policy := NewIdentityPolicy(identity.Observe, sink.record, turnrouting.ServiceURN)
+	h.svc.InstallIdentityPolicy(policy)
+	if _, err := h.svc.SubmitRoutingReply(context.Background(), replyReq(parent.ID, identity.Principal{ID: strangerID})); err != nil {
+		t.Fatalf("anonymous observe reply must proceed: %v", err)
+	}
+	sess := messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"}
+	if err := policy.Channel()(context.Background(), "publish", "ops", identity.Principal{ID: strangerID}, sess); err != nil {
+		t.Fatalf("anonymous observe publish must proceed: %v", err)
+	}
+	if got := sink.events(); len(got) != 0 {
+		t.Fatalf("anonymous observe traffic audited: %v", got)
+	}
+}
+
+func TestAnonymousClaimsAreRefusedInEnforce(t *testing.T) {
+	h := newReplyHarness(t)
+	parent := h.routed("s1")
+	sink := &auditSink{}
+	policy := NewIdentityPolicy(identity.Enforce, sink.record, turnrouting.ServiceURN)
+	h.svc.InstallIdentityPolicy(policy)
+	if _, err := h.svc.SubmitRoutingReply(context.Background(), replyReq(parent.ID, identity.Principal{ID: strangerID})); !errors.Is(err, api.ErrReplyForbidden) {
+		t.Fatalf("anonymous enforce reply: %v", err)
+	}
+	sess := messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"}
+	if err := policy.Channel()(context.Background(), "publish", "ops", identity.Principal{ID: strangerID}, sess); !errors.Is(err, channels.ErrForbidden) {
+		t.Fatalf("anonymous enforce publish: %v", err)
+	}
+}
