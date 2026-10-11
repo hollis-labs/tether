@@ -132,6 +132,7 @@ func (s *Service) QueueTeamDelivery(ctx context.Context, d teams.Delivery) error
 	if reply.State == store.RoutingReplyUndeliverable {
 		return teamhost.ErrSessionGone
 	}
+	s.kickOffAppServerTeamMember(row.ID)
 	if created {
 		dispatcher.notifyNew(row.ID)
 	}

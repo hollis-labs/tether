@@ -53,8 +53,32 @@ func (s *Service) primeAppServerSession(ctx context.Context, id string) error {
 	return err
 }
 
+// kickOffAppServerTeamMember primes sessionID once, if it is a fresh Codex
+// app-server team member. It is called from the launch path and again when a
+// team delivery is queued, so a session whose launch hook did not run (or did
+// not take) is still primed before its first delivery. Idempotent per session.
 func (s *Service) kickOffAppServerTeamMember(sessionID string) {
+	if s.Store == nil || s.Manager == nil {
+		return
+	}
+	plan, err := s.Store.GetLaunchPlan(sessionID)
+	if err != nil || plan == nil || !plan.TeamMember || plan.ResumeSourceSessionID != "" || plan.ProviderBrand != "codex" {
+		return
+	}
+	info, ok := s.Manager.Get(sessionID)
+	if !ok || !info.Caps.JsonRpcStdio {
+		return
+	}
+	if _, done := s.primedSessions.LoadOrStore(sessionID, struct{}{}); done {
+		return
+	}
+	log.Printf("app: priming codex team session %s", sessionID)
 	go func() {
+		defer func() {
+			// Forget on session end so the map cannot grow without bound.
+			_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+			s.primedSessions.Delete(sessionID)
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if err := s.primeAppServerSession(ctx, sessionID); err != nil {

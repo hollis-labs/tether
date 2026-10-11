@@ -146,6 +146,9 @@ type Service struct {
 	// left to codex's own sandbox, so each turn can be re-checked
 	// (refuseWidenedCodex). Set at launch, removed when the session ends.
 	codexExempt sync.Map
+	// primedSessions marks app-server team members already given their
+	// priming turn (codex_prime.go), by session id.
+	primedSessions sync.Map
 
 	// scratchCustodies retains physical handles by session/operation through
 	// authoritative completion, including entered Start failures of unknown

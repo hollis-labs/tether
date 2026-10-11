@@ -16,7 +16,9 @@ import (
 	"github.com/hollis-labs/substrate/harness/sandbox"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
@@ -56,7 +58,7 @@ func startNeverPromptedHostedCodex(t *testing.T) (*Service, context.Context) {
 	s.shimHosting = &shimHosting{provider: p, instance: "urn:instance:codex-kickoff", capability: shimhost.Supported, inspect: p.Inspect, prepare: func(spec shim.Launch, _ *sandbox.ResolvedAccessPolicy, limits runner.ResourceLimits) (shim.Launch, func(), error) {
 		return shimhost.PrepareProvider(spec, nil, limits)
 	}}
-	plan := &launch.Plan{ProviderID: "codex", ProviderBrand: "codex", RuntimeKind: "jsonrpc-stdio", Command: exe, RepoRoot: root, WorkRoot: root, BootMode: "none",
+	plan := &launch.Plan{ProviderID: "codex", ProviderBrand: "codex", RuntimeKind: "jsonrpc-stdio", Command: exe, RepoRoot: root, WorkRoot: root, BootMode: "none", TeamMember: true,
 		Route: &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}}
 	if err = s.Store.CreateSession(store.SessionRow{ID: "codex-kick", ProviderID: "codex", Workspace: root, State: "created"}, plan); err != nil {
 		t.Fatal(err)
@@ -150,6 +152,42 @@ func TestPrimeAppServerSessionTakesAFirstTurn(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("priming did not run a turn: %+v (%v)", state, loadErr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Queueing a team delivery to a fresh Codex team member primes it, whatever
+// the launch path did: the live shim-hosted launch did not.
+func TestQueueTeamDeliveryPrimesAFreshCodexTeamMember(t *testing.T) {
+	s, ctx := startNeverPromptedHostedCodex(t)
+	d := newReplyDispatcher(ctx, s.Store, s.Registry, s.replyRuntime(), nil)
+	s.replies.Store(d)
+	t.Cleanup(d.stop)
+	err := s.QueueTeamDelivery(ctx, teams.Delivery{IdempotencyKey: "kick-team", From: "msg://user/local/operator", Body: "hello reviewer",
+		Recipient: teams.Member{Actor: "msg://agent/local/reviewer", SessionID: "codex-kick"}, Delivery: mesh.DeliveryAtIdle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, primed := s.primedSessions.Load("codex-kick"); !primed {
+		t.Fatal("team delivery did not prime the session")
+	}
+	row, err := s.Store.SessionShim(ctx, "codex-kick")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := s.Store.CodexProtocolStore(ctx, row.SessionID, row.ShimKey, codexRecordLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		state, loadErr := port.Load(ctx)
+		if loadErr == nil && state.LastTerminal == "app-turn" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no turn ran: %+v (%v)", state, loadErr)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
