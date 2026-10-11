@@ -14,6 +14,7 @@ type Config struct {
 	BaseURL              string
 	Wire                 string
 	HTTPClient           *http.Client
+	Headers              map[string]string
 	IncludeReasoningText bool
 }
 
@@ -25,6 +26,7 @@ func New(cfg Config) *llmopenai.Provider {
 		BaseURL:              cfg.BaseURL,
 		Wire:                 cfg.Wire,
 		HTTPClient:           cfg.HTTPClient,
+		Headers:              cfg.Headers,
 		AllowUnauthenticated: true,
 		IncludeReasoningText: cfg.IncludeReasoningText,
 	})
