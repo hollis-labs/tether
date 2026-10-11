@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/substrate/harness/sandbox"
@@ -24,13 +25,18 @@ func shimSandboxPolicy(opts agentsessions.StartOptions, privateRoot string) (san
 		policy = *opts.SandboxPolicy
 		policy.FS.Deny = append(append([]sandbox.ResolvedPath{}, policy.FS.Deny...), sandbox.ResolvedPath{Kind: sandbox.AccessDeny, Path: realPathOrClean(privateRoot)})
 		policy, err = policy.WithProtected(protected...)
+		if err == nil {
+			// Hidden paths are denies here: the shim runs under a resolved policy.
+			policy, err = policy.WithHidden(opts.HiddenPaths...)
+		}
 	} else {
 		profile := opts.Profile
 		if profile.ID == "" {
 			profile = sandbox.Profile{ID: "shim-provider", HostFilesystem: true, Net: true, Subprocess: true}
 		}
 		profile.FS.Protect = append(append([]string{}, profile.FS.Protect...), protected...)
-		profile.FS.Deny = append(append([]string{}, profile.FS.Deny...), privateRoot)
+		profile.FS.Deny = append(append(append([]string{}, profile.FS.Deny...), privateRoot), append(slices.Clone(profile.FS.Hide), opts.HiddenPaths...)...)
+		profile.FS.Hide = nil
 		profile.DenyGUILaunch = profile.DenyGUILaunch || opts.DenyGUILaunch
 		request := sandbox.PolicyFromProfile(profile, opts.Workdir)
 		grant := opts.Workdir
@@ -65,7 +71,7 @@ func (s *Service) applyShimSandboxProtection(kind string, opts *agentsessions.St
 	if s.LaunchHost() != HostShim || runtime.GOOS != "linux" || kind == "api" {
 		return nil
 	}
-	sandboxed := opts.Profile.ID != "" || len(opts.ProtectedPaths) > 0 || opts.SandboxPolicy != nil && opts.SandboxPolicy.Mode != sandbox.ConfinementDisabled
+	sandboxed := opts.Profile.ID != "" || len(opts.ProtectedPaths) > 0 || len(opts.HiddenPaths) > 0 || opts.SandboxPolicy != nil && opts.SandboxPolicy.Mode != sandbox.ConfinementDisabled
 	if !sandboxed {
 		return nil
 	}

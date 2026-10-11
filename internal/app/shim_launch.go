@@ -340,6 +340,7 @@ func shimBridgeOptions(opts agentsessions.StartOptions, command []string, receip
 	opts.SandboxPolicy = nil
 	opts.PreparedExecution = nil
 	opts.ProtectedPaths = nil
+	opts.HiddenPaths = nil
 	opts.DenyGUILaunch = false
 	opts.ResourceLimits = nil
 	opts.Supervisor = nil

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
@@ -191,10 +192,14 @@ func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, op
 	if len(dirs) == 0 {
 		return s.applyShimSandboxProtection(kind, opts)
 	}
+	hidden, err := s.controlPlaneHidden()
+	if err != nil {
+		return err
+	}
 	writable := launchDirs(plan, opts)
 	for _, w := range writable {
 		resolved := realPathOrClean(w.path)
-		for _, dir := range dirs {
+		for _, dir := range append(slices.Clone(dirs), hidden...) {
 			if pathWithin(dir, resolved) {
 				return fmt.Errorf("%w: the agent's %s %s is inside %s, which Tether write-protects for every agent; move it out of that directory", launch.ErrLaunchInsideProtectedPath, w.what, w.path, dir)
 			}
@@ -207,8 +212,66 @@ func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, op
 		return err
 	}
 	opts.ProtectedPaths = dirs
+	opts.HiddenPaths = hidden
 	return s.applyShimSandboxProtection(kind, opts)
 }
+
+// controlPlaneHidden returns the real paths no wrapped agent may even read
+// (CW-20261001-0263): the state directory, which holds every session, message
+// and event; the operator's bearer token, hidden as a file because the daemon's
+// socket in the same run/ directory must stay reachable; and the secrets
+// directory. Only paths that exist are returned, because a mount cannot cover
+// a path that is not there, so one created after the agent started stays
+// readable to it; the daemon creates the token and the state directory before
+// it launches anything. The token and secrets are looked for under the
+// catalog root's parent and under the default ~/.tether. Codex, which Tether
+// does not wrap (see protectionPlan), is not covered.
+func (s *Service) controlPlaneHidden() ([]string, error) {
+	catalogRoot := config.Expand(s.CatalogRoot)
+	if catalogRoot == "" {
+		return nil, errors.New("hide control plane: the catalog root is not set")
+	}
+	catalog, err := realDir(catalogRoot)
+	if err != nil {
+		return nil, fmt.Errorf("hide control plane: catalog root: %w", err)
+	}
+	roots := []string{filepath.Dir(catalog)}
+	if home, err := os.UserHomeDir(); err == nil {
+		if tetherHome, err := realDir(filepath.Join(home, ".tether")); err == nil && !containsPath(roots, tetherHome) {
+			roots = append(roots, tetherHome)
+		}
+	}
+	var candidates []string
+	if s.Catalog != nil {
+		if db := config.ResolveStateDB(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths); db != "" {
+			candidates = append(candidates, filepath.Dir(config.Expand(db)))
+		}
+	}
+	for _, root := range roots {
+		candidates = append(candidates, filepath.Join(root, "run", operatorTokenFile), filepath.Join(root, secretsDirName))
+	}
+	var hidden []string
+	for _, candidate := range candidates {
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("hide control plane: %s: %w", candidate, err)
+		}
+		if !containsPath(hidden, resolved) {
+			hidden = append(hidden, resolved)
+		}
+	}
+	return hidden, nil
+}
+
+const (
+	// operatorTokenFile is the operator's bearer credential in the run directory.
+	operatorTokenFile = "operator.token"
+	// secretsDirName is the directory of Tether's own secrets under its root.
+	secretsDirName = "secrets"
+)
 
 // controlPlaneDirs returns the real paths of the directories to protect.
 // The catalog root must resolve: protection that cannot name the catalog
