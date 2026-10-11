@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/tether/internal/teamstore"
 )
 
 // RecoveryRosters reads existing run/roster facts; it never acquires membership,
@@ -28,7 +29,7 @@ func (s *Store) RecoveryRosters(ctx context.Context, agentID string) ([]teams.Ro
 		if err := json.Unmarshal(runRaw, &run); err != nil {
 			return nil, err
 		}
-		if run.Status.Terminal() {
+		if teamstore.RunEnded(run.Status) {
 			continue
 		}
 		if err := json.Unmarshal(rosterRaw, &roster); err != nil {

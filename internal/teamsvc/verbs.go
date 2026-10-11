@@ -481,6 +481,9 @@ func (s *Service) Dissolve(ctx context.Context, req RunRequest) (Result, error) 
 			}
 		}
 		err := teams.EndRun(ctx, req.RunID, guardedRoster{RosterStore: s.deps.Roster, team: t, plan: plan, provisioner: s.deps.Provisioner}, s.deps.Provisioner, s.deps.Routing)
+		if err == nil {
+			err = s.deps.Runs.MarkDissolved(ctx, req.RunID)
+		}
 		return Result{}, err
 	})
 }

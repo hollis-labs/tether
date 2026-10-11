@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/substrate/mesh/teams"
 )
 
@@ -195,6 +196,41 @@ func (s *Store) CreateRunAtomic(ctx context.Context, run teams.TeamRun, commit f
 	}
 	return result, nil
 }
+
+// RunDissolved is the run status recorded once a run has been dissolved.
+// It is terminal but is not part of the mesh task vocabulary.
+const RunDissolved mesh.TaskState = "dissolved"
+
+// RunEnded reports whether a run no longer accepts work.
+func RunEnded(status mesh.TaskState) bool {
+	return status.Terminal() || status == RunDissolved
+}
+
+// MarkRunDissolved records that the run was dissolved. It is idempotent and
+// leaves runs that already reached another terminal status untouched.
+func (s *Store) MarkRunDissolved(ctx context.Context, id string) error {
+	return s.fencedImmediate(ctx, func(conn *sql.Conn) error {
+		var payload []byte
+		if err := conn.QueryRowContext(ctx, `SELECT payload FROM team_runs WHERE run_id=?`, id).Scan(&payload); err != nil {
+			return readError("team run", err)
+		}
+		var run teams.TeamRun
+		if err := decode(payload, &run); err != nil {
+			return err
+		}
+		if RunEnded(run.Status) {
+			return nil
+		}
+		run.Status = RunDissolved
+		payload, err := encode(run)
+		if err != nil {
+			return err
+		}
+		_, err = conn.ExecContext(ctx, `UPDATE team_runs SET payload=? WHERE run_id=?`, payload, id)
+		return err
+	})
+}
+
 func (s *Store) GetRun(ctx context.Context, id string) (RunContainer, error) {
 	var result RunContainer
 	var payload []byte

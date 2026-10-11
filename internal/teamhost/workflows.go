@@ -112,3 +112,8 @@ func (h *Host) FailWorkflow(ctx context.Context, key, reason string) error {
 		return err
 	})
 }
+
+// MarkDissolved records the terminal "dissolved" run status.
+func (h *Host) MarkDissolved(ctx context.Context, runID string) error {
+	return h.store.MarkRunDissolved(ctx, runID)
+}

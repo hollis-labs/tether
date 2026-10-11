@@ -80,4 +80,13 @@ func TestFormationWithDurableLibraryStores(t *testing.T) {
 	if roster.Members[0].Status != "released" {
 		t.Fatal("durable roster not ended", roster)
 	}
+	run, err = storage.GetRun(ctx, first.Run.ID)
+	must(t, err)
+	if run.Run.Status != teamstore.RunDissolved {
+		t.Fatal("run status not dissolved", run.Run.Status)
+	}
+}
+
+func (r storedRuns) MarkDissolved(ctx context.Context, id string) error {
+	return r.storage.MarkRunDissolved(ctx, id)
 }
