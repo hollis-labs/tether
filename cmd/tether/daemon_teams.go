@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -51,6 +52,9 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 	}()
 	definitions, err := definitionresolve.NewDefinitionStore(fabricstore.New(svc.Store.DB()), content, definitionresolve.Policy{KnownCapability: teamspolicy.KnownCapability})
 	if err != nil {
+		return nil, noop, err
+	}
+	if err := indexPolicyDefinitions(context.Background(), definitions, policy); err != nil {
 		return nil, noop, err
 	}
 	enroller, err := teamruntime.NewLegacyEnroller(svc.Store.DB(), storage, svc.Registry, definitions, launchTargets(policy))
@@ -106,4 +110,25 @@ func launchTargets(policy *teamspolicy.Policy) map[mesh.DefinitionRef]teamruntim
 		out[pin] = teamruntime.LaunchTarget{LaunchID: launch}
 	}
 	return out
+}
+
+// indexPolicyDefinitions indexes each policy entry's authored definition so the
+// team host can Load its pin. Nothing else in the daemon indexes definitions;
+// without this step every formation fails with a not-found pin. The indexed
+// pin must equal the policy pin exactly.
+func indexPolicyDefinitions(ctx context.Context, definitions *definitionresolve.DefinitionStore, policy *teamspolicy.Policy) error {
+	for _, l := range policy.Launches() {
+		if l.Source == "" {
+			continue
+		}
+		verified, err := definitions.Index(ctx, l.Source)
+		if err != nil {
+			return fmt.Errorf("teams policy launch %q: index %s: %w", l.Launch, l.Source, err)
+		}
+		if verified.Pin != l.Definition.Ref() {
+			return fmt.Errorf("teams policy launch %q: %s is %s/%s %s, policy pins %s/%s %s", l.Launch, l.Source,
+				verified.Pin.ID, verified.Pin.Revision, verified.Pin.Digest, l.Definition.ID, l.Definition.Revision, l.Definition.Digest)
+		}
+	}
+	return nil
 }

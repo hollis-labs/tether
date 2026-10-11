@@ -57,5 +57,6 @@ func NewCommand(factory func() (*client.Client, error), enabled bool) *cobra.Com
 		cmd.AddCommand(sub)
 	}
 	addRosterCommands(cmd, factory)
+	addPinCommand(cmd)
 	return cmd
 }

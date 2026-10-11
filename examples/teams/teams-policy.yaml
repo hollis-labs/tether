@@ -1,0 +1,20 @@
+# Copy to <catalog root>/teams-policy.yaml and definitions/*.md to <catalog root>/team-definitions/.
+# Regenerate pins with: tether team pin examples/teams/definitions/*.md
+version: 1
+launches:
+  - launch: tether-claude
+    runtime: claude
+    definition: {id: claude-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/claude-agent.md
+  - launch: tether-claude-worktree
+    runtime: claude
+    definition: {id: claude-worktree-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/claude-worktree-agent.md
+  - launch: agent-mux-codex-app-server
+    runtime: codex
+    definition: {id: codex-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/codex-agent.md
+  - launch: agent-mux-codex-app-server-worktree
+    runtime: codex
+    definition: {id: codex-worktree-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/codex-worktree-agent.md

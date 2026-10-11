@@ -1,0 +1,107 @@
+{
+  "launch": {
+    "counts": {
+      "coordinator": 0,
+      "reviewer": 1,
+      "workers": 1
+    }
+  },
+  "team": {
+    "id": "first-team",
+    "name": "First team",
+    "version": 1,
+    "slots": [
+      {
+        "name": "coordinator",
+        "role": "",
+        "definition_ref": {
+          "id": "claude-agent",
+          "revision": "r1",
+          "digest": "sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185"
+        },
+        "resolution": "fresh",
+        "activation": "singleton",
+        "required": false,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "workers",
+        "role": "",
+        "definition_ref": {
+          "id": "claude-agent",
+          "revision": "r1",
+          "digest": "sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185"
+        },
+        "resolution": "fresh",
+        "activation": "singleton",
+        "required": false,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "name": "reviewer",
+        "role": "",
+        "definition_ref": {
+          "id": "codex-agent",
+          "revision": "r1",
+          "digest": "sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185"
+        },
+        "resolution": "fresh",
+        "activation": "singleton",
+        "required": false,
+        "min": 1,
+        "max": 1
+      }
+    ],
+    "phases": [
+      {
+        "id": "work",
+        "kind": "flex",
+        "active_slots": [
+          "coordinator",
+          "workers",
+          "reviewer"
+        ],
+        "owner_slot": "coordinator",
+        "exit_trigger": {
+          "kind": "manual",
+          "spec": {
+            "signal": "done"
+          }
+        }
+      }
+    ],
+    "authority": {
+      "mode": "strict",
+      "grants": [
+        {
+          "from_slot": "coordinator",
+          "verb": "may_message",
+          "to_slot": "workers"
+        },
+        {
+          "from_slot": "workers",
+          "verb": "may_message",
+          "to_slot": "reviewer"
+        }
+      ]
+    },
+    "routing": {
+      "rules": null,
+      "coordinator_slot": "coordinator"
+    },
+    "policy": {
+      "spawn": {
+        "max_depth": 1,
+        "max_children": 4,
+        "fan_out": 4,
+        "max_rounds": 16,
+        "max_stalls": 4,
+        "budget": 1,
+        "timeout": 300000000000
+      },
+      "history": "none"
+    }
+  }
+}

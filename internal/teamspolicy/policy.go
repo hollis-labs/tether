@@ -48,6 +48,9 @@ type Launch struct {
 	Launch     string `yaml:"launch"`
 	Runtime    string `yaml:"runtime"`
 	Definition Pin    `yaml:"definition"`
+	// Source is the optional catalog-relative definition file ("catalog:<path>").
+	// When set the daemon indexes it at start and refuses a pin mismatch.
+	Source string `yaml:"source,omitempty"`
 }
 type Pin struct {
 	ID       string `yaml:"id"`

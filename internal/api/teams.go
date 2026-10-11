@@ -261,7 +261,7 @@ func (s *Server) registerTeamRoutes(mux *http.ServeMux) {
 			if err != nil {
 				status, detail := TeamError(err)
 				if status >= 500 || status == 409 {
-					slog.WarnContext(r.Context(), "team verb failed", "verb", verb, "code", detail.Code)
+					slog.WarnContext(r.Context(), "team verb failed", "verb", verb, "code", detail.Code, "err", err)
 				}
 				writeError(w, status, detail.Code, detail.Message)
 				return
