@@ -41,10 +41,17 @@ type TeamsConfig struct {
 // IdentityConfig rolls out verified attribution before authorization policy.
 type IdentityConfig struct {
 	Mode string `yaml:"mode"`
+	// Points overrides Mode for one enforcement point (see IdentityPoints).
+	// An omitted point follows Mode. Applied at daemon start only.
+	Points map[string]string `yaml:"points,omitempty"`
 	// MCPGrants is operator-provisioned authority for service/interactive
 	// principals. Omission grants no upstreams, never the operator's inventory.
 	MCPGrants map[string]PrincipalMCPGrant `yaml:"mcp_grants,omitempty"`
 }
+
+// IdentityPoints are the enforcement points whose mode can be set
+// independently of identity.mode. Every other consumer follows identity.mode.
+var IdentityPoints = []string{"local_api", "mcp_gateway", "teams"}
 
 type PrincipalMCPGrant struct {
 	Servers []string `yaml:"servers" json:"servers"`
@@ -56,6 +63,15 @@ func (c IdentityConfig) EffectiveMode() string {
 		return "observe"
 	}
 	return mode
+}
+
+// ModeFor is the effective mode of one enforcement point: its identity.points
+// override when set, otherwise identity.mode.
+func (c IdentityConfig) ModeFor(point string) string {
+	if m := strings.ToLower(strings.TrimSpace(c.Points[point])); m != "" {
+		return m
+	}
+	return c.EffectiveMode()
 }
 
 // AIConfig controls the in-process AI gateway surface. The first schema slice

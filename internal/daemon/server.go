@@ -30,10 +30,12 @@ const tetherVersion = "0.2.0"
 // expected to have already run path expansion (config.Expand) on
 // ListenAddr and PIDFile.
 type Config struct {
-	RemoteListener  RemoteListenerConfig
-	Modules         *environment.Profile
-	TeamsEnabled    bool
-	IdentityMode    identity.Mode
+	RemoteListener RemoteListenerConfig
+	Modules        *environment.Profile
+	TeamsEnabled   bool
+	IdentityMode   identity.Mode
+	// IdentityPoints overrides IdentityMode per enforcement point (CW-20261010-0268).
+	IdentityPoints  map[string]identity.Mode
 	ListenAddr      string
 	PIDFile         string
 	ShutdownTimeout time.Duration
@@ -590,7 +592,7 @@ func (s *Server) handler(remote bool) http.Handler {
 	})
 	// Scope attribution is observe-only on the local listener (Enforce stays
 	// false); CW-20261010-0261.
-	protected := identity.MiddlewareWithScopes(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, identity.ScopePolicy{Observe: api.ObserveLocalScope}, s.Config.Modules.ModuleGate(protocolHandler))
+	protected := identity.MiddlewareWithScopes(s.Config.IdentityModeFor("local_api"), s.Identity, s.recordIdentityObservation, identity.ScopePolicy{Observe: api.ObserveLocalScope}, s.Config.Modules.ModuleGate(protocolHandler))
 	if remote {
 		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
 	}
@@ -896,4 +898,12 @@ func (s *Server) apiMounts() []apiMount {
 		{"/fs/validate", true},
 		{"/fs/detect", true},
 	}
+}
+
+// IdentityModeFor is the identity mode of one enforcement point.
+func (c Config) IdentityModeFor(point string) identity.Mode {
+	if m, ok := c.IdentityPoints[point]; ok && m != "" {
+		return m
+	}
+	return c.IdentityMode
 }

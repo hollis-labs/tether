@@ -65,7 +65,7 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 		return nil, noop, err
 	}
 	ops, err := teamsvc.New(teamsvc.Deps{
-		Principals: teamruntime.Principals{Mode: cfg.IdentityMode, Sessions: enroller},
+		Principals: teamruntime.Principals{Mode: cfg.IdentityModeFor("teams"), Sessions: enroller},
 		Ceilings:   disabledFormation{}, Runs: host, Calls: host,
 		Definitions: storage, Roster: storage, Ledger: storage, Signals: storage,
 		Provisioner: host, Workflows: host, Triggers: host, Sender: host,

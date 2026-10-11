@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -427,6 +428,14 @@ func checkIdentity(cat *config.Catalog) checkResult {
 	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
 	if err := mode.Validate(); err != nil {
 		return fail("caller-identity", "invalid identity.mode", "use off, observe or enforce; validation happens at daemon start")
+	}
+	for point, m := range cat.Global.Identity.Points {
+		if !slices.Contains(config.IdentityPoints, point) {
+			return fail("caller-identity", "unknown identity.points entry "+point, "use one of "+strings.Join(config.IdentityPoints, ", "))
+		}
+		if identity.Mode(strings.ToLower(strings.TrimSpace(m))).Validate() != nil {
+			return fail("caller-identity", "invalid identity.points."+point, "use off, observe or enforce")
+		}
 	}
 	cfg, err := daemonConfigFromCatalog(cat)
 	if err != nil {

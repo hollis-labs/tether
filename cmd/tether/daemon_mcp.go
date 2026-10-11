@@ -27,7 +27,7 @@ func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, id
 	return mcptransport.NewHandler(ctx, mcptransport.HandlerConfig{
 		TeamsEnabled: cfg.TeamsEnabled, Teams: teams,
 		Publisher:  mcpadapter.NewDaemonToolCallRecorder(ctx, svc.Bus, svc.Store),
-		ListenAddr: cfg.ListenAddr, IdentityMode: cfg.IdentityMode, Verifier: verifier, Service: svc,
+		ListenAddr: cfg.ListenAddr, IdentityMode: cfg.IdentityModeFor("mcp_gateway"), Verifier: verifier, Service: svc,
 		NativeClient: func(token string) *client.Client { return client.New(cfg.ListenAddr, client.WithToken(token)) },
 		Resolver: mcptransport.CallerResolver{
 			Catalog:         cache.Load,
