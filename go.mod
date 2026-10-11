@@ -98,3 +98,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+// CW-20261001-0263 DEV ONLY: remove once harness releases FS.Hide / HiddenPaths and the require above is bumped.
+replace github.com/hollis-labs/substrate/harness => ../scratch/substrate-hide/harness
