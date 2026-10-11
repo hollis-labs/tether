@@ -239,7 +239,7 @@ var daemonRunCmd = &cobra.Command{
 			_ = closeService()
 			return err
 		}
-		if err := identity.ValidateBind(cfg.ListenAddr, cfg.IdentityMode); err != nil {
+		if err := cfg.ValidateListenerBind(false); err != nil {
 			_ = closeService()
 			return err
 		}
@@ -266,11 +266,11 @@ var daemonRunCmd = &cobra.Command{
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		var identities *identity.Store
 		operatorDegraded := false
-		if cfg.IdentityMode != identity.Off || cfg.RemoteListener.Enabled {
+		if cfg.StrictestIdentityMode() != identity.Off || cfg.RemoteListener.Enabled {
 			identities = identity.NewStore(svc.Store.DB())
 		}
-		if cfg.IdentityMode != identity.Off {
-			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), cfg.IdentityMode)
+		if strictest := cfg.StrictestIdentityMode(); strictest != identity.Off {
+			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), strictest)
 			if err != nil {
 				_ = closeService()
 				return err

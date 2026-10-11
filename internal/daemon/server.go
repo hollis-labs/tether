@@ -325,7 +325,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.MCPShutdown != nil {
 		defer s.MCPShutdown()
 	}
-	if err := identity.ValidateBind(s.Config.ListenAddr, s.Config.IdentityMode); err != nil {
+	if err := s.Config.ValidateListenerBind(s.MCP != nil); err != nil {
 		return err
 	}
 	if err := s.Config.RemoteListener.Validate(); err != nil {
@@ -350,7 +350,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	defer func() { _ = lis.Close() }()
 	if s.MCP != nil {
-		if err := validateMCPListenerAddress(lis.Addr(), s.Config.IdentityMode, s.Identity != nil); err != nil {
+		if err := validateMCPListenerAddress(lis.Addr(), s.Config.IdentityModeFor("mcp_gateway"), s.Identity != nil); err != nil {
 			_ = lis.Close()
 			return err
 		}
@@ -908,4 +908,41 @@ func (c Config) IdentityModeFor(point string) identity.Mode {
 		return m
 	}
 	return c.IdentityMode
+}
+
+// ValidateListenerBind checks the local listener's bind against the effective
+// mode of every point served on it: local_api, plus mcp_gateway when the MCP
+// endpoint is mounted. A non-loopback TCP bind needs each of them to enforce,
+// so a global enforce cannot mask a point left at observe or off.
+func (c Config) ValidateListenerBind(mcp bool) error {
+	if err := identity.ValidateBind(c.ListenAddr, c.IdentityModeFor("local_api")); err != nil {
+		return err
+	}
+	if mcp {
+		return identity.ValidateBind(c.ListenAddr, c.IdentityModeFor("mcp_gateway"))
+	}
+	return nil
+}
+
+// StrictestIdentityMode is the strictest of the global mode and every point
+// override (enforce > observe > off). Identity storage and operator-token
+// bootstrap are needed whenever any consumer is not off.
+func (c Config) StrictestIdentityMode() identity.Mode {
+	rank := func(m identity.Mode) int {
+		switch m {
+		case identity.Enforce:
+			return 2
+		case identity.Observe:
+			return 1
+		default:
+			return 0
+		}
+	}
+	best := c.IdentityMode
+	for _, m := range c.IdentityPoints {
+		if rank(m) > rank(best) {
+			best = m
+		}
+	}
+	return best
 }
