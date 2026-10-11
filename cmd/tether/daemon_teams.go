@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"log"
+	"os"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/definitionresolve"
 	"github.com/hollis-labs/tether/internal/fabricstore"
 	"github.com/hollis-labs/tether/internal/teamhost"
+	"github.com/hollis-labs/tether/internal/teamloop"
 	"github.com/hollis-labs/tether/internal/teamruntime"
 	"github.com/hollis-labs/tether/internal/teamstore"
 	"github.com/hollis-labs/tether/internal/teamsvc"
@@ -77,5 +81,20 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 	}
 	complete = true
 	svc.BootTeamRecovery = host.RecoverSessions
-	return ops, closeContent, nil
+	stopLoop := teamloop.Start(context.Background(), teamloop.Config{
+		Interval:  teamLoopInterval(),
+		Flush:     host.FlushMessages,
+		Reconcile: teamruntime.Reconciler{Enroller: enroller, Sessions: sessions, Messenger: messenger}.Reconcile,
+		Logf:      log.Printf,
+	})
+	return ops, func() { stopLoop(); closeContent() }, nil
+}
+
+// teamLoopInterval reads TETHER_TEAMS_LOOP_INTERVAL (a Go duration); invalid
+// or non-positive values fall back to the 5s default.
+func teamLoopInterval() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("TETHER_TEAMS_LOOP_INTERVAL")); err == nil && d > 0 {
+		return d
+	}
+	return teamloop.DefaultInterval
 }
