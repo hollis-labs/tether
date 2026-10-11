@@ -498,3 +498,88 @@ func (s *Store) NackMessageDelivery(ctx context.Context, lease delivery.LeaseRef
 		NextAttemptAt: nextAttemptAt,
 	})
 }
+
+// deliverySQLiteTimeFormat is the timestamp layout go-messaging's SQLite
+// delivery store writes (and compares as text) for next_attempt_at and
+// deadline_at.
+const deliverySQLiteTimeFormat = "2006-01-02T15:04:05.000000000Z07:00"
+
+// ReadyPage is one slice of the sweep's ready queue. LastID is the id of the
+// last row the SQL page returned (including rows skipped as unusable), and
+// Exhausted reports that the SQL page came back short -- the queue ended
+// (at upToID, if given) -- so the caller, not a silently shortened Rows,
+// decides when a scan cycle is over.
+type ReadyPage struct {
+	Rows      []delivery.RecipientDelivery
+	LastID    delivery.DeliveryID
+	Exhausted bool
+}
+
+// DeliveryHighWater returns the greatest delivery id in any state ("" when
+// there are none): a sweep cycle's upper bound, so a cycle covers a fixed
+// set of rows and ends even while new ones keep arriving.
+func (s *Store) DeliveryHighWater(ctx context.Context) (delivery.DeliveryID, error) {
+	var id sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(id) FROM messaging_deliveries`).Scan(&id); err != nil {
+		return "", fmt.Errorf("delivery high water: %w", err)
+	}
+	return delivery.DeliveryID(id.String), nil
+}
+
+// ReadyDeliveryPage returns up to limit wake-sweep candidates -- pending or
+// retry_scheduled deliveries whose backoff and deadline allow a claim now --
+// with id strictly greater than afterID (and at most upToID, when non-empty),
+// oldest first. It exists because delivery.Filter has no cursor: a sweep that
+// only ever reads the oldest N ready rows can never reach a row behind N
+// undeliverable ones. Only ID, MessageID, Recipient and Status are populated.
+//
+// It applies the same readiness rule as delivery.Filter{ReadyOnly: true} for
+// those two statuses. It is not purely a read: it first runs a one-row ready
+// listing, which makes the delivery store release lapsed leases (writing
+// lease/attempt state), so expired leases are retry-eligible here exactly as
+// in a plain listing.
+func (s *Store) ReadyDeliveryPage(ctx context.Context, afterID, upToID delivery.DeliveryID, limit int) (ReadyPage, error) {
+	if limit <= 0 {
+		return ReadyPage{Exhausted: true}, nil
+	}
+	if _, err := s.DeliveryStore().ListDeliveries(ctx, delivery.Filter{ReadyOnly: true, Limit: 1}); err != nil {
+		return ReadyPage{}, fmt.Errorf("ready delivery page: release expired leases: %w", err)
+	}
+	now := time.Now().UTC().Format(deliverySQLiteTimeFormat)
+	query := `SELECT id, message_id, recipient_urn, status FROM messaging_deliveries
+		WHERE id > ? AND status IN (?, ?) AND (next_attempt_at IS NULL OR next_attempt_at <= ?) AND (deadline_at IS NULL OR deadline_at > ?)`
+	args := []any{string(afterID), string(delivery.DeliveryPending), string(delivery.DeliveryRetryScheduled), now, now}
+	if upToID != "" {
+		query += ` AND id <= ?`
+		args = append(args, string(upToID))
+	}
+	query += ` ORDER BY id ASC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return ReadyPage{}, fmt.Errorf("ready delivery page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	page := ReadyPage{}
+	raw := 0
+	for rows.Next() {
+		var id, msgID, urn, status string
+		if err := rows.Scan(&id, &msgID, &urn, &status); err != nil {
+			return ReadyPage{}, fmt.Errorf("ready delivery page: scan: %w", err)
+		}
+		raw++
+		page.LastID = delivery.DeliveryID(id)
+		to, err := messaging.ParseURN(urn)
+		if err != nil {
+			// Unusable as an address (the sweep could only park it): skipped
+			// from Rows, but still counted in LastID and Exhausted.
+			continue
+		}
+		page.Rows = append(page.Rows, delivery.RecipientDelivery{ID: delivery.DeliveryID(id), MessageID: delivery.MessageID(msgID), Recipient: to, Status: delivery.DeliveryStatus(status)})
+	}
+	if err := rows.Err(); err != nil {
+		return ReadyPage{}, fmt.Errorf("ready delivery page: %w", err)
+	}
+	page.Exhausted = raw < limit
+	return page, nil
+}

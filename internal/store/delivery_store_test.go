@@ -30,6 +30,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -753,5 +754,106 @@ func TestDeliveryBackedConsume_PreT03MessageHasNoDeliveryID(t *testing.T) {
 
 	if err := db.MessagingStore().Consume(context.Background(), "legacy-msg-1", addr("bob")); err != nil {
 		t.Fatalf("consume a no-delivery-id row must still succeed: %v", err)
+	}
+}
+
+// TestReadyDeliveryPage_MatchesReadyListingAndPaginates: the cursor query
+// must agree with delivery.Filter{ReadyOnly} on which rows are ready, and
+// pages must walk the queue oldest first without repeats.
+func TestReadyDeliveryPage_MatchesReadyListingAndPaginates(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "page.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	ms := db.MessagingStore()
+	var ids []string
+	for i := 0; i < 6; i++ {
+		env, err := ms.Send(ctx, messaging.Envelope{From: addr("alice"), To: addr(fmt.Sprintf("bob%d", i)), Kind: messaging.MsgKindNotice, Payload: []byte("x")})
+		if err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		ids = append(ids, env.ID)
+	}
+	// One consumed (terminal), one claimed then nacked with a future retry.
+	if err := ms.Consume(ctx, ids[1], addr("bob1")); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	_, lease, err := db.ClaimMessageDelivery(ctx, ids[3], addr("bob3"), "test", time.Minute)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, _, err := db.NackMessageDelivery(ctx, lease, true, "later", time.Hour); err != nil {
+		t.Fatalf("nack: %v", err)
+	}
+
+	want, err := db.DeliveryStore().ListDeliveries(ctx, delivery.Filter{
+		Status: []delivery.DeliveryStatus{delivery.DeliveryPending, delivery.DeliveryRetryScheduled}, ReadyOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(want) != 4 {
+		t.Fatalf("ready listing has %d rows, want 4", len(want))
+	}
+	var got []delivery.RecipientDelivery
+	after := delivery.DeliveryID("")
+	for {
+		page, err := db.ReadyDeliveryPage(ctx, after, "", 3)
+		if err != nil {
+			t.Fatalf("page: %v", err)
+		}
+		got = append(got, page.Rows...)
+		if page.Exhausted {
+			break
+		}
+		after = page.LastID
+	}
+	if len(got) != len(want) {
+		t.Fatalf("pages returned %d rows, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].ID != want[i].ID || got[i].MessageID != want[i].MessageID || got[i].Recipient.URN() != want[i].Recipient.URN() {
+			t.Fatalf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestReadyDeliveryPage_UpperBoundAndUnusableRows: upToID caps the scan, and
+// a row with an unparseable recipient shortens Rows but not the raw page, so
+// Exhausted and LastID stay honest.
+func TestReadyDeliveryPage_UpperBoundAndUnusableRows(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "bound.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	ms := db.MessagingStore()
+	for i := 0; i < 4; i++ {
+		if _, err := ms.Send(ctx, messaging.Envelope{From: addr("alice"), To: addr(fmt.Sprintf("bob%d", i)), Kind: messaging.MsgKindNotice, Payload: []byte("x")}); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+	all, err := db.ReadyDeliveryPage(ctx, "", "", 10)
+	if err != nil || len(all.Rows) != 4 || !all.Exhausted {
+		t.Fatalf("all = %d rows exhausted=%v err=%v", len(all.Rows), all.Exhausted, err)
+	}
+	bound := all.Rows[1].ID
+	capped, err := db.ReadyDeliveryPage(ctx, "", bound, 10)
+	if err != nil || len(capped.Rows) != 2 || capped.LastID != bound || !capped.Exhausted {
+		t.Fatalf("capped = %d rows last=%s exhausted=%v err=%v", len(capped.Rows), capped.LastID, capped.Exhausted, err)
+	}
+	if _, err := db.DB().ExecContext(ctx, `UPDATE messaging_deliveries SET recipient_urn='not a urn' WHERE id=?`, string(all.Rows[2].ID)); err != nil {
+		t.Fatalf("corrupt: %v", err)
+	}
+	short, err := db.ReadyDeliveryPage(ctx, "", "", 4)
+	if err != nil || len(short.Rows) != 3 || short.Exhausted || short.LastID != all.Rows[3].ID {
+		t.Fatalf("with one unusable row: %d rows exhausted=%v last=%s err=%v (a full raw page must not look short)", len(short.Rows), short.Exhausted, short.LastID, err)
+	}
+	hw, err := db.DeliveryHighWater(ctx)
+	if err != nil || hw != all.Rows[3].ID {
+		t.Fatalf("high water = %q err=%v, want %s", hw, err, all.Rows[3].ID)
 	}
 }

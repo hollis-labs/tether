@@ -47,10 +47,14 @@ package app
 //   TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1301,8 +1305,10 @@ func TestRunWakeSweep_UnresolvableBacklog_DoesNotStarveFreshDelivery(t *testing.
 		}
 	}
 	for _, id := range staleIDs {
-		if got := rt.healthCallCount(id); got != 1 {
-			t.Fatalf("recipient %s probed %d times across 5 sweeps, want 1 (parked after its first miss)", id, got)
+		// Parked rows are not re-woken or re-parked, but their recipient is
+		// probed (once per sweep) so a session coming online is noticed.
+		if got := rt.healthCallCount(id); got > 5 {
+			t.Fatalf("recipient %s probed %d times across 5 sweeps, want at most one per sweep", id, got)
 		}
 	}
 	if got := park.size(); got != staleSessions+3 {
@@ -1367,18 +1373,18 @@ func TestRunWakeSweep_ParkedDelivery_ClaimableMeanwhile_RecheckedAfterBackoff(t 
 		t.Fatalf("consumed-while-parked delivery status = %s, want delivered (parking must not block Consume's claim)", rd.Status)
 	}
 
-	// The other recipient comes online; its park has not lapsed yet.
-	rt.setAlive("s-late", true, agentsessions.LiveStateIdle)
+	// The other recipient stays offline: still parked, not woken.
 	n, err := runWakeSweep(ctx, st, reg, rt.seam(), park)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if n != 0 || rt.sendCallCount("s-late") != 0 {
-		t.Fatalf("parked delivery woken before its park lapsed: attempted=%d calls=%d", n, rt.sendCallCount("s-late"))
+		t.Fatalf("offline parked delivery woken: attempted=%d calls=%d", n, rt.sendCallCount("s-late"))
 	}
 	if park.size() != 1 {
 		t.Fatalf("park set size = %d after the consumed delivery left the ready set, want 1", park.size())
 	}
+	rt.setAlive("s-late", true, agentsessions.LiveStateIdle)
 
 	// Lapse the park (no fake clock in the sweep; the set is ours).
 	lateDeliveryID, _, err := st.DeliveryIDForMessage(ctx, lateEnv.ID)
@@ -1439,5 +1445,284 @@ func TestWakeParkSet_FullSetRefusesNewEntries(t *testing.T) {
 	}
 	if _, ok := p.park("d0", now); !ok {
 		t.Fatalf("full set refused a repeat miss for an entry it already holds")
+	}
+}
+
+// ─── RunWakeSweep: fairness behind a deep unresolvable backlog (CW-20261011-0024) ─────
+
+// TestRunWakeSweep_DeepUnresolvableBacklog_LiveRecipientWokenInOneSweep: after
+// a daemon restart the park set is empty, and the old sweep spent its whole
+// 50-row batch re-resolving dead recipients, so a live recipient behind N
+// dead rows waited N/50 sweeps (5s each).
+func TestRunWakeSweep_DeepUnresolvableBacklog_LiveRecipientWokenInOneSweep(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	const stale = wakeSweepBatchLimit*8 + 7
+	for i := 0; i < stale; i++ {
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: fmt.Sprintf("gone-%03d", i)})
+	}
+	rt.setAlive("s-live", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-live"})
+
+	if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := rt.sendCallCount("s-live"); got != 1 {
+		t.Fatalf("live recipient woken %d times in the first sweep behind %d dead rows, want 1", got, stale)
+	}
+}
+
+// TestRunWakeSweep_ParkedRecipientComingOnline_WokenWithoutWaitingForPark: a
+// parked delivery becomes eligible as soon as its recipient has a live
+// session, not when the park lapses.
+func TestRunWakeSweep_ParkedRecipientComingOnline_WokenWithoutWaitingForPark(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-late"})
+	if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if park.size() != 1 {
+		t.Fatalf("park size = %d, want 1", park.size())
+	}
+	rt.setAlive("s-late", true, agentsessions.LiveStateIdle)
+	n, err := runWakeSweep(ctx, st, reg, rt.seam(), park)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 1 || rt.sendCallCount("s-late") != 1 {
+		t.Fatalf("recipient that came online was not woken while parked: attempted=%d calls=%d", n, rt.sendCallCount("s-late"))
+	}
+}
+
+// TestRunWakeSweep_NothingNew_LogsNothing: a backlog the sweep has already
+// parked must not produce a log line on every pass.
+func TestRunWakeSweep_NothingNew_LogsNothing(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+	for i := 0; i < wakeSweepBatchLimit*2; i++ {
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: fmt.Sprintf("gone-%03d", i)})
+	}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := strings.Count(buf.String(), "wake sweep"); got != 1 {
+		t.Fatalf("first sweep logged %d wake-sweep lines, want exactly 1 summary:\n%s", got, buf.String())
+	}
+	buf.Reset()
+	for i := 0; i < 3; i++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("sweeps with nothing new logged:\n%s", buf.String())
+	}
+}
+
+// ─── RunWakeSweep: scan cursor and recipient rotation (CW-20261011-0024 review) ─────
+
+// TestRunWakeSweep_BacklogDeeperThanScanWindow_LiveRowEventuallyReached: dead
+// ready rows stay pending, so a fixed oldest-first window never reaches a
+// live row behind more of them than it holds. The cursor must make progress
+// across passes.
+func TestRunWakeSweep_BacklogDeeperThanScanWindow_LiveRowEventuallyReached(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	// Deeper than the old fixed window plus a full park set.
+	const dead = wakeSweepBatchLimit + wakeParkMaxEntries + 2048 + 100
+	for i := 0; i < dead; i++ {
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: fmt.Sprintf("gone-%03d", i)})
+	}
+	rt.setAlive("s-live", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-live"})
+
+	for pass := 1; pass <= 6 && rt.sendCallCount("s-live") == 0; pass++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if rt.sendCallCount("s-live") != 1 {
+		t.Fatalf("live row behind %d dead rows never reached within 6 passes", dead)
+	}
+	// Dead rows stay claimable: nothing durable was written for them.
+	rd, err := st.DeliveryStore().ListDeliveries(ctx, delivery.Filter{Status: []delivery.DeliveryStatus{delivery.DeliveryPending}, ReadyOnly: true})
+	if err != nil || len(rd) != dead {
+		t.Fatalf("pending ready rows = %d err=%v, want %d untouched", len(rd), err, dead)
+	}
+}
+
+// TestRunWakeSweep_SustainedBusyOldRecipients_LaterIdleRecipientServed: more
+// busy recipients than one batch, each re-ready on every pass. Restarting the
+// round at the oldest recipient would serve the same few forever.
+func TestRunWakeSweep_SustainedBusyOldRecipients_LaterIdleRecipientServed(t *testing.T) {
+	prevBusy, prevOff := wakeBusyRetryBackoff, wakeOfflineRetryBackoff
+	wakeBusyRetryBackoff, wakeOfflineRetryBackoff = 0, 0
+	t.Cleanup(func() { wakeBusyRetryBackoff, wakeOfflineRetryBackoff = prevBusy, prevOff })
+
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	const busy = wakeSweepBatchLimit + 5
+	for i := 0; i < busy; i++ {
+		id := fmt.Sprintf("s-busy-%02d", i)
+		rt.setAlive(id, true, agentsessions.LiveStateProcessing)
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: id})
+	}
+	rt.setAlive("s-zidle", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-zidle"})
+
+	for pass := 1; pass <= 8 && rt.sendCallCount("s-zidle") == 0; pass++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if rt.sendCallCount("s-zidle") != 1 {
+		t.Fatalf("idle recipient behind %d re-ready busy recipients not served within 8 passes", busy)
+	}
+}
+
+// TestRunWakeSweep_HugeLiveBacklogOneRecipient_SecondRecipientServed: one
+// recipient's backlog larger than the scan window must not hide a later one.
+func TestRunWakeSweep_HugeLiveBacklogOneRecipient_SecondRecipientServed(t *testing.T) {
+	prevBusy, prevOff := wakeBusyRetryBackoff, wakeOfflineRetryBackoff
+	wakeBusyRetryBackoff, wakeOfflineRetryBackoff = 0, 0
+	t.Cleanup(func() { wakeBusyRetryBackoff, wakeOfflineRetryBackoff = prevBusy, prevOff })
+
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	// Larger than the old fixed scan window (batch + parked + 2048 rows).
+	const backlog = wakeSweepBatchLimit + 2048 + 60
+	rt.setAlive("s-a", true, agentsessions.LiveStateProcessing)
+	for i := 0; i < backlog; i++ {
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-a"})
+	}
+	rt.setAlive("s-b", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-b"})
+
+	for pass := 1; pass <= 6 && rt.sendCallCount("s-b") == 0; pass++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if rt.sendCallCount("s-b") != 1 {
+		t.Fatalf("second recipient hidden behind a %d-row backlog for another recipient", backlog)
+	}
+}
+
+// TestRunWakeSweep_SustainedArrivals_OlderBusyRetryRevisited: ready work keeps
+// arriving faster than a pass consumes it, so the scan cursor never meets the
+// end of the queue. A row attempted early and Nacked busy becomes ready again
+// behind the cursor; a bounded scan cycle must wrap and attempt it again.
+func TestRunWakeSweep_SustainedArrivals_OlderBusyRetryRevisited(t *testing.T) {
+	prevBusy, prevOff := wakeBusyRetryBackoff, wakeOfflineRetryBackoff
+	wakeBusyRetryBackoff, wakeOfflineRetryBackoff = 0, 0
+	t.Cleanup(func() { wakeBusyRetryBackoff, wakeOfflineRetryBackoff = prevBusy, prevOff })
+
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	// A scan budget below the per-pass arrivals: the cursor never meets the
+	// end of the queue unless the cycle is bounded.
+	park := &wakeParkSet{scanPage: 10, scanBudget: 20}
+
+	rt.setAlive("s-busy", true, agentsessions.LiveStateProcessing)
+	oldEnv := sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-busy"})
+	oldID, ok, err := st.DeliveryIDForMessage(ctx, oldEnv.ID)
+	if err != nil || !ok {
+		t.Fatalf("delivery id: ok=%v err=%v", ok, err)
+	}
+
+	attempts := func() int {
+		rd, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(oldID))
+		if err != nil {
+			t.Fatalf("get delivery: %v", err)
+		}
+		return rd.AttemptCount
+	}
+	// Each pass appends more ready work (30 rows) than the scan budget (20)
+	// reads, all of it wakeable within the batch so it leaves the queue.
+	arrival := 0
+	for pass := 1; pass <= 30 && attempts() < 2; pass++ {
+		for i := 0; i < 30; i++ {
+			id := fmt.Sprintf("s-idle-%05d", arrival)
+			arrival++
+			rt.setAlive(id, true, agentsessions.LiveStateIdle)
+			sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: id})
+		}
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if got := attempts(); got < 2 {
+		t.Fatalf("older busy delivery attempted %d times across 30 passes of sustained arrivals, want a retry once the cycle wraps", got)
+	}
+}
+
+// TestRunWakeSweep_IneligibleRowOnLiveRecipient_StaysParked: rows the sweep must
+// not wake (no-wake intent) park as ineligible even though their recipient is
+// live, so they stop spending batch.
+func TestRunWakeSweep_IneligibleRowOnLiveRecipient_StaysParked(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	rt.setAlive("s-live", true, agentsessions.LiveStateIdle)
+	env, err := st.MessagingStore().Send(ctx, messaging.Envelope{
+		Kind:     messaging.MsgKindNotice,
+		From:     messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"},
+		To:       messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-live"},
+		Payload:  []byte(`{"body":"x"}`),
+		Metadata: map[string]string{"tether.wake_intent": `{"no_wake":true}`},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	deliveryID, _, err := st.DeliveryIDForMessage(ctx, env.ID)
+	if err != nil {
+		t.Fatalf("delivery id: %v", err)
+	}
+	var firstUntil time.Time
+	for i := 0; i < 3; i++ {
+		n, err := runWakeSweep(ctx, st, reg, rt.seam(), park)
+		if err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if n != 0 || rt.sendCallCount("s-live") != 0 {
+			t.Fatalf("no-wake delivery was woken: attempted=%d sends=%d", n, rt.sendCallCount("s-live"))
+		}
+		park.mu.Lock()
+		e := park.entries[delivery.DeliveryID(deliveryID)]
+		park.mu.Unlock()
+		if i == 0 {
+			firstUntil = e.until
+		} else if !e.until.Equal(firstUntil) {
+			t.Fatalf("pass %d re-evaluated the parked no-wake row (park window moved), so it is spending batch every pass", i+1)
+		}
+	}
+	if park.size() != 1 {
+		t.Fatalf("park size = %d, want the no-wake row parked once and kept parked", park.size())
 	}
 }
