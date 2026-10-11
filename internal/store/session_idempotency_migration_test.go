@@ -7,9 +7,9 @@ import (
 	"testing/fstest"
 )
 
-// Migration 0066 rebuilds session_idempotency with a per-principal primary
-// key, keeps every row, and attributes daemon-derived team keys to the team
-// runtime (CW-20261010-0263).
+// Migration 0067 rebuilds session_idempotency with a per-principal primary
+// key and attributes every existing row to 'legacy', which no lookup matches
+// (CW-20261010-0263).
 func TestSessionIdempotencyMigrationScopesKeysAndPreservesRows(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	db := openTempDB(t)
@@ -27,14 +27,14 @@ func TestSessionIdempotencyMigrationScopesKeysAndPreservesRows(t *testing.T) {
 	for _, m := range migrations {
 		name := fmt.Sprintf("%04d_%s.sql", m.version, m.name)
 		switch {
-		case m.version < 66:
+		case m.version < 67:
 			before[name] = &fstest.MapFile{Data: []byte(m.sql)}
-		case m.version == 66:
+		case m.version == 67:
 			current = m
 		}
 	}
 	if current.sql == "" {
-		t.Fatal("migration 66 not found")
+		t.Fatal("migration 67 not found")
 	}
 	if _, err := migrateFS(db, before); err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestSessionIdempotencyMigrationScopesKeysAndPreservesRows(t *testing.T) {
 	if _, err := migrateFS(db, fstest.MapFS{fmt.Sprintf("%04d_%s.sql", current.version, current.name): &fstest.MapFile{Data: []byte(current.sql)}}); err != nil {
 		t.Fatal(err)
 	}
-	for key, want := range map[string]string{"hadron/run/1": "legacy", "device_v1_abc": "legacy", "team-port:nonce": "team-runtime"} {
+	for key, want := range map[string]string{"hadron/run/1": "legacy", "device_v1_abc": "legacy", "team-port:nonce": "legacy"} {
 		var principal, digest, parent string
 		if err := db.QueryRow(`SELECT principal_id,request_digest,resolved_parent_session_id FROM session_idempotency WHERE key=?`, key).Scan(&principal, &digest, &parent); err != nil {
 			t.Fatalf("row %q lost: %v", key, err)
@@ -59,12 +59,21 @@ func TestSessionIdempotencyMigrationScopesKeysAndPreservesRows(t *testing.T) {
 			t.Fatalf("row %q = %s/%s/%s, want principal %s with data intact", key, principal, digest, parent, want)
 		}
 	}
+	s := &Store{db: db}
+	for _, principal := range []string{"msg://a", "legacy", ""} {
+		if rec, err := s.GetSessionIdempotency(principal, "hadron/run/1"); err != nil || rec != nil {
+			t.Fatalf("lookup as %q matched a legacy row: %+v, %v", principal, rec, err)
+		}
+	}
 	insert := `INSERT INTO session_idempotency(principal_id,key,operation,request_digest,session_id) VALUES (?,?,'create','d','s1')`
 	if _, err := db.Exec(insert, "msg://a", "hadron/run/1"); err != nil {
 		t.Fatalf("a new principal could not reuse a legacy key: %v", err)
 	}
 	if _, err := db.Exec(insert, "msg://a", "hadron/run/1"); err == nil {
 		t.Fatal("(principal, key) is not unique")
+	}
+	if rec, err := s.GetSessionIdempotency("msg://a", "hadron/run/1"); err != nil || rec == nil || rec.PrincipalID != "msg://a" {
+		t.Fatalf("new principal row not found: %+v, %v", rec, err)
 	}
 	var idx int
 	if err := db.QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type='index' AND name='idx_session_idempotency_session'`).Scan(&idx); err != nil || idx != 1 {

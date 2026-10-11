@@ -28,7 +28,7 @@ const (
 	// IdempotencyPrincipalTeam scopes keys the daemon's team runtime derives.
 	IdempotencyPrincipalTeam = "team-runtime"
 	// IdempotencyPrincipalLegacy marks rows from before keys were scoped
-	// (migration 0066). They are replayable but never claimed.
+	// (migration 0067). Kept for audit; never matched by a lookup.
 	IdempotencyPrincipalLegacy = "legacy"
 )
 
@@ -60,14 +60,15 @@ func insertSessionIdempotency(tx *sql.Tx, sessionID string, key SessionIdempoten
 }
 
 // GetSessionIdempotency returns principal's record for key, or nil when that
-// principal has never used it. A pre-scoping ("legacy") row for the key is
-// returned when the principal has none of its own, so a retry that began
-// before the upgrade still replays; it is never returned to claim a key.
+// principal has never used it. Pre-scoping ("legacy") rows are never returned:
+// a key from before the upgrade does not replay.
 func (s *Store) GetSessionIdempotency(principal, key string) (*SessionIdempotency, error) {
+	if principal == IdempotencyPrincipalLegacy {
+		return nil, nil
+	}
 	var rec SessionIdempotency
 	err := s.db.QueryRow(`SELECT principal_id, key, operation, request_digest, session_id, resolved_parent_session_id
-		FROM session_idempotency WHERE key = ? AND principal_id IN (?, ?)
-		ORDER BY principal_id = ? DESC LIMIT 1`, key, principal, IdempotencyPrincipalLegacy, principal).
+		FROM session_idempotency WHERE principal_id = ? AND key = ?`, principal, key).
 		Scan(&rec.PrincipalID, &rec.Key, &rec.Operation, &rec.RequestDigest, &rec.SessionID, &rec.ResolvedParentSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

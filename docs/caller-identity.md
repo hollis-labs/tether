@@ -156,9 +156,17 @@ The client library's credential options have their own task/PR and require a
 lead-chosen release before consumers adopt them. No token introspection endpoint
 is required.
 
-The remote listener now enforces device route scopes and namespaces launch,
-resume, routing-reply and team idempotency keys by the verified device id.
-Local keys and local authorization retain their existing behavior. Remaining
+The remote listener now enforces device route scopes. Idempotency keys are
+scoped per caller (CW-20261010-0263, migration 0067): launch and resume keys
+are stored as sent under the verified principal (the device id on the remote
+listener); routing-reply keys are unique per (parent, actor, key) and team keys
+per (principal, verb, key). Rows from before the upgrade are kept as principal
+`legacy` for audit and are never matched, so a retry of a pre-upgrade key (and
+of an in-flight remote `device_v1_<hash>` key) creates a new session. The
+migration is one-way; back up the state DB first. Observe-mode behaviours are
+retained: unverified local callers share one `anonymous` key space, and a reply
+without a verified principal still takes its actor from `?as=`. Local
+authorization is unchanged. Remaining
 phase-2 work covers message `from` stamping, mailbox ownership, AI caller
 stamping and launch-plan read restrictions. Phase 2 must also reconcile the operator messaging address
 `msg://user/local/me` with its stable principal identity. Phase 3 covers live enforcement rollout and consumer adoption.

@@ -318,9 +318,9 @@ func TestCreateKeyed_UnauthenticatedCallersShareAnonymousSpace(t *testing.T) {
 	}
 }
 
-// A row from before keys were scoped replays for any caller but is never
-// claimed or overwritten by one.
-func TestCreateKeyed_LegacyRowReplaysButIsNeverClaimed(t *testing.T) {
+// A row from before keys were scoped is kept but never matched: no caller
+// replays it or sees its conflict, and a retry creates a new session.
+func TestCreateKeyed_LegacyRowIsPreservedButNeverMatched(t *testing.T) {
 	svc, _ := idemHarness(t)
 	first, err := svc.createKeyed("p1", "old", "digest-a", idemPlan(t))
 	if err != nil {
@@ -329,14 +329,17 @@ func TestCreateKeyed_LegacyRowReplaysButIsNeverClaimed(t *testing.T) {
 	if _, err := svc.Store.DB().Exec(`UPDATE session_idempotency SET principal_id='legacy' WHERE key='old'`); err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := svc.createKeyed("p2", "old", "digest-a", idemPlan(t))
-	if err != nil || !replayed.Replayed || replayed.SessionID != first.SessionID {
-		t.Fatalf("legacy replay = %+v, %v", replayed, err)
+	for _, digest := range []string{"digest-a", "digest-b"} {
+		got, err := svc.createKeyed("p2", "old", digest, idemPlan(t))
+		if err != nil || got.Replayed || got.SessionID == first.SessionID {
+			t.Fatalf("legacy row matched (%s): %+v, %v", digest, got, err)
+		}
+		if _, err := svc.Store.DB().Exec(`DELETE FROM session_idempotency WHERE principal_id='p2'`); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := svc.createKeyed("p2", "old", "digest-b", idemPlan(t)); !errors.Is(err, store.ErrIdempotencyConflict) {
-		t.Fatalf("legacy row changed request = %v, want conflict", err)
-	}
-	if n := countSessions(t, svc); n != 1 {
-		t.Fatalf("sessions = %d, want 1", n)
+	var n int
+	if err := svc.Store.DB().QueryRow(`SELECT COUNT(1) FROM session_idempotency WHERE principal_id='legacy' AND key='old' AND session_id=?`, first.SessionID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("legacy row not preserved: %d, %v", n, err)
 	}
 }
