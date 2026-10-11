@@ -52,15 +52,21 @@ type ProviderInfo struct {
 // Service is the first in-process AI gateway surface. It owns route planning,
 // middleware execution, and dispatch into a concrete provider adapter.
 type Service struct {
-	Planner      RoutePlanner
-	Catalog      Catalog
-	Providers    map[string]llm.ChatProvider
-	ProviderInfo map[string]ProviderInfo
-	Routes       []router.Route
-	RouteOrder   []string
-	Middleware   []llm.Middleware
-	Recorder     observability.Recorder
-	Publisher    events.Publisher
+	Planner   RoutePlanner
+	Catalog   Catalog
+	Providers map[string]llm.ChatProvider
+	// DecisionPlanner and DecisionProviders are the separate route category
+	// for structured judgments: decision providers are never planned for
+	// chat or embeddings, and chat routes are never planned for Decide.
+	DecisionPlanner   RoutePlanner
+	DecisionProviders map[string]llm.DecisionProvider
+	DecisionRoutes    []router.Route
+	ProviderInfo      map[string]ProviderInfo
+	Routes            []router.Route
+	RouteOrder        []string
+	Middleware        []llm.Middleware
+	Recorder          observability.Recorder
+	Publisher         events.Publisher
 	// Secrets holds the provider credentials resolved so far; audit
 	// error text is scrubbed of them before it is recorded
 	// (CW-20260930-0009). nil redacts nothing.
@@ -139,6 +145,47 @@ func (s *Service) Embed(ctx context.Context, req llm.Request) (llm.Response, err
 	return resp, err
 }
 
+// Decide routes one normalized decision request through middleware and into
+// the selected decision provider. Decision routes are a separate category:
+// they are not cost-routed against chat providers.
+func (s *Service) Decide(ctx context.Context, req llm.Request) (llm.Response, error) {
+	ctx, span := hotel.StartSpan(ctx, "tether.ai.decide")
+	defer span.End()
+	recordRequestSpanAttrs(span, req)
+
+	if req.Operation != llm.OperationDecide {
+		span.SetStatus(codes.Error, "unsupported operation")
+		return llm.Response{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
+	}
+	if s.DecisionPlanner == nil {
+		span.SetStatus(codes.Error, "no decision routes")
+		return llm.Response{}, fmt.Errorf("%w: no decision provider configured", ErrUnsupportedOperation)
+	}
+	if err := req.Decision.Validate(); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return llm.Response{}, err
+	}
+
+	handler := llm.BuildMiddlewareChain(s.handleDecide, s.Middleware)
+	start := time.Now()
+	resp, err := handler(ctx, req)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		s.recordBudgetRejections(req, s.DecisionPlanner.Explain(req), time.Since(start))
+	} else {
+		recordResponseSpanAttrs(span, resp)
+	}
+	s.recordAuditEvent("decide", req, router.Plan{
+		Provider:         resp.Route.Provider,
+		Model:            resp.Route.Model,
+		EstimatedCostUSD: resp.Usage.EstimatedCostUSD,
+		Reasons:          append([]string(nil), resp.Route.Reasons...),
+		PolicyVersion:    resp.Route.PolicyVersion,
+	}, resp, err, time.Since(start))
+	return resp, err
+}
+
 // StreamChat routes one normalized chat request through the planner and a
 // streaming-capable provider adapter, emitting normalized incremental events.
 // When the provider lacks native streaming support, this falls back to a unary
@@ -180,16 +227,17 @@ func (s *Service) PreviewRoute(req llm.Request) (router.Plan, error) {
 	if req.Operation == "" {
 		req.Operation = llm.OperationChat
 	}
-	if req.Operation != llm.OperationChat && req.Operation != llm.OperationEmbedding {
+	if req.Operation != llm.OperationChat && req.Operation != llm.OperationEmbedding && req.Operation != llm.OperationDecide {
 		return router.Plan{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
 	}
-	if s.Planner == nil {
+	planner := s.plannerFor(req.Operation)
+	if planner == nil {
 		return router.Plan{}, fmt.Errorf("llm service planner is nil")
 	}
 	start := time.Now()
-	plan, err := s.Planner.Plan(req)
+	plan, err := planner.Plan(req)
 	if err != nil {
-		s.recordBudgetRejections(req, s.Planner.Explain(req), time.Since(start))
+		s.recordBudgetRejections(req, planner.Explain(req), time.Since(start))
 	}
 	s.recordAuditEvent("route_preview", req, plan, llm.Response{}, err, time.Since(start))
 	return plan, err
@@ -200,14 +248,15 @@ func (s *Service) ExplainRoute(req llm.Request) (router.Explanation, error) {
 	if req.Operation == "" {
 		req.Operation = llm.OperationChat
 	}
-	if req.Operation != llm.OperationChat && req.Operation != llm.OperationEmbedding {
+	if req.Operation != llm.OperationChat && req.Operation != llm.OperationEmbedding && req.Operation != llm.OperationDecide {
 		return router.Explanation{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
 	}
-	if s.Planner == nil {
+	planner := s.plannerFor(req.Operation)
+	if planner == nil {
 		return router.Explanation{}, fmt.Errorf("llm service planner is nil")
 	}
 	start := time.Now()
-	explanation := s.Planner.Explain(req)
+	explanation := planner.Explain(req)
 	var plan router.Plan
 	if explanation.Winner != nil {
 		plan = *explanation.Winner
@@ -219,6 +268,14 @@ func (s *Service) ExplainRoute(req llm.Request) (router.Explanation, error) {
 	s.recordBudgetRejections(req, explanation, time.Since(start))
 	s.recordAuditEvent("route_explain", req, plan, llm.Response{}, callErr, time.Since(start))
 	return explanation, nil
+}
+
+// plannerFor returns the planner owning the route category of op.
+func (s *Service) plannerFor(op llm.OperationKind) RoutePlanner {
+	if op == llm.OperationDecide {
+		return s.DecisionPlanner
+	}
+	return s.Planner
 }
 
 // ListProviders returns configured AI providers in stable route order.
@@ -249,10 +306,10 @@ func (s *Service) ListProviders() []ProviderInfo {
 
 // ListRoutes returns the mounted planner routes in stable order.
 func (s *Service) ListRoutes() []router.Route {
-	if len(s.Routes) == 0 {
+	if len(s.Routes) == 0 && len(s.DecisionRoutes) == 0 {
 		return nil
 	}
-	return append([]router.Route(nil), s.Routes...)
+	return append(append([]router.Route(nil), s.Routes...), s.DecisionRoutes...)
 }
 
 // ListModels returns configured models from the shared catalog. When
@@ -378,6 +435,47 @@ func (s *Service) handleEmbed(ctx context.Context, req llm.Request) (llm.Respons
 	resp.Route = route
 	if resp.Usage.EstimatedCostUSD == 0 && plan.EstimatedCostUSD > 0 {
 		resp.Usage.EstimatedCostUSD = plan.EstimatedCostUSD
+	}
+	recordResponseSpanAttrs(span, resp)
+	genai.RecordModelLatency(ctx, resp.Model, time.Since(callStart))
+	return resp, nil
+}
+
+func (s *Service) handleDecide(ctx context.Context, req llm.Request) (llm.Response, error) {
+	plan, err := s.DecisionPlanner.Plan(req)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	provider, ok := s.DecisionProviders[plan.Provider]
+	if !ok {
+		return llm.Response{}, fmt.Errorf("%w: %s", ErrProviderNotRegistered, plan.Provider)
+	}
+
+	route := plan.RouteDecision()
+	ctx, span := genai.ModelCallSpan(ctx, route.Model, "decide")
+	defer span.End()
+	recordRouteSpanAttrs(span, route, providerTypeForRoute(s.ProviderInfo, route))
+	callStart := time.Now()
+	resp, err := provider.Decide(ctx, req, route)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return llm.Response{}, err
+	}
+	if resp.Provider == "" {
+		resp.Provider = route.Provider
+	}
+	if resp.Model == "" {
+		resp.Model = route.Model
+	}
+	resp.Route = route
+	if resp.Decision != nil {
+		if resp.Decision.LatencyMS == 0 {
+			resp.Decision.LatencyMS = time.Since(callStart).Milliseconds()
+		}
+		if resp.Decision.RequestID == "" {
+			resp.Decision.RequestID = req.RequestID
+		}
 	}
 	recordResponseSpanAttrs(span, resp)
 	genai.RecordModelLatency(ctx, resp.Model, time.Since(callStart))
@@ -510,6 +608,8 @@ func matchesVendor(providerType, vendorID string) bool {
 		return vendorID == "anthropic"
 	case "openai", "openai-compatible":
 		return vendorID == "openai"
+	case "jev":
+		return vendorID == "jev"
 	default:
 		return false
 	}
@@ -525,6 +625,7 @@ func (s *Service) recordAuditEvent(eventType string, req llm.Request, plan route
 		SessionID:        req.SessionID,
 		CallerID:         req.CallerID,
 		Operation:        string(req.Operation),
+		Purpose:          decisionPurpose(req),
 		Provider:         firstNonEmpty(resp.Provider, plan.Provider),
 		Model:            firstNonEmpty(resp.Model, plan.Model),
 		PolicyVersion:    firstNonEmpty(resp.Route.PolicyVersion, plan.PolicyVersion),
@@ -566,6 +667,7 @@ func (s *Service) recordBudgetRejections(req llm.Request, explanation router.Exp
 			SessionID:      req.SessionID,
 			CallerID:       req.CallerID,
 			Operation:      string(req.Operation),
+			Purpose:        decisionPurpose(req),
 			Provider:       candidate.Route.Provider,
 			Model:          candidate.Route.Model,
 			PolicyVersion:  explanation.PolicyVersion,
@@ -614,6 +716,11 @@ func (s *Service) publishBudgetRejection(req llm.Request, policyVersion string, 
 }
 
 func summarizeRequest(req llm.Request) string {
+	if req.Decision != nil {
+		// Counts and tags only: the state and question text are never audited.
+		return fmt.Sprintf("decide questions=%d purpose=%q on_error=%q provider_hint=%q model_hint=%q",
+			len(req.Decision.Questions), req.Decision.Purpose, req.Decision.OnError, req.ProviderHint, req.ModelHint)
+	}
 	return fmt.Sprintf("messages=%d embedding_inputs=%d tools=%d attachments=%d streaming=%t provider_hint=%q model_hint=%q mode=%q intent=%q",
 		len(req.Input), len(req.EmbeddingInput), len(req.Tools), len(req.Attachments), req.Streaming, req.ProviderHint, req.ModelHint, req.Mode, req.Intent)
 }
@@ -623,6 +730,9 @@ func summarizeResponse(resp llm.Response) string {
 	parts = append(parts, fmt.Sprintf("messages=%d stop_reason=%q", len(resp.Output), resp.StopReason))
 	if len(resp.Embeddings) > 0 {
 		parts = append(parts, fmt.Sprintf("embeddings=%d", len(resp.Embeddings)))
+	}
+	if resp.Decision != nil {
+		parts = append(parts, fmt.Sprintf("answers=%d", len(resp.Decision.Answers)))
 	}
 	if resp.Refusal != "" {
 		parts = append(parts, "refusal=true")
@@ -637,6 +747,13 @@ func summarizeResponse(resp llm.Response) string {
 		parts = append(parts, fmt.Sprintf("tool_uses=%d", toolUses))
 	}
 	return strings.Join(parts, " ")
+}
+
+func decisionPurpose(req llm.Request) string {
+	if req.Decision == nil {
+		return ""
+	}
+	return req.Decision.Purpose
 }
 
 func firstNonEmpty(a, b string) string {

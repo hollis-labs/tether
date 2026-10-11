@@ -69,7 +69,12 @@ func (e Evaluator) Validate(req llm.Request, route router.Route, estimatedCostUS
 // BuildFilter resolves the ai_events usage query filter implied by one route's
 // effective usage budget and one request's correlation metadata.
 func BuildFilter(req llm.Request, route router.Route) (store.AIUsageFilter, error) {
-	filter := store.AIUsageFilter{Operation: string(llm.OperationChat)}
+	// Spend is counted per operation: a decide budget sees decide spend only.
+	operation := req.Operation
+	if operation == "" {
+		operation = llm.OperationChat
+	}
+	filter := store.AIUsageFilter{Operation: string(operation)}
 	switch route.UsageBudget.Level {
 	case "", "global":
 	case "provider":
@@ -93,6 +98,15 @@ func BuildFilter(req llm.Request, route router.Route) (store.AIUsageFilter, erro
 			return store.AIUsageFilter{}, fmt.Errorf("usage budget scope session requires session_id")
 		}
 		filter.SessionID = req.SessionID
+	case "purpose":
+		purpose := ""
+		if req.Decision != nil {
+			purpose = req.Decision.Purpose
+		}
+		if purpose == "" {
+			return store.AIUsageFilter{}, fmt.Errorf("usage budget scope purpose requires a decision purpose")
+		}
+		filter.Purpose = purpose
 	default:
 		return store.AIUsageFilter{}, fmt.Errorf("unsupported usage budget scope %q", route.UsageBudget.Scope)
 	}

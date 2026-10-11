@@ -14,6 +14,13 @@ type EmbeddingProvider interface {
 	Embed(ctx context.Context, req Request, route RouteDecision) (Response, error)
 }
 
+// DecisionProvider executes a normalized structured-judgment request against
+// one concrete provider selected by the decision planner. Chat and embedding
+// routes never reach a DecisionProvider.
+type DecisionProvider interface {
+	Decide(ctx context.Context, req Request, route RouteDecision) (Response, error)
+}
+
 // StreamChatProvider is the optional streaming extension for a chat provider.
 // Implementations emit normalized stream events through emit and return the
 // final accumulated response once the vendor stream completes.

@@ -117,6 +117,13 @@ type AIProviderConfig struct {
 	// appended after the configured models; configured ids keep precedence
 	// and a failed discovery leaves the configured list unchanged.
 	DiscoverModels bool `yaml:"discover_models,omitempty"`
+	// InputPriceUSDPerMTok is a decision provider's flat price per million
+	// input tokens (output is free). Only the jev type uses it: JEV has no
+	// models.dev entry, so the config declares the price.
+	InputPriceUSDPerMTok *float64 `yaml:"input_price_usd_per_mtok,omitempty"`
+	// TimeoutSeconds bounds one decision-provider attempt (jev). Zero uses the
+	// adapter default.
+	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"`
 }
 
 type ProviderExtensions struct {

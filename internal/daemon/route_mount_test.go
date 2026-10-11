@@ -33,7 +33,7 @@ import (
 //	grep -rhoE 'tether\.HandleFunc\("(/[^"]*)"' internal/api/*.go |
 //	  sed -E 's/.*"(\/[^"]*)"/\1/' | sort -u
 var apiTopLevelPaths = []string{
-	"/ai/audit", "/ai/budgets", "/ai/chat", "/ai/chat/stream", "/ai/embeddings",
+	"/ai/audit", "/ai/budgets", "/ai/chat", "/ai/chat/stream", "/ai/decide", "/ai/embeddings",
 	"/ai/models", "/ai/providers", "/ai/routes", "/ai/routes/explain",
 	"/ai/routes/preview", "/ai/usage",
 	"/auth/context",

@@ -231,6 +231,9 @@ func validateAIConfig(ai AIConfig) error {
 		if p.Wire != "" && p.Type != "openai" && p.Type != "openai-compatible" {
 			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets wire %q (wire is only supported for openai/openai-compatible)", i, p.ID, p.Type, p.Wire)
 		}
+		if p.InputPriceUSDPerMTok != nil && p.Type != "jev" {
+			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets input_price_usd_per_mtok (only supported for jev)", i, p.ID, p.Type)
+		}
 		if p.DiscoverModels && p.Type != "openai" && p.Type != "openai-compatible" {
 			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets discover_models (only supported for openai/openai-compatible)", i, p.ID, p.Type)
 		}
@@ -244,6 +247,18 @@ func validateAIConfig(ai AIConfig) error {
 			}
 			if len(models) == 0 {
 				return fmt.Errorf("global ai.providers[%d] (%s) missing model or models", i, p.ID)
+			}
+		case "jev":
+			// A decision provider: keyed by secret_ref, with a pinned model and
+			// a flat input price (JEV is not in the models.dev catalog).
+			if p.SecretRef == "" {
+				return fmt.Errorf("global ai.providers[%d] (%s) missing secret_ref", i, p.ID)
+			}
+			if len(models) == 0 {
+				return fmt.Errorf("global ai.providers[%d] (%s) missing model or models", i, p.ID)
+			}
+			if p.InputPriceUSDPerMTok != nil && *p.InputPriceUSDPerMTok < 0 {
+				return fmt.Errorf("global ai.providers[%d] (%s) input_price_usd_per_mtok must be >= 0", i, p.ID)
 			}
 		case "openai-compatible":
 			if p.BaseURL == "" {
@@ -333,9 +348,9 @@ func validateAIUsageBudgetPolicyConfig(prefix string, budget AIUsageBudgetPolicy
 		return fmt.Errorf("%s usage_budget.window %q is invalid (want \"day\" or \"month\")", prefix, budget.Window)
 	}
 	switch budget.Scope {
-	case "", "total", "caller", "session":
+	case "", "total", "caller", "session", "purpose":
 	default:
-		return fmt.Errorf("%s usage_budget.scope %q is invalid (want \"total\", \"caller\", or \"session\")", prefix, budget.Scope)
+		return fmt.Errorf("%s usage_budget.scope %q is invalid (want \"total\", \"caller\", \"session\", or \"purpose\")", prefix, budget.Scope)
 	}
 	return nil
 }

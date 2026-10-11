@@ -42,6 +42,7 @@ import (
 	llm "github.com/hollis-labs/tether/internal/llm"
 	llmanthropic "github.com/hollis-labs/tether/internal/llm/anthropic"
 	llmgemini "github.com/hollis-labs/tether/internal/llm/gemini"
+	llmjev "github.com/hollis-labs/tether/internal/llm/jev"
 	"github.com/hollis-labs/tether/internal/llm/observability"
 	llmopenai "github.com/hollis-labs/tether/internal/llm/openai"
 	llmopenaicompat "github.com/hollis-labs/tether/internal/llm/openaicompat"
@@ -470,6 +471,10 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 	aiSecrets := &redact.Set{}
 
 	providers := map[string]llm.ChatProvider{}
+	// Decision providers (jev) are their own route category: they are never
+	// planned for chat or embeddings, and their routes live in a separate
+	// planner.
+	decisionProviders := map[string]llm.DecisionProvider{}
 	providerInfos := map[string]llmservice.ProviderInfo{}
 	providerConfigs := map[string]config.AIProviderConfig{}
 	var routes []router.Route
@@ -531,6 +536,18 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 				Models:       p.EffectiveModels(),
 				BaseURL:      p.BaseURL,
 			}
+		case "jev":
+			secretRef := p.SecretRef
+			decisionProviders[p.ID] = llmjev.New(jevAdapterConfig(p, aiSecrets.Remember(func(ctx context.Context) (string, error) {
+				return resolveAISecret(ctx, secretResolver, secretRef)
+			})))
+			providerInfos[p.ID] = llmservice.ProviderInfo{
+				ID:           p.ID,
+				Type:         p.Type,
+				DefaultModel: p.EffectiveDefaultModel(),
+				Models:       p.EffectiveModels(),
+				BaseURL:      p.BaseURL,
+			}
 		case "openai-compatible":
 			var resolve func(context.Context) (string, error)
 			if p.SecretRef != "" {
@@ -551,7 +568,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			log.Printf("ai gateway: skipping unsupported provider type %q for %s", p.Type, p.ID)
 		}
 	}
-	if len(providers) == 0 {
+	if len(providers) == 0 && len(decisionProviders) == 0 {
 		return nil
 	}
 
@@ -593,7 +610,9 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			if !ok {
 				continue
 			}
-			if _, ok := providers[id]; !ok {
+			_, isChat := providers[id]
+			_, isDecision := decisionProviders[id]
+			if !isChat && !isDecision {
 				continue
 			}
 			usageBudget := effectiveAIDefaultUsageBudget(ai.Policy.UsageBudget, p.Policy.UsageBudget)
@@ -616,6 +635,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 	if len(routes) == 0 {
 		return nil
 	}
+	routes, decisionRoutes := splitDecisionRoutes(routes, decisionProviders)
 
 	models, priceStates := syntheticConfiguredModels(providerConfigs)
 	catalogView := modelcatalog.NewOverlay(catalog, models, priceStates)
@@ -624,21 +644,57 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 	if deps.Usage != nil {
 		evaluators = append(evaluators, usagebudget.Evaluator{Store: deps.Usage})
 	}
-	planner := router.NewWithEvaluators(catalogView, router.Policy{
-		Version: "catalog-ai-v1",
-		Routes:  routes,
-	}, evaluators...)
-	return &llmservice.Service{
-		Planner:      planner,
-		Catalog:      catalogView,
-		Providers:    providers,
-		ProviderInfo: providerInfos,
-		Routes:       append([]router.Route(nil), routes...),
-		RouteOrder:   append([]string(nil), order...),
-		Recorder:     deps.Recorder,
-		Publisher:    deps.Publisher,
-		Secrets:      aiSecrets,
+	svc := &llmservice.Service{
+		Catalog:           catalogView,
+		Providers:         providers,
+		DecisionProviders: decisionProviders,
+		ProviderInfo:      providerInfos,
+		Routes:            append([]router.Route(nil), routes...),
+		DecisionRoutes:    append([]router.Route(nil), decisionRoutes...),
+		RouteOrder:        append([]string(nil), order...),
+		Recorder:          deps.Recorder,
+		Publisher:         deps.Publisher,
+		Secrets:           aiSecrets,
 	}
+	// Assigned only when non-empty so a nil planner stays a true nil interface.
+	if len(routes) > 0 {
+		svc.Planner = router.NewWithEvaluators(catalogView, router.Policy{
+			Version: "catalog-ai-v1",
+			Routes:  routes,
+		}, evaluators...)
+	}
+	if len(decisionRoutes) > 0 {
+		svc.DecisionPlanner = router.NewWithEvaluators(catalogView, router.Policy{
+			Version: "catalog-ai-decide-v1",
+			Routes:  decisionRoutes,
+		}, evaluators...)
+	}
+	return svc
+}
+
+// splitDecisionRoutes separates routes owned by decision providers from chat
+// and embedding routes, preserving order within each.
+func splitDecisionRoutes(routes []router.Route, decision map[string]llm.DecisionProvider) (chat, decide []router.Route) {
+	for _, r := range routes {
+		if _, ok := decision[r.Provider]; ok {
+			decide = append(decide, r)
+			continue
+		}
+		chat = append(chat, r)
+	}
+	return chat, decide
+}
+
+func jevAdapterConfig(p config.AIProviderConfig, resolve func(context.Context) (string, error)) llmjev.Config {
+	cfg := llmjev.Config{
+		BaseURL:       p.BaseURL,
+		ResolveAPIKey: resolve,
+		Timeout:       time.Duration(p.TimeoutSeconds) * time.Second,
+	}
+	if p.InputPriceUSDPerMTok != nil {
+		cfg.InputPriceUSDPerMTok = *p.InputPriceUSDPerMTok
+	}
+	return cfg
 }
 
 func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) (map[string]modelsdev.Model, map[string]modelcatalog.PriceState) {

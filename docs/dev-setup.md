@@ -184,6 +184,29 @@ Provider notes:
 - `anthropic`, `gemini`, and `openai` require `secret_ref` and `model`.
 - `openai-compatible` requires `base_url` and `model`; `secret_ref` is
   optional so local unauthenticated servers can work.
+- `jev` is a decision provider (TypeSafe JEV, `POST /v1/systemone`). It
+  requires `secret_ref` and `model` (pin a versioned id such as
+  `jev-1.13.0`; the `jev-latest` aliases can move). `input_price_usd_per_mtok`
+  declares the flat input-token price (JEV is not in models.dev; output is
+  free), `timeout_seconds` bounds one attempt, and `base_url` defaults to
+  `https://api.typesafe.ai`. It answers only `Decide`: chat and embedding
+  requests are never routed to it, and its routes are planned separately
+  from chat routes (no cost routing). Store the key with
+  `tether-apikey-helper`; it is resolved per call and never logged.
+
+  ```yaml
+  - id: jev
+    type: jev
+    model: jev-1.13.0
+    secret_ref: keychain://typesafe/jev
+    input_price_usd_per_mtok: 0.042
+    enabled: true
+    policy:
+      usage_budget:
+        max_cost_usd: 5.00
+        window: day
+        scope: purpose   # each `purpose` tag gets its own cap
+  ```
 - Configured models that are missing from models.dev are still routable. Tether
   synthesizes a conservative text-only catalog entry for those ids so local
   OpenAI-compatible servers can use custom llama/Ollama model names.
@@ -196,7 +219,10 @@ Provider notes:
   as inherited planning ceilings.
 - `usage_budget` is a separate inherited policy block for durable spend
   governance. It supports `max_cost_usd`, `window` (`day` or `month`), and
-  `scope` (`total`, `caller`, or `session`).
+  `scope` (`total`, `caller`, `session`, or `purpose`). `purpose` caps each
+  decision `purpose` tag separately and applies to `Decide` only. Spend is
+  counted per operation: a decide budget sees decide spend and a chat budget
+  sees chat spend.
 
 Routing notes:
 
@@ -242,11 +268,11 @@ Once configured and the daemon is running, the typed AI surfaces are
 available through:
 
 - HTTP: `/ai/providers`, `/ai/models`, `/ai/routes`, `/ai/routes/preview`, `/ai/routes/explain`, `/ai/chat`,
-  `/ai/chat/stream`, `/ai/embeddings`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
+  `/ai/chat/stream`, `/ai/embeddings`, `/ai/decide`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
 - CLI: `tether ai providers|models|routes|route-preview|route-explain|chat|embeddings|usage|budgets|audit|watch-budgets`
 - MCP: `tether_ai_list_providers`, `tether_ai_list_models`,
   `tether_ai_list_routes`, `tether_ai_route_preview`, `tether_ai_route_explain`, `tether_ai_chat`,
-  `tether_ai_chat_stream`, `tether_ai_embeddings`,
+  `tether_ai_chat_stream`, `tether_ai_embeddings`, `tether_ai_decide`,
   `tether_ai_usage`, `tether_ai_budgets`, `tether_ai_audit`
 
 For live alerting instead of polling, `tether ai watch-budgets` subscribes to the

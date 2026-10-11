@@ -531,3 +531,7 @@ func TestAIRequestFromToolAcceptsRequestObject(t *testing.T) {
 		t.Fatalf("request roles = %s", string(b))
 	}
 }
+
+func (s aiStubService) Decide(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, nil
+}

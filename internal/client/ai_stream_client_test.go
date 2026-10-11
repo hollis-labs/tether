@@ -172,3 +172,7 @@ func TestClientAIChatStreamUsesCallerContextNotTransportTimeout(t *testing.T) {
 		}
 	}
 }
+
+func (s streamAIStub) Decide(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, nil
+}

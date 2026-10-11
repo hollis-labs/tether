@@ -62,6 +62,14 @@ const (
 	// a different request. The key stays bound to its original session
 	// (CW-20260930-0229).
 	CodeIdempotencyConflict = "idempotency_conflict"
+
+	// CodeDecisionFailed means a decision provider could not answer (auth,
+	// rate limit, overload, timeout, open circuit or an unusable response).
+	// ErrorDetail.Details carries "kind" and, when the caller declared one,
+	// "on_error" (fail_open or fail_closed): the gateway reports the mode, the
+	// caller's own code decides what to do with it. A provider-rejected
+	// request is CodeInvalidRequest instead.
+	CodeDecisionFailed = "decision_failed"
 )
 
 // ErrorResponse is the envelope for every non-2xx JSON body. Callers
@@ -74,6 +82,8 @@ type ErrorResponse struct {
 type ErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Details carries optional machine-readable fields for specific codes.
+	Details map[string]string `json:"details,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
