@@ -43,6 +43,9 @@ type Observation struct {
 	RoutePattern  string `json:"route_pattern,omitempty"`
 	RequiredScope string `json:"required_scope,omitempty"`
 	WouldAllow    *bool  `json:"would_allow,omitempty"`
+	// Event names a handler-level finding (from_unverified, as_unverified,
+	// from_refused, as_refused). Empty for ordinary request rows.
+	Event string `json:"event,omitempty"`
 }
 
 // ScopeObservation is the verdict of a route-to-scope table for one request.
