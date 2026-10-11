@@ -70,7 +70,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 		Name:        "tether_message_inbox",
 		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call; when the calling session is the recipient itself, they are also marked consumed. For a non-destructive, repeatable listing use tether_message_list instead.",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("to", "Recipient URN", true),
+			gomcp.StringProp("to", "Recipient URN; omit to read your own inbox (the address from tether_whoami)", false),
 			gomcp.StringProp("kind", "Comma-separated kind filter: request, response, notice, status_update, handoff, escalation", false),
 			gomcp.StringProp("thread_id", "Thread ID filter (optional)", false),
 		),
@@ -281,14 +281,18 @@ func (a *Adapter) handleMessageGet(ctx context.Context, args map[string]any) (an
 
 func (a *Adapter) handleMessageInbox(ctx context.Context, args map[string]any) (any, error) {
 	toURN := str(args, "to")
+	if a.client == nil {
+		return nil, toolError("internal_error", "tether_message_inbox requires daemon routing; start MCP with tether mcp")
+	}
 	if toURN == "" {
-		return nil, toolError("invalid_request", "to required")
+		self, _, err := a.selfAddress(ctx)
+		if err != nil {
+			return nil, err
+		}
+		toURN = self
 	}
 	if _, parseErr := messaging.ParseURN(toURN); parseErr != nil {
 		return nil, toolError("invalid_request", "invalid to URN: "+parseErr.Error())
-	}
-	if a.client == nil {
-		return nil, toolError("internal_error", "tether_message_inbox requires daemon routing; start MCP with tether mcp")
 	}
 	// Pass this proxy's own session: when it is the recipient, the daemon
 	// consumes what it pulls, settling the deliveries (CW-20261001-0016).

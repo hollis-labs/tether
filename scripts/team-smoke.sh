@@ -60,6 +60,15 @@ echo '{"type":"system","subtype":"init","session_id":"fake"}'
 ( umask 077; printf '%s' "\$TETHER_TOKEN" >"$ROOT/tok.\$\$" )
 while read -r line; do
   printf '%s\\n' "\$line" >>"$ROOT/got.log"
+  # A turn asking for smoke-reply is answered by mail to the coordinator address
+  # and own address the delivery preamble announced, using this session's credential.
+  case "\$line" in *smoke-reply*)
+    coord=\$(printf '%s' "\$line" | sed -n 's/.*coordinator \(msg:[^ ]*\)\. Reply.*/\1/p')
+    me=\$(printf '%s' "\$line" | sed -n 's/.*you are @[a-z0-9_-]* (\(msg:[^)]*\)).*/\1/p')
+    if [ -n "\$coord" ] && [ -n "\$me" ]; then
+      "$BIN" --catalog "$CAT" messages notify --from "\$me" --to "\$coord" --kind response "smoke-reply-ack from worker" >>"$ROOT/reply.log" 2>&1
+    else echo "no coordinator in turn" >>"$ROOT/reply.log"; fi ;;
+  esac
   echo '{"type":"result","subtype":"success","result":"ok","session_id":"fake"}'
 done
 SH

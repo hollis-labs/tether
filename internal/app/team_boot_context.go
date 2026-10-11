@@ -9,6 +9,7 @@ import (
 	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/teamhost"
 )
 
@@ -157,4 +158,33 @@ func mergeTeamBootContext(plan *launch.Plan, resolved *agentlaunch.LaunchPlan) e
 		resolved.BootProfile.Inline = &inline
 	}
 	return nil
+}
+
+const sessionIdentityFile = "SESSION-IDENTITY.md"
+
+// mergeSessionIdentity plants the session's own message address (its logical
+// agent URN, the inbox mail and team replies reach) into the boot directory.
+// Team members get theirs from the delivered-message preamble instead.
+func mergeSessionIdentity(plan *launch.Plan, resolved *agentlaunch.LaunchPlan) {
+	if plan == nil || plan.TeamMember || plan.LogicalAgentID == "" {
+		return
+	}
+	if _, exists := resolved.Injection.BootDirOverlay[sessionIdentityFile]; exists {
+		return
+	}
+	address := registry.LogicalAgentBindingTarget(plan.LogicalAgentID)
+	doc := "# Your Tether identity\n\nYour message address (inbox) is `" + address + "`.\n\n" +
+		"- `tether_whoami` (no arguments) returns your verified principal and this address.\n" +
+		"- `tether_message_inbox` (no `to`) reads your own inbox; team member replies and results arrive there.\n" +
+		"- `tether_team_form` returns your address, the coordinator address, the channel and each member's address.\n"
+	resolved.Injection.BootDirOverlay = copyMap(resolved.Injection.BootDirOverlay)
+	if resolved.Injection.BootDirOverlay == nil {
+		resolved.Injection.BootDirOverlay = map[string]string{}
+	}
+	resolved.Injection.BootDirOverlay[sessionIdentityFile] = doc
+	if inline := resolved.BootProfile.Inline; inline != nil {
+		next := *inline
+		next.BootPrompt = appendPrompt(next.BootPrompt, "Your Tether message address is "+address+" (see "+sessionIdentityFile+" in this boot directory).")
+		resolved.BootProfile.Inline = &next
+	}
 }
