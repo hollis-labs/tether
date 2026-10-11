@@ -155,9 +155,8 @@ var (
 // stopped at, so the sweep walks a deep backlog and rotates fairly through
 // recipients instead of restarting from the oldest row every pass.
 type wakeParkSet struct {
-	mu         sync.Mutex
-	entries    map[delivery.DeliveryID]wakeParkEntry
-	unparkable int
+	mu      sync.Mutex
+	entries map[delivery.DeliveryID]wakeParkEntry
 
 	cursor     delivery.DeliveryID // last row scanned; "" = start of queue
 	highWater  delivery.DeliveryID // upper bound of the current scan cycle
@@ -212,17 +211,6 @@ func (p *wakeParkSet) touch(id delivery.DeliveryID, now time.Time) {
 		e.seen = now
 		p.entries[id] = e
 	}
-}
-
-// noteUnparkable records how many rows the last pass could not park and
-// reports whether that differs from the pass before, so a persistent
-// overflow is logged when it changes, not every sweep.
-func (p *wakeParkSet) noteUnparkable(n int) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	changed := n != p.unparkable
-	p.unparkable = n
-	return changed
 }
 
 type wakeParkEntry struct {
@@ -946,8 +934,8 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 	}
 	park.prune(now)
 	deferred := len(left)
-	// One summary line, and only when the pass changed something.
-	if park.noteUnparkable(unparkable) || attempted > 0 || newlyParked > 0 || deferred > 0 {
+	// One summary line, and only when the pass attempted, parked or deferred something.
+	if attempted > 0 || newlyParked > 0 || deferred > 0 {
 		log.Printf("app: wake sweep: attempted %d, newly parked %d (%d parked in total), %d live deliveries deferred to the next sweep (batch limit %d), %d unparkable (park set cap %d), scanned %d",
 			attempted, newlyParked, park.size(), deferred, batchLimit, unparkable, wakeParkMaxEntries, scanned)
 	}
