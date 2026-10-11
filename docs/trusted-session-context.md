@@ -4,7 +4,12 @@ The daemon verifies caller credentials before resolving call attribution.
 `GET /auth/context` accepts no session selector. Its response has `verified`,
 `source`, `principal_id`, `principal_kind`, `session_id`, `agent_urn`, `workstream_id`,
 `launch_id`, `project_id`, and `logical_agent_id`. Empty fields are omitted.
-Only a session principal whose session row exists receives `verified: true`.
+`verified` is the single caller-identity flag (see `docs/caller-identity.md`,
+"The verified flag"): true for any principal resolved from a bearer credential
+(operator, session, device, service). `session_resolved: true` is the narrower
+fact that the principal is a session whose row exists; session, workstream,
+launch, project and agent fields appear only then, and consumers that need a
+trusted session use `session_resolved`, not `verified`.
 An operator or service principal cannot select a session by claiming one.
 Agent attribution additionally requires the current daemon binding to name
 that exact session; missing or stale bindings leave `agent_urn` empty.
@@ -27,7 +32,8 @@ object. Verified session callers override the legacy top-level `session_id`;
 verified operator/service callers clear it. For compatibility, anonymous
 observe/off traffic retains its old top-level session claim, also recorded
 as `claimed_session_id`, with `attribution.verified: false`. Consumers must
-use the attribution object when they require verified identity. Events emitted
+use the attribution object when they require verified identity
+(`session_resolved` for a trusted session). Events emitted
 on the daemon bus carry the same attribution as the persisted row. Claims
 cannot overwrite it. Context describes state at each receiving boundary;
 workstream/binding changes between forwarding and receipt can change a snapshot.
