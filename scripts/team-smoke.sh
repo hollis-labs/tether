@@ -74,9 +74,49 @@ args: []
 bootstrap: {mode: streaming-stdio, prompt_prefix: ""}
 env: {mode: merge, passthrough: [HOME, PATH]}
 YAML
+# Stand-in for `codex app-server` (JSON-RPC over stdio): answers the handshake,
+# thread/start and turn/start, logs every turn's text to $ROOT/codex-got.log and
+# completes it. Like the real thing it emits nothing until it is asked to.
+cat >"$ROOT/fake-codex" <<SH
+#!/usr/bin/env python3
+import json, sys
+def out(o): sys.stdout.write(json.dumps(o) + "\\n"); sys.stdout.flush()
+n = 0
+for line in sys.stdin:
+    try: m = json.loads(line)
+    except ValueError: continue
+    meth, rid, p = m.get("method"), m.get("id"), m.get("params") or {}
+    if rid is None: continue
+    if meth == "initialize":
+        out({"id": rid, "result": {"userAgent": "fake-codex"}})
+    elif meth == "thread/start":
+        out({"id": rid, "result": {"thread": {"id": "fake-thread"}}})
+        out({"method": "thread/started", "params": {"thread": {"id": "fake-thread"}}})
+    elif meth == "turn/start":
+        n += 1; tid = "turn-%d" % n
+        text = " ".join(i.get("text", "") for i in p.get("input", []))
+        with open("$ROOT/codex-got.log", "a") as f: f.write(text.replace("\\n", " ") + "\\n")
+        turn = {"id": tid, "status": "inProgress", "items": [], "error": None}
+        out({"id": rid, "result": {"turn": turn}})
+        out({"method": "turn/started", "params": {"threadId": "fake-thread", "turn": turn}})
+        turn = dict(turn, status="completed")
+        out({"method": "turn/completed", "params": {"threadId": "fake-thread", "turn": turn}})
+    else:
+        out({"id": rid, "result": {}})
+SH
+chmod +x "$ROOT/fake-codex"
+cat >"$CAT/providers/codex-app-server.yaml" <<YAML
+id: codex-app-server
+type: cli
+command: $ROOT/fake-codex
+args: []
+bootstrap: {mode: jsonrpc-stdio, prompt_prefix: ""}
+env: {mode: merge, passthrough: [HOME, PATH]}
+YAML
 for l in tether-claude tether-claude-worktree agent-mux-codex-app-server agent-mux-codex-app-server-worktree; do
   mode=hybrid; [[ $l == *worktree ]] && mode=worktree
-  printf 'id: %s\nproject: tether\nagent: general\nprovider: fake\nworkspace: {mode: %s}\nprompt: {include_project_boot: false, include_agent_boot: false}\n' "$l" "$mode" >"$CAT/launches/$l.yaml"
+  prov=fake; [[ $l == agent-mux-codex-* ]] && prov=codex-app-server
+  printf 'id: %s\nproject: tether\nagent: general\nprovider: %s\nworkspace: {mode: %s}\nprompt: {include_project_boot: false, include_agent_boot: false}\n' "$l" "$prov" "$mode" >"$CAT/launches/$l.yaml"
 done
 cp "$REPO"/examples/teams/definitions/*.md "$CAT/team-definitions/"
 cp "$REPO/examples/teams/teams-policy.yaml" "$CAT/teams-policy.yaml"
@@ -109,6 +149,12 @@ done
 [[ $SEEN == 1 ]] || die "message never reached a worker session"
 RV="$("${T[@]}" team msg "$RUN" @reviewer 'hello reviewer' --key smoke-msg-rev 2>&1)" || die "msg @reviewer: $RV"
 echo "msg @reviewer: $RV"
+# The Codex reviewer (app-server, never prompted) must be woken into a turn too.
+SEEN=0
+for _ in $(seq 60); do
+  grep -qs 'hello reviewer' "$ROOT/codex-got.log" && SEEN=1 && break; sleep 0.5
+done
+[[ $SEEN == 1 ]] || die "message never started a turn on the Codex reviewer"
 LS="$("${T[@]}" team ls "$RUN" 2>&1)" || die "ls: $LS"
 echo "ls: $LS"
 DIS="$("${T[@]}" team stop "$RUN" --all --key smoke-stop 2>&1)" || die "stop: $DIS"

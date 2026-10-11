@@ -745,6 +745,9 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		s.leaseActorBinding(sessionID, plan.LogicalAgentID)
 	}
 	s.watchSessionBindings(sessionID)
+	if plan.TeamMember && plan.ResumeSourceSessionID == "" && rt.Caps().JsonRpcStdio {
+		s.kickOffAppServerTeamMember(sessionID)
+	}
 
 	return &Launched{
 		SessionID:    sessionID,
