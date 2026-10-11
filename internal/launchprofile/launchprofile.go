@@ -86,6 +86,23 @@ type LaunchProfile struct {
 	// provider ID (e.g. "claude-code", "codex-app-server"). Missing keys mean
 	// the agent uses provider defaults verbatim.
 	ProviderOverrides map[string]ProviderOverride `yaml:"provider_overrides" json:"provider_overrides,omitempty"`
+
+	// Recovery controls daemon-boot recovery of this agent: "never" (the
+	// default when empty) or "auto". Only "auto" lets boot recovery resume a
+	// logical agent that has no live session.
+	Recovery string `yaml:"recovery,omitempty" json:"recovery,omitempty"`
+}
+
+// Boot-recovery policy values for LaunchProfile.Recovery.
+const (
+	RecoveryNever = "never"
+	RecoveryAuto  = "auto"
+)
+
+// ValidRecovery reports whether v is an accepted recovery value; empty means
+// the default (never).
+func ValidRecovery(v string) bool {
+	return v == "" || v == RecoveryNever || v == RecoveryAuto
 }
 
 // Agent is a backward-compatible alias for LaunchProfile.

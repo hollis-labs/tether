@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
@@ -46,6 +49,170 @@ func TestBootResumePendingMailWithoutCheckpointLeavesMailUnread(t *testing.T) {
 	r.svc.BootResumeSessions(context.Background())
 	if r.count() != 2 {
 		t.Fatal("boot recovery duplicated a live agent")
+	}
+}
+
+// pendingMailRig returns a rig whose agent has ended and holds one unread
+// message, so ordinary selection would resume it.
+func pendingMailRig(t *testing.T) (*codexRig, messaging.Address) {
+	t.Helper()
+	r := newCodexRig(t)
+	id := r.start()
+	if err := r.turn(id, "initial work"); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(1)
+	if err := r.svc.StopSession(id); err != nil {
+		t.Fatal(err)
+	}
+	r.ended(id)
+	from, _ := messaging.ParseURN("msg://agent/local/sender")
+	to, _ := messaging.ParseURN(registry.LogicalAgentBindingTarget("agent"))
+	if _, err := r.svc.Store.MessagingStore().Send(context.Background(), messaging.Envelope{From: from, To: to, Kind: messaging.MsgKindNotice, Payload: json.RawMessage(`{"body":"pending"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	return r, to
+}
+
+func requireStillCold(t *testing.T, r *codexRig, to messaging.Address) {
+	t.Helper()
+	if r.count() != 1 {
+		t.Fatalf("agent was resumed: starts=%d", r.count())
+	}
+	page, err := r.svc.Store.MessagingStore().List(context.Background(), to, store.ListFilter{UnreadOnly: true, Limit: 20})
+	if err != nil || page.Total != 1 {
+		t.Fatalf("mail consumed=%+v %v", page, err)
+	}
+}
+
+func TestBootResumeDefaultNeverSkipsAndRecordsDecision(t *testing.T) {
+	for _, recovery := range []string{"", "never"} {
+		r, to := pendingMailRig(t)
+		r.svc.Catalog.Agents["agent"] = config.Agent{ID: "agent", Recovery: recovery}
+		r.svc.BootResumeSessions(context.Background())
+		requireStillCold(t, r, to)
+		var found bool
+		for _, e := range r.bus.got {
+			if e.Kind == "session.boot_recovery" && strings.Contains(e.PayloadJSON, `"skipped"`) && strings.Contains(e.PayloadJSON, "recovery_not_auto") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("recovery=%q: no skipped session.boot_recovery event", recovery)
+		}
+	}
+}
+
+func TestBootResumeUsesEffectiveExtendsPolicy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		child  config.Agent
+		resume bool
+	}{
+		"inherited auto":        {config.Agent{ID: "agent", Extends: "base"}, true},
+		"child never overrides": {config.Agent{ID: "agent", Extends: "base", Recovery: "never"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, to := pendingMailRig(t)
+			r.svc.Catalog.Agents["base"] = config.Agent{ID: "base", Recovery: "auto"}
+			r.svc.Catalog.Agents["agent"] = tc.child
+			r.svc.BootResumeSessions(context.Background())
+			if tc.resume {
+				r.wait(2)
+			} else {
+				requireStillCold(t, r, to)
+			}
+		})
+	}
+}
+
+func bootEvents(r *codexRig, kind string) []string {
+	var out []string
+	for _, e := range r.bus.got {
+		if e.Kind == kind {
+			out = append(out, e.PayloadJSON)
+		}
+	}
+	return out
+}
+
+func TestBootResumePolicyIgnoresLaunchIDCollisions(t *testing.T) {
+	cases := map[string]struct {
+		agents  map[string]config.Agent
+		resume  bool
+		wantErr string
+	}{
+		"leaf never, launch points at auto":     {map[string]config.Agent{"agent": {ID: "agent", Recovery: "never"}, "b": {ID: "b", Recovery: "auto"}}, false, ""},
+		"leaf auto, launch points at never":     {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
+		"ancestor shadowed by launch":           {map[string]config.Agent{"agent": {ID: "agent", Extends: "base"}, "base": {ID: "base", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
+		"ancestor never, launch points at auto": {map[string]config.Agent{"agent": {ID: "agent", Extends: "base"}, "base": {ID: "base", Recovery: "never"}, "b": {ID: "b", Recovery: "auto"}}, false, ""},
+		"cycle":                                 {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "x"}, "x": {ID: "x", Extends: "agent"}}, false, "recovery_policy_unresolved"},
+		"missing ancestor":                      {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "ghost"}}, false, "recovery_policy_unresolved"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r, to := pendingMailRig(t)
+			r.svc.Catalog.Agents = tc.agents
+			// Launches resolve before agents in Catalog.GetProfile; make the
+			// ids "agent" and "base" collide with launches pointing at "b".
+			r.svc.Catalog.Launches["agent"] = config.Launch{ID: "agent", Project: "proj", Agent: "b", Provider: "codex-cli"}
+			r.svc.Catalog.Launches["base"] = config.Launch{ID: "base", Project: "proj", Agent: "b", Provider: "codex-cli"}
+			r.svc.BootResumeSessions(context.Background())
+			if tc.resume {
+				r.wait(2)
+				return
+			}
+			requireStillCold(t, r, to)
+			want := tc.wantErr
+			if want == "" {
+				want = "recovery_not_auto"
+			}
+			evs := bootEvents(r, "session.boot_recovery")
+			if len(evs) != 1 || !strings.Contains(evs[0], `"skipped"`) || !strings.Contains(evs[0], want) {
+				t.Fatalf("events=%v, want one skipped %s", evs, want)
+			}
+		})
+	}
+}
+
+func TestBootResumeNativeOnlySelectionBypassesDefaultNever(t *testing.T) {
+	r := newCodexRig(t)
+	r.svc.Catalog.Agents["agent"] = config.Agent{ID: "agent"} // recovery defaults to never
+	id := r.start()
+	if err := r.svc.StopSession(id); err != nil {
+		t.Fatal(err)
+	}
+	r.ended(id)
+	r.svc.BootResumeSessions(context.Background(), BootResumeOptions{NativeOnlySourceIDs: []string{id}})
+	evs := bootEvents(r, "session.boot_recovery")
+	if len(evs) != 1 || !strings.Contains(evs[0], `"failed"`) || !strings.Contains(evs[0], "native_only_resume_refused") {
+		t.Fatalf("want exactly one native-only refusal outcome, got %v", evs)
+	}
+}
+
+func TestBootResumeAutoResumes(t *testing.T) {
+	r, _ := pendingMailRig(t)
+	r.svc.BootResumeSessions(context.Background())
+	r.wait(2)
+}
+
+func TestBootResumeReadinessGateSkipsEverything(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{missing, file} {
+		r, to := pendingMailRig(t)
+		d := &r.svc.Catalog.Global.Catalog.Defaults
+		d.WorkspaceRoot = root
+		before := len(r.bus.kinds())
+		teamCalled := false
+		r.svc.BootTeamRecovery = func(context.Context) error { teamCalled = true; return nil }
+		r.svc.BootResumeSessions(context.Background())
+		requireStillCold(t, r, to)
+		if teamCalled || len(r.bus.got) != before {
+			t.Fatalf("root %q: gate had side effects (team=%v)", root, teamCalled)
+		}
 	}
 }
 

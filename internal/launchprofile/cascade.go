@@ -296,6 +296,19 @@ func (r *Resolver) ResolveSnapshot(ctx context.Context, in CompositionInput) (*S
 	return comp.ToSnapshot()
 }
 
+// ResolveProfile returns the effective profile for target after folding its
+// extends chain, without composing launch context or overrides.
+func (r *Resolver) ResolveProfile(ctx context.Context, target string) (*LaunchProfile, error) {
+	if target == "" {
+		return nil, fmt.Errorf("target launch profile ID is required")
+	}
+	chain, _, err := r.walkExtendsChain(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	return r.foldChain(chain), nil
+}
+
 func (r *Resolver) walkExtendsChain(ctx context.Context, target string) ([]*LaunchProfile, []string, error) {
 	var chain []*LaunchProfile
 	var lineage []string
@@ -356,6 +369,9 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 		}
 		if p.AgentPrompt != "" {
 			resolved.AgentPrompt = p.AgentPrompt
+		}
+		if p.Recovery != "" {
+			resolved.Recovery = p.Recovery
 		}
 		if p.Permissions.PermissionMode != "" {
 			resolved.Permissions.PermissionMode = p.Permissions.PermissionMode

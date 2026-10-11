@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 This file was backfilled from the git history and is a good-faith summary, not an exhaustive one; `git log` is the complete record. Entries are grouped by tagged release. Consumers should watch this file for new HTTP routes, MCP tools, CLI commands and catalog/configuration changes.
 
+## [Unreleased]
+
+- Breaking: daemon boot recovery no longer resumes ordinary logical agents by
+  default. Agent definitions gain `recovery: never|auto` (absent = `never`,
+  inherited through `extends`, closest non-empty value wins); only `auto`
+  agents with unread mail, an open assignment or a roster are resumed at
+  startup. A non-live, non-team agent with a prior session and a non-`auto`
+  policy is logged and published once as `session.boot_recovery`
+  (`outcome: skipped`) without consuming mail; live agents, agents without a
+  prior session and `auto` agents without work evidence return silently. Boot
+  recovery is skipped entirely, with one log line and no events, when
+  `catalog.defaults.workspace_root` is missing or not a directory. Explicit
+  native-only selection (an operator choice) and team-member recovery are
+  unchanged. Set `recovery: auto` on agents that must survive restarts.
+  (CW-20261011-0004)
+
 ## [0.8.0] - 2026-10-09
 
 - Add opt-in `tether messages claude-hook` feedback for external or hosted Claude
