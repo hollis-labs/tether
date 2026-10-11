@@ -22,6 +22,10 @@ import (
 
 var actor = gomsg.Address{Kind: gomsg.KindService, Authority: "local", ID: "turn-router"}
 
+// ServiceURN is the turn router's service identity, the one an identity policy
+// lists to authorize its channel publications.
+var ServiceURN = actor.URN()
+
 type retry struct {
 	next   time.Time
 	delay  time.Duration
@@ -196,7 +200,7 @@ func (r *Router) attach(ctx context.Context, item store.PendingTurnOutput) error
 		return fmt.Errorf("output kind is not selected")
 	}
 	sender := gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: item.SessionID}
-	ctx = identity.WithPrincipal(ctx, senderPrincipal(sender, item.SessionID, actor.URN()))
+	ctx = identity.WithInternalService(identity.WithPrincipal(ctx, senderPrincipal(sender, item.SessionID, actor.URN())), actor.URN())
 	_, err = r.channels.AttachExisting(ctx, channels.ExistingMessage{MessageID: item.MessageID, Channel: route.Channel, SessionID: item.SessionID, Actor: actor})
 	return err
 }

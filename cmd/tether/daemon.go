@@ -29,6 +29,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/apikeyhelper"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
@@ -375,6 +376,14 @@ var daemonRunCmd = &cobra.Command{
 			server.MCP = mcpHandler
 			server.MCPShutdown = mcpHandler.Close
 			server.MCPDrain = mcpHandler.Drain
+		}
+
+		// Reply, delivery and channel-publication authorization follow the
+		// local_api point (CW-20261010-0266). Observe records would-deny
+		// findings; only an explicit enforce refuses. The turn router is the one
+		// explicitly authorized internal publisher.
+		if identities != nil {
+			svc.InstallIdentityPolicy(app.NewIdentityPolicy(cfg.IdentityModeFor("local_api"), server.RecordIdentityObservation, turnrouting.ServiceURN))
 		}
 
 		return runDaemonServer(server, ctx)
