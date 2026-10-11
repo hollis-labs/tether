@@ -1630,3 +1630,99 @@ func TestRunWakeSweep_HugeLiveBacklogOneRecipient_SecondRecipientServed(t *testi
 		t.Fatalf("second recipient hidden behind a %d-row backlog for another recipient", backlog)
 	}
 }
+
+// TestRunWakeSweep_SustainedArrivals_OlderBusyRetryRevisited: ready work keeps
+// arriving faster than a pass consumes it, so the scan cursor never meets the
+// end of the queue. A row attempted early and Nacked busy becomes ready again
+// behind the cursor; a bounded scan cycle must wrap and attempt it again.
+func TestRunWakeSweep_SustainedArrivals_OlderBusyRetryRevisited(t *testing.T) {
+	prevBusy, prevOff := wakeBusyRetryBackoff, wakeOfflineRetryBackoff
+	wakeBusyRetryBackoff, wakeOfflineRetryBackoff = 0, 0
+	t.Cleanup(func() { wakeBusyRetryBackoff, wakeOfflineRetryBackoff = prevBusy, prevOff })
+
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	// A scan budget below the per-pass arrivals: the cursor never meets the
+	// end of the queue unless the cycle is bounded.
+	park := &wakeParkSet{scanPage: 10, scanBudget: 20}
+
+	rt.setAlive("s-busy", true, agentsessions.LiveStateProcessing)
+	oldEnv := sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-busy"})
+	oldID, ok, err := st.DeliveryIDForMessage(ctx, oldEnv.ID)
+	if err != nil || !ok {
+		t.Fatalf("delivery id: ok=%v err=%v", ok, err)
+	}
+
+	attempts := func() int {
+		rd, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(oldID))
+		if err != nil {
+			t.Fatalf("get delivery: %v", err)
+		}
+		return rd.AttemptCount
+	}
+	// Each pass appends more ready work (30 rows) than the scan budget (20)
+	// reads, all of it wakeable within the batch so it leaves the queue.
+	arrival := 0
+	for pass := 1; pass <= 30 && attempts() < 2; pass++ {
+		for i := 0; i < 30; i++ {
+			id := fmt.Sprintf("s-idle-%05d", arrival)
+			arrival++
+			rt.setAlive(id, true, agentsessions.LiveStateIdle)
+			sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: id})
+		}
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if got := attempts(); got < 2 {
+		t.Fatalf("older busy delivery attempted %d times across 30 passes of sustained arrivals, want a retry once the cycle wraps", got)
+	}
+}
+
+// TestRunWakeSweep_IneligibleRowOnLiveRecipient_StaysParked: rows the sweep must
+// not wake (no-wake intent) park as ineligible even though their recipient is
+// live, so they stop spending batch.
+func TestRunWakeSweep_IneligibleRowOnLiveRecipient_StaysParked(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	rt.setAlive("s-live", true, agentsessions.LiveStateIdle)
+	env, err := st.MessagingStore().Send(ctx, messaging.Envelope{
+		Kind:     messaging.MsgKindNotice,
+		From:     messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"},
+		To:       messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-live"},
+		Payload:  []byte(`{"body":"x"}`),
+		Metadata: map[string]string{"tether.wake_intent": `{"no_wake":true}`},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	deliveryID, _, err := st.DeliveryIDForMessage(ctx, env.ID)
+	if err != nil {
+		t.Fatalf("delivery id: %v", err)
+	}
+	var firstUntil time.Time
+	for i := 0; i < 3; i++ {
+		n, err := runWakeSweep(ctx, st, reg, rt.seam(), park)
+		if err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if n != 0 || rt.sendCallCount("s-live") != 0 {
+			t.Fatalf("no-wake delivery was woken: attempted=%d sends=%d", n, rt.sendCallCount("s-live"))
+		}
+		park.mu.Lock()
+		e := park.entries[delivery.DeliveryID(deliveryID)]
+		park.mu.Unlock()
+		if i == 0 {
+			firstUntil = e.until
+		} else if !e.until.Equal(firstUntil) {
+			t.Fatalf("pass %d re-evaluated the parked no-wake row (park window moved), so it is spending batch every pass", i+1)
+		}
+	}
+	if park.size() != 1 {
+		t.Fatalf("park size = %d, want the no-wake row parked once and kept parked", park.size())
+	}
+}

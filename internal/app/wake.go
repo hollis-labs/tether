@@ -160,8 +160,37 @@ type wakeParkSet struct {
 	unparkable int
 
 	cursor     delivery.DeliveryID // last row scanned; "" = start of queue
+	highWater  delivery.DeliveryID // upper bound of the current scan cycle
 	deferred   []delivery.RecipientDelivery
 	lastServed string // URN of the recipient that took the last batch slot
+
+	// Test overrides for the per-pass scan bounds; zero means the constants.
+	scanPage, scanBudget int
+}
+
+// parkIneligible parks id like park, flagged so that recipient liveness does
+// not release it.
+func (p *wakeParkSet) parkIneligible(id delivery.DeliveryID, now time.Time) {
+	if _, ok := p.park(id, now); !ok {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e := p.entries[id]
+	e.ineligible = true
+	p.entries[id] = e
+}
+
+// holdsIneligible reports whether id is parked as ineligible and the park
+// has not lapsed.
+func (p *wakeParkSet) holdsIneligible(id delivery.DeliveryID, now time.Time) (held, flagged bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.entries[id]
+	if !ok || !e.ineligible {
+		return false, false
+	}
+	return now.Before(e.until), true
 }
 
 // prune drops entries not seen within wakeParkEntryTTL.
@@ -200,6 +229,10 @@ type wakeParkEntry struct {
 	until  time.Time
 	seen   time.Time
 	misses int
+	// ineligible marks a row parked because it is not the sweep's to wake
+	// (no-wake intent, already answered), not because its recipient is
+	// offline: a live recipient does not release it.
+	ineligible bool
 }
 
 func (p *wakeParkSet) size() int {
@@ -249,10 +282,11 @@ func (p *wakeParkSet) release(id delivery.DeliveryID) {
 	delete(p.entries, id)
 }
 
-// retain drops every entry not in ready. Only call it with a complete
-// listing of ready deliveries: an entry missing from a truncated one may
-// simply lie past the listing's end.
-func (p *wakeParkSet) retain(ready []delivery.RecipientDelivery) {
+// retain drops every entry at or below upTo that is not in ready. Only call
+// it with a complete listing of ready deliveries up to upTo: an entry missing
+// from a truncated one may simply lie past the listing's end. Entries above
+// upTo arrived after the cycle began and are left alone.
+func (p *wakeParkSet) retain(ready []delivery.RecipientDelivery, upTo delivery.DeliveryID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.entries) == 0 {
@@ -263,6 +297,9 @@ func (p *wakeParkSet) retain(ready []delivery.RecipientDelivery) {
 		keep[rd.ID] = struct{}{}
 	}
 	for id := range p.entries {
+		if id > upTo {
+			continue
+		}
 		if _, ok := keep[id]; !ok {
 			delete(p.entries, id)
 		}
@@ -676,7 +713,16 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 	if park == nil {
 		park = &wakeParkSet{}
 	}
-	const batchLimit, scanPage, scanBudget = wakeSweepBatchLimit, wakeSweepScanPage, wakeSweepScanBudget
+	const batchLimit = wakeSweepBatchLimit
+	scanPage, scanBudget := wakeSweepScanPage, wakeSweepScanBudget
+	park.mu.Lock()
+	if park.scanPage > 0 {
+		scanPage = park.scanPage
+	}
+	if park.scanBudget > 0 {
+		scanBudget = park.scanBudget
+	}
+	park.mu.Unlock()
 	now := time.Now()
 
 	type resolved struct {
@@ -717,6 +763,7 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 	carried := park.deferred
 	park.deferred = nil
 	cursor := park.cursor
+	highWater := park.highWater
 	park.mu.Unlock()
 	for _, rd := range carried {
 		if r := resolve(rd.Recipient); r.err == nil && r.sessionID != "" {
@@ -725,6 +772,17 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 	}
 
 	startedAtHead := cursor == ""
+	if startedAtHead {
+		// A new scan cycle covers the rows that exist now, so it is finite
+		// however fast new ones arrive, and a row that became ready again
+		// behind the cursor (a busy Nack, a lapsed lease) is revisited next
+		// cycle.
+		hw, err := st.DeliveryHighWater(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("run wake sweep: %w", err)
+		}
+		highWater = hw
+	}
 	wrapped := false
 	var scannedRows []delivery.RecipientDelivery
 	for scanned < scanBudget && ctx.Err() == nil {
@@ -732,13 +790,15 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 		if rest := scanBudget - scanned; rest < n {
 			n = rest
 		}
-		page, err := st.ReadyDeliveryPage(ctx, cursor, n)
+		page, err := st.ReadyDeliveryPage(ctx, cursor, highWater, n)
 		if err != nil {
 			return 0, fmt.Errorf("run wake sweep: list deliveries: %w", err)
 		}
-		for _, rd := range page {
+		if page.LastID != "" {
+			cursor = page.LastID
+		}
+		for _, rd := range page.Rows {
 			scanned++
-			cursor = rd.ID
 			scannedRows = append(scannedRows, rd)
 			r := resolve(rd.Recipient)
 			if r.sessionID == "" || r.err != nil {
@@ -760,17 +820,26 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 				}
 				continue
 			}
-			park.release(rd.ID)
+			if held, flagged := park.holdsIneligible(rd.ID, now); flagged {
+				// Parked as not ours to wake; a live recipient does not
+				// change that. Re-checked once the park lapses.
+				if held {
+					park.touch(rd.ID, now)
+					continue
+				}
+			} else {
+				park.release(rd.ID)
+			}
 			addLive(rd, r.sessionID)
 		}
-		if len(page) < n {
-			// A short page: the end of the queue, not the budget running out.
+		if page.Exhausted {
+			// The queue ended at the cycle's bound, not the budget running out.
 			wrapped = true
 			break
 		}
-		// Enough live work for several batches: stop reading; the cursor
-		// resumes here next pass.
-		if len(seenLive) >= 2*batchLimit {
+		// More live work than the carry-over can hold: stop reading; the
+		// cursor resumes here next pass.
+		if len(seenLive) >= wakeSweepDeferredMax {
 			break
 		}
 	}
@@ -818,26 +887,27 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			}
 			msg, err := st.MessagingStore().Get(ctx, string(lr.rd.MessageID))
 			if err != nil {
-				park.park(lr.rd.ID, now)
+				park.parkIneligible(lr.rd.ID, now)
 				continue
 			}
 			intent, intentErr := wakeintent.Read(msg)
 			if intentErr != nil || intent.NoWake {
-				park.park(lr.rd.ID, now)
+				park.parkIneligible(lr.rd.ID, now)
 				continue
 			}
 			prior, found, priorErr := st.RecipientWakeOutcome(ctx, msg.ID)
 			if priorErr != nil {
-				park.park(lr.rd.ID, now)
+				park.parkIneligible(lr.rd.ID, now)
 				continue
 			}
 			if found {
 				var prev api.WakeOutcome
 				if prior == "" || json.Unmarshal([]byte(prior), &prev) != nil || prev.Delivered {
-					park.park(lr.rd.ID, now)
+					park.parkIneligible(lr.rd.ID, now)
 					continue
 				}
 			}
+			park.release(lr.rd.ID)
 			processed++
 			lastServed = key
 			text := intent.WakeText
@@ -865,13 +935,14 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 
 	park.mu.Lock()
 	park.cursor = cursor
+	park.highWater = highWater
 	park.deferred = left
 	park.lastServed = lastServed
 	park.mu.Unlock()
 	if startedAtHead && wrapped {
 		// The pass saw the whole ready queue: forget parked rows that have
 		// since been delivered, consumed or claimed elsewhere.
-		park.retain(scannedRows)
+		park.retain(scannedRows, highWater)
 	}
 	park.prune(now)
 	deferred := len(left)
