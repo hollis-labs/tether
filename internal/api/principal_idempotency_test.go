@@ -58,7 +58,7 @@ func TestRemoteReplyAndTeamIdempotency(t *testing.T) {
 		ctx := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{ID: id, Kind: "device", Scopes: []string{"operate"}})
 		r := httptest.NewRequest("POST", "/messages/parent/reply?as=msg://device/forged", nil).WithContext(ctx)
 		r.Header.Set("Idempotency-Key", "same")
-		if _, ok := s.submitReply(httptest.NewRecorder(), r, "parent", "body", false, ""); !ok {
+		if _, ok := s.submitReply(httptest.NewRecorder(), r, "parent", "body", false, "", nil); !ok {
 			t.Fatal("reply refused")
 		}
 	}

@@ -1235,3 +1235,25 @@ func TestAChannelMessageTheRouterPublishedCanBeRepliedTo(t *testing.T) {
 		t.Fatalf("the reply must be a second, distinct turn: %+v", outputs)
 	}
 }
+
+func TestReplyStoresTheStampedSenderMetadata(t *testing.T) {
+	h := newReplyHarness(t)
+	parent := h.routed("s1")
+	meta := map[string]string{"from_verification": "unverified", "from_unverified": "true", "from_principal": "msg://user/local/chris"}
+	receipt, err := h.svc.SubmitRoutingReply(context.Background(), api.RoutingReplyRequest{
+		ParentID: parent.ID, Body: "go", Verified: true, Metadata: meta,
+		Caller: identity.Principal{ID: "msg://user/local/chris", Kind: "user"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := h.st.MessagingStore().Get(context.Background(), receipt.ReplyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range meta {
+		if stored.Metadata[k] != v {
+			t.Fatalf("metadata[%s] = %q, want %q (all %v)", k, stored.Metadata[k], v, stored.Metadata)
+		}
+	}
+}

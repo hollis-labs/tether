@@ -7,6 +7,7 @@ import (
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/llm"
 	"github.com/hollis-labs/tether/internal/llm/router"
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
@@ -136,6 +137,11 @@ type Deps struct {
 	// session that sent it. *app.Service satisfies it. Absent the dep, those
 	// routes respond 404 like every other optional dependency.
 	RoutingReplies RoutingReplyService
+
+	// IdentityMode and IdentityAudit drive sender stamping and ?as=
+	// verification on /messages (CW-20261010-0262).
+	IdentityMode  identity.Mode
+	IdentityAudit func(context.Context, identity.Observation) error
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -173,6 +179,11 @@ type Server struct {
 	DeliveryRepair      DeliveryTraceStore
 	Retention           RetentionStore
 	RoutingReplies      RoutingReplyService
+	// IdentityMode and IdentityAudit drive sender stamping and ?as=
+	// verification on /messages. Enforce refuses with 403; any other mode
+	// records the finding and keeps the request.
+	IdentityMode  identity.Mode
+	IdentityAudit func(context.Context, identity.Observation) error
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -211,6 +222,8 @@ func NewHandler(deps Deps) http.Handler {
 		DeliveryRepair:      deps.DeliveryRepair,
 		Retention:           deps.Retention,
 		RoutingReplies:      deps.RoutingReplies,
+		IdentityMode:        deps.IdentityMode,
+		IdentityAudit:       deps.IdentityAudit,
 	}
 	router := http.NewServeMux()
 	s.registerDocsRoutes(router)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 	"slices"
 	"time"
@@ -32,6 +34,14 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	expires := time.Now().UTC().Add(sessionTokenTTL)
 	p := identity.Principal{ExpiresAt: &expires, ID: "msg://session/local/" + sessionID, Kind: "session", SessionID: sessionID, Display: "Session " + sessionID,
 		Scopes: slices.Clone(workerScopes), Addresses: []string{"msg://session/local/" + sessionID}}
+	// The session's own logical agent is another address it may send and read
+	// as. Derived from the session row, never from a request.
+	if row, err := s.Store.GetSession(sessionID); err == nil && row != nil && row.LogicalAgentID != "" {
+		agent := registry.LogicalAgentBindingTarget(row.LogicalAgentID)
+		if addr, err := messaging.ParseURN(agent); err == nil && addr.URN() == agent {
+			p.Addresses = append(p.Addresses, agent)
+		}
+	}
 	if parent, ok := identity.FromContext(ctx); ok {
 		p.CreatedBy = parent.ID
 		if !slices.Contains(parent.Scopes, "*") {

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -64,4 +65,44 @@ func validToken(token string) bool {
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token[4:])
 	return err == nil && len(raw) == 32 && base64.RawURLEncoding.EncodeToString(raw) == token[4:]
+}
+
+// ScopeSendAs lets a principal author a sender or mailbox address outside its
+// own address set. The local operator holds it through "*".
+const ScopeSendAs = "message.send_as"
+
+// MayActAs reports whether p may author or read as addr: addr is in the
+// principal's address set (its ID plus Addresses), or p holds message.send_as.
+func (p Principal) MayActAs(addr string) bool {
+	for _, a := range p.Scopes {
+		if a == "*" || a == ScopeSendAs {
+			return true
+		}
+	}
+	if addr == "" {
+		return false
+	}
+	if addr == p.ID || addr == p.DefaultAddress() {
+		return true
+	}
+	for _, a := range p.Addresses {
+		if a == addr {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultAddress is the address the daemon stamps as sender when a verified
+// principal sends without a from: its first address, else its ID. A device ID
+// (msg://device/<id>) is not a valid messaging address, so a device with no
+// registered address sends as msg://service/device/<id>.
+func (p Principal) DefaultAddress() string {
+	if len(p.Addresses) > 0 {
+		return p.Addresses[0]
+	}
+	if rest, ok := strings.CutPrefix(p.ID, "msg://device/"); ok && rest != "" {
+		return "msg://service/device/" + rest
+	}
+	return p.ID
 }
