@@ -18,7 +18,7 @@ import (
 // LinkTeamSession sets a retained team parent before the first launch. It is an
 // internal adapter operation: the key must already own the created session.
 func (s *Service) LinkTeamSession(ctx context.Context, id, key, parent string) error {
-	result, err := s.Store.DB().ExecContext(ctx, `UPDATE sessions SET parent_session_id=NULLIF(?,'') WHERE id=? AND state='created' AND EXISTS(SELECT 1 FROM session_idempotency WHERE key=? AND session_id=?)`, parent, id, key, id)
+	result, err := s.Store.DB().ExecContext(ctx, `UPDATE sessions SET parent_session_id=NULLIF(?,'') WHERE id=? AND state='created' AND EXISTS(SELECT 1 FROM session_idempotency WHERE principal_id=? AND key=? AND session_id=?)`, parent, id, store.IdempotencyPrincipalTeam, key, id)
 	if err != nil {
 		return err
 	}
@@ -33,7 +33,7 @@ func (s *Service) LinkTeamSession(ctx context.Context, id, key, parent string) e
 	if err != nil {
 		return err
 	}
-	record, err := s.Store.GetSessionIdempotency(key)
+	record, err := s.Store.GetSessionIdempotency(store.IdempotencyPrincipalTeam, key)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchI
 		return nil, err
 	}
 	digest := teamCreateDigest(launchID, boot)
-	return s.createKeyed(key, digest, func() (*launch.Plan, error) {
+	return s.createKeyed(store.IdempotencyPrincipalTeam, key, digest, func() (*launch.Plan, error) {
 		plan, err := s.BuildLaunchPlan(CreateSessionInput{LaunchID: launchID})
 		if err != nil {
 			return nil, err

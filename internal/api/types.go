@@ -167,8 +167,9 @@ type LaunchRequest struct {
 	// first request with a key binds it to the session it creates; a retry
 	// with the same key and the same request returns that session with
 	// replayed=true and HTTP 200, whatever state it is now in, and a
-	// different request answers 409 idempotency_conflict. Keys are one
-	// global, unauthenticated space: prefix them (e.g. "hadron/<run>/...").
+	// different request answers 409 idempotency_conflict. Keys are
+	// scoped to the authenticated caller (CW-20261010-0263); two callers may
+	// use the same key independently.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
@@ -179,6 +180,9 @@ type ResumeOptions struct {
 	NativeOnly      bool
 	SourceSessionID string
 	ResumeWorkRoot  string
+	// IdempotencyPrincipal is server-set from the authenticated caller; it is
+	// never read from a client (CW-20261010-0263).
+	IdempotencyPrincipal string
 }
 
 // ResumeRequest is the optional body of POST /logical-agents/{id}/resume.
@@ -187,6 +191,8 @@ type ResumeRequest struct {
 	NativeOnly      bool   `json:"native_only,omitempty"`
 	SourceSessionID string `json:"source_session_id,omitempty"`
 	ResumeWorkRoot  string `json:"resume_workroot,omitempty"`
+	// IdempotencyPrincipal is set by the server, never decoded from a body.
+	IdempotencyPrincipal string `json:"-"`
 }
 
 // CreateSessionInput mirrors app.CreateSessionInput in shape but is defined
@@ -206,6 +212,8 @@ type CreateSessionInput struct {
 	Injection string
 	// IdempotencyKey makes the create idempotent. See LaunchRequest.
 	IdempotencyKey string
+	// IdempotencyPrincipal scopes IdempotencyKey; server-set (CW-20261010-0263).
+	IdempotencyPrincipal string
 }
 
 type LaunchResponse struct {

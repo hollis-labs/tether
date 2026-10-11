@@ -88,6 +88,10 @@ type CreateSessionInput struct {
 	// created (CW-20260930-0229). Not part of the launch plan.
 	IdempotencyKey string
 
+	// IdempotencyPrincipal scopes IdempotencyKey to the authenticated caller
+	// (CW-20261010-0263). Empty means unauthenticated.
+	IdempotencyPrincipal string
+
 	// BootPromptAppend appends caller-provided instructions to the composed
 	// boot prompt. Unlike BootPromptOverride, it does not replace catalog,
 	// agent, or boot-profile content.

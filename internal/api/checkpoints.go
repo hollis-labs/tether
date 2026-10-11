@@ -300,12 +300,12 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
 		return
 	}
-	key, keyErr := principalIdempotencyKey(r.Context(), req.IdempotencyKey)
+	idemPrincipal, keyErr := idempotencyPrincipal(r.Context())
 	if keyErr != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "verified device required")
 		return
 	}
-	req.IdempotencyKey = key
+	req.IdempotencyPrincipal = idemPrincipal
 	if req.NativeOnly && req.SourceSessionID == "" || !req.NativeOnly && (req.SourceSessionID != "" || req.ResumeWorkRoot != "") {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "native_only requires exact source_session_id")
 		return

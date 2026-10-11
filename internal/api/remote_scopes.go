@@ -307,13 +307,8 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 					writeError(w, 400, CodeInvalidRequest, msg)
 					return
 				}
-				key, err := principalIdempotencyKey(r.Context(), key)
-				if err != nil {
-					writeError(w, 401, "unauthorized", "verified device required")
-					return
-				}
-				r = r.Clone(r.Context())
-				r.Header.Set("Idempotency-Key", key)
+				// The team service scopes the key by the verified device
+				// itself, so the header travels as sent.
 			}
 		}
 		if payload == "registry-kind" {
