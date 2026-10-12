@@ -396,15 +396,19 @@ type ProviderEnv struct {
 type Launch struct {
 	Lifecycle *launchprofile.LifecyclePolicy `yaml:"lifecycle,omitempty" json:"lifecycle,omitempty"`
 	Route     *launchprofile.Route           `yaml:"route,omitempty" json:"route,omitempty"`
-	ID        string                         `yaml:"id" json:"id"`
-	Project   string                         `yaml:"project" json:"project"`
-	Agent     string                         `yaml:"agent" json:"agent"`
-	Provider  string                         `yaml:"provider" json:"provider"`
-	Workspace LaunchWorkspace                `yaml:"workspace" json:"workspace"`
-	Prompt    PromptSpec                     `yaml:"prompt" json:"prompt"`
-	Overrides LaunchOverrides                `yaml:"overrides" json:"overrides"`
-	MCP       MCPConfig                      `yaml:"mcp" json:"mcp,omitempty"`
-	Injection LaunchInjection                `yaml:"injection" json:"injection,omitempty"`
+	// Chat lists the launch in the operator chat roster (GET /chat/agents).
+	// DisplayName is the roster label; empty falls back to the agent id.
+	Chat        bool            `yaml:"chat,omitempty" json:"chat,omitempty"`
+	DisplayName string          `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	ID          string          `yaml:"id" json:"id"`
+	Project     string          `yaml:"project" json:"project"`
+	Agent       string          `yaml:"agent" json:"agent"`
+	Provider    string          `yaml:"provider" json:"provider"`
+	Workspace   LaunchWorkspace `yaml:"workspace" json:"workspace"`
+	Prompt      PromptSpec      `yaml:"prompt" json:"prompt"`
+	Overrides   LaunchOverrides `yaml:"overrides" json:"overrides"`
+	MCP         MCPConfig       `yaml:"mcp" json:"mcp,omitempty"`
+	Injection   LaunchInjection `yaml:"injection" json:"injection,omitempty"`
 }
 
 type LaunchWorkspace struct {

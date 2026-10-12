@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/substrate/harness/sandbox"
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadExampleCatalog(t *testing.T) {
@@ -848,5 +849,27 @@ func TestValidate_AgentRecovery(t *testing.T) {
 	err := cat.Validate()
 	if err == nil || !strings.Contains(err.Error(), "recovery") {
 		t.Errorf("invalid recovery accepted: %v", err)
+	}
+}
+
+func TestLoadLaunchChatFlag(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "launches"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "id: pm\nproject: p\nagent: a\nprovider: x\nchat: true\ndisplay_name: Portfolio Manager\n"
+	if err := os.WriteFile(filepath.Join(root, "launches", "pm.yaml"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var l Launch
+	if err := loadYAML(filepath.Join(root, "launches", "pm.yaml"), &l); err != nil {
+		t.Fatal(err)
+	}
+	if !l.Chat || l.DisplayName != "Portfolio Manager" {
+		t.Fatalf("launch = %+v", l)
+	}
+	var plain Launch
+	if err := yaml.Unmarshal([]byte("id: q\nproject: p\nagent: a\nprovider: x\n"), &plain); err != nil || plain.Chat || plain.DisplayName != "" {
+		t.Fatalf("default launch = %+v, %v", plain, err)
 	}
 }

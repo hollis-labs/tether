@@ -8,6 +8,12 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add the chat roster: launches take `chat: true` and an optional `display_name`;
+  `GET /chat/agents` (read) lists them with their newest session, and
+  `POST /chat/agents/{launch_id}/send` (operate) delivers a message as the next
+  turn of an idle running session, or launches the profile with the text as its
+  first prompt, refusing a mid-turn agent with 409 `agent_working`. Sends require
+  an `idempotency_key`. Older daemons ignore the launch fields and answer 404.
 - Add `GET /messages/watch` (resumable, side-effect-free mailbox SSE stream with
   `after_seq`, `synchronized`, `gap` and keepalive) and `tether mailbox watch <urn>`.
 - Add the teams activation policy (Stage A). Formation, previously always

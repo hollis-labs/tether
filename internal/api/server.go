@@ -184,6 +184,8 @@ type Server struct {
 	// records the finding and keeps the request.
 	IdentityMode  identity.Mode
 	IdentityAudit func(context.Context, identity.Observation) error
+
+	chatReplays chatReplays
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -234,6 +236,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEventRoutes(router)
 	s.registerEnvironmentRoutes(router)
 	s.registerCatalogRoutes(router)
+	s.registerChatRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)
 	s.registerWorkstreamRoutes(router)

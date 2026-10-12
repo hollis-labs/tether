@@ -121,6 +121,9 @@ func TestRemoteScopesEnforceIndependentAndPayloadCases(t *testing.T) {
 		{"POST", "/a2a/agents/x/rpc", `{"method":"SendMessage"}`, []string{"read"}, 403},
 		{"POST", "/a2a/agents/x/rpc", `{"method":"SendMessage"}`, []string{"operate"}, 204},
 		{"POST", "/a2a/agents/x/rpc", `{"method":"FutureMethod"}`, []string{"admin", "operate", "read", "maintain"}, 403},
+		{"GET", "/chat/agents", "", []string{"read"}, 204},
+		{"POST", "/chat/agents/pm/send", `{}`, []string{"read"}, 403},
+		{"POST", "/chat/agents/pm/send", `{}`, []string{"operate"}, 204},
 		{"GET", "/future", "", []string{"read"}, 404},
 		{"DELETE", "/sessions", "", []string{"operate"}, 404},
 	} {

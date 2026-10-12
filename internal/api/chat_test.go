@@ -1,0 +1,186 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launchprofile"
+	"github.com/hollis-labs/tether/internal/store"
+)
+
+func chatCatalog() *fakeCatalogLoader {
+	return &fakeCatalogLoader{cat: &config.Catalog{
+		Agents: map[string]config.Agent{"pm": {ID: "pm"}},
+		Launches: map[string]config.Launch{
+			"pm-launch": {ID: "pm-launch", Agent: "pm", Chat: true, DisplayName: "Portfolio Manager",
+				Route: &launchprofile.Route{Channel: "owner-inbox", Kinds: []string{"final", "failure"}}},
+			"plain": {ID: "plain", Agent: "pm"},
+		},
+	}}
+}
+
+func chatHandler(svc LaunchService) http.Handler {
+	return NewHandler(Deps{Service: svc, Catalog: chatCatalog()})
+}
+
+func chatSend(h http.Handler, launch, body string) *httptest.ResponseRecorder {
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/chat/agents/"+launch+"/send", strings.NewReader(body)))
+	return rr
+}
+
+func TestChatRosterListsOnlyFlaggedLaunches(t *testing.T) {
+	svc := &fakeLaunchService{
+		listRes:         []store.SessionRow{{ID: "s1", LaunchID: "pm-launch", State: "running", UpdatedAt: "2026-10-12T10:00:00Z"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+	}
+	rr := httptest.NewRecorder()
+	chatHandler(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/chat/agents", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
+	}
+	var got ListChatAgentsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Agents) != 1 {
+		t.Fatalf("roster = %+v", got.Agents)
+	}
+	a := got.Agents[0]
+	if a.LaunchID != "pm-launch" || a.AgentID != "pm" || a.DisplayName != "Portfolio Manager" || a.Channel != "owner-inbox" {
+		t.Fatalf("agent = %+v", a)
+	}
+	if a.Session == nil || a.Session.ID != "s1" || !a.Session.AtTurnBoundary || a.Session.LastActivityAt != "2026-10-12T10:00:00Z" {
+		t.Fatalf("session = %+v", a.Session)
+	}
+	if svc.listOpts.LaunchID != "pm-launch" {
+		t.Fatalf("list not scoped to launch: %+v", svc.listOpts)
+	}
+}
+
+func TestChatRosterNoSessionIsNull(t *testing.T) {
+	rr := httptest.NewRecorder()
+	chatHandler(&fakeLaunchService{}).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/chat/agents", nil))
+	if !strings.Contains(rr.Body.String(), `"session":null`) {
+		t.Fatalf("body %s", rr.Body)
+	}
+}
+
+func TestChatSendDeliversTurnToIdleRunningSession(t *testing.T) {
+	svc := &fakeLaunchService{
+		listRes:         []store.SessionRow{{ID: "s1", LaunchID: "pm-launch", State: "running"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+	}
+	h := chatHandler(svc)
+	body := `{"text":"hello","idempotency_key":"k1"}`
+	if rr := chatSend(h, "pm-launch", body); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"mode":"turn"`) {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
+	}
+	// A retry with the same key must not deliver again.
+	rr := chatSend(h, "pm-launch", body)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"replayed":true`) {
+		t.Fatalf("retry status %d: %s", rr.Code, rr.Body)
+	}
+	if len(svc.inputLog) != 1 || string(svc.inputLog[0]) != "hello" {
+		t.Fatalf("delivered %q", svc.inputLog)
+	}
+	if rr := chatSend(h, "pm-launch", `{"text":"other","idempotency_key":"k1"}`); rr.Code != http.StatusConflict || decodeErr(t, rr).Error.Code != CodeIdempotencyConflict {
+		t.Fatalf("reused key: %d %s", rr.Code, rr.Body)
+	}
+}
+
+func TestChatSendMidTurnIs409AgentWorking(t *testing.T) {
+	svc := &fakeLaunchService{
+		listRes:            []store.SessionRow{{ID: "s1", LaunchID: "pm-launch", State: "running"}},
+		runtimeHealthOK:    map[string]bool{"s1": true},
+		runtimeHealthState: map[string]agentsessions.LiveState{"s1": agentsessions.LiveStateProcessing},
+	}
+	h := chatHandler(svc)
+	rr := chatSend(h, "pm-launch", `{"text":"hello","idempotency_key":"k1"}`)
+	if rr.Code != http.StatusConflict || decodeErr(t, rr).Error.Code != CodeAgentWorking {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
+	}
+	if len(svc.inputLog) != 0 || len(svc.createInputs) != 0 {
+		t.Fatalf("mid-turn send must not deliver or launch: %v %v", svc.inputLog, svc.createInputs)
+	}
+	// The refused key is not consumed: the retry once idle delivers.
+	svc.runtimeHealthState["s1"] = agentsessions.LiveStateIdle
+	if rr := chatSend(h, "pm-launch", `{"text":"hello","idempotency_key":"k1"}`); rr.Code != http.StatusOK {
+		t.Fatalf("retry status %d: %s", rr.Code, rr.Body)
+	}
+}
+
+func TestChatSendTurnInFlightRaceIs409(t *testing.T) {
+	svc := &fakeLaunchService{
+		listRes:         []store.SessionRow{{ID: "s1", LaunchID: "pm-launch", State: "running"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+		inputErr:        agentsessions.ErrTurnInFlight,
+	}
+	rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"hello","idempotency_key":"k1"}`)
+	if rr.Code != http.StatusConflict || decodeErr(t, rr).Error.Code != CodeAgentWorking {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
+	}
+}
+
+func TestChatSendLaunchesWhenNoRunningSession(t *testing.T) {
+	for name, rows := range map[string][]store.SessionRow{
+		"none":    nil,
+		"ended":   {{ID: "old", LaunchID: "pm-launch", State: "completed"}},
+		"foreign": {{ID: "other", LaunchID: "plain", State: "running"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeLaunchService{listRes: rows, createRes: LaunchResult{SessionID: "new"}}
+			rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"start here","idempotency_key":"k9"}`)
+			if rr.Code != http.StatusCreated || !strings.Contains(rr.Body.String(), `"mode":"launch"`) {
+				t.Fatalf("status %d: %s", rr.Code, rr.Body)
+			}
+			if len(svc.createInputs) != 1 {
+				t.Fatalf("creates = %+v", svc.createInputs)
+			}
+			in := svc.createInputs[0]
+			if in.LaunchID != "pm-launch" || in.PromptAppend != "start here" || in.IdempotencyKey != "chat:pm-launch:k9" {
+				t.Fatalf("create input = %+v", in)
+			}
+			if len(svc.launchIDs) != 1 || svc.launchIDs[0] != "new" || len(svc.inputLog) != 0 {
+				t.Fatalf("launch ids %v input %v", svc.launchIDs, svc.inputLog)
+			}
+		})
+	}
+}
+
+func TestChatSendLaunchReplayDoesNotRelaunch(t *testing.T) {
+	svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "new", Replayed: true}}
+	rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"x","idempotency_key":"k"}`)
+	if rr.Code != http.StatusOK || len(svc.launchIDs) != 0 {
+		t.Fatalf("status %d launches %v", rr.Code, svc.launchIDs)
+	}
+}
+
+func TestChatSendValidation(t *testing.T) {
+	h := chatHandler(&fakeLaunchService{})
+	for name, tc := range map[string]struct {
+		launch, body string
+		want         int
+	}{
+		"unflagged launch": {"plain", `{"text":"x","idempotency_key":"k"}`, http.StatusNotFound},
+		"unknown launch":   {"nope", `{"text":"x","idempotency_key":"k"}`, http.StatusNotFound},
+		"empty text":       {"pm-launch", `{"text":"  ","idempotency_key":"k"}`, http.StatusBadRequest},
+		"missing key":      {"pm-launch", `{"text":"x"}`, http.StatusBadRequest},
+		"unknown field":    {"pm-launch", `{"text":"x","idempotency_key":"k","extra":1}`, http.StatusBadRequest},
+	} {
+		if rr := chatSend(h, tc.launch, tc.body); rr.Code != tc.want {
+			t.Errorf("%s: status %d: %s", name, rr.Code, rr.Body)
+		}
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/chat/agents/pm-launch/send", nil))
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET send: %d", rr.Code)
+	}
+}

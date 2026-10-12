@@ -343,6 +343,8 @@ type ListSessionsOptions struct {
 	Cursor  string
 	State   string
 	GroupID string
+	// LaunchID, when set, restricts the list to sessions created from that launch.
+	LaunchID string
 }
 
 const (
@@ -381,6 +383,9 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	}
 	if opts.GroupID != "" {
 		add("session_group_id = ?", opts.GroupID)
+	}
+	if opts.LaunchID != "" {
+		add("launch_id = ?", opts.LaunchID)
 	}
 
 	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
