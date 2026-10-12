@@ -97,6 +97,7 @@ type Worker struct {
 	Version   string
 	mu        sync.Mutex
 	ws        *websocket.Conn
+	ready     bool
 	write     sync.Mutex
 	Caps      func(context.Context) json.RawMessage
 	Inventory func() []workerwire.Session
@@ -118,8 +119,9 @@ func (w *Worker) Send(f workerwire.Frame) error {
 	defer w.write.Unlock()
 	w.mu.Lock()
 	ws := w.ws
+	ready := w.ready
 	w.mu.Unlock()
-	if ws == nil {
+	if ws == nil || (!ready && f.T != "hello") {
 		return fmt.Errorf("hub disconnected")
 	}
 	_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -176,11 +178,13 @@ func (w *Worker) connect(ctx context.Context) error {
 	defer stop()
 	w.mu.Lock()
 	w.ws = ws
+	w.ready = false
 	w.mu.Unlock()
 	defer func() {
 		w.mu.Lock()
 		if w.ws == ws {
 			w.ws = nil
+			w.ready = false
 		}
 		w.mu.Unlock()
 	}()
@@ -200,6 +204,9 @@ func (w *Worker) connect(ctx context.Context) error {
 		_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
 		switch f.T {
 		case "welcome":
+			w.mu.Lock()
+			w.ready = true
+			w.mu.Unlock()
 			w.Config.WorkerID = f.WorkerID
 			_ = SaveJSON(filepath.Join(w.Root, "config.json"), w.Config)
 			if w.OnConnect != nil {

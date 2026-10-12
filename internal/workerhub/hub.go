@@ -148,7 +148,7 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 		var state string
 		var seq int64
 		err := h.db.QueryRowContext(r.Context(), `SELECT s.state,COALESCE(q.last_seq,0) FROM sessions s LEFT JOIN session_worker_seq q ON q.session_id=s.id WHERE s.id=? AND s.worker_id=?`, held.ID, id).Scan(&state, &seq)
-		if err != nil || state == "exited" || state == "failed" || state == "stopped" {
+		if err != nil || state == "completed" || state == "failed" || state == "killed" {
 			welcome.Kill = append(welcome.Kill, held.ID)
 		} else {
 			welcome.Resume = append(welcome.Resume, workerwire.Cursor{Session: held.ID, FromSeq: seq + 1})

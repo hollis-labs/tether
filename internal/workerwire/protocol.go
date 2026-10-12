@@ -40,6 +40,7 @@ type Frame struct {
 	Sandboxed bool            `json:"sandboxed"`
 	Error     string          `json:"error,omitempty"`
 	Data      []byte          `json:"data,omitempty"`
+	Stream    string          `json:"stream,omitempty"`
 	Seq       int64           `json:"seq,omitempty"`
 	FromSeq   int64           `json:"from_seq,omitempty"`
 	At        string          `json:"at,omitempty"`

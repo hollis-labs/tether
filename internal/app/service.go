@@ -67,13 +67,14 @@ type Service struct {
 	// call tether_team_*; set by daemon startup from modules.teams.
 	TeamsEnabled bool
 
-	CatalogRoot string
-	Catalog     *config.Catalog
-	Store       *store.Store
-	Workers     *workerhub.Hub
-	Manager     *agentsessions.Manager
-	Bus         events.Bus
-	Broker      *broker.Service
+	CatalogRoot    string
+	Catalog        *config.Catalog
+	Store          *store.Store
+	Workers        *workerhub.Hub
+	workerIngestMu sync.Mutex
+	Manager        *agentsessions.Manager
+	Bus            events.Bus
+	Broker         *broker.Service
 
 	// Federation is the authority-routing messaging Router, or nil when
 	// federation is disabled (the standalone default). When non-nil it
@@ -293,6 +294,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		factories:   factories,
 	}
 	service.installRecipientWake()
+	service.Workers.Event = service.ingestWorkerFrame
 	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
 	if validateMCPGrants {

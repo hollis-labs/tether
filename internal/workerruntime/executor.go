@@ -37,6 +37,7 @@ type execution struct {
 	Cursor     string `json:"cursor"`
 	ExitCode   *int   `json:"exit_code,omitempty"`
 	client     *shim.Client
+	outputs    []outputRecord
 }
 type Executor struct {
 	Root     string
@@ -101,7 +102,21 @@ func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 		return e.Send(workerwire.Frame{T: "input_ack", CmdID: f.CmdID, Session: f.Session})
 	case "resize":
 		return fmt.Errorf("stdio shim does not support resize")
-	case "welcome", "replay", "ack":
+	case "welcome":
+		for _, id := range f.Kill {
+			if s := e.get(id); s != nil {
+				_ = s.client.Send(id, "control", map[string]any{"action": "kill"})
+			}
+		}
+		for _, cursor := range f.Resume {
+			if err := e.replay(cursor.Session, cursor.FromSeq); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "replay":
+		return e.replay(f.Session, f.FromSeq)
+	case "ack":
 		return nil
 	default:
 		return fmt.Errorf("unsupported worker command %s", f.T)
@@ -244,6 +259,12 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		time.Sleep(50 * time.Millisecond)
 	}
 	s := &execution{ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client}
+	if child != nil {
+		s.PID = child.Process.Pid
+	}
+	if err := e.persist(s); err != nil {
+		return nil, err
+	}
 	e.mu.Lock()
 	e.sessions[spec.Session] = s
 	e.mu.Unlock()
@@ -283,23 +304,43 @@ func (e *Executor) follow(s *execution) {
 			continue
 		}
 		event := body.Event
+		s.mu.Lock()
+		s.Cursor = event.Cursor
 		if event.Kind == "shim.started" {
 			var b struct {
 				PID int `json:"pid"`
 			}
 			_ = json.Unmarshal(event.Payload, &b)
-			s.mu.Lock()
 			s.PID = b.PID
-			s.mu.Unlock()
+		}
+		if event.Kind == "shim.output" {
+			var chunk struct {
+				Data   string `json:"data"`
+				Stream string `json:"stream"`
+			}
+			if json.Unmarshal(event.Payload, &chunk) == nil {
+				data, err := base64.StdEncoding.DecodeString(chunk.Data)
+				if err == nil {
+					s.LastSeq++
+					out := outputRecord{Frame: workerwire.Frame{T: "output", Session: s.ID, Seq: s.LastSeq, Data: data, Stream: chunk.Stream, At: event.Time.UTC().Format(time.RFC3339Nano)}, Cursor: event.Cursor}
+					if err := e.appendOutput(s, out); err != nil {
+						s.mu.Unlock()
+						continue
+					}
+					s.outputs = append(s.outputs, out)
+					_ = e.persist(s)
+					_ = e.Send(out.Frame)
+				}
+			}
 		}
 		if event.Kind == "shim.exit" {
 			var exit shim.Exit
 			_ = json.Unmarshal(event.Payload, &exit)
-			s.mu.Lock()
 			s.State = "exited"
 			s.ExitCode = &exit.Status
-			s.mu.Unlock()
 			_ = e.Send(workerwire.Frame{T: "state", Session: s.ID, State: "exited", ExitCode: &exit.Status})
 		}
+		_ = e.persist(s)
+		s.mu.Unlock()
 	}
 }

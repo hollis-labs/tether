@@ -58,6 +58,9 @@ func main() {
 			return err
 		}
 		executor := workerruntime.NewExecutor(root, binary, w.Send)
+		if err := executor.Restore(); err != nil {
+			return err
+		}
 		w.Inventory = executor.Inventory
 		w.Command = executor.Command
 		return w.Run(c.Context())
