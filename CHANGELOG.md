@@ -8,6 +8,8 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add `GET /messages/watch` (resumable, side-effect-free mailbox SSE stream with
+  `after_seq`, `synchronized`, `gap` and keepalive) and `tether mailbox watch <urn>`.
 - Add the teams activation policy (Stage A). Formation, previously always
   refused, is now governed by `<catalog root>/teams-policy.yaml` read at daemon
   start: absent means deny, invalid fails with a clear error. It allows only the

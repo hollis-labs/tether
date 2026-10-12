@@ -114,26 +114,7 @@ func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f List
 		offset = 0
 	}
 
-	where := "routing_staged=0 AND to_urn=?"
-	args := []any{to.URN()}
-	if !f.IncludeArchived {
-		where += " AND archived_at IS NULL"
-	}
-	if f.UnreadOnly {
-		where += " AND read_at IS NULL"
-	}
-	if len(f.Kind) > 0 {
-		in := make([]any, len(f.Kind))
-		for i, k := range f.Kind {
-			in[i] = string(k)
-		}
-		where += " AND kind IN (?" + repeatCommaQ(len(f.Kind)-1) + ")"
-		args = append(args, in...)
-	}
-	if f.ThreadID != "" {
-		where += " AND thread_id=?"
-		args = append(args, f.ThreadID)
-	}
+	where, args := listWhere(to, f)
 
 	page := ListPage{Limit: limit, Offset: offset}
 
@@ -166,6 +147,31 @@ func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f List
 		return ListPage{}, err
 	}
 	return page, nil
+}
+
+// listWhere builds the WHERE clause shared by List and MailboxAfter.
+func listWhere(to messaging.Address, f ListFilter) (string, []any) {
+	where := "routing_staged=0 AND to_urn=?"
+	args := []any{to.URN()}
+	if !f.IncludeArchived {
+		where += " AND archived_at IS NULL"
+	}
+	if f.UnreadOnly {
+		where += " AND read_at IS NULL"
+	}
+	if len(f.Kind) > 0 {
+		in := make([]any, len(f.Kind))
+		for i, k := range f.Kind {
+			in[i] = string(k)
+		}
+		where += " AND kind IN (?" + repeatCommaQ(len(f.Kind)-1) + ")"
+		args = append(args, in...)
+	}
+	if f.ThreadID != "" {
+		where += " AND thread_id=?"
+		args = append(args, f.ThreadID)
+	}
+	return where, args
 }
 
 // ─── MarkRead / Archive / Unarchive ─────────────────────────────────────────

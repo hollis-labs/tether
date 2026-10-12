@@ -103,7 +103,7 @@ func remoteMiddleware(verifier Verifier, record func(context.Context, Observatio
 
 func deviceStreamRequest(r *http.Request) bool {
 	p := r.URL.Path
-	if p == "/events/stream" || p == "/environment/events" || p == "/messages/subscribe" || p == "/ai/chat/stream" {
+	if p == "/events/stream" || p == "/environment/events" || p == "/messages/subscribe" || p == "/messages/watch" || p == "/ai/chat/stream" {
 		return true
 	}
 	if strings.HasPrefix(p, "/sessions/") && (strings.HasSuffix(p, "/stream") || strings.HasSuffix(p, "/events") || strings.HasSuffix(p, "/attach")) {
