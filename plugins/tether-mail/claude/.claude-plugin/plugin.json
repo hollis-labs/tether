@@ -1,0 +1,12 @@
+{
+  "name": "tether-mail",
+  "version": "0.2.0",
+  "description": "Credential-free Outpost mailbox push via a local socket; no private mailbox watcher.",
+  "userConfig": {
+    "socket": {"type":"string","title":"Outpost socket","description":"Local socket path, or TETHER_MAIL_SOCKET"},
+    "binary": {"type":"string","title":"Worker binary","description":"Path to the thin tether-worker binary","default":"tether-worker"},
+    "name": {"type":"string","title":"Worker-local agent name","description":"Unique name per live agent on this machine","default":"claude"},
+    "urn": {"type":"string","title":"Granted existing URN","description":"Optional; otherwise the hub mints a worker-scoped URN"},
+    "allowSenders": {"type":"string","title":"Allowed sender URNs","description":"Comma-separated exact URNs allowed to wake this agent; empty = operator only","default":""}
+  }
+}

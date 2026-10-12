@@ -32,6 +32,20 @@ func init() {
 	for _, c := range workers {
 		if c.Name() == "workers" {
 			c.Flags().Bool("json", false, "JSON output")
+			var remove bool
+			grant := &cobra.Command{Use: "grant <worker-id> <urn>", Short: "Grant an Outpost permission to bind an existing agent URN", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+				client, err := localDeviceAdminClient()
+				if err != nil {
+					return err
+				}
+				var result any
+				if err = client.call(cmd.Context(), http.MethodPost, "/workers/grants", map[string]any{"worker": args[0], "urn": args[1], "remove": remove}, &result); err != nil {
+					return err
+				}
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}}
+			grant.Flags().BoolVar(&remove, "remove", false, "remove grant and stop its live binding")
+			c.AddCommand(grant)
 		}
 	}
 }

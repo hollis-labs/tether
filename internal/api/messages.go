@@ -276,6 +276,16 @@ func (s *Server) unreadCount(ctx context.Context, to messaging.Address) (int, er
 }
 
 func (s *Server) resolveNotifySession(ctx context.Context, explicit string, to messaging.Address) (string, error) {
+	if resolver, ok := s.Service.(interface {
+		ResolveOutpostRecipient(context.Context, messaging.Address) (string, bool)
+	}); ok {
+		if id, matched := resolver.ResolveOutpostRecipient(ctx, to); matched {
+			if explicit != "" && explicit != id {
+				return "", fmt.Errorf("recipient has an Outpost binding; session override refused")
+			}
+			return id, nil
+		}
+	}
 	if explicit != "" {
 		row, err := s.Service.GetSession(explicit)
 		if err != nil {

@@ -24,6 +24,12 @@ type Cursor struct {
 	FromSeq int64  `json:"from_seq"`
 }
 type Frame struct {
+	Features  []string        `json:"features,omitempty"`
+	Bindings  []Binding       `json:"bindings,omitempty"`
+	Binding   *Binding        `json:"binding,omitempty"`
+	URN       string          `json:"urn,omitempty"`
+	Text      string          `json:"text,omitempty"`
+	MessageID string          `json:"message_id,omitempty"`
 	T         string          `json:"t"`
 	Proto     int             `json:"proto,omitempty"`
 	Worker    *Worker         `json:"worker,omitempty"`

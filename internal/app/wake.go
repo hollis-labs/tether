@@ -61,6 +61,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -300,14 +301,23 @@ func (p *wakeParkSet) retain(ready []delivery.RecipientDelivery, upTo delivery.D
 // deterministic fake so the delivery-core/registry-binding logic below can
 // be driven end-to-end without spawning a real provider subprocess.
 type wakeRuntime struct {
-	health   func(sessionID string) (api.RuntimeHealthResult, bool)
-	sendTurn func(ctx context.Context, sessionID, text string) error
+	resolveOutpost func(context.Context, messaging.Address) (string, bool)
+	sendMail       func(context.Context, string, string, string) error
+	health         func(sessionID string) (api.RuntimeHealthResult, bool)
+	sendTurn       func(ctx context.Context, sessionID, text string) error
 }
 
 func (s *Service) runtimeSeam() wakeRuntime {
 	return wakeRuntime{
-		health:   s.RuntimeHealth,
-		sendTurn: s.SendTurn,
+		health: func(id string) (api.RuntimeHealthResult, bool) {
+			if strings.HasPrefix(id, "outpost:") {
+				return s.outpostHealth(id)
+			}
+			return s.RuntimeHealth(id)
+		},
+		sendTurn:       s.SendTurn,
+		resolveOutpost: s.outpostResolve,
+		sendMail:       s.outpostSend,
 	}
 }
 
@@ -576,7 +586,13 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		return blocked
 	}
 
-	if err := rt.sendTurn(ctx, sessionID, wakeText); err != nil {
+	var submitErr error
+	if rt.sendMail != nil {
+		submitErr = rt.sendMail(ctx, sessionID, messageID, wakeText)
+	} else {
+		submitErr = rt.sendTurn(ctx, sessionID, wakeText)
+	}
+	if err := submitErr; err != nil {
 		// Unsupported steering / turn-submit failure fails honestly: the
 		// delivery is released for retry, but this call never falls back
 		// to a different session for the same actor -- a failed selected
@@ -587,6 +603,12 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 
 	if _, _, err := ds.Ack(ctx, delivery.AckRequest{Lease: lease, Stage: delivery.StageTurnSubmitted}); err != nil {
 		log.Printf("app: attempt wake: ack turn_submitted for delivery %s failed (best-effort receipt recording skipped): %v", deliveryID, err)
+	}
+	if strings.HasPrefix(sessionID, "outpost:") {
+		// A real adapter acknowledgement marks delivered, never read/consumed.
+		if _, err := st.DB().ExecContext(ctx, `UPDATE messages SET delivered_at=COALESCE(delivered_at,?) WHERE id=? AND to_urn=?`, time.Now().UTC().Format(time.RFC3339Nano), messageID, to.URN()); err != nil {
+			return api.WakeOutcome{Attempted: true, Delivered: true, SessionID: sessionID, Detail: "delivered timestamp: " + err.Error()}
+		}
 	}
 	// Hold the lease, still at turn_submitted, for the recipient to consume
 	// -- see wakeConsumeWindow. Best-effort: on failure the lease lapses at
@@ -609,6 +631,9 @@ func checkWakeBinding(ctx context.Context, reg *registry.Service, to messaging.A
 		return 0, api.WakeOutcome{Reason: reason, Detail: detail, SessionID: sessionID}
 	}
 	target := registry.LogicalAgentBindingTarget(to.ID)
+	if strings.HasPrefix(sessionID, "outpost:") {
+		target = to.URN()
+	}
 	current, err := reg.CurrentBinding(ctx, target)
 	if err == nil {
 		if isPullOnly(current) {
@@ -660,6 +685,11 @@ func nackRetryable(ctx context.Context, ds delivery.Store, lease delivery.LeaseR
 // no per-call explicit session_id override the way notify does -- it only
 // ever works from the delivery's own recorded recipient address.
 func resolveWakeTarget(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, to messaging.Address) (string, error) {
+	if rt.resolveOutpost != nil {
+		if id, matched := rt.resolveOutpost(ctx, to); matched {
+			return id, nil
+		}
+	}
 	switch to.Kind {
 	case messaging.KindSession:
 		if _, ok := rt.health(to.ID); ok {

@@ -5,6 +5,7 @@ package workerruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"github.com/hollis-labs/tether/internal/devicepair"
@@ -23,10 +24,15 @@ import (
 )
 
 type Config struct {
-	Hub      string `json:"hub"`
-	Label    string `json:"label"`
-	WorkerID string `json:"worker_id,omitempty"`
+	MailSocket string `json:"mail_socket,omitempty"`
+	MailGID    *int   `json:"mail_gid,omitempty"`
+	MailUIDs   []int  `json:"mail_uids,omitempty"`
+	Hub        string `json:"hub"`
+	Label      string `json:"label"`
+	WorkerID   string `json:"worker_id,omitempty"`
 }
+
+var ErrHubDisconnected = errors.New("hub disconnected")
 
 func SaveJSON(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
@@ -107,6 +113,11 @@ type Worker struct {
 	Inventory func() []workerwire.Session
 	Command   func(context.Context, workerwire.Frame) error
 	OnConnect func()
+	Bindings  func() []workerwire.Binding
+	pendingMu sync.Mutex
+	pending   map[string]chan workerwire.Frame
+	commands  chan workerwire.Frame
+	launches  chan struct{}
 }
 
 func (w *Worker) capabilities(ctx context.Context) json.RawMessage {
@@ -126,18 +137,41 @@ func (w *Worker) Send(f workerwire.Frame) error {
 	ready := w.ready
 	w.mu.Unlock()
 	if ws == nil || (!ready && f.T != "hello") {
-		return fmt.Errorf("hub disconnected")
+		return ErrHubDisconnected
 	}
 	_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return ws.WriteJSON(f)
 }
 func (w *Worker) Run(ctx context.Context) error {
+	w.pendingMu.Lock()
+	if w.pending == nil {
+		w.pending = map[string]chan workerwire.Frame{}
+	}
+	w.pendingMu.Unlock()
+	// Keep the socket reader free for ping/replies while a launch clones a repo.
+	w.commands = make(chan workerwire.Frame, 32)
+	w.launches = make(chan struct{}, 4)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case f := <-w.commands:
+				if w.Command == nil {
+					continue
+				}
+				if err := w.Command(ctx, f); err != nil {
+					_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: err.Error()})
+				}
+			}
+		}
+	}()
 	backoff := time.Second
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil //nolint:nilerr // context cancellation is the clean shutdown path, not a failure
 		}
-		err := w.connect(ctx)
+		err := w.connect(ctx, func() { backoff = time.Second })
 		if ctx.Err() != nil {
 			return nil //nolint:nilerr // shutdown during connect is a clean exit; err is only the canceled dial
 		}
@@ -152,7 +186,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		backoff = min(15*time.Second, backoff*2)
 	}
 }
-func (w *Worker) connect(ctx context.Context) error {
+func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 	token, err := identity.ReadTokenFile(filepath.Join(w.Root, "device.token"))
 	if err != nil {
 		return err
@@ -196,7 +230,11 @@ func (w *Worker) connect(ctx context.Context) error {
 	if w.Inventory != nil {
 		inventory = w.Inventory()
 	}
-	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory}); err != nil {
+	var bindings []workerwire.Binding
+	if w.Bindings != nil {
+		bindings = w.Bindings()
+	}
+	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver"}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory}); err != nil {
 		return err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
@@ -206,8 +244,24 @@ func (w *Worker) connect(ctx context.Context) error {
 			return err
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
+		if f.T == "bind_ack" || f.T == "unbind_ack" {
+			w.pendingMu.Lock()
+			ch := w.pending[f.CmdID]
+			w.pendingMu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- f:
+				default:
+				}
+			}
+			continue
+		}
 		switch f.T {
 		case "welcome":
+			if !hasFeature(f.Features, "bind") || !hasFeature(f.Features, "deliver") {
+				return fmt.Errorf("hub lacks outpost mail features; upgrade hub before worker")
+			}
+			welcomed()
 			w.mu.Lock()
 			w.ready = true
 			w.mu.Unlock()
@@ -216,10 +270,10 @@ func (w *Worker) connect(ctx context.Context) error {
 			if w.OnConnect != nil {
 				w.OnConnect()
 			}
-			if w.Command != nil {
-				if err := w.Command(ctx, f); err != nil {
-					log.Printf("worker welcome: %v", err)
-				}
+			select {
+			case w.commands <- f:
+			default:
+				return fmt.Errorf("worker command queue full")
 			}
 		case "ping":
 			if err = w.Send(workerwire.Frame{T: "pong", TS: f.TS}); err != nil {
@@ -227,26 +281,64 @@ func (w *Worker) connect(ctx context.Context) error {
 			}
 		default:
 			if w.Command != nil {
-				run := func(c context.Context) {
-					if err := w.Command(c, f); err != nil {
-						_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: err.Error()})
-					}
-				}
 				if f.T == "launch" {
-					// A launch clones a repository and can take minutes. Run it off the read loop so pings,
-					// stops and input keep flowing, and bound it below the hub's wait so a launch the hub
-					// has given up on is aborted here instead of starting an untracked agent.
-					go func() {
-						lctx, cancel := context.WithTimeout(ctx, WorkerLaunchTimeout)
-						defer cancel()
-						run(lctx)
-					}()
-				} else {
-					run(ctx)
+					select {
+					case w.launches <- struct{}{}:
+						// Preserve main's deadline and concurrent stop/input handling,
+						// while bounding how many launches can run off the reader.
+						go func(f workerwire.Frame) {
+							defer func() { <-w.launches }()
+							lctx, cancel := context.WithTimeout(ctx, WorkerLaunchTimeout)
+							defer cancel()
+							if err := w.Command(lctx, f); err != nil {
+								_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: err.Error()})
+							}
+						}(f)
+					default:
+						_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: "worker launch capacity full"})
+					}
+					continue
+				}
+				select {
+				case w.commands <- f:
+				default:
+					_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: "worker command queue full"})
 				}
 			} else {
 				_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: "execution not installed"})
 			}
 		}
+	}
+}
+
+func hasFeature(features []string, want string) bool {
+	for _, v := range features {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (w *Worker) Request(ctx context.Context, f workerwire.Frame) (workerwire.Frame, error) {
+	ch := make(chan workerwire.Frame, 1)
+	w.pendingMu.Lock()
+	if w.pending == nil {
+		w.pending = map[string]chan workerwire.Frame{}
+	}
+	w.pending[f.CmdID] = ch
+	w.pendingMu.Unlock()
+	defer func() { w.pendingMu.Lock(); delete(w.pending, f.CmdID); w.pendingMu.Unlock() }()
+	if err := w.Send(f); err != nil {
+		return workerwire.Frame{}, err
+	}
+	select {
+	case r := <-ch:
+		if r.Error != "" {
+			return r, fmt.Errorf("%s", r.Error)
+		}
+		return r, nil
+	case <-ctx.Done():
+		return workerwire.Frame{}, ctx.Err()
 	}
 }
