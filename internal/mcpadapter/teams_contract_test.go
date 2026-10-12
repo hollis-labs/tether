@@ -1040,4 +1040,4 @@ func TestTeamSurfacesDefaultAddress(t *testing.T) {
 }
 
 func (p *refusalPorts) MarkDissolved(context.Context, string) error { return teamsvc.ErrNotFound }
-func (requiredRun) MarkDissolved(context.Context, string) error { return nil }
+func (requiredRun) MarkDissolved(context.Context, string) error     { return nil }
