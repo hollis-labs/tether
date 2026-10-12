@@ -57,6 +57,9 @@ const (
 	ReplyReasonWaitingForIdle  = "waiting_for_idle"
 	ReplyReasonTurnFailed      = "turn_failed"
 	ReplyReasonNoTurnFeed      = "no_turn_feed"
+	// ReplyReasonWorkerOffline: the session lives on a worker that stayed
+	// disconnected for the whole replyUnreachableTTL. Until then the reply waits.
+	ReplyReasonWorkerOffline = "worker_offline_expired"
 	// ReplyReasonInterruptUnconfirmed: the daemon stopped between reserving an
 	// interrupting reply and learning whether the cancel happened. The caller never
 	// got a receipt, so the reply is not sent; resubmit it.
@@ -73,6 +76,11 @@ const (
 var (
 	replySubmitBackoff = 2 * time.Second
 	replyIdleBackoff   = time.Second
+	// A worker that is offline (a sleeping laptop, a restarting service) has not
+	// ended its sessions. A reply for one waits, re-checked on this interval and
+	// when the worker's sessions are next kicked, for at most the TTL.
+	replyUnreachableBackoff = 15 * time.Second
+	replyUnreachableTTL     = 24 * time.Hour
 )
 
 // Interrupt outcomes reported on the receipt. The cancel outcome is the same
@@ -111,6 +119,10 @@ type replyRuntime struct {
 	// noTurnFeed reports a runtime with no turn lifecycle (a PTY): nothing ever
 	// says when it is idle, so a reply could not be delivered at a boundary.
 	noTurnFeed func(sessionID string) bool
+	// unreachable reports a session that is not running only because its worker
+	// is disconnected: it may be perfectly alive, so its replies must wait, not
+	// be resolved as if the session had ended. Nil means never.
+	unreachable func(sessionID string) bool
 }
 
 type replyDrain struct {
@@ -143,11 +155,14 @@ type replyDispatcher struct {
 	// requeued. A 'delivering' row that is not in it was left by a process that
 	// is gone and is resolved by resolveStale.
 	inflight map[string]struct{}
+	// parked holds the sessions with a pending unreachable-worker retry timer,
+	// so repeated kicks do not stack timers.
+	parked map[string]struct{}
 }
 
 func newReplyDispatcher(ctx context.Context, st *store.Store, reg *registry.Service, rt replyRuntime, pub func(string, events.RoutingReplyEvent)) *replyDispatcher {
 	ctx, cancel := context.WithCancel(ctx)
-	return &replyDispatcher{st: st, reg: reg, rt: rt, pub: pub, ctx: ctx, cancel: cancel, sessions: map[string]*replyDrain{}, inflight: map[string]struct{}{}}
+	return &replyDispatcher{st: st, reg: reg, rt: rt, pub: pub, ctx: ctx, cancel: cancel, sessions: map[string]*replyDrain{}, inflight: map[string]struct{}{}, parked: map[string]struct{}{}}
 }
 
 // drainFor returns sessionID's drain state; call with d.mu held.
@@ -305,6 +320,10 @@ func (d *replyDispatcher) drain(sessionID string) bool {
 			return false
 		}
 		if _, running := d.rt.health(sessionID); !running {
+			if d.rt.unreachable != nil && d.rt.unreachable(sessionID) {
+				d.waitForWorker(sessionID, rows[0])
+				return false
+			}
 			d.resolveEnded(sessionID, rows)
 			return false
 		}
@@ -477,6 +496,42 @@ func (d *replyDispatcher) notifyAt(sessionID string, at time.Time) {
 		case <-timer.C:
 			d.notify(sessionID)
 		}
+	})
+}
+
+// waitForWorker holds a session's queue while its worker is disconnected. The
+// head reply is the oldest, so once it outlives the TTL the whole queue is
+// undeliverable; until then one timer (not one per kick) re-checks the session.
+func (d *replyDispatcher) waitForWorker(sessionID string, head store.RoutingReply) {
+	if time.Since(head.CreatedAt) > replyUnreachableTTL {
+		rows, err := d.st.QueuedRoutingReplies(d.ctx, sessionID, replyDrainBatch)
+		if err != nil {
+			return
+		}
+		for _, r := range rows {
+			d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonWorkerOffline,
+				Detail: fmt.Sprintf("the worker hosting session %s stayed offline for %s", sessionID, replyUnreachableTTL)})
+		}
+		return
+	}
+	d.mu.Lock()
+	if _, ok := d.parked[sessionID]; ok || d.stopped {
+		d.mu.Unlock()
+		return
+	}
+	d.parked[sessionID] = struct{}{}
+	d.mu.Unlock()
+	d.spawn(func() {
+		timer := time.NewTimer(replyUnreachableBackoff)
+		defer timer.Stop()
+		select {
+		case <-d.ctx.Done():
+		case <-timer.C:
+		}
+		d.mu.Lock()
+		delete(d.parked, sessionID)
+		d.mu.Unlock()
+		d.notify(sessionID)
 	})
 }
 
@@ -708,7 +763,7 @@ func (s *Service) notifyReplyIdle(sessionID string) {
 }
 
 func (s *Service) replyRuntime() replyRuntime {
-	return replyRuntime{wakeRuntime: s.runtimeSeam(), noTurnFeed: s.replyNoTurnFeed, turnBusy: func(sessionID string) bool {
+	return replyRuntime{wakeRuntime: s.runtimeSeam(), noTurnFeed: s.replyNoTurnFeed, unreachable: s.workerSessionUnreachable, turnBusy: func(sessionID string) bool {
 		state, ok := s.SessionTurnOutputState(sessionID)
 		if !ok {
 			return false
