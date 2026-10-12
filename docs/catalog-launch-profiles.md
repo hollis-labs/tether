@@ -120,6 +120,26 @@ are unset, the default is `worktree`.
 See [workspace parity with the tmux team kit](workspace-parity.md) for the
 working-directory, environment, boot-profile, MCP and file-scope comparison.
 
+### Chat roster flag
+
+```yaml
+id: portfolio-manager
+project: portfolio
+agent: portfolio-manager
+provider: claude-code
+chat: true                      # list this launch in GET /chat/agents
+display_name: Portfolio Manager # optional roster label; defaults to the agent id
+route:
+  channel: owner-inbox
+  kinds: [final, failure]
+```
+
+`chat` (default false) lists the launch as an agent the operator can chat with,
+and `display_name` is its label. Both are roster metadata only: they do not
+change how the launch starts. The agent's replies reach the operator through the
+launch's `route`, so a chat launch normally has one. See
+[Chat roster](api/README.md#chat-roster) for the endpoints.
+
 ### Workspace roots and worktree lifecycle
 
 Three roots are easy to confuse — they are distinct:

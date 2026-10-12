@@ -1866,6 +1866,72 @@ Response (200):
 
 ---
 
+## Chat roster
+
+Operator chat surface for a client that lets a person talk to long-lived
+agents. The roster is the catalog launches flagged `chat: true` (see
+[launch profiles](../catalog-launch-profiles.md#chat-roster-flag)). Both routes
+are mounted only when the daemon has a catalog and a session service; an older
+daemon answers 404, which clients should treat as "roster unavailable". On the
+remote listener they require the `Tether-Protocol` header like every other
+route.
+
+### `GET /chat/agents`
+
+Scope: `read`. Response (200), sorted by `launch_id`:
+
+```json
+{
+  "agents": [
+    {
+      "launch_id": "portfolio-manager",
+      "agent_id": "portfolio-manager",
+      "display_name": "Portfolio Manager",
+      "channel": "owner-inbox",
+      "session": {
+        "id": "01J...",
+        "state": "running",
+        "last_activity_at": "2026-10-12T10:00:00Z",
+        "at_turn_boundary": true
+      }
+    }
+  ]
+}
+```
+
+`session` is `null` when the launch has never produced one, otherwise the
+newest session of that launch in any state. `at_turn_boundary` is true only for
+a `running` session whose runtime reports idle. `channel` is the launch route's
+channel, else its agent's, else empty.
+
+### `POST /chat/agents/{launch_id}/send`
+
+Scope: `operate`. Body (unknown fields are refused):
+
+```json
+{ "text": "hello", "idempotency_key": "client-generated-unique" }
+```
+
+`text` is required, non-blank and at most 64 KiB; `idempotency_key` is
+required. Behavior:
+
+| Newest session of the launch | Result |
+|---|---|
+| running, at a turn boundary | `text` is delivered as the next turn (the `/sessions/{id}/turn` path). 200 `{"mode":"turn"}` |
+| running, mid-turn | Nothing is sent. 409 `agent_working`; the key is not consumed, so retry once idle |
+| none, or not running | A session is created from the launch (`/sessions` semantics, no overrides) with `text` appended to its boot prompt as the first prompt, then started. 201 `{"mode":"launch"}` |
+
+Response: `{"launch_id","session_id","mode","replayed"}`. A retry with the same
+key and text returns the original result with `replayed: true` and delivers
+nothing again; the same key with different text is 409 `idempotency_conflict`.
+Keys are scoped to the authenticated caller and launch. The `turn` path
+remembers keys in memory for 24 hours (a daemon restart forgets them); the
+`launch` path binds the key to the created session durably. Errors: 400
+`invalid_request`, 404 `not_found` (unknown or unflagged launch), 502
+`turn_failed`.
+
+---
+
 ## Session lifecycle policy
 
 Agent profiles and launch entries accept a `lifecycle` block. Launch fields

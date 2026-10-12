@@ -75,6 +75,8 @@ type fakeLaunchService struct {
 	policyErr error
 
 	runtimeHealthOK map[string]bool
+	// runtimeHealthState overrides the live state reported for a session.
+	runtimeHealthState map[string]agentsessions.LiveState
 
 	// attemptWakeLog records every AttemptWake call
 	// (messageID/to/sessionID/wakeText) for assertions. AttemptWake itself
@@ -214,7 +216,7 @@ func (f *fakeLaunchService) RuntimeHealth(id string) (RuntimeHealthResult, bool)
 	if f.runtimeHealthOK == nil || !f.runtimeHealthOK[id] {
 		return RuntimeHealthResult{}, false
 	}
-	return RuntimeHealthResult{SessionID: id}, true
+	return RuntimeHealthResult{SessionID: id, Health: agentsessions.HealthStatus{State: f.runtimeHealthState[id]}}, true
 }
 
 // ResolveActorSession replicates resolveNotifySession's pre-T06 legacy
