@@ -540,3 +540,32 @@ func TestResolve_ExplicitEmptyProjectGrantWins(t *testing.T) {
 		t.Fatalf("empty grant lost: %v", plan.Env)
 	}
 }
+
+func TestResolve_RepoURLCarriedIntoPlan(t *testing.T) {
+	cat := &config.Catalog{
+		Projects: map[string]config.Project{
+			"demo": {ID: "demo", RepoRoot: "/tmp/demo", RepoURL: "https://github.com/hollis-labs/demo.git", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/sessions"}},
+			"bare": {ID: "bare", RepoRoot: "/tmp/bare", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/sessions"}},
+		},
+		Agents:    map[string]config.Agent{"a": {ID: "a", Name: "A"}},
+		Providers: map[string]config.Provider{"p": {ID: "p", Type: "cli", Command: "p"}},
+		Launches: map[string]config.Launch{
+			"with-url": {ID: "with-url", Project: "demo", Agent: "a", Provider: "p"},
+			"no-url":   {ID: "no-url", Project: "bare", Agent: "a", Provider: "p"},
+		},
+	}
+	withURL, err := Resolve(cat, Input{LaunchID: "with-url"})
+	if err != nil {
+		t.Fatalf("resolve with url: %v", err)
+	}
+	if withURL.RepoURL != "https://github.com/hollis-labs/demo.git" {
+		t.Fatalf("RepoURL = %q, want the project's git remote", withURL.RepoURL)
+	}
+	noURL, err := Resolve(cat, Input{LaunchID: "no-url"})
+	if err != nil {
+		t.Fatalf("resolve without url: %v", err)
+	}
+	if noURL.RepoURL != "" {
+		t.Fatalf("RepoURL = %q, want empty when the project declares none", noURL.RepoURL)
+	}
+}
