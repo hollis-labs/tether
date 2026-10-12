@@ -33,6 +33,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
+	github.com/hollis-labs/go-forums v0.0.0 // indirect
 	github.com/hollis-labs/go-ssekit v0.2.0 // indirect
 	github.com/hollis-labs/libs/plugin-mcp v0.1.1 // indirect
 	github.com/hollis-labs/libs/util v0.2.0 // indirect
@@ -90,3 +91,5 @@ require (
 )
 
 replace github.com/hollis-labs/tether => ../..
+
+replace github.com/hollis-labs/go-forums => ../../../go-forums

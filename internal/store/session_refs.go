@@ -25,6 +25,7 @@ import (
 // should have been one. Use these constants at the callsite; adding a kind is
 // a one-line change here, not a migration.
 const (
+	KindForumPost         = "forum_post"
 	KindTorqueTask        = "torque_task"
 	KindGitCommit         = "git_commit"
 	KindGitPR             = "git_pr"
@@ -40,7 +41,7 @@ const (
 // unknown kind is accepted, by design. It exists so callers can check
 // themselves and so a drift audit has something to compare against.
 var KnownRefKinds = map[string]bool{
-	KindTorqueTask: true, KindGitCommit: true, KindGitPR: true,
+	KindForumPost: true, KindTorqueTask: true, KindGitCommit: true, KindGitPR: true,
 	KindTesseractItem: true, KindTesseractRevision: true, KindTesseractKey: true,
 	KindCerberusDeploy: true, KindADR: true, KindURL: true,
 }

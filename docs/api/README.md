@@ -2826,3 +2826,9 @@ The routes documented here are stable for v0.0.2 — Nanite and Clockwork
 adopt these shapes in v0.0.3 integration work. Adding new endpoints is
 additive and non-breaking. Changing existing response shapes requires a
 version bump at the mount-point level (not yet in scope).
+
+## Forums
+
+The `/forums` routes provide durable topics and threaded posts. See
+[Forums](../forums.md#http-contract) for routes, identity, pagination and the
+compact response contract.

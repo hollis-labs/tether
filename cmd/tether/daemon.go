@@ -38,6 +38,7 @@ import (
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
+	forumhost "github.com/hollis-labs/tether/internal/forums"
 	"github.com/hollis-labs/tether/internal/identity"
 	llm "github.com/hollis-labs/tether/internal/llm"
 	llmanthropic "github.com/hollis-labs/tether/internal/llm/anthropic"
@@ -337,6 +338,7 @@ var daemonRunCmd = &cobra.Command{
 			Digests:             svc.Store,
 			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			Channels:            svc.Channels,
+			Forums:              forumhost.New(svc.Store),
 			Routing:             svc,
 			Teams:               teamOps,
 			DeliveryClaims:      svc.Store,

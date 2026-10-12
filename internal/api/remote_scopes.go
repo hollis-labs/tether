@@ -45,6 +45,13 @@ func routeScope(registration, path string, methods map[string]string, payloadPol
 // Registration links item/action policies to their actual ServeMux owner for
 // the structural coverage test; it is not a route-count or document check.
 var RemoteRouteScopes = []RouteScope{
+	routeScope("/forums", "/forums", map[string]string{"GET": readScope, "POST": localScope}),
+	routeScope("/forums/", "/forums/{id}", map[string]string{"GET": readScope}),
+	routeScope("/forums/", "/forums/{id}/topics", map[string]string{"GET": readScope, "POST": operateScope}),
+	routeScope("/forums/", "/forums/{id}/search", map[string]string{"GET": readScope}),
+	routeScope("/forums/", "/forums/topics/{id}", map[string]string{"GET": readScope}),
+	routeScope("/forums/", "/forums/topics/{id}/posts", map[string]string{"GET": readScope, "POST": operateScope}),
+	routeScope("/forums/", "/forums/posts/{id}", map[string]string{"GET": readScope}),
 	routeScope("GET /worker/v1/connect", "/worker/v1/connect", map[string]string{"GET": identity.ScopeWorker}),
 	routeScope("GET /workers", "/workers", map[string]string{"GET": readScope}),
 	routeScope("POST /workers/grants", "/workers/grants", map[string]string{"POST": adminScope}),
