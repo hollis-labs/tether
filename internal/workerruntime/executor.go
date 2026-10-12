@@ -191,23 +191,23 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			switch args[i] {
 			case "--mcp-config", "--append-system-prompt-file", "--system-prompt-file", "--input-format", "--output-format":
 				i++
+			case "--add-dir":
+				i++
 			case "-p", "--print", "--verbose", "--include-partial-messages":
 			default:
 				keep = append(keep, args[i])
 			}
 		}
 		args = append(keep, "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages")
-		mcp := filepath.Join(e.Root, "hub-mcp.json")
-		if b, err := os.ReadFile(mcp); err == nil {
-			if err = plant(cwd, ".mcp.json", b); err != nil {
-				return nil, err
-			}
-			args = append(args, "--strict-mcp-config", "--mcp-config", filepath.Join(cwd, ".mcp.json"))
+		if err := e.plantMCP(cwd); err != nil {
+			return nil, err
 		}
+		args = append(args, "--strict-mcp-config", "--mcp-config", filepath.Join(cwd, ".mcp.json"))
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = cwd
 	cmd.Env = provider.BuildEnv("merge", nil, nil, spec.Env, os.Environ())
+	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+spec.Actor)
 	sandboxed := false
 	if spec.Sandbox != nil {
 		if _, err := sandbox.Apply(cmd, *spec.Sandbox, cwd); err == nil {
@@ -279,6 +279,9 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	go e.follow(s)
 	_ = client.Replay(spec.Session, "")
 	if spec.BootPrompt != "" {
+		if spec.Provider == "claude" {
+			spec.BootPrompt += "\n\nYou run on a Tether execution outpost. Your canonical hub session is " + spec.Session + " and hub agent address is " + spec.Actor + ". The planted torque, tesseract and tether MCP clients go to the hub. For self-discovery call tether_whoami with as set to that hub agent address. Do not start a local Tether daemon or create a local authority."
+		}
 		data := []byte(spec.BootPrompt + "\n")
 		if spec.Provider == "claude" {
 			data, _ = json.Marshal(map[string]any{"type": "user", "message": map[string]string{"role": "user", "content": spec.BootPrompt}})

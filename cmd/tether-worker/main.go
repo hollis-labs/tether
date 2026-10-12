@@ -35,10 +35,25 @@ func main() {
 	}}
 	shimCmd.Flags().StringVar(&descriptor, "launch", "", "private shim launch descriptor")
 	cmd.AddCommand(shimCmd)
-	var hub, code, label string
+	var hub, code, label, mcpSource string
+	var install bool
 	enroll := &cobra.Command{Use: "enroll", RunE: func(c *cobra.Command, _ []string) error {
 		if err := workerruntime.Enroll(c.Context(), root, hub, code, label); err != nil {
 			return err
+		}
+		if mcpSource != "" {
+			if err := workerruntime.ImportHubMCP(root, mcpSource); err != nil {
+				return err
+			}
+		}
+		if install {
+			binary, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			if err := workerruntime.InstallService(c.Context(), root, binary); err != nil {
+				return err
+			}
 		}
 		fmt.Fprintln(c.OutOrStdout(), "enrolled", label)
 		return nil
@@ -46,6 +61,8 @@ func main() {
 	enroll.Flags().StringVar(&hub, "hub", "", "hub HTTP(S) URL")
 	enroll.Flags().StringVar(&code, "code", "", "one-time worker pairing code")
 	enroll.Flags().StringVar(&label, "label", "", "worker label")
+	enroll.Flags().StringVar(&mcpSource, "mcp-config", "", "existing JSON with configured hub torque/tesseract/tether clients")
+	enroll.Flags().BoolVar(&install, "install", false, "install/start systemd user or launchd outpost service")
 	cmd.AddCommand(enroll)
 	cmd.AddCommand(&cobra.Command{Use: "run", RunE: func(c *cobra.Command, _ []string) error {
 		cfg, err := workerruntime.Load(root)

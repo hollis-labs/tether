@@ -237,3 +237,40 @@ Windows; distinct repo/binary hardening (CW-20261012-0017, OS parity -0016); ret
    on a different machine than the hub's catalog assumes.
 5. The agent's `tether` MCP entry needs unattended SSH from the worker account to the hub (S0).
 6. Two Tether authorities on one account if the old worker service is left running.
+
+## 11. Implemented MVP commands and smoke entry points
+
+Build both binaries from the exact commit deployed on the hub. The worker takes
+no catalog and opens no Tether database. Its root defaults to `~/.tether-worker`.
+
+```sh
+# Claude performs Linux setup/deployment; the operator enrolls each Mac.
+tether-worker enroll --hub https://tether.hub.nanite.cloud --code CODE \
+  --label worker-1 --mcp-config /path/to/configured-hub-clients.json --install
+tether-worker run
+tether-worker status
+tether workers --json
+tether launch --launch tether-claude --worker worker-1
+```
+
+`--mcp-config` accepts a JSON document with `mcpServers.torque`, `.tesseract` and
+`.tether` already configured for the hub. Only those entries are imported.
+The Tether entry must use `ssh` and `mcp --daemon-only`; a local Tether entry
+is refused. Provider logins and SSH access stay under the worker's OS account.
+
+`--install` writes/starts `tether-outpost.service` on Linux, with `KillMode=process`
+so restarting the outpost leaves detached shims alive. On a logged-in Mac it
+writes/bootstraps `~/Library/LaunchAgents/dev.tether.worker.plist`. Stop the old
+full-Tether `tether-worker.service` before starting the outpost. Do not use
+`--install` and a simultaneous foreground `run` for the same root.
+
+The planted hub MCP uses the existing SSH credential model. `tether_whoami`
+is called with `as` set to the hub agent URN in the worker boot instructions;
+this is claimed self-discovery, not a verified per-session credential. That
+distinction preserves the MVP decision not to transmit session credentials.
+
+Run `bash scripts/worker-smoke-s1.sh` through `worker-smoke-s6.sh` in order.
+The smokes use disposable stores and real detached shim processes. S5 waits
+the existing 30-second offline delivery retry backoff. S6 checks MCP/service
+definitions and builds darwin/linux for amd64/arm64; it does not substitute
+for real Claude/MCP/reply acceptance on worker-1, agent-os and macbook-1.
