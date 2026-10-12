@@ -824,7 +824,7 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 // terminal state is recorded as "killed", distinct from "completed" and
 // "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
-	if row, err := s.Store.GetSession(id); err == nil && row.WorkerID != "" {
+	if row, worker := s.workerSession(id); worker {
 		return s.sendWorkerCommand(context.Background(), row, "stop", nil)
 	}
 	return s.stopSessionWithLifecycle(id)
@@ -969,6 +969,23 @@ func (s *Service) revokeActorBindingIfCurrent(sessionID, logicalAgentID string) 
 // so callers (including the daemon's HTTP handlers) don't reach past Service
 // into the lib.
 func (s *Service) WaitSession(ctx context.Context, id string) (int, error) {
+	if row, worker := s.workerSession(id); worker {
+		for {
+			var err error
+			row, err = s.Store.GetSession(id)
+			if err != nil {
+				return 0, err
+			}
+			if session.State(row.State).Terminal() {
+				return int(row.ExitCode.Int64), nil
+			}
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
 	return s.Manager.WaitSession(ctx, id)
 }
 
@@ -994,6 +1011,9 @@ func (s *Service) AttachedClients(id string) int {
 // delegating to agentsessions.Manager.Health. Returns (zero, false) when
 // the session is not currently registered.
 func (s *Service) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
+	if row, worker := s.workerSession(id); worker {
+		return s.workerRuntimeHealth(row)
+	}
 	shim := s.shimHealth(id)
 	snap, ok := s.Manager.Health(id)
 	if !ok {

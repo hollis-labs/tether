@@ -50,6 +50,9 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 			return err
 		}
 		raw, _ := json.Marshal(map[string]any{"data": f.Data, "stream": f.Stream, "worker_seq": f.Seq})
+		if err := s.workerTurnOutput(row, f); err != nil {
+			return err
+		}
 		return s.publishWorkerEvent(f.Session, "session.output", raw)
 	case "state":
 		state := f.State
@@ -63,6 +66,9 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		}
 		if err = s.Store.UpdateSessionState(f.Session, state, int(row.PID.Int64), f.ExitCode); err != nil {
 			return err
+		}
+		if (state == "completed" || state == "failed" || state == "killed") && s.Registry != nil {
+			_, _ = s.Registry.RevokeSessionBindings(context.Background(), row.ID)
 		}
 		raw, _ := json.Marshal(map[string]any{"from": row.State, "to": state, "exit_code": f.ExitCode})
 		return s.publishWorkerEvent(f.Session, "session.state_changed", raw)

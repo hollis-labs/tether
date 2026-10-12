@@ -32,6 +32,7 @@ type connection struct {
 	write     sync.Mutex
 	pendingMu sync.Mutex
 	pending   map[string]chan workerwire.Frame
+	inventory map[string]workerwire.Session
 	done      chan struct{}
 }
 
@@ -127,7 +128,10 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), done: make(chan struct{})}
+	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), inventory: make(map[string]workerwire.Session), done: make(chan struct{})}
+	for _, s := range hello.Sessions {
+		c.inventory[s.ID] = s
+	}
 	h.mu.Lock()
 	old := h.connections[id]
 	h.connections[id] = c
@@ -178,6 +182,15 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
+		if f.T == "state" || f.T == "launched" {
+			c.pendingMu.Lock()
+			state := f.State
+			if state == "" {
+				state = "running"
+			}
+			c.inventory[f.Session] = workerwire.Session{ID: f.Session, State: state, ExitCode: f.ExitCode}
+			c.pendingMu.Unlock()
+		}
 		_, _ = h.db.Exec(`UPDATE workers SET last_seen=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), id)
 		if f.CmdID != "" {
 			c.pendingMu.Lock()
@@ -196,6 +209,18 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+func (h *Hub) SessionState(id, session string) (string, bool) {
+	h.mu.RLock()
+	c := h.connections[id]
+	h.mu.RUnlock()
+	if c == nil {
+		return "", false
+	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	s, ok := c.inventory[session]
+	return s.State, ok && s.State != "exited"
 }
 func (h *Hub) NextSeq(session string) int64 {
 	var seq int64

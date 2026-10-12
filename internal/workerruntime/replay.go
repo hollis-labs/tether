@@ -93,6 +93,7 @@ func (e *Executor) Restore() error {
 			return fmt.Errorf("restore %s: %w", s.ID, err)
 		}
 		s.client = client
+		s.pending = make(map[string]chan shim.Frame)
 		e.sessions[s.ID] = &s
 		go e.follow(&s)
 		if err := client.Replay(s.ID, s.Cursor); err != nil {

@@ -36,8 +36,11 @@ type execution struct {
 	LastSeq    int64  `json:"last_seq"`
 	Cursor     string `json:"cursor"`
 	ExitCode   *int   `json:"exit_code,omitempty"`
+	Provider   string `json:"provider"`
+	Carry      []byte `json:"carry,omitempty"`
 	client     *shim.Client
 	outputs    []outputRecord
+	pending    map[string]chan shim.Frame
 }
 type Executor struct {
 	Root     string
@@ -83,7 +86,7 @@ func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 		if s == nil {
 			return fmt.Errorf("unknown execution")
 		}
-		if err := s.client.Send(f.Session, "control", map[string]any{"action": "kill"}); err != nil {
+		if err := e.submit(ctx, s, f.CmdID, "control", map[string]any{"action": "kill", "expected_generation": "1"}); err != nil {
 			return err
 		}
 		return e.Send(workerwire.Frame{T: "state", CmdID: f.CmdID, Session: f.Session, State: "exited"})
@@ -96,7 +99,12 @@ func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 		if err != nil {
 			return err
 		}
-		if err = s.client.Send(f.Session, "inject", shim.Inject{Key: f.CmdID, Actor: spec.Actor, Subject: spec.Subject, Mode: "input", Delivery: "immediate", Data: base64.StdEncoding.EncodeToString(f.Data), Generation: "1"}); err != nil {
+		s.mu.Lock()
+		s.State = "running"
+		_ = e.persist(s)
+		s.mu.Unlock()
+		_ = e.Send(workerwire.Frame{T: "state", Session: f.Session, State: "running"})
+		if err = e.submit(ctx, s, f.CmdID, "inject", shim.Inject{Key: f.CmdID, Actor: spec.Actor, Subject: spec.Subject, Mode: "input", Delivery: "immediate", Data: base64.StdEncoding.EncodeToString(f.Data), Generation: "1"}); err != nil {
 			return err
 		}
 		return e.Send(workerwire.Frame{T: "input_ack", CmdID: f.CmdID, Session: f.Session})
@@ -105,7 +113,7 @@ func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 	case "welcome":
 		for _, id := range f.Kill {
 			if s := e.get(id); s != nil {
-				_ = s.client.Send(id, "control", map[string]any{"action": "kill"})
+				_ = s.client.Send(id, "control", map[string]any{"action": "kill", "expected_generation": "1"})
 			}
 		}
 		for _, cursor := range f.Resume {
@@ -258,7 +266,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	s := &execution{ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client}
+	s := &execution{ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
 	if child != nil {
 		s.PID = child.Process.Pid
 	}
@@ -294,6 +302,17 @@ func plant(root, path string, b []byte) error {
 func identityToken() (string, error) { return uuid.NewString() + uuid.NewString(), nil }
 func (e *Executor) follow(s *execution) {
 	for f := range s.client.Frames {
+		if f.ReplyTo != "" {
+			s.mu.Lock()
+			ch := s.pending[f.ReplyTo]
+			s.mu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- f:
+				default:
+				}
+			}
+		}
 		if f.Type != "event" {
 			continue
 		}
@@ -328,6 +347,24 @@ func (e *Executor) follow(s *execution) {
 						continue
 					}
 					s.outputs = append(s.outputs, out)
+					if chunk.Stream == "stdout" {
+						s.Carry = append(s.Carry, data...)
+						for {
+							at := strings.IndexByte(string(s.Carry), '\n')
+							if at < 0 {
+								break
+							}
+							line := s.Carry[:at]
+							s.Carry = s.Carry[at+1:]
+							var result struct {
+								Type string `json:"type"`
+							}
+							if s.Provider != "claude" || json.Unmarshal(line, &result) == nil && result.Type == "result" {
+								s.State = "idle"
+								_ = e.Send(workerwire.Frame{T: "state", Session: s.ID, State: "idle"})
+							}
+						}
+					}
 					_ = e.persist(s)
 					_ = e.Send(out.Frame)
 				}

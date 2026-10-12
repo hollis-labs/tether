@@ -72,6 +72,7 @@ type Service struct {
 	Store          *store.Store
 	Workers        *workerhub.Hub
 	workerIngestMu sync.Mutex
+	workerCarries  map[string][]byte
 	Manager        *agentsessions.Manager
 	Bus            events.Bus
 	Broker         *broker.Service

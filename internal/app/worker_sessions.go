@@ -128,6 +128,11 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err
 	}
+	if s.Registry != nil && p.LogicalAgentID != "" {
+		if _, err := s.Registry.LeaseBinding(ctx, registry.LogicalAgentBindingTarget(p.LogicalAgentID), row.ID, row.WorkerID, row.ID, nil, registry.VisibilityTetherHosted, 0); err != nil {
+			return nil, err
+		}
+	}
 	return &Launched{SessionID: row.ID, Workspace: workspace.Open(row.Workspace, row.ID), Plan: p, ProviderKind: row.ProviderKind}, nil
 }
 func (s *Service) sendWorkerCommand(ctx context.Context, row *store.SessionRow, kind string, data []byte) error {

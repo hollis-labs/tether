@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
 	"github.com/hollis-labs/tether/internal/workerruntime"
@@ -25,6 +28,7 @@ func TestSmokeS3(t *testing.T) {
 	workerSmoke(t, 3)
 }
 func TestSmokeS4(t *testing.T) { workerSmoke(t, 4) }
+func TestSmokeS5(t *testing.T) { workerSmoke(t, 5) }
 func workerSmoke(t *testing.T, stage int) {
 	binary := os.Getenv("WORKER_SMOKE_BINARY")
 	if binary == "" {
@@ -148,6 +152,77 @@ func workerSmoke(t *testing.T, stage int) {
 			t.Fatal("duplicate changed session log")
 		}
 		t.Log("live output and reconnect replay are gap-free and deduplicated; shim kept running")
+	}
+	if stage >= 5 {
+		svc.Registry = registry.NewService(registry.NewStorage(db.DB()))
+		if _, err := svc.Registry.LeaseBinding(ctx, registry.LogicalAgentBindingTarget(plan.LogicalAgentID), "smoke-s3", workerID, "smoke-binding", nil, registry.VisibilityTetherHosted, 0); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			health, ok := svc.RuntimeHealth("smoke-s3")
+			if ok && health.Health.State == agentsessions.LiveStateIdle {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("worker never idle")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		to := messaging.Address{Kind: messaging.KindAgent, Authority: "local", ID: plan.LogicalAgentID}
+		env := sendMessage(t, db, to)
+		outcome := svc.AttemptWake(ctx, env.ID, to, "smoke-s3", "s5-message")
+		if !outcome.Delivered {
+			t.Fatalf("message delivery: %+v", outcome)
+		}
+		path := filepath.Join(workspace, "logs", "session.log")
+		deadline = time.Now().Add(3 * time.Second)
+		for {
+			b, _ := os.ReadFile(path)
+			if strings.Contains(string(b), "s5-message") {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("message not received: %s", b)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		hub.Close()
+		deadline = time.Now().Add(time.Second)
+		for {
+			if _, ok := svc.RuntimeHealth("smoke-s3"); !ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("worker remains online")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		queued := sendMessage(t, db, to)
+		parked := svc.AttemptWake(ctx, queued.ID, to, "smoke-s3", "s5-queued")
+		if parked.Delivered {
+			t.Fatal("offline message claimed delivered")
+		}
+		select {
+		case <-ready:
+		case <-time.After(5 * time.Second):
+			t.Fatal("offline worker did not reconnect")
+		}
+		deadline = time.Now().Add(wakeOfflineRetryBackoff + 5*time.Second)
+		for {
+			n, err := svc.RunWakeSweep(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n > 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("queued wake not retried")
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+		t.Log("real messaging claim/receipts, runtimeSeam to shim input, offline park and reconnect sweep passed")
 	}
 	if err := svc.StopSession("smoke-s3"); err != nil {
 		t.Fatal(err)

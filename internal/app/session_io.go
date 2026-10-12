@@ -12,6 +12,9 @@ import (
 // SendInput writes data to the named session's input channel. Thin wrapper
 // over agentsessions.Manager.SendInput.
 func (s *Service) SendInput(id string, data []byte) error {
+	if row, worker := s.workerSession(id); worker {
+		return s.sendWorkerCommand(context.Background(), row, "input", data)
+	}
 	if err := s.refuseWidenedCodex(id); err != nil {
 		return err
 	}
@@ -53,6 +56,21 @@ func (s *Service) subprocessTurn(id string, send func() error) error {
 // intended for callers that want lifecycle-aware framing without
 // hand-rolling the per-mode envelope.
 func (s *Service) SendTurn(ctx context.Context, id, text string) error {
+	if row, worker := s.workerSession(id); worker {
+		plan, err := s.Store.GetLaunchPlan(id)
+		if err != nil {
+			return err
+		}
+		data := []byte(text + "\n")
+		if plan.ProviderBrand == "claude" || plan.ProviderBrand == "claude-code" {
+			data, err = frameUserMessage(text)
+			if err != nil {
+				return err
+			}
+			data = append(data, '\n')
+		}
+		return s.sendWorkerCommand(ctx, row, "input", data)
+	}
 	if err := s.refuseWidenedCodex(id); err != nil {
 		return err
 	}
@@ -94,5 +112,8 @@ func frameUserMessage(text string) ([]byte, error) {
 // ResizeSession forwards a (rows, cols) winsize update. Thin wrapper over
 // agentsessions.Manager.Resize.
 func (s *Service) ResizeSession(id string, rows, cols uint16) error {
+	if _, worker := s.workerSession(id); worker {
+		return fmt.Errorf("worker stdio sessions cannot resize")
+	}
 	return s.Manager.Resize(id, rows, cols)
 }
