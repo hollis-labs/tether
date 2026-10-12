@@ -3,11 +3,11 @@ module github.com/hollis-labs/tether
 go 1.26.9
 
 require (
-	github.com/hollis-labs/go-forums v0.0.0
 	github.com/a2aproject/a2a-go/v2 v2.5.0
 	github.com/anthropics/anthropic-sdk-go v1.45.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
+	github.com/hollis-labs/go-forums v0.1.0
 	github.com/hollis-labs/go-ssekit v0.2.0
 	github.com/hollis-labs/libs/plugin-mcp v0.1.1
 	github.com/hollis-labs/libs/util v0.2.0
@@ -99,5 +99,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-replace github.com/hollis-labs/go-forums => ../go-forums
