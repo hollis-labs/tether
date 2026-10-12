@@ -8,10 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/hollis-labs/substrate/harness/sandbox"
 	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/provider"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
@@ -186,7 +189,11 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}
 	for _, f := range spec.NativeFiles {
-		if err := plant(cwd, f.RelPath, []byte(f.Content)); err != nil {
+		rel, err := nativeFilePath(spec.Provider, spec.RuntimeKind, f)
+		if err != nil {
+			return nil, err
+		}
+		if err := plant(cwd, rel, []byte(f.Content)); err != nil {
 			return nil, err
 		}
 	}
@@ -306,6 +313,24 @@ func claudeArgs(in []string, permissionMode, mcpConfig string) []string {
 		out = append(out, "--permission-mode", "bypassPermissions")
 	}
 	return append(out, "--strict-mcp-config", "--mcp-config", mcpConfig)
+}
+
+// nativeFilePath is where a hub-supplied native file is planted under the workroot. A raw file carries its own
+// relative path. A skill carries only an ID (the hub compiles agent skills into kind "skill" files with no
+// RelPath), so the path comes from the harness's per-provider skill layout, the same table the hub-local
+// planter uses.
+func nativeFilePath(provider, runtimeKind string, f launchprofile.NativeFile) (string, error) {
+	if f.Kind != "skill" {
+		return f.RelPath, nil
+	}
+	if f.ID == "" || f.ID == "." || f.ID == ".." || strings.ContainsAny(f.ID, `/\`) {
+		return "", fmt.Errorf("invalid skill id %q", f.ID)
+	}
+	rel, err := agentlaunch.SkillRelPath(provider, runtimes.Mode(runtimeKind), f.ID)
+	if err != nil {
+		return "", fmt.Errorf("skill %q: %w", f.ID, err)
+	}
+	return rel, nil
 }
 func plant(root, path string, b []byte) error {
 	clean := filepath.Clean(path)
