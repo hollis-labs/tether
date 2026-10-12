@@ -34,7 +34,7 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return err
 		}
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) //nolint:gosec // G304: path is the hub-owned session log of a session this connection owns
 		if err != nil {
 			return err
 		}
@@ -56,12 +56,13 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		return s.publishWorkerEvent(f.Session, "session.output", raw)
 	case "state":
 		state := f.State
-		if state == "exited" {
+		switch state {
+		case "exited":
 			state = "completed"
 			if f.ExitCode != nil && *f.ExitCode != 0 {
 				state = "failed"
 			}
-		} else if state == "idle" {
+		case "idle":
 			state = "running"
 		}
 		if err = s.Store.UpdateSessionState(f.Session, state, int(row.PID.Int64), f.ExitCode); err != nil {

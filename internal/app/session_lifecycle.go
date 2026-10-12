@@ -969,10 +969,9 @@ func (s *Service) revokeActorBindingIfCurrent(sessionID, logicalAgentID string) 
 // so callers (including the daemon's HTTP handlers) don't reach past Service
 // into the lib.
 func (s *Service) WaitSession(ctx context.Context, id string) (int, error) {
-	if row, worker := s.workerSession(id); worker {
+	if _, worker := s.workerSession(id); worker {
 		for {
-			var err error
-			row, err = s.Store.GetSession(id)
+			row, err := s.Store.GetSession(id)
 			if err != nil {
 				return 0, err
 			}

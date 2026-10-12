@@ -70,7 +70,7 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	} else if p.RepoRoot != "" {
 		probe, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
-		out, err := exec.CommandContext(probe, "git", "-C", p.RepoRoot, "remote", "get-url", "origin").Output()
+		out, err := exec.CommandContext(probe, "git", "-C", p.RepoRoot, "remote", "get-url", "origin").Output() //nolint:gosec // G204: RepoRoot comes from the hub's own catalog, not from a worker
 		if err == nil {
 			spec.Workspace = workerwire.Workspace{Kind: "git", URL: strings.TrimSpace(string(out))}
 		}
@@ -81,7 +81,7 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 		}
 		for name, path := range map[string]string{"CLAUDE.md": p.Shared.BootFile, "transient.md": p.Shared.TransientFile} {
 			if path != "" {
-				b, err := os.ReadFile(path)
+				b, err := os.ReadFile(path) //nolint:gosec // G304: boot file paths come from the hub's resolved launch plan
 				if err != nil {
 					return spec, err
 				}

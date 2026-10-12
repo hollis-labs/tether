@@ -103,14 +103,14 @@ func (h *Hub) ListHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	p, ok := identity.FromContext(r.Context())
 	if !ok || !p.Verified || !identity.HasDeviceScope(p, identity.ScopeWorker) {
-		http.Error(w, "worker device required", 403)
+		http.Error(w, "worker device required", http.StatusForbidden)
 		return
 	}
 	ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	ws.SetReadLimit(8 << 20)
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
 	var hello workerwire.Frame

@@ -67,7 +67,7 @@ func (e *Executor) Restore() error {
 		if err != nil {
 			return err
 		}
-		if file, err := os.Open(filepath.Join(path, "output.jsonl")); err == nil {
+		if file, err := os.Open(filepath.Join(path, "output.jsonl")); err == nil { //nolint:gosec // G304: path is the worker-owned session directory
 			scanner := bufio.NewScanner(file)
 			scanner.Buffer(make([]byte, 64<<10), 2<<20)
 			for scanner.Scan() {

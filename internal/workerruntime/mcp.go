@@ -17,7 +17,7 @@ type mcpConfig struct {
 }
 
 func ImportHubMCP(root, source string) error {
-	b, err := os.ReadFile(source)
+	b, err := os.ReadFile(source) //nolint:gosec // G304: source is the operator-supplied --mcp-config path
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func ImportHubMCP(root, source string) error {
 func validateHubMCP(config mcpConfig) error {
 	entry, ok := config.Servers["tether"]
 	if !ok || entry.Command != "ssh" {
-		return fmt.Errorf("Tether MCP must run on the hub over SSH")
+		return fmt.Errorf("tether MCP must run on the hub over SSH")
 	}
 	daemonOnly := false
 	for _, arg := range entry.Args {

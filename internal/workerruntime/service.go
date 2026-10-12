@@ -53,7 +53,7 @@ func InstallService(ctx context.Context, root, binary string) error {
 	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	if err = os.WriteFile(path, []byte(definition), 0600); err != nil {
+	if err = os.WriteFile(path, []byte(definition), 0600); err != nil { //nolint:gosec // G703: path is the unit file under the worker user's own home
 		return err
 	}
 	var command *exec.Cmd
@@ -63,7 +63,7 @@ func InstallService(ctx context.Context, root, binary string) error {
 		}
 		command = exec.CommandContext(ctx, "systemctl", "--user", "enable", "--now", "tether-outpost.service")
 	} else {
-		command = exec.CommandContext(ctx, "launchctl", "bootstrap", "gui/"+strconv.Itoa(os.Getuid()), path)
+		command = exec.CommandContext(ctx, "launchctl", "bootstrap", "gui/"+strconv.Itoa(os.Getuid()), path) //nolint:gosec // G204: path is the unit file this command just wrote
 	}
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr

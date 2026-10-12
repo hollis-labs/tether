@@ -137,6 +137,9 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if spec.Session == "" || filepath.Base(spec.Session) != spec.Session {
 		return nil, fmt.Errorf("invalid session")
 	}
+	if spec.Provider == "" || strings.ContainsAny(spec.Provider, "/\\") {
+		return nil, fmt.Errorf("provider must be a bare command name, got %q", spec.Provider)
+	}
 	binary, err := exec.LookPath(spec.Provider)
 	if err != nil {
 		return nil, err
@@ -154,11 +157,14 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		if spec.Workspace.URL == "" {
 			return nil, fmt.Errorf("git workspace URL required")
 		}
-		if out, err := exec.CommandContext(ctx, "git", "clone", "--", spec.Workspace.URL, cwd).CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(ctx, "git", "clone", "--", spec.Workspace.URL, cwd).CombinedOutput(); err != nil { //nolint:gosec // G204: "--" ends options; the URL comes from the authenticated hub
 			return nil, fmt.Errorf("workspace clone: %w: %s", err, out)
 		}
 		if spec.Workspace.Ref != "" {
-			if err := exec.CommandContext(ctx, "git", "-C", cwd, "checkout", spec.Workspace.Ref).Run(); err != nil {
+			if strings.HasPrefix(spec.Workspace.Ref, "-") {
+				return nil, fmt.Errorf("invalid git ref %q", spec.Workspace.Ref)
+			}
+			if err := exec.CommandContext(ctx, "git", "-C", cwd, "checkout", spec.Workspace.Ref).Run(); err != nil { //nolint:gosec // G204: a ref starting with "-" is rejected above; the ref comes from the authenticated hub
 				return nil, err
 			}
 		}
@@ -204,7 +210,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		args = append(args, "--strict-mcp-config", "--mcp-config", filepath.Join(cwd, ".mcp.json"))
 	}
-	cmd := exec.Command(binary, args...)
+	cmd := exec.Command(binary, args...) //nolint:gosec // G204: binary is the provider resolved on this worker's PATH; args come from the authenticated hub's launch spec
 	cmd.Dir = cwd
 	cmd.Env = provider.BuildEnv("merge", nil, nil, spec.Env, os.Environ())
 	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+spec.Actor)
@@ -223,7 +229,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if err := os.WriteFile(pin, nil, 0600); err != nil {
 		return nil, err
 	}
-	secret, _ := identityToken()
+	secret := identityToken()
 	actor := spec.Actor
 	if actor == "" {
 		actor = "urn:agent:worker"
@@ -237,9 +243,9 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if e.Spawn != nil {
 		child, err = e.Spawn(descriptor)
 	} else {
-		child = exec.Command(e.Binary, "shim-host", "--launch", descriptor)
+		child = exec.Command(e.Binary, "shim-host", "--launch", descriptor) //nolint:gosec // G204: e.Binary is this worker's own executable; descriptor is a path this worker wrote
 		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		logFile, openErr := os.OpenFile(filepath.Join(hostRoot, "host.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		logFile, openErr := os.OpenFile(filepath.Join(hostRoot, "host.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) //nolint:gosec // G304: hostRoot is a worker-owned directory
 		if openErr != nil {
 			return nil, openErr
 		}
@@ -300,9 +306,9 @@ func plant(root, path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(target, b, 0600)
+	return os.WriteFile(target, b, 0600) //nolint:gosec // G703: target is root joined with a cleaned relative path; absolute and ".." paths are rejected above
 }
-func identityToken() (string, error) { return uuid.NewString() + uuid.NewString(), nil }
+func identityToken() string { return uuid.NewString() + uuid.NewString() }
 func (e *Executor) follow(s *execution) {
 	for f := range s.client.Frames {
 		if f.ReplyTo != "" {

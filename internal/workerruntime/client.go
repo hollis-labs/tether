@@ -41,7 +41,7 @@ func SaveJSON(path string, v any) error {
 		return err
 	}
 	name := tmp.Name()
-	defer os.Remove(name)
+	defer func() { _ = os.Remove(name) }()
 	if _, err = tmp.Write(b); err == nil {
 		err = tmp.Sync()
 	}
@@ -56,7 +56,7 @@ func SaveJSON(path string, v any) error {
 }
 func Load(root string) (Config, error) {
 	var cfg Config
-	b, err := os.ReadFile(filepath.Join(root, "config.json"))
+	b, err := os.ReadFile(filepath.Join(root, "config.json")) //nolint:gosec // G304: root is the worker's own state directory
 	if err != nil {
 		return cfg, err
 	}
@@ -131,11 +131,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	backoff := time.Second
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil
+			return nil //nolint:nilerr // context cancellation is the clean shutdown path, not a failure
 		}
 		err := w.connect(ctx)
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // shutdown during connect is a clean exit; err is only the canceled dial
 		}
 		if err != nil {
 			log.Printf("worker channel: %v; reconnect in %s", err, backoff)
@@ -173,7 +173,7 @@ func (w *Worker) connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = ws.Close() })
 	defer stop()
 	w.mu.Lock()
