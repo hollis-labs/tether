@@ -897,6 +897,14 @@ func (s *Server) apiMounts() []apiMount {
 		{"/catalog/providers", s.Catalog != nil},
 		{"/catalog/launches", s.Catalog != nil},
 
+		// Chat roster (CW-20261012-0099). api registers these only when it has
+		// both a LaunchService and a catalog (registerChatRoutes), so the mount
+		// carries the same condition. Both forms: the bare path is the roster,
+		// the subtree is /chat/agents/{launch_id}/send. They shipped in PR #250
+		// without a mount and 404'd in production.
+		{"/chat/agents", hasService && s.Catalog != nil},
+		{"/chat/agents/", hasService && s.Catalog != nil},
+
 		// "/registry/" is a subtree pattern -- it already covers
 		// /registry/bindings* and /registry/scoped-bindings* (T07, T08)
 		// without a separate entry per subpath.
