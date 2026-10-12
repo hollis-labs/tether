@@ -91,6 +91,10 @@ func Enroll(ctx context.Context, root, hub, code, label string) error {
 	return nil
 }
 
+// WorkerLaunchTimeout bounds one launch on the worker. It must stay below the hub's launch wait
+// (internal/app workerLaunchWait) so the worker aborts a slow launch before the hub marks it failed.
+const WorkerLaunchTimeout = 4 * time.Minute
+
 type Worker struct {
 	Root      string
 	Config    Config
@@ -223,8 +227,22 @@ func (w *Worker) connect(ctx context.Context) error {
 			}
 		default:
 			if w.Command != nil {
-				if err := w.Command(ctx, f); err != nil {
-					_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: err.Error()})
+				run := func(c context.Context) {
+					if err := w.Command(c, f); err != nil {
+						_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: err.Error()})
+					}
+				}
+				if f.T == "launch" {
+					// A launch clones a repository and can take minutes. Run it off the read loop so pings,
+					// stops and input keep flowing, and bound it below the hub's wait so a launch the hub
+					// has given up on is aborted here instead of starting an untracked agent.
+					go func() {
+						lctx, cancel := context.WithTimeout(ctx, WorkerLaunchTimeout)
+						defer cancel()
+						run(lctx)
+					}()
+				} else {
+					run(ctx)
 				}
 			} else {
 				_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: "execution not installed"})

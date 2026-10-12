@@ -192,23 +192,10 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	}
 	args := append([]string(nil), spec.Args...)
 	if spec.Provider == "claude" {
-		var keep []string
-		for i := 0; i < len(args); i++ {
-			switch args[i] {
-			case "--mcp-config", "--append-system-prompt-file", "--system-prompt-file", "--input-format", "--output-format":
-				i++
-			case "--add-dir":
-				i++
-			case "-p", "--print", "--verbose", "--include-partial-messages":
-			default:
-				keep = append(keep, args[i])
-			}
-		}
-		args = append(keep, "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages")
 		if err := e.plantMCP(cwd); err != nil {
 			return nil, err
 		}
-		args = append(args, "--strict-mcp-config", "--mcp-config", filepath.Join(cwd, ".mcp.json"))
+		args = claudeArgs(args, spec.PermissionMode, filepath.Join(cwd, ".mcp.json"))
 	}
 	cmd := exec.Command(binary, args...) //nolint:gosec // G204: binary is the provider resolved on this worker's PATH; args come from the authenticated hub's launch spec
 	cmd.Dir = cwd
@@ -296,6 +283,29 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		_ = client.Send(spec.Session, "inject", shim.Inject{Key: "boot:" + spec.Session, Actor: launchSpec.Actor, Subject: launchSpec.Subject, Mode: "input", Delivery: "immediate", Data: base64.StdEncoding.EncodeToString(data), Generation: "1"})
 	}
 	return s, nil
+}
+
+// claudeArgs turns the hub's resolved args into the worker's Claude command line: the stream-json framing the
+// shim expects, the planted hub MCP config only, and the agent's permission posture. A worker session has no
+// human to approve tool calls, so without "bypass" every tool use is refused.
+func claudeArgs(in []string, permissionMode, mcpConfig string) []string {
+	var keep []string
+	for i := 0; i < len(in); i++ {
+		switch in[i] {
+		case "--mcp-config", "--append-system-prompt-file", "--system-prompt-file", "--input-format", "--output-format", "--permission-mode":
+			i++
+		case "--add-dir":
+			i++
+		case "-p", "--print", "--verbose", "--include-partial-messages", "--dangerously-skip-permissions":
+		default:
+			keep = append(keep, in[i])
+		}
+	}
+	out := append(keep, "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages")
+	if permissionMode == "bypass" {
+		out = append(out, "--permission-mode", "bypassPermissions")
+	}
+	return append(out, "--strict-mcp-config", "--mcp-config", mcpConfig)
 }
 func plant(root, path string, b []byte) error {
 	clean := filepath.Clean(path)

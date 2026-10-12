@@ -64,8 +64,12 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	if strings.Contains(brand, "claude") {
 		brand = "claude"
 	}
-	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}}
-	if strings.HasPrefix(p.RepoRoot, "https://") || strings.HasPrefix(p.RepoRoot, "git@") {
+	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, PermissionMode: p.PermissionMode, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}}
+	// The project's git remote is what a worker can clone; RepoRoot is a path on the hub's machine. Prefer
+	// repo_url, then a URL-shaped repo_root, then a local checkout's origin (only exists when the hub has one).
+	if p.RepoURL != "" {
+		spec.Workspace = workerwire.Workspace{Kind: "git", URL: p.RepoURL}
+	} else if strings.HasPrefix(p.RepoRoot, "https://") || strings.HasPrefix(p.RepoRoot, "git@") {
 		spec.Workspace = workerwire.Workspace{Kind: "git", URL: p.RepoRoot}
 	} else if p.RepoRoot != "" {
 		probe, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -105,6 +109,11 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	}
 	return spec, err
 }
+
+// workerLaunchWait is how long the hub waits for a worker to finish a launch (a git clone plus process
+// start). It must exceed workerruntime.WorkerLaunchTimeout so the worker gives up first.
+const workerLaunchWait = 5 * time.Minute
+
 func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow, p *launch.Plan) (*Launched, error) {
 	spec, err := s.workerSpec(ctx, row.ID, p)
 	if err != nil {
@@ -117,7 +126,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err = s.Store.UpdateSessionState(row.ID, "launching", 0, nil); err != nil {
 		return nil, err
 	}
-	wait, cancel := context.WithTimeout(ctx, 30*time.Second)
+	wait, cancel := context.WithTimeout(ctx, workerLaunchWait)
 	defer cancel()
 	result, err := s.Workers.Send(wait, row.WorkerID, workerwire.Frame{T: "launch", CmdID: "launch:" + row.ID, Session: row.ID, Spec: raw})
 	if err != nil {
