@@ -62,6 +62,12 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 			if f.ExitCode != nil && *f.ExitCode != 0 {
 				state = "failed"
 			}
+			// A stop the operator asked for ends as killed, like a local
+			// session's, not as the failed that exit 143 would read as.
+			if s.stops.requested(f.Session) {
+				s.stops.clear(f.Session)
+				state = "killed"
+			}
 		case "idle":
 			state = "running"
 		}

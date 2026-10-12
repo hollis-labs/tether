@@ -1901,7 +1901,7 @@ Scope: `read`. Response (200), sorted by `launch_id`:
 ```
 
 `session` is `null` when the launch has never produced one, otherwise the
-newest session of that launch in any state. `at_turn_boundary` is true only for
+newest session of that launch in any state. A session the operator stopped reports `killed`, not `failed`. `at_turn_boundary` is true only for
 a `running` session whose runtime reports idle. `channel` is the launch route's
 channel, else its agent's, else empty. `worker` is the launch's
 `worker:` default placement and is omitted when the launch sets none.

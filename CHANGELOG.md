@@ -25,6 +25,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
   the hub); without one it answers 409 `worker_not_configured`, and an unknown or
   offline worker answers 502 `worker_unavailable`. `GET /chat/agents` entries
   carry `worker` when set.
+- Fix a worker session the operator stopped ending `failed` (exit 143): a stop
+  requested through `tether sessions stop` now records `killed`, as for local
+  sessions, so the chat roster no longer shows a cleanly stopped agent as failed.
+  The stop request is remembered in memory, so a daemon restart between the stop
+  and the exit still records `failed`.
 - Add `GET /messages/watch` (resumable, side-effect-free mailbox SSE stream with
   `after_seq`, `synchronized`, `gap` and keepalive) and `tether mailbox watch <urn>`.
 - Add the teams activation policy (Stage A). Formation, previously always
