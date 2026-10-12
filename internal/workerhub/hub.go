@@ -51,6 +51,13 @@ type Hub struct {
 }
 
 func New(db *sql.DB) *Hub { return &Hub{db: db, connections: make(map[string]*connection)} }
+func (h *Hub) Close() {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, c := range h.connections {
+		_ = c.ws.Close()
+	}
+}
 func (h *Hub) Connected(id string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
