@@ -241,3 +241,16 @@ func TestHandleMessagesWatch_KeepaliveAndRejections(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleMessagesWatch_RejectsPost(t *testing.T) {
+	srv, _ := newMessageTestServer(t)
+	alice := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "alice"}
+	r, err := http.Post(srv.URL+"/messages/watch?"+watchQuery(alice, "").Encode(), "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want 405", r.StatusCode)
+	}
+}
