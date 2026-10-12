@@ -25,6 +25,7 @@ type AttachmentStore interface {
 // http.Handler back. Each field is optional — handlers whose
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
+	Forums ForumService
 	// Teams is populated only when the host enables teams; nil leaves routes absent.
 	Teams             TeamOps
 	Docs              DocsService
@@ -147,6 +148,7 @@ type Deps struct {
 // Server carries the dependencies required by handlers. Tests construct
 // it directly; production code goes through NewHandler.
 type Server struct {
+	Forums              ForumService
 	Teams               TeamOps
 	Docs                DocsService
 	Service             LaunchService
@@ -192,6 +194,7 @@ type Server struct {
 // api package. The daemon package layers /health on top of this.
 func NewHandler(deps Deps) http.Handler {
 	s := &Server{
+		Forums:              deps.Forums,
 		Teams:               deps.Teams,
 		Docs:                deps.Docs,
 		Service:             deps.Service,
@@ -242,6 +245,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerWorkstreamRoutes(router)
 	s.registerMessageRoutes(router)
 	s.registerChannelRoutes(router)
+	s.registerForumRoutes(router)
 	s.registerRoutingRoutes(router)
 	s.registerProxyEventRoutes(router)
 	s.registerRegistryRoutes(router)

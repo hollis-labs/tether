@@ -46,6 +46,7 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
+	Forums  api.ForumService
 	Workers *workerhub.Hub
 	// Environment is the cached public descriptor composed from selected
 	// state identity. It is separate from authenticated session/API handlers.
@@ -542,8 +543,9 @@ func (s *Server) handler(remote bool) http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil || api.HasTeamOps(teams) {
+	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
+			Forums:              s.Forums,
 			EnvironmentStream:   s.EnvironmentStream,
 			Docs:                s.Docs,
 			Service:             s.Service,
@@ -873,6 +875,8 @@ func (s *Server) apiMounts() []apiMount {
 		// are listed because api registers them as exact patterns, and an
 		// exact pattern must be mounted to take precedence over the subtree.
 		{"/routing/capabilities", s.Routing != nil},
+		{"/forums", s.Forums != nil},
+		{"/forums/", s.Forums != nil},
 		{"/channels", s.Channels != nil},
 		{"/channels/", s.Channels != nil},
 		{"/messages", s.MessageStore != nil},

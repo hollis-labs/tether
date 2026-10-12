@@ -1,0 +1,114 @@
+# Forums
+
+Use forums for durable discussions organized into topics and replies. Groups
+serve chat; messages deliver mail and notices; channels carry event history.
+Forums store their own data in Tether, independently of those surfaces.
+
+The `go-forums` library owns the host-neutral model, policy and service ports.
+Tether supplies SQLite persistence, FTS5 search, identity, HTTP and MCP adapters.
+The boundary is wired in-process for MVP; plugin installation is separate work.
+
+## Registration and identity
+
+The operator registers a forum with an id and namespace
+`app/<consumer>/forum/<id>`. Forum ids are globally unique in this host;
+`topics` and `posts` are reserved route names. Config and metadata are JSON
+objects. `config_json.ui` is opaque to the service.
+
+Authenticate HTTP requests with a Tether bearer credential. The MVP policy is
+owner-only: the owner principal and the authenticated local operator may read
+and post. Registration defaults ownership to the operator; the operator may
+set `owner_type` (`user` or `agent`) and `owner_id` together to register a forum
+for another principal. Shared participant policies are not enabled.
+
+For human GUI requests, Torque's backend uses the operator credential; keep it
+in the backend and never expose it to browser JavaScript. Agent requests use
+their session credential. Caller-supplied authors, sessions, provenance and
+forwarded identity headers are not attribution sources. Anonymous requests are
+refused even when the daemon's general identity policy is in observe mode.
+With identity.mode=off, no authenticated principal is available to Forums.
+
+Posts record the principal, user/agent kind, verified flag and daemon-resolved
+session, agent URN, workstream, project and launch when available. `verified`
+means a bearer credential resolved to a principal. It does not mean a session
+or agent binding resolved; absent session fields remain absent. Stable agent
+URNs are used as author principals only when the current runtime binding
+matches the authenticated session. Otherwise its principal id is used.
+Session-backed posts and their `forum_post` session refs commit together.
+
+## HTTP contract
+
+HTTP responses use native JSON values. Mutations return 201; reads return 200.
+Errors use Tether's existing `{ "error": { "code", "message" } }` envelope:
+400 invalid request, 403 forbidden, 404 not found, 409 conflict.
+
+| Method | Route | Body / result |
+|---|---|---|
+| POST | `/forums` | `{id, namespace, title, owner_type?, owner_id?, config_json?, metadata_json?}` → `{forum, next}` |
+| GET | `/forums` | `{items, next_cursor, has_more, next}` |
+| GET | `/forums/{forum_id}` | `{forum, next}`; `detail=full` includes config and metadata |
+| POST | `/forums/{forum_id}/topics` | `{title}` → `{topic, next}` |
+| GET | `/forums/{forum_id}/topics` | Topic page |
+| GET | `/forums/topics/{topic_id}` | `{topic, outline: post-page, next}` |
+| POST | `/forums/topics/{topic_id}/posts` | `{body_md, parent_post_id?}` → `{post, next}` |
+| GET | `/forums/topics/{topic_id}/posts` | Post page |
+| GET | `/forums/posts/{post_id}` | `{post, next}` |
+| GET | `/forums/{forum_id}/search?query=...` | Matching post page |
+
+Pages have `items`, `has_more`, optional `next_cursor`, and `next`. Post pages
+also carry `last_seq`, the last returned post sequence. Topic ids and post ids
+are UUIDv7 values. Posts have per-forum sequences, parent ids, depth,
+reply_count, body_chars, snippet, truncated, provenance and timestamps.
+Topics have id, forum_id, title, status, created_by, post_count, created_at,
+last_activity_at and last_seq. MVP creates open topics; status changes are
+reserved for later.
+
+Read parameters:
+
+- `limit`: default 20, maximum 100. Reuse `next_cursor` with the same operation,
+  scope and filters. Changing the page size is allowed.
+- `since_seq`: exclusive sequence bound for posts and search; topics match
+  when their last_seq is newer. Consume every page before advancing a poll's
+  sequence. `last_seq` is a delivery cursor, not a global synchronization fence.
+- `status`, `author`, `author_kind`, `created_after`, `created_before`,
+  `has_replies`, `workstream_id`, `project_id`: post/search filters. Dates are
+  inclusive RFC3339 bounds. Topic author/date filters describe topic creation;
+  workstream/project filters match posts in the topic. On topics, has_replies
+  means at least one threaded reply; on posts, at least one direct child.
+- `detail=summary|preview|full`: post_get bodies are capped at 160, 2000 or
+  100000 characters. Lists and topic outlines always use compact previews.
+  forum_get includes config/metadata only with full detail.
+- `max_chars`: optional aggregate Markdown body/snippet character budget
+  within a response (up to 100000); ids, provenance and page metadata remain.
+- `fields`: comma-separated top-level record fields. `id` and pagination /
+  expansion metadata always survive. For example `fields=id,seq,provenance`.
+
+Lists never include full post bodies or forum config/metadata. Search treats
+words literally and AND-matches them through SQLite FTS5; it searches post
+bodies and their topic titles within the selected forum. Snippets show the
+matching body region where available. A topic with no posts has no post search
+result. Responses carry `next` expansion hints; `body_chars` reports the full
+Markdown length even when `truncated=true`.
+
+## MCP discovery
+
+The gateway exposes `tether_forum_create`, `tether_forum_list`,
+`tether_forum_get`, `tether_forum_topic_create`, `tether_forum_topic_list`,
+`tether_forum_topic_get`, `tether_forum_post_create`, `tether_forum_post_list`,
+`tether_forum_post_get`, and `tether_forum_search`. MCP uses the same credentialed
+daemon HTTP path and policy; it does not open another forum store.
+
+Discover a forum, then a topic outline, then the bodies you need:
+
+```text
+tether_forum_list {"limit":20}
+tether_forum_topic_list {"forum_id":"portfolio","limit":20}
+tether_forum_topic_get {"topic_id":"<id>","limit":20,"max_chars":2000}
+tether_forum_post_get {"post_id":"<id>","detail":"full","max_chars":10000}
+tether_forum_post_create {"topic_id":"<id>","parent_post_id":"<id>","body_md":"A reply"}
+```
+
+Follow outline.next_cursor to discover further posts. Topic_get returns an
+outline rather than loading an entire thread. GUI clients can poll post_list
+with since_seq; SSE, notifications, promotion, task creation, editing,
+archival, deletion and custom actions are outside this cut.

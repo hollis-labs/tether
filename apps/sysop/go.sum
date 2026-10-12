@@ -55,6 +55,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePC
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
+github.com/hollis-labs/go-forums v0.1.0 h1:istotdqzZ0slTEqQgdzejC70SbAyR/aXrhtxKmPKBPY=
+github.com/hollis-labs/go-forums v0.1.0/go.mod h1:WyrvH7zFRS2aC0X1sTugrxbBNypN1XPdavRD7FfNJW0=
 github.com/hollis-labs/go-ssekit v0.2.0 h1:li4Oi6iR8EGw3gh9lY1OoYukQ40AVLU/Kp1T5RzdajM=
 github.com/hollis-labs/go-ssekit v0.2.0/go.mod h1:0cbVtvNr1trN787jry9D2hbxtRo5EcsJfQRK0aOYOtM=
 github.com/hollis-labs/libs/plugin-mcp v0.1.1 h1:213HZTZaWL6KFkQeU3d2HZU9UMI+C0jxixHUtD4JFR0=
@@ -69,8 +71,6 @@ github.com/hollis-labs/substrate/harness v0.5.0 h1:igx3XCPA7EmMpnuUYfULkFc9mkgJu
 github.com/hollis-labs/substrate/harness v0.5.0/go.mod h1:BCteU5BGFnLujwOQJK1USbwu35YoNLpr+oe0/3ZD+sU=
 github.com/hollis-labs/substrate/llm-core v0.1.0 h1:nsNpY3OzpuvHKC9zLzqFKmwMXt856PXOUfaVpGP8pFY=
 github.com/hollis-labs/substrate/llm-core v0.1.0/go.mod h1:055xZrH5gLwodrVMu2SHQzfIcTXhjDGBXfJ1kdy/eSo=
-github.com/hollis-labs/substrate/mesh v0.1.0 h1:CkUvYdoXSGVcSlXhVgc+0AYzyhXdd49c+AV47z0XvOs=
-github.com/hollis-labs/substrate/mesh v0.1.0/go.mod h1:akUYHGaDVmF2Gwyr784nk8HuNr0KBsl1x97ApvTxcAM=
 github.com/hollis-labs/substrate/mesh v0.4.0 h1:xC7ef+0rvwl1EL+ysYUz9hDqd5X6Kp/UenlK8kxoSUs=
 github.com/hollis-labs/substrate/mesh v0.4.0/go.mod h1:4elvX/CcBf51X9ORmGibLaS+bFOO3jolBvw9OlwCALs=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

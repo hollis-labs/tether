@@ -49,6 +49,7 @@ var apiTopLevelPaths = []string{
 	"/logical-agents", "/logical-agents/",
 	"/logs/daemon",
 	"/mentions",
+	"/forums", "/forums/",
 	"/messages", "/messages/", "/messages/inbox", "/messages/list",
 	"/messages/notify", "/messages/request", "/messages/retention/candidates",
 	"/messages/subscribe", "/messages/thread/", "/messages/watch",

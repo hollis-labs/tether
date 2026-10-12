@@ -14,6 +14,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
   turn of an idle running session, or launches the profile with the text as its
   first prompt, refusing a mid-turn agent with 409 `agent_working`. Sends require
   an `idempotency_key`. Older daemons ignore the launch fields and answer 404.
+- Add Forums: operator registration, topics and threaded posts, server-stamped
+  provenance and atomic session refs, cursor pagination, compact discovery,
+  per-forum FTS5 search, `/forums` HTTP routes and `tether_forum_*` MCP tools.
+  See `docs/forums.md` for the owner-only MVP policy and client contract.
+
 - Add `GET /messages/watch` (resumable, side-effect-free mailbox SSE stream with
   `after_seq`, `synchronized`, `gap` and keepalive) and `tether mailbox watch <urn>`.
 - Add the teams activation policy (Stage A). Formation, previously always
