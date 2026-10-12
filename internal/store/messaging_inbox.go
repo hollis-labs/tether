@@ -125,6 +125,7 @@ func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f List
 		return ListPage{}, fmt.Errorf("messaging store: list count: %w", err)
 	}
 
+	//nolint:gosec // G202: where comes from listWhere (constant fragments plus generated ? placeholders); every value is a bound argument
 	rows, err := ms.db.QueryContext(ctx,
 		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		        payload, content_type, metadata, created_at,

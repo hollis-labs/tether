@@ -48,6 +48,7 @@ func (ms *messagingStore) MailboxAfter(ctx context.Context, to messaging.Address
 		return MailboxWindow{}, fmt.Errorf("messaging store: mailbox high water: %w", err)
 	}
 	where, args := listWhere(to, f)
+	//nolint:gosec // G202: where comes from listWhere (constant fragments plus generated ? placeholders); every value is a bound argument
 	rows, err := ms.db.QueryContext(ctx,
 		`SELECT rowid, id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		        payload, content_type, metadata, created_at,
