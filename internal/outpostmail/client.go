@@ -28,11 +28,11 @@ func Attach(ctx context.Context, socket string, q Request, out io.Writer) error 
 	for ctx.Err() == nil {
 		actual, _, probe := ProcessIdentity(q.PID)
 		if probe != nil || actual != q.Started {
-			return nil
+			return nil //nolint:nilerr // the owning process ending retires the helper cleanly
 		}
 		err = attach(ctx, socket, &q, out)
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // cancellation is a clean helper shutdown, not an attach failure
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "outpost mail:", err)
@@ -50,8 +50,8 @@ func attach(ctx context.Context, socket string, q *Request, out io.Writer) error
 	if err != nil {
 		return err
 	}
-	defer c.Close()
-	stop := context.AfterFunc(ctx, func() { c.Close() })
+	defer func() { _ = c.Close() }()
+	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
 	var mu sync.Mutex
 	send := func(v Request) error {
@@ -139,14 +139,14 @@ func Execute(ctx context.Context, adapter, handle, text string) error {
 	return ExecuteOptions(ctx, adapter, handle, text, false)
 }
 
-// Native mods cannot import socket libraries; this one-shot path uses the
+// Acknowledge bridges native mods that cannot import socket libraries. It uses the
 // per-registration capability and sends no hub credential.
 func Acknowledge(ctx context.Context, socket string, q Request) error {
 	c, err := net.DialTimeout("unix", socket, 3*time.Second)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	q.Op = "ack"
 	if err = json.NewEncoder(c).Encode(q); err != nil {
@@ -166,7 +166,7 @@ func ExecuteOptions(ctx context.Context, adapter, handle, text string, escapeFir
 		return fmt.Errorf("invalid adapter handle")
 	}
 	run := func(name string, args ...string) error {
-		cmd := exec.CommandContext(ctx, name, args...)
+		cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: only fixed codex/tmux commands below call this helper, with argv and no shell
 		b, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("%s: %w: %s", name, err, b)
@@ -187,7 +187,7 @@ func ExecuteOptions(ctx context.Context, adapter, handle, text string, escapeFir
 			}
 		}
 		buffer := "tether-mail-" + fmt.Sprint(os.Getpid())
-		cmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buffer, "-")
+		cmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buffer, "-") //nolint:gosec // G204: fixed tmux argv; buffer is generated from this process pid, text is stdin
 		cmd.Stdin = strings.NewReader(text)
 		if b, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("tmux load: %w: %s", err, b)

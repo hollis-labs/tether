@@ -33,10 +33,18 @@ func TestOutpostChannelReaderDuringLaunch(t *testing.T) {
 		}
 		_ = ws.WriteJSON(workerwire.Frame{T: "welcome", Features: []string{"bind", "deliver"}})
 		_ = ws.WriteJSON(workerwire.Frame{T: "launch", CmdID: "slow-launch"})
+		_ = ws.WriteJSON(workerwire.Frame{T: "stop", CmdID: "stop-during-launch"})
 		_ = ws.WriteJSON(workerwire.Frame{T: "ping", TS: 123})
 		_ = ws.SetReadDeadline(time.Now().Add(time.Second))
-		err = ws.ReadJSON(&f)
-		pong <- err == nil && f.T == "pong" && f.TS == 123
+		seenPong, seenStop := false, false
+		for !seenPong || !seenStop {
+			if ws.ReadJSON(&f) != nil {
+				break
+			}
+			seenPong = seenPong || (f.T == "pong" && f.TS == 123)
+			seenStop = seenStop || (f.T == "state" && f.CmdID == "stop-during-launch")
+		}
+		pong <- seenPong && seenStop
 		<-ctx.Done()
 	}))
 	defer func() { cancel(); server.Close() }()
@@ -57,11 +65,18 @@ func TestOutpostChannelReaderDuringLaunch(t *testing.T) {
 		}
 		return nil
 	}}
+	handle := w.Command
+	w.Command = func(ctx context.Context, f workerwire.Frame) error {
+		if f.T == "stop" {
+			return w.Send(workerwire.Frame{T: "state", CmdID: f.CmdID})
+		}
+		return handle(ctx, f)
+	}
 	go func() { _ = w.Run(ctx) }()
 	select {
 	case ok := <-pong:
 		if !ok {
-			t.Fatal("slow launch blocked reader/pong")
+			t.Fatal("slow launch blocked reader/pong or stop handling")
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("reader timeout")

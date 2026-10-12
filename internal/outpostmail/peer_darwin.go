@@ -15,7 +15,7 @@ func peerUID(c *net.UnixConn) (int, error) {
 	var uid int
 	var check error
 	err = raw.Control(func(fd uintptr) {
-		cred, e := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
+		cred, e := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED) //nolint:gosec // G115: fd is a live OS descriptor from SyscallConn.Control, representable as an int
 		check = e
 		if e == nil {
 			uid = int(cred.Uid)

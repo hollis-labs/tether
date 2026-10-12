@@ -122,8 +122,10 @@ lost helpers. Restarting a helper without its old capability waits for the
 old lease/process identity to expire. Linux cross-uid deployment and real
 Claude/Codex idle/mid-turn acceptance still need operational proof.
 
-Channel prerequisites included: a bounded command dispatcher keeps launch
-off the socket read loop; welcome resets reconnect backoff; replay is capped
+Channel prerequisites included: up to four launches run independently with
+main's four-minute worker deadline (below the five-minute hub wait), so the
+bounded command dispatcher can still deliver stop/input during a slow launch.
+Welcome resets reconnect backoff; replay is capped
 at 256 frames/1MiB per batch with explicit continuation. This is not a replay
 retention/compaction or hardening project.
 
@@ -150,3 +152,8 @@ Mac enrollment/login remain operator-owned. No full make check/hardening claim.
 Broader app verification finds `TestTeamRecoveryReplacesLostExecutionAndRetainsBinding`
 failing with `codex_explicit_provider_home_required`. The exact isolated test
 also fails on unchanged deployed/base `99e7973`; it is not fixed by this change.
+
+CI follow-up: main `a6d37cc` is merged, preserving its repo_url, permission
+posture and dead-shim recovery fixes. The initial CI lint findings are fixed;
+Linux lint is checked with CI's pinned golangci-lint v2.14.0, not the older
+preinstalled Mac tool. Full Linux CI remains the authority for its race suite.

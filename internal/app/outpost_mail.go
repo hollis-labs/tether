@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -46,8 +47,11 @@ func (s *Service) installOutpostMail() {
 	}
 	s.Workers.UnbindMail = func(ctx context.Context, id string, b workerwire.Binding) error {
 		current, err := s.Registry.CurrentBinding(ctx, b.URN)
-		if err != nil {
+		if errors.Is(err, registry.ErrBindingNotFound) {
 			return nil
+		}
+		if err != nil {
+			return err
 		}
 		if current.SessionID == "outpost:"+b.ID && current.HostID == id {
 			return s.Registry.RevokeBinding(ctx, current.ID)
@@ -80,7 +84,7 @@ func outpostBinding(b registry.RuntimeBinding) bool {
 	return false
 }
 
-// API's optional exact-address resolver preserves the existing interface for
+// ResolveOutpostRecipient implements the API's optional exact-address resolver for
 // clients/fakes while avoiding the legacy authority-stripping for outposts.
 func (s *Service) ResolveOutpostRecipient(ctx context.Context, to messaging.Address) (string, bool) {
 	return s.outpostResolve(ctx, to)

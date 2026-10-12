@@ -120,7 +120,7 @@ func (s *Server) persist() error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	err = json.NewEncoder(f).Encode(s.regs)
 	if err == nil {
 		err = f.Sync()
@@ -170,7 +170,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	// Refuse a second outpost rather than unlink its live socket.
 	if c, err := net.DialTimeout("unix", s.Socket, time.Second); err == nil {
-		c.Close()
+		_ = c.Close()
 		return fmt.Errorf("mail socket already active")
 	}
 	if info, err := os.Lstat(s.Socket); err == nil {
@@ -185,16 +185,16 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	if s.GID >= 0 {
 		if err = os.Chown(s.Socket, -1, s.GID); err != nil {
 			return err
 		}
 	}
-	if err = os.Chmod(s.Socket, 0660); err != nil {
+	if err = os.Chmod(s.Socket, 0660); err != nil { //nolint:gosec // G302: operator-approved shared-group socket, further restricted by peer uid and registration capability
 		return err
 	}
-	stop := context.AfterFunc(ctx, func() { l.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = l.Close() })
 	defer stop()
 	go s.sweep(ctx)
 	for {
@@ -222,7 +222,7 @@ func (s *Server) sweep(ctx context.Context) {
 				if !s.live(r) {
 					expired = append(expired, s.binding(r))
 					if r.transport != nil {
-						r.transport.c.Close()
+						_ = r.transport.c.Close()
 					}
 					delete(s.regs, id)
 				}
@@ -240,7 +240,7 @@ func (s *Server) sweep(ctx context.Context) {
 	}
 }
 func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	uid, err := peerUID(c)
 	if err != nil {
 		return
@@ -253,7 +253,7 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 		return
 	}
 	t := &transport{c: c, pending: map[string]chan Request{}}
-	stop := context.AfterFunc(ctx, func() { c.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
 	defer func() {
 		s.mu.Lock()
@@ -296,11 +296,9 @@ func (s *Server) serveConn(ctx context.Context, c *net.UnixConn) {
 				_ = t.send(Reply{Op: "acknowledged", CmdID: req.CmdID})
 				continue
 			}
-			if ch != nil {
-				select {
-				case ch <- req:
-				default:
-				}
+			select {
+			case ch <- req:
+			default:
 			}
 			continue
 		}

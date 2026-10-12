@@ -10,14 +10,14 @@ import (
 	"time"
 )
 
-// Same ps identity witness as the session reaper, plus uid ownership.
+// ProcessIdentity uses the session reaper's ps identity witness plus uid ownership.
 func ProcessIdentity(pid int) (string, int, error) {
 	if pid <= 0 {
 		return "", 0, fmt.Errorf("invalid pid")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "uid=", "-o", "lstart=")
+	cmd := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "uid=", "-o", "lstart=") //nolint:gosec // G204: fixed ps arguments; positive pid formatted as an integer
 	cmd.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
 	b, err := cmd.Output()
 	if err != nil {
