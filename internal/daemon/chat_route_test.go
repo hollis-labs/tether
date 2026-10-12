@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/api"
@@ -64,5 +65,61 @@ func TestChatSendRouteMountedThroughDaemon(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/chat/agents/pm/send", nil))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET /chat/agents/pm/send through the daemon = %d (404 means unmounted): %s", w.Code, w.Body.String())
+	}
+}
+
+// chatSendService records the create input of a no-session chat send.
+type chatSendService struct {
+	api.LaunchService
+	inputs   []api.CreateSessionInput
+	launched []string
+}
+
+func (*chatSendService) ListSessions(store.ListSessionsOptions) ([]store.SessionRow, error) {
+	return nil, nil
+}
+
+func (s *chatSendService) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
+	s.inputs = append(s.inputs, in)
+	return api.LaunchResult{SessionID: "new"}, nil
+}
+
+func (s *chatSendService) LaunchSession(id string) (api.LaunchResult, error) {
+	s.launched = append(s.launched, id)
+	return api.LaunchResult{SessionID: id}, nil
+}
+
+type chatWorkerCatalog struct{}
+
+func (chatWorkerCatalog) Load() (*config.Catalog, error) {
+	return &config.Catalog{Launches: map[string]config.Launch{
+		"pm":      {ID: "pm", Agent: "portfolio-manager", Chat: true, Worker: "agent-os"},
+		"no-wrkr": {ID: "no-wrkr", Agent: "x", Chat: true},
+	}}, nil
+}
+
+// A no-session send through the real handler must reach the launch service
+// with the launch's worker, never a worker-less (hub-local) create.
+func TestChatSendNoSessionUsesLaunchWorkerThroughDaemon(t *testing.T) {
+	svc := &chatSendService{}
+	handler := (&Server{Service: svc, Catalog: chatWorkerCatalog{}}).Handler()
+	post := func(launch string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/chat/agents/"+launch+"/send", strings.NewReader(`{"text":"hello","idempotency_key":"k1"}`)))
+		return w
+	}
+	if w := post("pm"); w.Code != http.StatusCreated {
+		t.Fatalf("send = %d: %s", w.Code, w.Body.String())
+	}
+	if len(svc.inputs) != 1 || svc.inputs[0].Worker != "agent-os" || svc.inputs[0].LaunchID != "pm" || svc.inputs[0].PromptAppend != "hello" {
+		t.Fatalf("create inputs = %+v, want Worker agent-os", svc.inputs)
+	}
+	if len(svc.launched) != 1 || svc.launched[0] != "new" {
+		t.Fatalf("launched = %v", svc.launched)
+	}
+
+	w := post("no-wrkr")
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "worker_not_configured") || len(svc.inputs) != 1 {
+		t.Fatalf("no-worker send = %d: %s (creates %d)", w.Code, w.Body.String(), len(svc.inputs))
 	}
 }

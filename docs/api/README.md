@@ -1888,6 +1888,7 @@ Scope: `read`. Response (200), sorted by `launch_id`:
       "agent_id": "portfolio-manager",
       "display_name": "Portfolio Manager",
       "channel": "owner-inbox",
+      "worker": "agent-os",
       "session": {
         "id": "01J...",
         "state": "running",
@@ -1902,7 +1903,8 @@ Scope: `read`. Response (200), sorted by `launch_id`:
 `session` is `null` when the launch has never produced one, otherwise the
 newest session of that launch in any state. `at_turn_boundary` is true only for
 a `running` session whose runtime reports idle. `channel` is the launch route's
-channel, else its agent's, else empty.
+channel, else its agent's, else empty. `worker` is the launch's
+`worker:` default placement and is omitted when the launch sets none.
 
 ### `POST /chat/agents/{launch_id}/send`
 
@@ -1919,7 +1921,7 @@ required. Behavior:
 |---|---|
 | running, at a turn boundary | `text` is delivered as the next turn (the `/sessions/{id}/turn` path). 200 `{"mode":"turn"}` |
 | running, mid-turn | Nothing is sent. 409 `agent_working`; the key is not consumed, so retry once idle |
-| none, or not running | A session is created from the launch (`/sessions` semantics, no overrides) with `text` appended to its boot prompt as the first prompt, then started. 201 `{"mode":"launch"}` |
+| none, or not running | A session is created on the launch's `worker` (`/sessions` semantics with `worker` set, no other overrides, the launch's route honored) with `text` appended to its boot prompt as the first prompt, then started. 201 `{"mode":"launch"}`. A launch without `worker:` answers 409 `worker_not_configured`; a worker that is not enrolled or not connected answers 502 `worker_unavailable` naming the label |
 
 Response: `{"launch_id","session_id","mode","replayed"}`. A retry with the same
 key and text returns the original result with `replayed: true` and delivers
@@ -1927,8 +1929,8 @@ nothing again; the same key with different text is 409 `idempotency_conflict`.
 Keys are scoped to the authenticated caller and launch. The `turn` path
 remembers keys in memory for 24 hours (a daemon restart forgets them); the
 `launch` path binds the key to the created session durably. Errors: 400
-`invalid_request`, 404 `not_found` (unknown or unflagged launch), 502
-`turn_failed`.
+`invalid_request`, 404 `not_found` (unknown or unflagged launch), 409
+`worker_not_configured`, 502 `worker_unavailable`, 502 `turn_failed`.
 
 ---
 

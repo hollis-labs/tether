@@ -19,6 +19,12 @@ This file was backfilled from the git history and is a good-faith summary, not a
   per-forum FTS5 search, `/forums` HTTP routes and `tether_forum_*` MCP tools.
   See `docs/forums.md` for the owner-only MVP policy and client contract.
 
+- Add the launch `worker: <label>` field: the default worker for sessions started
+  from a launch by API-driven paths. Chat send now starts a missing session on
+  that worker instead of failing with 500 `session creation failed` (it ran on
+  the hub); without one it answers 409 `worker_not_configured`, and an unknown or
+  offline worker answers 502 `worker_unavailable`. `GET /chat/agents` entries
+  carry `worker` when set.
 - Add `GET /messages/watch` (resumable, side-effect-free mailbox SSE stream with
   `after_seq`, `synchronized`, `gap` and keepalive) and `tether mailbox watch <urn>`.
 - Add the teams activation policy (Stage A). Formation, previously always

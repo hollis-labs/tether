@@ -18,11 +18,20 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 // CodeAgentWorking (409) means the chat agent's session is mid-turn, so the
 // message was not sent and the caller keeps its draft.
 const CodeAgentWorking = "agent_working"
+
+// CodeWorkerNotConfigured (409) means there is no running session to continue
+// and the launch declares no `worker:`. The hub never runs agents itself.
+const CodeWorkerNotConfigured = "worker_not_configured"
+
+// CodeWorkerUnavailable (502) means the launch's worker is not enrolled,
+// offline, or the worker channel is down.
+const CodeWorkerUnavailable = "worker_unavailable"
 
 const (
 	chatSendPrefix  = "/chat/agents/"
@@ -41,6 +50,7 @@ type ChatAgent struct {
 	AgentID     string       `json:"agent_id"`
 	DisplayName string       `json:"display_name"`
 	Channel     string       `json:"channel"`
+	Worker      string       `json:"worker,omitempty"`
 	Session     *ChatSession `json:"session"`
 }
 
@@ -124,6 +134,7 @@ func (s *Server) handleListChatAgents(w http.ResponseWriter, r *http.Request) {
 			AgentID:     l.Agent,
 			DisplayName: chatDisplayName(l),
 			Channel:     chatChannel(cat, l),
+			Worker:      l.Worker,
 			Session:     s.chatSession(row),
 		})
 	}
@@ -241,7 +252,7 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request, launchID
 		return
 	}
 
-	resp, status, code, msg := s.deliverChat(r, launchID, req, principal)
+	resp, status, code, msg := s.deliverChat(r, launchID, l.Worker, req, principal)
 	if code != "" {
 		s.chatReplays.abandon(replayKey)
 		writeError(w, status, code, msg)
@@ -253,7 +264,7 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request, launchID
 
 // deliverChat sends to the newest running session at a turn boundary, or
 // launches a fresh session with the text as its first prompt.
-func (s *Server) deliverChat(r *http.Request, launchID string, req ChatSendRequest, principal string) (resp ChatSendResponse, status int, code, msg string) {
+func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatSendRequest, principal string) (resp ChatSendResponse, status int, code, msg string) {
 	row, err := s.newestLaunchSession(launchID)
 	if err != nil {
 		return resp, http.StatusInternalServerError, CodeInternalError, "session lookup failed"
@@ -278,7 +289,11 @@ func (s *Server) deliverChat(r *http.Request, launchID string, req ChatSendReque
 		}
 	}
 
+	if worker == "" {
+		return resp, http.StatusConflict, CodeWorkerNotConfigured, "no session is running and launch " + launchID + " has no worker; set `worker: <label>` on the launch"
+	}
 	res, err := s.Service.CreateSessionWithInput(CreateSessionInput{
+		Worker:               worker,
 		LaunchID:             launchID,
 		PromptAppend:         req.Text,
 		IdempotencyKey:       "chat:" + launchID + ":" + req.IdempotencyKey,
@@ -290,6 +305,8 @@ func (s *Server) deliverChat(r *http.Request, launchID string, req ChatSendReque
 			return resp, http.StatusConflict, CodeIdempotencyConflict, err.Error()
 		case errors.Is(err, launch.ErrLaunchNotFound):
 			return resp, http.StatusNotFound, CodeNotFound, "chat agent not found"
+		case errors.Is(err, workerhub.ErrNotEnrolled), errors.Is(err, workerhub.ErrOffline), errors.Is(err, workerhub.ErrChannelUnavailable):
+			return resp, http.StatusBadGateway, CodeWorkerUnavailable, "launch " + launchID + " worker unavailable: " + err.Error()
 		}
 		return resp, http.StatusInternalServerError, CodeInternalError, "session creation failed"
 	}
