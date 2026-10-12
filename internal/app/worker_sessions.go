@@ -109,6 +109,11 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	}
 	return spec, err
 }
+
+// workerLaunchWait is how long the hub waits for a worker to finish a launch (a git clone plus process
+// start). It must exceed workerruntime.WorkerLaunchTimeout so the worker gives up first.
+const workerLaunchWait = 5 * time.Minute
+
 func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow, p *launch.Plan) (*Launched, error) {
 	spec, err := s.workerSpec(ctx, row.ID, p)
 	if err != nil {
@@ -121,7 +126,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err = s.Store.UpdateSessionState(row.ID, "launching", 0, nil); err != nil {
 		return nil, err
 	}
-	wait, cancel := context.WithTimeout(ctx, 30*time.Second)
+	wait, cancel := context.WithTimeout(ctx, workerLaunchWait)
 	defer cancel()
 	result, err := s.Workers.Send(wait, row.WorkerID, workerwire.Frame{T: "launch", CmdID: "launch:" + row.ID, Session: row.ID, Spec: raw})
 	if err != nil {
