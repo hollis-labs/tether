@@ -11,19 +11,20 @@ const (
 	ScopeTerminal = "terminal"
 	ScopeMaintain = "maintain"
 	ScopeAdmin    = "admin"
+	ScopeWorker   = "worker"
 )
 
 // NormalizeDeviceScopes validates independent capabilities, not a privilege hierarchy.
 // In particular admin does not imply terminal, operate or maintain, and legacy
 // wildcards do not become remote device authority (ADR 0062).
 func NormalizeDeviceScopes(scopes []string) ([]string, error) {
-	if len(scopes) == 0 || len(scopes) > 5 {
-		return nil, fmt.Errorf("choose at least one of read, operate, terminal, maintain, admin")
+	if len(scopes) == 0 || len(scopes) > 6 {
+		return nil, fmt.Errorf("choose at least one of read, operate, terminal, maintain, admin, worker")
 	}
 	seen := make(map[string]bool)
 	for _, scope := range scopes {
 		switch scope {
-		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin:
+		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker:
 		default:
 			return nil, fmt.Errorf("unknown device scope")
 		}

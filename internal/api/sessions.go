@@ -248,9 +248,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var err error
 	// A keyed request always takes the input path: that is where the
 	// request digest is computed and the key recorded.
-	if req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" {
+	if req.Worker != "" || req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" {
 		// v005-08 Tier-2 path: caller-provided payload (any field set routes here).
 		res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
+			Worker:             req.Worker,
 			LaunchID:           req.Launch,
 			Route:              req.Route,
 			BootPromptOverride: req.BootPrompt,

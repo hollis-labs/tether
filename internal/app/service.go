@@ -36,6 +36,7 @@ import (
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/specresolve"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 // RuntimeFactory builds an agentsessions.Runtime for a single launch. The
@@ -66,12 +67,15 @@ type Service struct {
 	// call tether_team_*; set by daemon startup from modules.teams.
 	TeamsEnabled bool
 
-	CatalogRoot string
-	Catalog     *config.Catalog
-	Store       *store.Store
-	Manager     *agentsessions.Manager
-	Bus         events.Bus
-	Broker      *broker.Service
+	CatalogRoot    string
+	Catalog        *config.Catalog
+	Store          *store.Store
+	Workers        *workerhub.Hub
+	workerIngestMu sync.Mutex
+	workerCarries  map[string][]byte
+	Manager        *agentsessions.Manager
+	Bus            events.Bus
+	Broker         *broker.Service
 
 	// Federation is the authority-routing messaging Router, or nil when
 	// federation is disabled (the standalone default). When non-nil it
@@ -280,6 +284,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
+		Workers:     workerhub.New(db.DB()),
 		Manager:     mgr,
 		stops:       stops,
 		Bus:         bus,
@@ -290,6 +295,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		factories:   factories,
 	}
 	service.installRecipientWake()
+	service.Workers.Event = service.ingestWorkerFrame
 	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
 	if validateMCPGrants {
@@ -510,6 +516,9 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 // to call multiple times only via the underlying components' contracts;
 // callers should treat Close as one-shot.
 func (s *Service) Close() error {
+	if s.Workers != nil {
+		s.Workers.Close()
+	}
 	s.StopSessionReaper()
 	if s.Manager != nil {
 		if err := s.Manager.Shutdown(context.Background()); err != nil {

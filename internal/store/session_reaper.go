@@ -18,7 +18,7 @@ type ReaperSession struct {
 }
 
 func (s *Store) ReaperSessions(ctx context.Context) ([]ReaperSession, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(pid_started_at,'') FROM sessions WHERE state IN ('launching','running','detached') ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(pid_started_at,'') FROM sessions WHERE worker_id='' AND state IN ('launching','running','detached') ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}

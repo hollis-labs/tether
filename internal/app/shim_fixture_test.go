@@ -32,8 +32,6 @@ import (
 	"github.com/hollis-labs/tether/internal/testutil"
 )
 
-const shimFixtureBudget = 8 * time.Second
-
 func TestShimLaunchProcess(t *testing.T) {
 	role := ""
 	for i, arg := range os.Args {
@@ -252,18 +250,6 @@ func shimFixture(t *testing.T) *shimAppFixture {
 		}
 	})
 	return f
-}
-
-func shimAwait(t *testing.T, what string, fn func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(shimFixtureBudget)
-	for time.Now().Before(deadline) {
-		if fn() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("timeout: " + what)
 }
 
 func (f *shimAppFixture) start(t *testing.T) shimhost.Receipt {

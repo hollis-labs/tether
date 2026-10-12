@@ -309,6 +309,7 @@ var daemonRunCmd = &cobra.Command{
 			EnvironmentStream:        environmentStream,
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
+			Workers:                  svc.Workers,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
 			Manager:                  svc.Manager,
@@ -943,6 +944,7 @@ func (a *serviceAdapter) CreateSessionWithBootPrompt(launchID, bootPrompt string
 
 func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
 	l, err := a.svc.CreateSessionWithInput(app.CreateSessionInput{
+		Worker:               in.Worker,
 		LaunchID:             in.LaunchID,
 		BootPromptOverride:   in.BootPromptOverride,
 		AgentFile:            in.AgentFile,
