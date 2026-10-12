@@ -46,6 +46,10 @@ func (e *Executor) replay(id string, from int64) error {
 	}
 	return e.Send(workerwire.Frame{T: "state", Session: s.ID, State: s.State, ExitCode: s.ExitCode})
 }
+
+// Restore re-adopts the shims that are still alive after a worker restart. A session whose shim has gone
+// (the agent finished and its host exited) or whose state is damaged is skipped and logged: one dead
+// session must never keep the worker from starting and serving the live ones.
 func (e *Executor) Restore() error {
 	dirs, err := os.ReadDir(filepath.Join(e.Root, "hosts"))
 	if os.IsNotExist(err) {
@@ -58,47 +62,49 @@ func (e *Executor) Restore() error {
 		if !dir.IsDir() {
 			continue
 		}
-		path := filepath.Join(e.Root, "hosts", dir.Name())
-		var s execution
-		if err := shimhost.ReadPrivateJSON(filepath.Join(path, "meta.json"), 1<<20, &s); err != nil {
-			return err
-		}
-		spec, err := shim.ReadLaunch(s.Descriptor)
-		if err != nil {
-			return err
-		}
-		if file, err := os.Open(filepath.Join(path, "output.jsonl")); err == nil { //nolint:gosec // G304: path is the worker-owned session directory
-			scanner := bufio.NewScanner(file)
-			scanner.Buffer(make([]byte, 64<<10), 2<<20)
-			for scanner.Scan() {
-				var out outputRecord
-				if err := json.Unmarshal(scanner.Bytes(), &out); err != nil {
-					file.Close()
-					return err
-				}
-				s.outputs = append(s.outputs, out)
-				if out.Frame.Seq > s.LastSeq {
-					s.LastSeq = out.Frame.Seq
-					s.Cursor = out.Cursor
-				}
-			}
-			err = scanner.Err()
-			file.Close()
-			if err != nil {
-				return err
-			}
-		}
-		client, err := shim.Connect(filepath.Join(spec.ControlDir, "control.sock"), spec.Secret, s.ID, spec.Instance, "1", "controller", true)
-		if err != nil {
-			return fmt.Errorf("restore %s: %w", s.ID, err)
-		}
-		s.client = client
-		s.pending = make(map[string]chan shim.Frame)
-		e.sessions[s.ID] = &s
-		go e.follow(&s)
-		if err := client.Replay(s.ID, s.Cursor); err != nil {
-			return err
+		if err := e.restoreOne(filepath.Join(e.Root, "hosts", dir.Name())); err != nil {
+			fmt.Fprintf(os.Stderr, "tether-worker: skipping session host %s: %v\n", dir.Name(), err)
 		}
 	}
 	return nil
+}
+func (e *Executor) restoreOne(path string) error {
+	var s execution
+	if err := shimhost.ReadPrivateJSON(filepath.Join(path, "meta.json"), 1<<20, &s); err != nil {
+		return err
+	}
+	spec, err := shim.ReadLaunch(s.Descriptor)
+	if err != nil {
+		return err
+	}
+	if file, err := os.Open(filepath.Join(path, "output.jsonl")); err == nil { //nolint:gosec // G304: path is the worker-owned session directory
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 64<<10), 2<<20)
+		for scanner.Scan() {
+			var out outputRecord
+			if err := json.Unmarshal(scanner.Bytes(), &out); err != nil {
+				_ = file.Close()
+				return err
+			}
+			s.outputs = append(s.outputs, out)
+			if out.Frame.Seq > s.LastSeq {
+				s.LastSeq = out.Frame.Seq
+				s.Cursor = out.Cursor
+			}
+		}
+		err = scanner.Err()
+		_ = file.Close()
+		if err != nil {
+			return err
+		}
+	}
+	client, err := shim.Connect(filepath.Join(spec.ControlDir, "control.sock"), spec.Secret, s.ID, spec.Instance, "1", "controller", true)
+	if err != nil {
+		return fmt.Errorf("restore %s: %w", s.ID, err)
+	}
+	s.client = client
+	s.pending = make(map[string]chan shim.Frame)
+	e.sessions[s.ID] = &s
+	go e.follow(&s)
+	return client.Replay(s.ID, s.Cursor)
 }
