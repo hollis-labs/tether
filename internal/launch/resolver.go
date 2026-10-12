@@ -162,6 +162,7 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		ExtractRefs:    extractRefs,
 		Route:          route,
 		RepoRoot:       config.Expand(proj.RepoRoot),
+		RepoURL:        proj.RepoURL,
 		WriteHome:      writeHome,
 		WorkspaceMode:  workspaceMode,
 		WorktreeBase:   config.Expand(proj.Workspace.WorktreeBase),
