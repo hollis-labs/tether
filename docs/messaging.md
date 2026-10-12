@@ -195,6 +195,17 @@ recipient. It does not replay historical mail; use `inbox` or `list` for
 history. A connected UI or keeper process can subscribe and react immediately,
 but durable delivery still lives in the message store.
 
+`GET /messages/watch?to=<urn>&as=<urn>[&after_seq=N][&kind=..][&thread_id=..][&unread_only=true]`
+is the resumable form (CLI: `tether mailbox watch <urn> [--after-seq N] [--json]`).
+It uses the environment-stream framing (`id: <seq>`, `event: message`,
+`synchronized`, `gap`, `: ping` keepalives every 15s) over durable rows. `seq` is
+a per-hub, increasing, non-contiguous cursor. Without `after_seq` (or
+`Last-Event-ID`) the stream starts from now; with it, replay resumes strictly
+after that seq, so a reconnect does not duplicate. Like `list`, it never marks
+anything delivered or read and does not wake a session. `gap` with reason
+`ahead` means the cursor is newer than the hub's newest row (hub reset); resume
+from the `high_water_seq` it carries. Needs the `read` scope on remote listeners.
+
 ## Group Mentions
 
 Group `@` mentions emit `notice` envelopes to mentioned agents' personal

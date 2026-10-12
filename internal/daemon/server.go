@@ -864,6 +864,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/messages/subscribe", s.MessageStore != nil},
 		{"/messages/inbox", s.MessageStore != nil},
 		{"/messages/list", s.MessageStore != nil},
+		{"/messages/watch", s.MessageStore != nil},
 		{"/messages/notify", s.MessageStore != nil},
 		{"/messages/request", s.MessageStore != nil},
 		{"/messages/thread/", s.MessageStore != nil},
