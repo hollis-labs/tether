@@ -54,6 +54,7 @@ func (s *Server) registerMessageRoutes(router *http.ServeMux) {
 	router.HandleFunc("/messages/subscribe", s.guardAs(s.handleMessagesSubscribe))
 	router.HandleFunc("/messages/inbox", s.guardAs(s.handleMessagesInbox))
 	router.HandleFunc("/messages/list", s.guardAs(s.handleMessagesList))
+	router.HandleFunc("/messages/watch", s.guardAs(s.handleMessagesWatch))
 	router.HandleFunc("/messages/thread/", s.guardAs(s.handleMessagesThread))
 	router.HandleFunc("/messages/", s.guardAs(s.handleMessagesItem))
 }

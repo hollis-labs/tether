@@ -1090,6 +1090,16 @@ func (f *federatedMessageStore) Inbox(ctx context.Context, to gomsg.Address, fil
 func (f *federatedMessageStore) Subscribe(ctx context.Context, to gomsg.Address, filt gomsg.Filter) (<-chan gomsg.Envelope, error) {
 	return f.router.Subscribe(ctx, to, filt)
 }
+
+// MailboxAfter keeps the watch stream reachable through the federation
+// wrapper: it reads only the local mailbox, like List.
+func (f *federatedMessageStore) MailboxAfter(ctx context.Context, to gomsg.Address, after int64, filt store.ListFilter, limit int) (store.MailboxWindow, error) {
+	w, ok := f.InboxStore.(store.MailboxWatcher)
+	if !ok {
+		return store.MailboxWindow{}, errors.New("mailbox watch unavailable")
+	}
+	return w.MailboxAfter(ctx, to, after, filt, limit)
+}
 func (f *federatedMessageStore) Consume(ctx context.Context, id string, recipient gomsg.Address) error {
 	return f.router.Consume(ctx, id, recipient)
 }

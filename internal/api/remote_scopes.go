@@ -106,6 +106,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/messages/notify", "/messages/notify", map[string]string{"POST": operateScope}),
 	routeScope("/messages/request", "/messages/request", map[string]string{"POST": operateScope}),
 	routeScope("/messages/subscribe", "/messages/subscribe", map[string]string{"GET": readScope}),
+	routeScope("/messages/watch", "/messages/watch", map[string]string{"GET": readScope}),
 	routeScope("/messages/inbox", "/messages/inbox", map[string]string{"GET": readScope}),
 	routeScope("/messages/list", "/messages/list", map[string]string{"GET": readScope}),
 	routeScope("/messages/thread/", "/messages/thread/{id}", map[string]string{"GET": readScope}),

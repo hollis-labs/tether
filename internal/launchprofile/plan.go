@@ -58,8 +58,11 @@ type Plan struct {
 	SandboxProfile string `json:"sandbox_profile,omitempty"`
 	// ExtractRefs records whether proxy-side identifier extraction (--extract-refs)
 	// was enabled for this launch plan.
-	ExtractRefs     bool     `json:"extract_refs,omitempty"`
-	RepoRoot        string   `json:"repo_root"`
+	ExtractRefs bool   `json:"extract_refs,omitempty"`
+	RepoRoot    string `json:"repo_root"`
+	// RepoURL is the project's git remote, carried so a remote worker can clone it. Empty when the project
+	// declares none.
+	RepoURL         string   `json:"repo_url,omitempty"`
 	WorkRoot        string   `json:"work_root,omitempty"`
 	WriteHome       string   `json:"write_home"`
 	WorkspaceMode   string   `json:"workspace_mode,omitempty"`

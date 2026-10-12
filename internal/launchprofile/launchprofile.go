@@ -14,9 +14,12 @@ type MCPConfig struct {
 // tracking root, workspace defaults, and MCP proxy settings. Distinct from
 // registry.Project (identity object).
 type LaunchContext struct {
-	ID            string        `yaml:"id" json:"id"`
-	Name          string        `yaml:"name" json:"name"`
-	RepoRoot      string        `yaml:"repo_root" json:"repo_root"`
+	ID       string `yaml:"id" json:"id"`
+	Name     string `yaml:"name" json:"name"`
+	RepoRoot string `yaml:"repo_root" json:"repo_root"`
+	// RepoURL is the project's git remote (e.g. https://github.com/org/repo.git). RepoRoot is a path on one
+	// machine; RepoURL is what a remote worker clones to materialize its own checkout. Optional.
+	RepoURL       string        `yaml:"repo_url,omitempty" json:"repo_url,omitempty"`
 	TrackingRoot  string        `yaml:"tracking_root" json:"tracking_root"`
 	KnowledgeBase []string      `yaml:"knowledge_base" json:"knowledge_base,omitempty"`
 	BootFragments []string      `yaml:"boot_fragments" json:"boot_fragments,omitempty"`
