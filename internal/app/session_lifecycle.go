@@ -101,6 +101,9 @@ func (s *Service) CreateSession(launchID string) (*Launched, error) {
 // For Tier 2 (caller-provided), populate AgentFile / AgentInline /
 // BootProfileFile / Override as needed. See CreateSessionInput for precedence.
 func (s *Service) CreateSessionWithInput(in CreateSessionInput) (*Launched, error) {
+	if in.Worker != "" {
+		return s.createWorkerSession(in)
+	}
 	if in.IdempotencyKey == "" {
 		plan, err := s.BuildLaunchPlan(in)
 		if err != nil {
@@ -245,6 +248,9 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	plan, err := s.Store.GetLaunchPlan(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("load launch plan: %w", err)
+	}
+	if row.WorkerID != "" {
+		return s.launchWorkerSession(ctx, row, plan)
 	}
 
 	if plan.NativeResumeOnly {
@@ -818,6 +824,9 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 // terminal state is recorded as "killed", distinct from "completed" and
 // "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
+	if row, err := s.Store.GetSession(id); err == nil && row.WorkerID != "" {
+		return s.sendWorkerCommand(context.Background(), row, "stop", nil)
+	}
 	return s.stopSessionWithLifecycle(id)
 }
 

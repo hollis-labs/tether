@@ -139,6 +139,7 @@ type LaunchResult struct {
 // contract; rename with care.
 
 type LaunchRequest struct {
+	Worker string               `json:"worker,omitempty"`
 	Route  *launchprofile.Route `json:"route,omitempty"`
 	Launch string               `json:"launch"`
 	// BootPrompt, when non-empty, overrides the catalog's static boot prompt
@@ -200,6 +201,7 @@ type ResumeRequest struct {
 // cycle via internal/app importing api). The adapter in cmd/tether/daemon.go
 // translates between the two.
 type CreateSessionInput struct {
+	Worker             string
 	Route              *launchprofile.Route
 	LaunchID           string
 	BootPromptOverride string

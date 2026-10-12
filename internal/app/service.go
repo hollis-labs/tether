@@ -513,6 +513,9 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 // to call multiple times only via the underlying components' contracts;
 // callers should treat Close as one-shot.
 func (s *Service) Close() error {
+	if s.Workers != nil {
+		s.Workers.Close()
+	}
 	s.StopSessionReaper()
 	if s.Manager != nil {
 		if err := s.Manager.Shutdown(context.Background()); err != nil {

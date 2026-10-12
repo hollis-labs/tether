@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/tether/internal/workerruntime"
 	"github.com/spf13/cobra"
 	"os"
@@ -19,6 +20,21 @@ func main() {
 	root := filepath.Join(home, ".tether-worker")
 	cmd := &cobra.Command{Use: "tether-worker", Short: "Thin execution outpost for the Tether hub"}
 	cmd.PersistentFlags().StringVar(&root, "root", root, "worker state root")
+	var descriptor string
+	shimCmd := &cobra.Command{Use: "shim-host", Hidden: true, RunE: func(c *cobra.Command, _ []string) error {
+		spec, err := shim.ReadLaunch(descriptor)
+		if err != nil {
+			return err
+		}
+		host, err := shim.Start(spec)
+		if err != nil {
+			return err
+		}
+		<-c.Context().Done()
+		return host.Close()
+	}}
+	shimCmd.Flags().StringVar(&descriptor, "launch", "", "private shim launch descriptor")
+	cmd.AddCommand(shimCmd)
 	var hub, code, label string
 	enroll := &cobra.Command{Use: "enroll", RunE: func(c *cobra.Command, _ []string) error {
 		if err := workerruntime.Enroll(c.Context(), root, hub, code, label); err != nil {
@@ -37,6 +53,13 @@ func main() {
 			return err
 		}
 		w := &workerruntime.Worker{Root: root, Config: cfg, Version: version}
+		binary, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		executor := workerruntime.NewExecutor(root, binary, w.Send)
+		w.Inventory = executor.Inventory
+		w.Command = executor.Command
 		return w.Run(c.Context())
 	}})
 	cmd.AddCommand(&cobra.Command{Use: "status", RunE: func(c *cobra.Command, _ []string) error {

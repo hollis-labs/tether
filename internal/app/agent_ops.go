@@ -37,7 +37,8 @@ import (
 // behavior should populate LaunchID + BootPromptOverride and leave the new
 // fields zero.
 type CreateSessionInput struct {
-	Route *launchprofile.Route
+	Worker string
+	Route  *launchprofile.Route
 	// LaunchID resolves the base launch profile from the catalog. Required.
 	LaunchID string
 

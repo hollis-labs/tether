@@ -104,6 +104,9 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 	if err != nil || parent == nil {
 		return
 	}
+	if parent.WorkerID != "" {
+		return
+	}
 	for _, option := range options {
 		for _, id := range option.NativeOnlySourceIDs {
 			source, err := s.Store.GetSession(id)
