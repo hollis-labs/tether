@@ -35,3 +35,17 @@ func TestWorkerSpecWorkspaceFromRepoURL(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerSpecCarriesPermissionMode(t *testing.T) {
+	s := &Service{Catalog: &config.Catalog{}}
+	for _, mode := range []string{"bypass", "default", ""} {
+		plan := launch.Plan{ProviderBrand: "claude", PermissionMode: mode}
+		spec, err := s.workerSpec(context.Background(), "sess-1", &plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.PermissionMode != mode {
+			t.Fatalf("spec.PermissionMode = %q, want %q", spec.PermissionMode, mode)
+		}
+	}
+}
