@@ -153,13 +153,28 @@ func TestAttachMissingCheckpointIsRefused(t *testing.T) {
 		t.Fatalf("missing checkpoint: %v", err)
 	}
 }
+
+// connectObserver retries while the host is still releasing the previous
+// observer slot; the release is asynchronous after the client closes.
+func (f *fixture) connectObserver() (*shim.Client, error) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c, err := shim.Connect(filepath.Join(f.root, "c", "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "observer", false)
+		var fault *shim.Error
+		if err == nil || !errors.As(err, &fault) || fault.Code != "observer_busy" || time.Now().After(deadline) {
+			return c, err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestAttachJournalConflictPreservesCheckpointAndEpoch(t *testing.T) {
 	f := startFixture(t, 16<<20)
 	descriptor := filepath.Join(f.root, "launch.json")
 	if err := saveJSON(descriptor, f.cfg.Launch); err != nil {
 		t.Fatal(err)
 	}
-	observer, err := shim.Connect(filepath.Join(f.root, "c", "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "observer", false)
+	observer, err := f.connectObserver()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +193,7 @@ func TestAttachJournalConflictPreservesCheckpointAndEpoch(t *testing.T) {
 	if err != nil || saved.Journal != journal || saved.Counter != 42 {
 		t.Fatal("conflict rewrote checkpoint")
 	}
-	observer, err = shim.Connect(filepath.Join(f.root, "c", "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "observer", false)
+	observer, err = f.connectObserver()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +223,7 @@ func TestAttachHostJournalPinRefusesBeforeEpochChanges(t *testing.T) {
 	if err := saveJSON(descriptor, f.cfg.Launch); err != nil {
 		t.Fatal(err)
 	}
-	observer, err := shim.Connect(filepath.Join(f.root, "c", "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "observer", false)
+	observer, err := f.connectObserver()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +236,7 @@ func TestAttachHostJournalPinRefusesBeforeEpochChanges(t *testing.T) {
 	if _, err = Run(context.Background(), Options{DescriptorPath: descriptor, StatePath: f.cfg.StatePath, Attach: true, Takeover: true}, io.NopCloser(bytes.NewReader(nil)), io.Discard, io.Discard); err == nil {
 		t.Fatal("wrong journal accepted")
 	}
-	observer, err = shim.Connect(filepath.Join(f.root, "c", "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "observer", false)
+	observer, err = f.connectObserver()
 	if err != nil {
 		t.Fatal(err)
 	}
