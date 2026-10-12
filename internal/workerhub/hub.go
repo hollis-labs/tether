@@ -28,11 +28,13 @@ type Record struct {
 	Sessions  int             `json:"sessions"`
 }
 type connection struct {
+	features  []string
 	ws        *websocket.Conn
 	write     sync.Mutex
 	pendingMu sync.Mutex
 	pending   map[string]chan workerwire.Frame
 	inventory map[string]workerwire.Session
+	replaying map[string]bool
 	done      chan struct{}
 }
 
@@ -44,6 +46,10 @@ func (c *connection) send(f workerwire.Frame) error {
 }
 
 type Hub struct {
+	mailMu      sync.Mutex
+	mail        map[string]*mailBinding
+	BindMail    func(context.Context, string, workerwire.Binding) (workerwire.Binding, error)
+	UnbindMail  func(context.Context, string, workerwire.Binding) error
 	db          *sql.DB
 	mu          sync.RWMutex
 	connections map[string]*connection
@@ -51,7 +57,9 @@ type Hub struct {
 	Event func(string, workerwire.Frame) error
 }
 
-func New(db *sql.DB) *Hub { return &Hub{db: db, connections: make(map[string]*connection)} }
+func New(db *sql.DB) *Hub {
+	return &Hub{db: db, connections: make(map[string]*connection), mail: map[string]*mailBinding{}}
+}
 func (h *Hub) Close() {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -111,10 +119,15 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = ws.Close() }()
+	stop := context.AfterFunc(r.Context(), func() { _ = ws.Close() })
+	defer stop()
 	ws.SetReadLimit(8 << 20)
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
 	var hello workerwire.Frame
 	if ws.ReadJSON(&hello) != nil || hello.T != "hello" || hello.Proto != workerwire.Protocol || hello.Worker == nil || hello.Worker.Label == "" {
+		return
+	}
+	if len(hello.Bindings) > 0 && (!feature(hello.Features, "bind") || !feature(hello.Features, "deliver")) {
 		return
 	}
 	sum := sha256.Sum256([]byte(p.ID))
@@ -128,7 +141,8 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), inventory: make(map[string]workerwire.Session), done: make(chan struct{})}
+	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), inventory: make(map[string]workerwire.Session), replaying: make(map[string]bool), done: make(chan struct{})}
+	c.features = hello.Features
 	for _, s := range hello.Sessions {
 		c.inventory[s.ID] = s
 	}
@@ -139,15 +153,30 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	if old != nil {
 		_ = old.ws.Close()
 	}
+	// Serialized replacement must revoke the previous connection's inventory
+	// before any new bind is installed. Its late defer must not revoke ours.
+	h.disconnectMail(id)
 	defer func() {
 		close(c.done)
 		h.mu.Lock()
 		if h.connections[id] == c {
 			delete(h.connections, id)
+			h.disconnectMail(id)
 		}
 		h.mu.Unlock()
 	}()
 	welcome := workerwire.Frame{T: "welcome", WorkerID: id}
+	if feature(hello.Features, "bind") && feature(hello.Features, "deliver") {
+		welcome.Features = []string{"bind", "deliver"}
+	}
+	for _, b := range hello.Bindings {
+		bound, err := h.bind(r.Context(), id, c, b)
+		if err != nil {
+			welcome.Error = err.Error()
+			continue
+		}
+		welcome.Bindings = append(welcome.Bindings, bound)
+	}
 	for _, held := range hello.Sessions {
 		var state string
 		var seq int64
@@ -156,6 +185,7 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 			welcome.Kill = append(welcome.Kill, held.ID)
 		} else {
 			welcome.Resume = append(welcome.Resume, workerwire.Cursor{Session: held.ID, FromSeq: seq + 1})
+			c.replaying[held.ID] = true
 		}
 	}
 	if c.send(welcome) != nil {
@@ -182,6 +212,32 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
+		if f.T == "bind" || f.T == "unbind" {
+			response := workerwire.Frame{T: f.T + "_ack", CmdID: f.CmdID}
+			if f.Binding == nil {
+				response.Error = "binding required"
+			} else if f.T == "bind" {
+				b, err := h.bind(r.Context(), id, c, *f.Binding)
+				if err != nil {
+					response.Error = err.Error()
+				} else {
+					response.Binding = &b
+				}
+			} else if err := h.unbind(r.Context(), id, *f.Binding); err != nil {
+				response.Error = err.Error()
+			}
+			if c.send(response) != nil {
+				return
+			}
+			continue
+		}
+		if f.T == "replay_end" {
+			_ = c.send(workerwire.Frame{T: "replay", Session: f.Session, FromSeq: h.NextSeq(f.Session)})
+			continue
+		}
+		if f.T == "state" {
+			delete(c.replaying, f.Session)
+		}
 		if f.T == "state" || f.T == "launched" {
 			c.pendingMu.Lock()
 			state := f.State
@@ -205,7 +261,10 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 		}
 		if h.Event != nil && f.Session != "" {
 			if err := h.Event(id, f); err != nil {
-				_ = c.send(workerwire.Frame{T: "replay", Session: f.Session, FromSeq: h.NextSeq(f.Session)})
+				if !c.replaying[f.Session] {
+					c.replaying[f.Session] = true
+					_ = c.send(workerwire.Frame{T: "replay", Session: f.Session, FromSeq: h.NextSeq(f.Session)})
+				}
 			}
 		}
 	}
@@ -233,6 +292,9 @@ func (h *Hub) Send(ctx context.Context, id string, f workerwire.Frame) (workerwi
 	h.mu.RUnlock()
 	if c == nil {
 		return workerwire.Frame{}, fmt.Errorf("worker offline")
+	}
+	if f.T == "deliver" && !feature(c.features, "deliver") {
+		return workerwire.Frame{}, fmt.Errorf("worker lacks deliver feature")
 	}
 	if f.CmdID == "" {
 		return workerwire.Frame{}, c.send(f)

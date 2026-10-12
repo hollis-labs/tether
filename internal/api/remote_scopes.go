@@ -47,6 +47,7 @@ func routeScope(registration, path string, methods map[string]string, payloadPol
 var RemoteRouteScopes = []RouteScope{
 	routeScope("GET /worker/v1/connect", "/worker/v1/connect", map[string]string{"GET": identity.ScopeWorker}),
 	routeScope("GET /workers", "/workers", map[string]string{"GET": readScope}),
+	routeScope("POST /workers/grants", "/workers/grants", map[string]string{"POST": adminScope}),
 	routeScope("/health", "/health", map[string]string{"GET": publicScope, "HEAD": publicScope}),
 	routeScope(environment.DescriptorPath, environment.DescriptorPath, map[string]string{"GET": publicScope, "HEAD": publicScope}),
 	routeScope("/v1/environment/report", "/v1/environment/report", map[string]string{"GET": readScope}),

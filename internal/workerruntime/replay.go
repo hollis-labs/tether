@@ -36,15 +36,30 @@ func (e *Executor) replay(id string, from int64) error {
 		return fmt.Errorf("unknown execution")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var batch []workerwire.Frame
+	bytes := 0
+	next := int64(0)
 	for _, out := range s.outputs {
 		if out.Frame.Seq >= from {
-			if err := e.Send(out.Frame); err != nil {
-				return err
+			if len(batch) >= 256 || (len(batch) > 0 && bytes+len(out.Frame.Data) > 1<<20) {
+				next = out.Frame.Seq
+				break
 			}
+			batch = append(batch, out.Frame)
+			bytes += len(out.Frame.Data)
 		}
 	}
-	return e.Send(workerwire.Frame{T: "state", Session: s.ID, State: s.State, ExitCode: s.ExitCode})
+	state := workerwire.Frame{T: "state", Session: s.ID, State: s.State, ExitCode: s.ExitCode}
+	s.mu.Unlock()
+	for _, f := range batch {
+		if err := e.Send(f); err != nil {
+			return err
+		}
+	}
+	if next > 0 {
+		return e.Send(workerwire.Frame{T: "replay_end", Session: id, FromSeq: next})
+	}
+	return e.Send(state)
 }
 func (e *Executor) Restore() error {
 	dirs, err := os.ReadDir(filepath.Join(e.Root, "hosts"))

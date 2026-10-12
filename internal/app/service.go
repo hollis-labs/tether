@@ -296,6 +296,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	}
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame
+	service.installOutpostMail()
 	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
 	if validateMCPGrants {
