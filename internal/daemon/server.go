@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/workerhub"
 	"log"
 	"net"
 	"net/http"
@@ -45,6 +46,7 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
+	Workers *workerhub.Hub
 	// Environment is the cached public descriptor composed from selected
 	// state identity. It is separate from authenticated session/API handlers.
 	EnvironmentStream *environmentstream.Server
@@ -508,6 +510,10 @@ func (s *Server) handler(remote bool) http.Handler {
 		teams = s.Teams
 	}
 	router := http.NewServeMux()
+	if s.Workers != nil {
+		router.HandleFunc("GET /worker/v1/connect", s.Workers.Connect)
+		router.HandleFunc("GET /workers", s.Workers.ListHTTP)
+	}
 	if remote {
 		router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 			s.handleListenerHealth(w, identity.Enforce, s.Config.RemoteListener.ListenAddr)
@@ -598,13 +604,22 @@ func (s *Server) handler(remote bool) http.Handler {
 	if remote {
 		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
 	}
-	return otelprop.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ordinary := otelprop.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.Environment != nil && r.URL.Path == environment.DescriptorPath {
 			s.Environment.ServeHTTP(w, r)
 			return
 		}
 		protected.ServeHTTP(w, r)
 	}))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The ordinary metrics statusWriter does not preserve http.Hijacker.
+		// Keep all authentication/scope/protocol gates on the new WS endpoint.
+		if r.URL.Path == "/worker/v1/connect" {
+			protected.ServeHTTP(w, r)
+			return
+		}
+		ordinary.ServeHTTP(w, r)
+	})
 }
 
 // Health is the response body shape for GET /health. Kept small on purpose —

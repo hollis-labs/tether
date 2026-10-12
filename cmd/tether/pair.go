@@ -107,7 +107,7 @@ func newPairCommand(factory deviceAdminFactory) *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringSliceVar(&scopes, "scope", []string{identity.ScopeRead}, "independent device scopes: read, operate, terminal, maintain, admin")
+	cmd.Flags().StringSliceVar(&scopes, "scope", []string{identity.ScopeRead}, "independent device scopes: read, operate, terminal, maintain, admin, worker")
 	cmd.Flags().DurationVar(&ttl, "ttl", identity.DefaultGrantTTL, "pairing grant lifetime (maximum one hour)")
 	cmd.Flags().StringVar(&label, "label", "", "device label")
 	cmd.Flags().StringVar(&thumbprint, "key-thumbprint", "", "reserved key binding (no DPoP verification)")

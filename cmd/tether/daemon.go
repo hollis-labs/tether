@@ -309,6 +309,7 @@ var daemonRunCmd = &cobra.Command{
 			EnvironmentStream:        environmentStream,
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
+			Workers:                  svc.Workers,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
 			Manager:                  svc.Manager,

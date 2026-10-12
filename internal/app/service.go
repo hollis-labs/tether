@@ -36,6 +36,7 @@ import (
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/specresolve"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 // RuntimeFactory builds an agentsessions.Runtime for a single launch. The
@@ -69,6 +70,7 @@ type Service struct {
 	CatalogRoot string
 	Catalog     *config.Catalog
 	Store       *store.Store
+	Workers     *workerhub.Hub
 	Manager     *agentsessions.Manager
 	Bus         events.Bus
 	Broker      *broker.Service
@@ -280,6 +282,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
+		Workers:     workerhub.New(db.DB()),
 		Manager:     mgr,
 		stops:       stops,
 		Bus:         bus,
