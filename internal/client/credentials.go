@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // VerifiedPrincipal proves which principal this client's credential will send.
@@ -29,6 +31,14 @@ func (c *Client) VerifiedPrincipal(ctx context.Context, verifier identity.Verifi
 // disables environment/default-file lookup (e.g. for an anonymous health probe).
 func WithToken(token string) Option {
 	return func(c *Client) { c.token, c.tokenSet = token, true }
+}
+
+// WithProtocolHeader makes every request carry the environment protocol
+// version. A remote listener requires it (environment.ProtocolGate with
+// require=true) and answers 409 protocol_mismatch without it. Local unix
+// callers may omit it, so only remote clients (--target) opt in.
+func WithProtocolHeader() Option {
+	return func(c *Client) { c.protocolHeader = true }
 }
 
 // WithTokenFile reads a current-user-owned regular 0600 file at construction.
@@ -59,7 +69,7 @@ func (c *Client) configureCredentials() error {
 	}
 	// Do not mutate a caller-owned client/transport or its redirect policy.
 	cloned := *c.http
-	cloned.Transport = &credentialTransport{base: base, token: token, scheme: origin.Scheme, host: origin.Host}
+	cloned.Transport = &credentialTransport{base: base, token: token, scheme: origin.Scheme, host: origin.Host, protocol: c.protocolHeader}
 	c.http = &cloned
 	return nil
 }
@@ -110,6 +120,7 @@ type credentialTransport struct {
 	base                http.RoundTripper
 	err                 error
 	token, scheme, host string
+	protocol            bool
 }
 
 func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -127,6 +138,9 @@ func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	}
 	cloned := req.Clone(req.Context())
 	cloned.Header.Set("Authorization", "Bearer "+t.token)
+	if t.protocol {
+		cloned.Header.Set(environment.ProtocolHeader, strconv.Itoa(environment.Protocol))
+	}
 	return t.base.RoundTrip(cloned)
 }
 

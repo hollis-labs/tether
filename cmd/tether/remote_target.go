@@ -74,10 +74,10 @@ func remoteDaemonClient() (*client.Client, error) {
 		return nil, err
 	}
 	if tokenFilePath != "" {
-		return client.New(remoteTarget, client.WithTokenFile(tokenFilePath)), nil
+		return client.New(remoteTarget, client.WithTokenFile(tokenFilePath), client.WithProtocolHeader()), nil
 	}
 	if token := os.Getenv("TETHER_TOKEN"); token != "" {
-		return client.New(remoteTarget, client.WithToken(token)), nil
+		return client.New(remoteTarget, client.WithToken(token), client.WithProtocolHeader()), nil
 	}
 	return nil, fmt.Errorf("--target requires an explicit device credential (--token-file or TETHER_TOKEN)")
 }
