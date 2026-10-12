@@ -97,6 +97,10 @@ func Enroll(ctx context.Context, root, hub, code, label string) error {
 	return nil
 }
 
+// WorkerLaunchTimeout bounds one launch on the worker. It must stay below the hub's launch wait
+// (internal/app workerLaunchWait) so the worker aborts a slow launch before the hub marks it failed.
+const WorkerLaunchTimeout = 4 * time.Minute
+
 type Worker struct {
 	Root      string
 	Config    Config
@@ -113,6 +117,7 @@ type Worker struct {
 	pendingMu sync.Mutex
 	pending   map[string]chan workerwire.Frame
 	commands  chan workerwire.Frame
+	launches  chan struct{}
 }
 
 func (w *Worker) capabilities(ctx context.Context) json.RawMessage {
@@ -145,6 +150,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	w.pendingMu.Unlock()
 	// Keep the socket reader free for ping/replies while a launch clones a repo.
 	w.commands = make(chan workerwire.Frame, 32)
+	w.launches = make(chan struct{}, 4)
 	go func() {
 		for {
 			select {
@@ -275,6 +281,24 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 			}
 		default:
 			if w.Command != nil {
+				if f.T == "launch" {
+					select {
+					case w.launches <- struct{}{}:
+						// Preserve main's deadline and concurrent stop/input handling,
+						// while bounding how many launches can run off the reader.
+						go func(f workerwire.Frame) {
+							defer func() { <-w.launches }()
+							lctx, cancel := context.WithTimeout(ctx, WorkerLaunchTimeout)
+							defer cancel()
+							if err := w.Command(lctx, f); err != nil {
+								_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: err.Error()})
+							}
+						}(f)
+					default:
+						_ = w.Send(workerwire.Frame{T: "launch_failed", CmdID: f.CmdID, Session: f.Session, Error: "worker launch capacity full"})
+					}
+					continue
+				}
 				select {
 				case w.commands <- f:
 				default:
