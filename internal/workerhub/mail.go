@@ -170,7 +170,10 @@ func (h *Hub) GrantsHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	id, err := h.Resolve(r.Context(), in.Worker)
+	// Grants are authority changes: labels are not unique. Require the exact
+	// worker id, never Resolve's label convenience used by ordinary launches.
+	var id string
+	err := h.db.QueryRowContext(r.Context(), `SELECT id FROM workers WHERE id=?`, in.Worker).Scan(&id)
 	if err != nil || !strings.HasPrefix(in.URN, "msg://agent/") || len(strings.Split(in.URN, "/")) != 5 {
 		http.Error(w, "valid worker and agent URN required", 400)
 		return
