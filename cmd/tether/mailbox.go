@@ -66,7 +66,9 @@ func watchMailbox(ctx context.Context, c *client.Client, q client.MailboxWatchQu
 		q.AfterSeq = cursor
 		events, errCh, err := c.MailboxWatch(ctx, q)
 		if err != nil {
-			if !errors.Is(err, client.ErrDaemonUnreachable) && ctx.Err() == nil {
+			var statusErr *client.MailboxWatchStatusError
+			transient := errors.Is(err, client.ErrDaemonUnreachable) || (errors.As(err, &statusErr) && statusErr.Status >= 500)
+			if !transient && ctx.Err() == nil {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "mailbox watch: %v; retrying in %s\n", err, wait)

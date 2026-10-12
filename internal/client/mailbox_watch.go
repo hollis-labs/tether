@@ -9,7 +9,23 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// mailboxWatchIdle bounds how long a stream may be silent before the client
+// treats it as dead (the server pings every 15s). A var so tests can shrink it.
+var mailboxWatchIdle = 45 * time.Second
+
+// MailboxWatchStatusError is a non-200 answer to the watch request. Callers
+// retry 5xx (a proxy or restarting hub) and give up on the rest (404 means the
+// hub has no such route).
+type MailboxWatchStatusError struct {
+	Status int
+	Err    error
+}
+
+func (e *MailboxWatchStatusError) Error() string { return e.Err.Error() }
+func (e *MailboxWatchStatusError) Unwrap() error { return e.Err }
 
 // MailboxWatchQuery selects one recipient's stream. AfterSeq nil means "from
 // now"; a non-nil cursor resumes strictly after it.
@@ -56,19 +72,28 @@ func (c *Client) MailboxWatch(ctx context.Context, q MailboxWatchQuery) (<-chan 
 	if q.UnreadOnly {
 		params.Set("unread_only", "true")
 	}
+	parent := ctx
+	ctx, cancel := context.WithCancel(parent)
+	idle := time.AfterFunc(mailboxWatchIdle, cancel)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/messages/watch?"+params.Encode(), nil)
 	if err != nil {
+		idle.Stop()
+		cancel()
 		return nil, nil, err
 	}
 	longClient := *c.http
 	longClient.Timeout = 0
 	resp, err := longClient.Do(req)
 	if err != nil {
+		idle.Stop()
+		cancel()
 		return nil, nil, wrapIfUnreachable(err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		return nil, nil, readError(resp)
+		idle.Stop()
+		cancel()
+		return nil, nil, &MailboxWatchStatusError{Status: resp.StatusCode, Err: readError(resp)}
 	}
 
 	events := make(chan MailboxWatchEvent, 16)
@@ -77,6 +102,8 @@ func (c *Client) MailboxWatch(ctx context.Context, q MailboxWatchQuery) (<-chan 
 		defer close(events)
 		defer close(errCh)
 		defer resp.Body.Close()
+		defer cancel()
+		defer idle.Stop()
 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -114,6 +141,7 @@ func (c *Client) MailboxWatch(ctx context.Context, q MailboxWatchQuery) (<-chan 
 			return nil
 		}
 		for scanner.Scan() {
+			idle.Reset(mailboxWatchIdle)
 			line := scanner.Text()
 			switch {
 			case line == "":
@@ -130,7 +158,7 @@ func (c *Client) MailboxWatch(ctx context.Context, q MailboxWatchQuery) (<-chan 
 				data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 			}
 		}
-		if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		if err := scanner.Err(); err != nil && parent.Err() == nil {
 			errCh <- fmt.Errorf("read mailbox stream: %w", err)
 		}
 	}()
