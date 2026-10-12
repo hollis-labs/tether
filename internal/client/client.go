@@ -38,6 +38,7 @@ type Client struct {
 	http                               *http.Client
 	token, tokenFile, defaultTokenFile string
 	tokenSet, tokenFileSet             bool
+	protocolHeader                     bool
 }
 
 // MessageEnvelopeDTO is the daemon's /messages envelope shape as consumed by
