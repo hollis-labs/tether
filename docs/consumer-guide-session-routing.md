@@ -313,7 +313,10 @@ runtime's installed detector and publication feed, not just a tagged library.
 
 Gateway flags mean at least one advertised runtime supports the path and its
 kinds are their union. Multiple configured modes for the same runtime id produce
-an entry containing their common guarantees. Use the session query for decisions
+an entry containing their common guarantees: a catalog that also configures a
+Claude PTY provider reports `claude.route_supported: false` at the gateway even
+though a streaming-stdio Claude session routes and replies, so decide with the
+per-session query below. Use the session query for decisions
 about one sender; do not use another runtime's gateway-level support.
 
 Installed detectors expose question and approval for Claude/Codex, approval for
@@ -662,6 +665,7 @@ delivery: handoff first requeues on the successor.
 | `interrupt_unconfirmed` | Undeliverable: daemon stopped during interrupt reservation; resubmit with a **new** key |
 | `body_purged` | Undeliverable: reply text was purged before delivery |
 | `waiting_for_idle` | Queued: runtime rejected mid-turn input; wait for the turn to end |
+| `worker_offline_expired` | Undeliverable: the session's worker stayed offline for 24 hours. Before that, a reply to a session on an offline worker stays queued and is delivered when the worker reconnects |
 
 `routing.reply_delivered` and `routing.reply_undeliverable` report outcomes on the
 target session's event stream. Payload fields are `reply_id`, `parent_id`,

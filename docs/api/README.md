@@ -2285,6 +2285,7 @@ text.
 | `interrupt_unconfirmed` | `undeliverable` | See above. |
 | `body_purged` | `undeliverable` | The reply text was purged before it could be delivered. |
 | `waiting_for_idle` | `queued` | The runtime rejected mid-turn input; waiting for the turn to end. |
+| `worker_offline_expired` | `undeliverable` | The session lives on a worker that stayed disconnected for 24 hours. Until then a reply for a session on an offline worker stays `queued` and is re-checked every 15 seconds, because a disconnected worker has not ended its sessions. |
 
 An unknown message id is `404 not_found`; a message that is not a channel
 publication from a session is 400 `reply_target_not_a_session`. With the reply

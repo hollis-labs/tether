@@ -78,8 +78,10 @@ type replyHarness struct {
 	mu     sync.Mutex
 	busy   map[string]bool
 	noFeed map[string]bool
-	events []events.RoutingReplyEvent
-	kinds  []string
+	// unreach marks sessions that are not running only because their worker is offline.
+	unreach map[string]bool
+	events  []events.RoutingReplyEvent
+	kinds   []string
 	// onSend runs inside sendTurn, after it is recorded.
 	onSend func(sessionID, text string) error
 	// onBusyCheck runs after every idle check read its answer and before it is
@@ -94,7 +96,7 @@ func newReplyHarness(t *testing.T) *replyHarness {
 	t.Cleanup(func() { replySubmitBackoff, replyIdleBackoff = oldSubmit, oldIdle })
 
 	st, reg := newWakeHarness(t)
-	h := &replyHarness{t: t, st: st, reg: reg, rt: newFakeRuntime(), busy: map[string]bool{}, noFeed: map[string]bool{}, intr: &fakeInterrupter{}}
+	h := &replyHarness{t: t, st: st, reg: reg, rt: newFakeRuntime(), busy: map[string]bool{}, noFeed: map[string]bool{}, unreach: map[string]bool{}, intr: &fakeInterrupter{}}
 	seam := h.rt.seam()
 	runtime := replyRuntime{wakeRuntime: wakeRuntime{health: seam.health, sendTurn: func(ctx context.Context, id, text string) error {
 		if err := seam.sendTurn(ctx, id, text); err != nil {
@@ -108,6 +110,10 @@ func newReplyHarness(t *testing.T) *replyHarness {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		return h.noFeed[id]
+	}, unreachable: func(id string) bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.unreach[id]
 	}, turnBusy: func(id string) bool {
 		h.mu.Lock()
 		busy := h.busy[id]
@@ -145,6 +151,12 @@ func (h *replyHarness) waitQuiet() {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
+}
+
+func (h *replyHarness) setUnreachable(session string, v bool) {
+	h.mu.Lock()
+	h.unreach[session] = v
+	h.mu.Unlock()
 }
 
 func (h *replyHarness) setBusy(session string, busy bool) {
@@ -371,6 +383,62 @@ func TestEndedSessionHandsOffToTheActorsBoundSession(t *testing.T) {
 	}
 	if h.rt.sendCallCount("s-old") != 0 || h.rt.sendCallCount("s-new") != 1 {
 		t.Fatalf("sends = %+v", h.rt.sendCalls)
+	}
+}
+
+// A worker that is disconnected (a sleeping laptop, a restarting service) has not
+// ended its sessions: the reply waits for it instead of being resolved as if the
+// session were gone.
+func TestReplyToASessionOnAnOfflineWorkerWaitsAndIsDeliveredOnReconnect(t *testing.T) {
+	oldBackoff := replyUnreachableBackoff
+	replyUnreachableBackoff = 5 * time.Millisecond
+	t.Cleanup(func() { replyUnreachableBackoff = oldBackoff })
+	h := newReplyHarness(t)
+	if err := h.st.CreateSession(store.SessionRow{ID: "s-w", LogicalAgentID: "worker", State: "running"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setAlive("s-w", false, agentsessions.LiveStateIdle)
+	h.setUnreachable("s-w", true)
+	receipt, err := h.reply(h.routed("s-w").ID, "are you there", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond) // many backoff periods
+	got := h.state(receipt.ReplyID)
+	if got.State != store.RoutingReplyQueued {
+		t.Fatalf("a reply for an unreachable worker must stay queued, got %+v", got)
+	}
+	if h.rt.sendCallCount("s-w") != 0 {
+		t.Fatal("injected into a session whose worker is offline")
+	}
+	// The worker reconnects and reports the session alive.
+	h.rt.setAlive("s-w", true, agentsessions.LiveStateIdle)
+	h.setUnreachable("s-w", false)
+	h.waitState(receipt.ReplyID, store.RoutingReplyDelivered)
+	if h.rt.sendCallCount("s-w") != 1 {
+		t.Fatalf("sends = %d, want 1", h.rt.sendCallCount("s-w"))
+	}
+}
+
+func TestReplyToASessionOnAWorkerOfflineTooLongIsUndeliverable(t *testing.T) {
+	oldTTL := replyUnreachableTTL
+	replyUnreachableTTL = time.Millisecond
+	t.Cleanup(func() { replyUnreachableTTL = oldTTL })
+	h := newReplyHarness(t)
+	if err := h.st.CreateSession(store.SessionRow{ID: "s-w", LogicalAgentID: "worker", State: "running"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setAlive("s-w", false, agentsessions.LiveStateIdle)
+	h.setUnreachable("s-w", true)
+	receipt, err := h.reply(h.routed("s-w").ID, "too late", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	h.d.notify("s-w")
+	got := h.waitState(receipt.ReplyID, store.RoutingReplyUndeliverable)
+	if got.Reason != ReplyReasonWorkerOffline || got.Detail == "" {
+		t.Fatalf("got %+v", got)
 	}
 }
 
