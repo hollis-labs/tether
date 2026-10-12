@@ -174,7 +174,7 @@ func (s *Store) CreatePost(ctx context.Context, v f.Post) (out f.Post, err error
 			return v, fmt.Errorf("%w: thread depth exceeds 1000", f.ErrInvalid)
 		}
 	}
-	e = tx.QueryRowContext(ctx, `UPDATE forums SET last_seq=last_seq+1,updated_at=? WHERE id=? RETURNING last_seq`, v.CreatedAt, v.ForumID).Scan(&v.Seq)
+	e = tx.QueryRowContext(ctx, `UPDATE forums SET last_seq=last_seq+1,updated_at=MAX(updated_at,?) WHERE id=? RETURNING last_seq`, v.CreatedAt, v.ForumID).Scan(&v.Seq)
 	if e != nil {
 		return v, mapErr(e)
 	}
@@ -182,7 +182,7 @@ func (s *Store) CreatePost(ctx context.Context, v f.Post) (out f.Post, err error
 	if e != nil {
 		return v, mapErr(e)
 	}
-	_, e = tx.ExecContext(ctx, `UPDATE forum_topics SET post_count=post_count+1,last_activity_at=?,last_seq=? WHERE id=?`, v.CreatedAt, v.Seq, v.TopicID)
+	_, e = tx.ExecContext(ctx, `UPDATE forum_topics SET post_count=post_count+1,last_activity_at=MAX(last_activity_at,?),last_seq=? WHERE id=?`, v.CreatedAt, v.Seq, v.TopicID)
 	if e != nil {
 		return v, e
 	}

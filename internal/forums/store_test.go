@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	f "github.com/hollis-labs/go-forums"
 	"github.com/hollis-labs/tether/internal/store"
@@ -168,5 +169,27 @@ func TestConcurrentPostsHaveUniqueMonotonicSequences(t *testing.T) {
 	}
 	if count != 16 || unique != 16 || maximum != 16 {
 		t.Fatalf("sequences: %d %d %d", count, unique, maximum)
+	}
+}
+
+func TestQueuedPostKeepsActivityMonotonic(t *testing.T) {
+	svc, db, c := fixture(t)
+	_, topic := seed(t, svc, c)
+	st := &Store{db: db.DB()}
+	ctx := context.Background()
+	newer := time.Now().UTC().Add(time.Hour)
+	newestAt := newer.Format("2006-01-02T15:04:05.000000000Z")
+	for i, at := range []string{newestAt, newer.Add(-time.Minute).Format("2006-01-02T15:04:05.000000000Z")} {
+		_, e := st.CreatePost(ctx, f.Post{ID: fmt.Sprint("queued-", i), ForumID: "portfolio", TopicID: topic, BodyMD: "queued", BodyChars: 6, CreatedAt: at, Provenance: c.Provenance})
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	var activity, updated string
+	if e := db.DB().QueryRow(`SELECT t.last_activity_at,f.updated_at FROM forum_topics t JOIN forums f ON f.id=t.forum_id WHERE t.id=?`, topic).Scan(&activity, &updated); e != nil {
+		t.Fatal(e)
+	}
+	if activity != newestAt || updated != activity {
+		t.Fatalf("activity regressed: %s %s", activity, updated)
 	}
 }
