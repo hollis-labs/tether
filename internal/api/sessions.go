@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 // registerSessionRoutes wires /sessions handlers onto router. Route matching
@@ -248,6 +249,14 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "verified device required")
 		return
 	}
+	if req.Worker == "" && s.Catalog != nil {
+		// The launch's own `worker:` is its default placement.
+		if cat, cerr := s.Catalog.Load(); cerr == nil && cat != nil {
+			if l, found := cat.Launches[req.Launch]; found {
+				req.Worker = l.Worker
+			}
+		}
+	}
 	var res LaunchResult
 	var err error
 	// A keyed request always takes the input path: that is where the
@@ -284,6 +293,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if writeLaunchRefused(w, remoteResponseError(r, err, "session launch refused")) {
+			return
+		}
+		if errors.Is(err, workerhub.ErrNotEnrolled) || errors.Is(err, workerhub.ErrOffline) || errors.Is(err, workerhub.ErrChannelUnavailable) {
+			writeError(w, http.StatusBadGateway, CodeWorkerUnavailable, remoteResponseError(r, err, "worker unavailable").Error())
 			return
 		}
 		if errors.Is(err, launch.ErrDisabled) {
