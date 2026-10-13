@@ -326,3 +326,29 @@ func TestResolveProfileRecoveryCascade(t *testing.T) {
 		}
 	}
 }
+
+func TestEnabledIsPerAgentNotInherited(t *testing.T) {
+	off := false
+	mem := launchprofile.NewMemorySource()
+	mem.AddProfile(&launchprofile.LaunchProfile{ID: "base", Enabled: &off})
+	mem.AddProfile(&launchprofile.LaunchProfile{ID: "kid", Extends: "base"})
+	r := launchprofile.NewResolver(mem)
+
+	kid, err := r.ResolveProfile(context.Background(), "kid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kid.IsEnabled() {
+		t.Fatal("a child inherited enabled: false from its parent")
+	}
+	base, err := r.ResolveProfile(context.Background(), "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.IsEnabled() {
+		t.Fatal("enabled: false was lost on the agent that set it")
+	}
+	if !(launchprofile.LaunchProfile{}).IsEnabled() {
+		t.Fatal("absent must mean enabled")
+	}
+}

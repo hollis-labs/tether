@@ -286,6 +286,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		if writeLaunchRefused(w, remoteResponseError(r, err, "session launch refused")) {
 			return
 		}
+		if errors.Is(err, launch.ErrDisabled) {
+			writeError(w, http.StatusConflict, CodeAgentDisabled, remoteResponseError(r, err, "session creation failed").Error())
+			return
+		}
 		if errors.Is(err, launch.ErrLaunchNotFound) || errors.Is(err, config.ErrUnknownSandboxProfile) {
 			writeError(w, http.StatusNotFound, CodeNotFound, remoteResponseError(r, err, "session creation failed").Error())
 			return

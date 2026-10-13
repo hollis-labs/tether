@@ -273,6 +273,25 @@ provider-specific skill compilation an additive layer.
 > and is *not* persisted) or an external api-key-helper/keychain. The same rule
 > applies to `overrides.env` — explicit env overrides are persisted too.
 
+## Turning an agent or launch off: `enabled`
+
+`enabled: false` (default true; absent means on) in an agent file or a launch
+file blocks new launches and chat sends for it without removing the file. The
+refusal names the disabled entity and answers `409 agent_disabled`. It never
+touches a session that is already running; stop that separately. `enabled` is per
+entity and is not inherited through `extends`. `GET /chat/agents` leaves out
+disabled launches (and launches whose agent is disabled) unless
+`?include_disabled=true`, and each entry carries `enabled`; `GET /catalog/agents`
+and `/catalog/launches` list everything and show `enabled: false` where set.
+
+Launch files are re-read on every launch, so a launch's `enabled` takes effect at
+once. Agents are loaded when the daemon starts, so an agent's `enabled` takes
+effect after a daemon restart (or catalog reload, once that exists).
+
+**Deploy order.** Catalog YAML is parsed without strict field checking, so a
+daemon build that predates `enabled` ignores it and keeps launching a disabled
+entity. Run a build that has `enabled` before relying on it.
+
 ## Boot Profile
 
 ```yaml

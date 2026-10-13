@@ -33,6 +33,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
   `rollback_of`. This supersedes the "writes are not registered" fence on
   `/catalog/*` (ADR 0012) for these routes only. `golang.org/x/crypto` becomes a
   direct dependency (scrypt).
+
+- Add `enabled: false` to agents and launches (CW-20261013-0001): blocks new
+  launches and chat sends (409 `agent_disabled`, naming the entity) without
+  removing the file and without touching a running session. `GET /chat/agents`
+  hides disabled entries unless `?include_disabled=true` and each entry carries
+  `enabled`. A daemon build that predates this field ignores it, so deploy the
+  build before disabling anything.
 - Add per-session credentials and stable identity for worker sessions. The hub
   mints a session-bound bearer at launch (scopes from the new optional agent
   field `mcp_scopes`, default `message.write,registry.write,groups.write`),
