@@ -1004,6 +1004,10 @@ func (a *serviceAdapter) StopSession(id string) error {
 	return a.svc.StopSession(id)
 }
 
+func (a *serviceAdapter) ForceStopSession(ctx context.Context, id string, opts api.ForceStopOptions) (api.ForceStopResult, error) {
+	return a.svc.ForceStopSession(ctx, id, opts)
+}
+
 func (a *serviceAdapter) WaitSession(ctx context.Context, id string) (int, error) {
 	return a.svc.WaitSession(ctx, id)
 }

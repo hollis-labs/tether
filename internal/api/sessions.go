@@ -73,6 +73,10 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 			return
 		}
+		if queryFlag(r, "force") {
+			s.handleForceStopSession(w, r, id)
+			return
+		}
 		s.handleStopSession(w, r, id)
 	case "wait":
 		if r.Method != http.MethodGet {
