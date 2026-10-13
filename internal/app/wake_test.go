@@ -1252,6 +1252,32 @@ func TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers(t *testing.T) {
 	}
 }
 
+// TestRunWakeSweep_StaleMessage_NotReplayedAsTurn: mail older than
+// wakeMaxMessageAge stays in the inbox and is not woken for.
+func TestRunWakeSweep_StaleMessage_NotReplayedAsTurn(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	sendMessage(t, st, to)
+	if _, err := reg.LeaseBinding(ctx, registry.LogicalAgentBindingTarget("worker"), "s1", "local", "s1", nil, "", 0); err != nil {
+		t.Fatalf("lease: %v", err)
+	}
+	old := wakeMaxMessageAge
+	wakeMaxMessageAge = time.Millisecond
+	t.Cleanup(func() { wakeMaxMessageAge = old })
+	time.Sleep(20 * time.Millisecond)
+
+	n, err := runWakeSweep(ctx, st, reg, rt.seam(), nil)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 0 || rt.sendCallCount("s1") != 0 {
+		t.Fatalf("stale message woke recipient: attempted=%d sends=%d", n, rt.sendCallCount("s1"))
+	}
+}
+
 // ─── RunWakeSweep: parking unresolvable deliveries (CW-20261001-0012) ─────
 
 // TestRunWakeSweep_UnresolvableBacklog_DoesNotStarveFreshDelivery
