@@ -206,7 +206,14 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, _ *http.Request, id 
 		return
 	}
 	caps := result.Caps
+	var stall *StallStatus
+	if sr, ok := s.Service.(StallReporter); ok {
+		if st, ok := sr.SessionStall(id); ok {
+			stall = &st
+		}
+	}
 	writeJSON(w, http.StatusOK, RuntimeHealthResponse{
+		Stall:        stall,
 		SessionID:    id,
 		Alive:        result.Health.Alive,
 		PID:          result.Health.PID,
@@ -430,6 +437,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		dto := SessionRowToDTO(row)
 		dto.AttachedClients = s.Service.AttachedClients(row.ID)
+		if sr, ok := s.Service.(StallReporter); ok && row.State == "running" {
+			if st, ok := sr.SessionStall(row.ID); ok && st.Stalled {
+				dto.Stalled, dto.StallReason = true, st.Reason
+			}
+		}
 		out = append(out, sessionResponseFor(r, dto))
 	}
 

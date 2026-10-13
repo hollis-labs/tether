@@ -966,6 +966,14 @@ engine's session host) can rely on, and what it cannot:
   daemon restart), `GET /sessions/{id}/health` the live runtime,
   `GET /sessions/{id}/wait` blocks for the exit code, and
   `GET /sessions/{id}/events` / `GET /events/stream` carry state changes.
+- **Stalled sessions.** A headless session whose tool actions are refused
+  (`provider.permission_denied`) can sit idle looking healthy. After 3 refusals
+  since its last turn output the daemon publishes one `session.stalled` event
+  (`{"reason":"repeated_tool_denials","denied":N}`); `GET /sessions/{id}/health`
+  carries a `stall` object (`stalled`, `reason`, `denied_since_output`,
+  `idle_seconds`), and running sessions in `GET /sessions` carry
+  `stalled`/`stall_reason`. One refusal plus 10 minutes of silence also counts
+  (`tool_denied_and_idle`).
 - **Cancelling.** `POST /sessions/{id}/stop`. A successful stop records `killed`,
   durably, so a cancel is never mistaken for an agent that finished. A retained
   shim can refuse an unverified stop; an HTTP refusal is not proof of exit.

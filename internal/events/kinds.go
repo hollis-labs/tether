@@ -76,4 +76,10 @@ const (
 	// so an otherwise silent no-op is visible. Payload schema:
 	//   {"action":"<string>","display_name":"<string>"}
 	KindProviderPermissionDenied = "provider.permission_denied"
+
+	// KindSessionStalled fires once when a session's refused tool actions
+	// since its last turn output reach the stall threshold, so a worker that
+	// is silently making no progress is visible to operators. Payload schema:
+	//   {"reason":"repeated_tool_denials","denied":<int>}
+	KindSessionStalled = "session.stalled"
 )

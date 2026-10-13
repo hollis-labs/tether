@@ -189,8 +189,14 @@ func (o *sessionTurnOutput) wire(rt agentsessions.Runtime, opts *agentsessions.S
 	}
 	existing := opts.TypedEventCallback
 	var permission gop.EventsCallback
-	if o.runtimeID == "antigravity" {
-		permission = makeProviderTypedEventCallback(o.service.Bus, o.row.ID, o.row.LogicalAgentID)
+	if o.runtimeID == "antigravity" || o.service.turnFeeds[o.runtimeID].approval != nil {
+		denied := makeProviderTypedEventCallback(o.service.Bus, o.row.ID, o.row.LogicalAgentID)
+		permission = func(ev gopevents.Event) {
+			denied(ev)
+			if _, ok := ev.(gopevents.PermissionDenied); ok {
+				o.service.notifyStallOnDenial(o.row.ID, o.row.LogicalAgentID)
+			}
+		}
 	}
 	opts.TypedEventCallback = gop.EventsCallback(func(ev gopevents.Event) {
 		if existing != nil {
