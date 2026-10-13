@@ -257,6 +257,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if req.RequireWorker && req.Worker == "" {
+		writeError(w, http.StatusConflict, CodeWorkerNotConfigured, "launch "+req.Launch+" has no worker and require_worker is set; refusing to run on the hub")
+		return
+	}
 	var res LaunchResult
 	var err error
 	// A keyed request always takes the input path: that is where the
