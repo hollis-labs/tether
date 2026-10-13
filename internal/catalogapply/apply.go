@@ -22,6 +22,12 @@ type Result struct {
 	// RolledBack is true when the install failed and the touched files were restored.
 	RolledBack bool     `json:"rolled_back,omitempty"`
 	Changed    []string `json:"changed"`
+	// Reloaded is true when the daemon swapped the new catalog in live.
+	Reloaded bool `json:"reloaded,omitempty"`
+	// ReloadError is set when the files landed but the live reload was refused.
+	ReloadError string `json:"reload_error,omitempty"`
+	// RestartRequired names edits the live reload could not apply.
+	RestartRequired []string `json:"restart_required,omitempty"`
 	// AuditNote is a one-line summary for the Torque audit comment.
 	AuditNote string `json:"audit_note"`
 }
@@ -131,6 +137,20 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 	}
 
 	res := &Result{PlanID: planID, Applied: true, BackupID: backupID, Changed: changed, Activation: activationOf(cp)}
+	if e.Reload != nil {
+		rr, rerr := e.Reload(ctx)
+		switch {
+		case rerr != nil:
+			res.ReloadError = rerr.Error()
+			res.Activation = ActivationRestartRequired
+		case len(rr) > 0:
+			res.Reloaded, res.RestartRequired = true, rr
+			res.Activation = ActivationRestartRequired
+		default:
+			res.Reloaded = true
+			res.Activation = ActivationImmediate
+		}
+	}
 	res.AuditNote = fmt.Sprintf("catalog apply %q (plan %s, digest %s): %s; backup %s; activation %s", cp.Name, cp.ID, cp.Digest[:12], strings.Join(changed, ", "), backupID, res.Activation)
 
 	now := e.now().UTC()

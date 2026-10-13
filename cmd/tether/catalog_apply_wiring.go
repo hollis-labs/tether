@@ -26,6 +26,13 @@ func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 		Root:       svc.CatalogRoot,
 		BackupRoot: backupRoot,
 		Approver:   catalogapply.NewApprover(approverFile),
+		Reload: func(ctx context.Context) ([]string, error) {
+			rep, err := svc.ReloadCatalog(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return rep.RestartRequired, nil
+		},
 		RunningSessions: func(_ context.Context, touches []string) ([]string, error) {
 			rows, err := svc.Store.ListSessions(store.ListSessionsOptions{State: "running", Limit: 1000})
 			if err != nil {
