@@ -123,7 +123,7 @@ func TestReaperSweepIsBoundedAndRotates(t *testing.T) {
 }
 
 // A retained condition that does not change must not rewrite the session or append a shim_status event
-// on every reconcile (the old behaviour produced an unbounded stream for sessions retained forever).
+// on every reconcile (the old behavior produced an unbounded stream for sessions retained forever).
 func TestRetainShimRecordsAnUnchangedConditionOnce(t *testing.T) {
 	svc := stopHarness(t)
 	if err := svc.Store.CreateSession(store.SessionRow{ID: "kept", State: "running", Workspace: t.TempDir()}, &launch.Plan{}); err != nil {
