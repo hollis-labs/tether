@@ -57,55 +57,96 @@ func (s *Server) registerForumRoutes(m *http.ServeMux) {
 }
 
 // ForumRoute is the shared HTTP mapping used by daemon clients and MCP.
-func ForumRoute(op string, r f.Request) (method, path string, err error) {
-	switch op {
-	case "forum_create":
-		return "POST", "/forums", nil
-	case "forum_list":
-		return "GET", "/forums", nil
-	case "forum_get":
-		return "GET", "/forums/" + r.ForumID, nil
-	case "topic_create":
-		return "POST", "/forums/" + r.ForumID + "/topics", nil
-	case "topic_list":
-		return "GET", "/forums/" + r.ForumID + "/topics", nil
-	case "topic_get":
-		return "GET", "/forums/topics/" + r.TopicID, nil
-	case "post_create":
-		return "POST", "/forums/topics/" + r.TopicID + "/posts", nil
-	case "post_list":
-		return "GET", "/forums/topics/" + r.TopicID + "/posts", nil
-	case "post_get":
-		return "GET", "/forums/posts/" + r.PostID, nil
-	case "participant_list":
-		return "GET", "/forums/" + r.ForumID + "/participants", nil
-	case "participant_add":
-		return "POST", "/forums/" + r.ForumID + "/participants", nil
-	case "participant_revoke":
-		return "POST", "/forums/" + r.ForumID + "/participants/revoke", nil
-	case "owner_set":
-		return "POST", "/forums/" + r.ForumID + "/owner", nil
-	case "forum_search":
-		return "GET", "/forums/" + r.ForumID + "/search", nil
+type forumRouteSpec struct{ op, method, path string }
+
+func forumRoutes() []forumRouteSpec {
+	routes := []forumRouteSpec{
+		{"forum_create", "POST", "/forums"}, {"forum_list", "GET", "/forums"},
+		{"category_create", "POST", "/forums/categories"}, {"category_list", "GET", "/forums/categories"},
+		{"topic_create", "POST", "/forums/:forum_id/topics"}, {"topic_list", "GET", "/forums/:forum_id/topics"},
+		{"post_create", "POST", "/forums/topics/:topic_id/posts"}, {"post_list", "GET", "/forums/topics/:topic_id/posts"},
+		{"participant_list", "GET", "/forums/:forum_id/participants"}, {"participant_add", "POST", "/forums/:forum_id/participants"},
+		{"participant_revoke", "POST", "/forums/:forum_id/participants/revoke"}, {"owner_set", "POST", "/forums/:forum_id/owner"},
+		{"forum_search", "GET", "/forums/:forum_id/search"},
+	}
+	for _, entity := range []struct{ kind, path string }{{"category", "/forums/categories/:category_id"}, {"forum", "/forums/:forum_id"}, {"topic", "/forums/topics/:topic_id"}, {"post", "/forums/posts/:post_id"}} {
+		routes = append(routes, forumRouteSpec{entity.kind + "_get", "GET", entity.path}, forumRouteSpec{entity.kind + "_update", "PATCH", entity.path}, forumRouteSpec{entity.kind + "_delete", "DELETE", entity.path})
+		if entity.kind != "post" {
+			for _, action := range []string{"archive", "unarchive"} {
+				routes = append(routes, forumRouteSpec{entity.kind + "_" + action, "POST", entity.path + "/" + action})
+			}
+		}
+		if entity.kind != "category" {
+			for _, action := range []string{"move", "clone"} {
+				routes = append(routes, forumRouteSpec{entity.kind + "_" + action, "POST", entity.path + "/" + action})
+			}
+		}
+		if entity.kind == "topic" {
+			routes = append(routes, forumRouteSpec{"topic_fork", "POST", entity.path + "/fork"})
+		}
+	}
+	return routes
+}
+func ForumRoute(op string, r f.Request) (string, string, error) {
+	for _, spec := range forumRoutes() {
+		if spec.op == op {
+			path := spec.path
+			for key, id := range map[string]string{"forum_id": r.ForumID, "topic_id": r.TopicID, "post_id": r.PostID, "category_id": categoryID(r.CategoryID)} {
+				if strings.Contains(path, ":"+key) {
+					if id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/%?#\\") {
+						return "", "", f.ErrInvalid
+					}
+					path = strings.ReplaceAll(path, ":"+key, id)
+				}
+			}
+			return spec.method, path, nil
+		}
 	}
 	return "", "", f.ErrInvalid
 }
 func (s *Server) handleForums(w http.ResponseWriter, r *http.Request) {
 	var req f.Request
 	var op string
+	var ids map[string]string
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	// Read filters are accepted on GET only; strict JSON rejects caller provenance.
-	switch r.Method {
-	case http.MethodGet:
+	for _, spec := range forumRoutes() {
+		if spec.method != r.Method {
+			continue
+		}
+		pattern := strings.Split(strings.Trim(spec.path, "/"), "/")
+		if len(parts) != len(pattern) {
+			continue
+		}
+		candidate := map[string]string{}
+		match := true
+		for i, key := range pattern {
+			if strings.HasPrefix(key, ":") {
+				candidate[key[1:]] = parts[i]
+			} else if key != parts[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			op = spec.op
+			ids = candidate
+			break
+		}
+	}
+	if op == "" {
+		writeError(w, 404, CodeNotFound, "forum route not found")
+		return
+	}
+	if r.Method == http.MethodGet {
 		if e := forumReadOptions(r, &req); e != nil {
 			writeForumError(w, e)
 			return
 		}
-	case http.MethodPost:
+	} else {
 		r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
-		if e := dec.Decode(&req); e != nil {
+		if e := dec.Decode(&req); e != nil && (e != io.EOF || r.Method != http.MethodDelete) {
 			writeForumError(w, fmt.Errorf("%w: invalid JSON body: %w", f.ErrInvalid, e))
 			return
 		}
@@ -114,58 +155,19 @@ func (s *Server) handleForums(w http.ResponseWriter, r *http.Request) {
 			writeForumError(w, fmt.Errorf("%w: one JSON object required", f.ErrInvalid))
 			return
 		}
-	default:
-		writeError(w, 405, CodeMethodNotAllowed, "method not allowed")
-		return
 	}
-	switch {
-	case len(parts) == 3 && parts[2] == "participants":
-		req.ForumID = parts[1]
-		op = "participant_list"
-		if r.Method == "POST" {
-			op = "participant_add"
+	// Path identifiers always win over conflicting body selectors.
+	for key, id := range ids {
+		switch key {
+		case "forum_id":
+			req.ForumID = id
+		case "topic_id":
+			req.TopicID = id
+		case "post_id":
+			req.PostID = id
+		case "category_id":
+			req.CategoryID = &id
 		}
-	case len(parts) == 4 && parts[2] == "participants" && parts[3] == "revoke" && r.Method == "POST":
-		req.ForumID = parts[1]
-		op = "participant_revoke"
-	case len(parts) == 3 && parts[2] == "owner" && r.Method == "POST":
-		req.ForumID = parts[1]
-		op = "owner_set"
-	case len(parts) == 1:
-		if r.Method == "GET" {
-			op = "forum_list"
-		} else {
-			op = "forum_create"
-		}
-	case len(parts) == 3 && parts[1] == "topics" && r.Method == "GET":
-		op = "topic_get"
-		req.TopicID = parts[2]
-	case len(parts) == 3 && parts[1] == "posts" && r.Method == "GET":
-		op = "post_get"
-		req.PostID = parts[2]
-	case len(parts) == 4 && parts[1] == "topics" && parts[3] == "posts":
-		req.TopicID = parts[2]
-		if r.Method == "GET" {
-			op = "post_list"
-		} else {
-			op = "post_create"
-		}
-	case len(parts) == 2 && r.Method == "GET":
-		op = "forum_get"
-		req.ForumID = parts[1]
-	case len(parts) == 3 && parts[2] == "topics":
-		req.ForumID = parts[1]
-		if r.Method == "GET" {
-			op = "topic_list"
-		} else {
-			op = "topic_create"
-		}
-	case len(parts) == 3 && parts[2] == "search" && r.Method == "GET":
-		op = "forum_search"
-		req.ForumID = parts[1]
-	default:
-		writeError(w, 404, CodeNotFound, "forum route not found")
-		return
 	}
 	c, e := s.forumCaller(r.Context())
 	if e != nil {
@@ -178,13 +180,25 @@ func (s *Server) handleForums(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := 200
-	if r.Method == "POST" {
+	if strings.HasSuffix(op, "_create") || strings.HasSuffix(op, "_clone") || strings.HasSuffix(op, "_fork") {
 		status = 201
 	}
 	writeJSON(w, status, out)
 }
 func forumReadOptions(r *http.Request, v *f.Request) error {
 	q := r.URL.Query()
+	v.Namespace = q.Get("namespace")
+	if q.Has("category_id") {
+		id := q.Get("category_id")
+		v.CategoryID = &id
+	}
+	if q.Has("archived") {
+		b, e := strconv.ParseBool(q.Get("archived"))
+		if e != nil {
+			return fmt.Errorf("%w: archived must be a boolean", f.ErrInvalid)
+		}
+		v.Archived = &b
+	}
 	v.Cursor = q.Get("cursor")
 	v.Status = q.Get("status")
 	v.Author = q.Get("author")
@@ -234,4 +248,11 @@ func writeForumError(w http.ResponseWriter, e error) {
 	default:
 		writeError(w, 500, CodeInternalError, "forum operation failed")
 	}
+}
+
+func categoryID(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
