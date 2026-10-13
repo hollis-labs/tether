@@ -119,8 +119,12 @@ type Engine struct {
 	// RunningSessions returns ids of live sessions that use any of touches
 	// ("agent:<id>", "launch:<id>"). Nil means none are known.
 	RunningSessions func(ctx context.Context, touches []string) ([]string, error)
-	Now             func() time.Time
-	TTL             time.Duration
+	// Reload swaps the installed catalog into the running daemon after an
+	// apply; restartRequired names edits it could not apply live. Nil means
+	// no live reload (only launches/ files are then immediate).
+	Reload func(ctx context.Context) (restartRequired []string, err error)
+	Now    func() time.Time
+	TTL    time.Duration
 
 	mu      sync.Mutex
 	plans   map[string]*Plan
