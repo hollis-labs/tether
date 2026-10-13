@@ -22,8 +22,8 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 		return "", fmt.Errorf("%w: credential ceiling lookup: %w", store.ErrSessionReplacementUnavailable, err)
 	}
 	mode := string(identity.Observe)
-	if s.Catalog != nil {
-		mode = s.Catalog.Global.Identity.EffectiveMode()
+	if s.cat() != nil {
+		mode = s.cat().Global.Identity.EffectiveMode()
 	}
 	if replacement && floor.Mode != mode {
 		return "", store.ErrSessionReplacementUnavailable

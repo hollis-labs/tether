@@ -14,6 +14,7 @@ func (a *Adapter) registerTools(s *gomcp.Server) {
 	a.registerCatalogTools(s)
 	a.registerAgentOpsTools(s)
 	a.registerCatalogApplyTools(s)
+	a.registerCatalogReloadTools(s)
 	a.registerSkillTools(s)
 	a.registerSessionTools(s)
 	a.registerLogicalAgentTools(s)

@@ -13,20 +13,20 @@ import (
 )
 
 func (s *Service) mcpOwnership() (string, error) {
-	if s.Catalog == nil {
+	if s.cat() == nil {
 		return config.MCPUpstreamsLegacy, nil
 	}
-	return config.ReadMCPUpstreamOwnership(s.CatalogRoot, s.Catalog.Global.Daemon)
+	return config.ReadMCPUpstreamOwnership(s.CatalogRoot, s.cat().Global.Daemon)
 }
 
 // preflightDaemonMCP proves the session can initialize the strict endpoint.
 // A health ping alone would miss disabled endpoints and unavailable identity.
 func (s *Service) preflightDaemonMCP(ctx context.Context, token string) (string, error) {
 	hint := "set daemon.mcp_endpoint.enabled=true with verified identity and retry, or select daemon.mcp_upstream_ownership=legacy_proxy"
-	if s.Catalog == nil || token == "" {
+	if s.cat() == nil || token == "" {
 		return "", fmt.Errorf("daemon MCP ownership requires a session credential; %s", hint)
 	}
-	addr := s.Catalog.Global.Daemon.ListenAddr
+	addr := s.cat().Global.Daemon.ListenAddr
 	if addr == "" {
 		addr = "unix:~/.tether/run/tetherd.sock"
 	}

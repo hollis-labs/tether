@@ -69,6 +69,7 @@ type Service struct {
 
 	CatalogRoot    string
 	Catalog        *config.Catalog
+	catalogState   catalogState
 	Store          *store.Store
 	Workers        *workerhub.Hub
 	workerIngestMu sync.Mutex

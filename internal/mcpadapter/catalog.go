@@ -51,13 +51,13 @@ func (a *Adapter) catalogForRead() (*config.Catalog, catalogReadObservation, *ca
 	root := strings.TrimSpace(a.svc.CatalogRoot)
 	if root == "" {
 		observation.Source = "startup_snapshot"
-		if a.svc.Catalog == nil {
+		if a.svc.CurrentCatalog() == nil {
 			failure := &catalogReadFailure{Category: "unavailable", Location: "catalog"}
 			observation.Error = failure
 			return nil, observation, failure
 		}
 		observation.Status = "current"
-		return a.svc.Catalog, observation, nil
+		return a.svc.CurrentCatalog(), observation, nil
 	}
 
 	cat, err := config.LoadLayered(root)

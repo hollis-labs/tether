@@ -127,6 +127,8 @@ type Server struct {
 	// CatalogApply is optional; when set, /catalog/plans and /catalog/backups
 	// are mounted (CW-20261012-0124).
 	CatalogApply api.CatalogApplyService
+	// CatalogReload is optional; when set, POST /catalog/reload is mounted.
+	CatalogReload api.CatalogReloader
 	// Groups is optional; when set, /groups/* + /mentions v060-05
 	// group-messaging endpoints are mounted. In production this is the
 	// same *registry.Service instance used by Registry — the
@@ -575,6 +577,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			Settings:            s.Settings,
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			CatalogApply:        s.CatalogApply,
+			CatalogReload:       s.CatalogReload,
 			Groups:              s.Groups,
 			LogsDir:             s.LogsDir,
 			SessionBootstrap:    s.SessionBootstrap,
@@ -910,6 +913,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/catalog/validate", s.CatalogApply != nil},
 		{"/catalog/files", s.CatalogApply != nil},
 		{"/catalog/audit", s.CatalogApply != nil},
+		{"/catalog/reload", s.CatalogReload != nil},
 
 		// Chat roster (CW-20261012-0099). api registers these only when it has
 		// both a LaunchService and a catalog (registerChatRoutes), so the mount

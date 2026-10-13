@@ -75,10 +75,10 @@ func (s *Service) shimHost() (*shimHosting, error) {
 	if s.shimHosting != nil {
 		return s.shimHosting, nil
 	}
-	if s.Catalog == nil {
+	if s.cat() == nil {
 		return nil, &shimhost.Failure{Code: "unsupported", Message: "catalog unavailable"}
 	}
-	root := filepath.Join(filepath.Dir(config.ResolveStateDB(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths)), "shims")
+	root := filepath.Join(filepath.Dir(config.ResolveStateDB(s.cat().Global.Catalog.Defaults, s.cat().Paths)), "shims")
 	if !filepath.IsAbs(root) {
 		return nil, &shimhost.Failure{Code: "unsupported", Message: "private shim root unavailable"}
 	}
@@ -86,7 +86,7 @@ func (s *Service) shimHost() (*shimHosting, error) {
 	if err != nil {
 		return nil, &shimhost.Failure{Code: "unsupported", Message: "host executable unavailable"}
 	}
-	cfg := s.Catalog.Global.Catalog.Defaults.ShimHost
+	cfg := s.cat().Global.Catalog.Defaults.ShimHost
 	backend := shimhost.Detached
 	if cfg.SystemdUser {
 		backend = shimhost.SystemdUser

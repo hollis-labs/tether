@@ -238,7 +238,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	if wsRoot == "" {
 		// Explicit catalog workspace_root wins; cat.Paths supplies the
 		// go-apppaths fallback only when global.yaml omits the key.
-		wsRoot = filepath.Join(config.ResolveWorkspaceRoot(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths), plan.ProjectID)
+		wsRoot = filepath.Join(config.ResolveWorkspaceRoot(s.cat().Global.Catalog.Defaults, s.cat().Paths), plan.ProjectID)
 	}
 	ws, err := workspace.Create(wsRoot, sessID, plan)
 	if err != nil {

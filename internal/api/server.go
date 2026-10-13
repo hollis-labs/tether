@@ -81,6 +81,8 @@ type Deps struct {
 	// CatalogApply, when non-nil, enables the /catalog/plans and
 	// /catalog/backups routes (CW-20261012-0124).
 	CatalogApply CatalogApplyService
+	// CatalogReload, when non-nil, enables POST /catalog/reload (CW-20261013-0002).
+	CatalogReload CatalogReloader
 
 	// Groups, when non-nil, enables the /groups/... + /mentions
 	// v060-05 group-messaging routes (registerGroupRoutes). In
@@ -178,6 +180,7 @@ type Server struct {
 	Settings            SettingsService
 	RegistryCatalogRoot string
 	CatalogApply        CatalogApplyService
+	CatalogReload       CatalogReloader
 	Groups              GroupsService
 	LogsDir             string
 	DeliveryClaims      DeliveryClaimer
@@ -225,6 +228,7 @@ func NewHandler(deps Deps) http.Handler {
 		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		CatalogApply:        deps.CatalogApply,
+		CatalogReload:       deps.CatalogReload,
 		Groups:              deps.Groups,
 		LogsDir:             deps.LogsDir,
 		DeliveryClaims:      deps.DeliveryClaims,
@@ -246,6 +250,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEnvironmentRoutes(router)
 	s.registerCatalogRoutes(router)
 	s.registerCatalogApplyRoutes(router)
+	s.registerCatalogReloadRoutes(router)
 	s.registerChatRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)

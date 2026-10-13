@@ -149,6 +149,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/catalog/files", "/catalog/files", map[string]string{"GET": readScope}),
 	routeScope("/catalog/audit", "/catalog/audit", map[string]string{"GET": readScope}),
 	routeScope("/catalog/validate", "/catalog/validate", map[string]string{"POST": readScope}),
+	routeScope("/catalog/reload", "/catalog/reload", map[string]string{"POST": localScope}),
 	routeScope("/chat/agents", "/chat/agents", map[string]string{"GET": readScope}),
 	routeScope("/chat/agents/", "/chat/agents/{launch_id}/send", map[string]string{"POST": operateScope}),
 	routeScope("/docs/mcp", "/docs/mcp", map[string]string{"GET": readScope}),

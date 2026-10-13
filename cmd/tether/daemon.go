@@ -348,6 +348,7 @@ var daemonRunCmd = &cobra.Command{
 			Settings:            svc.Settings,
 			RegistryCatalogRoot: svc.CatalogRoot,
 			CatalogApply:        newCatalogApplyEngine(svc),
+			CatalogReload:       svc,
 			Groups:              svc.Registry,
 			Publisher:           svc.Bus,
 			WakeSweeper:         svc,
