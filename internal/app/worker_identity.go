@@ -27,10 +27,10 @@ var ErrIdentityInUse = errors.New("stable agent identity is already bound to ano
 // override, and a team member (derived "<agent>#<slot>" id) never takes the
 // base agent's URN.
 func (s *Service) applyCatalogIdentity(plan *launch.Plan) {
-	if s.Catalog == nil || plan.TeamMember {
+	if s.cat() == nil || plan.TeamMember {
 		return
 	}
-	agent, ok := s.Catalog.Agents[plan.CatalogAgent()]
+	agent, ok := s.cat().Agents[plan.CatalogAgent()]
 	if !ok {
 		return
 	}
@@ -55,8 +55,8 @@ func (s *Service) SessionIdentityURN(sessionID string) string {
 func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionRow, p *launch.Plan, spec *workerwire.LaunchSpec) (func(), error) {
 	undo := func() {}
 	mode := string(identity.Observe)
-	if s.Catalog != nil {
-		mode = s.Catalog.Global.Identity.EffectiveMode()
+	if s.cat() != nil {
+		mode = s.cat().Global.Identity.EffectiveMode()
 	}
 	if s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureSessionCred) {
 		if p.IdentityURN != "" {

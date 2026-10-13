@@ -28,8 +28,8 @@ func (s *Service) routingCapabilities(ctx context.Context, sessionID string, sou
 	}
 	out := RoutingCapabilitiesResponse{Delivery: "next-turn", KindsAvailable: []string{}, Runtimes: map[string]RuntimeRoutingCapabilities{}, SessionID: sessionID}
 	providers := map[string]config.Provider{}
-	if s.Catalog != nil {
-		for id, p := range s.Catalog.Providers {
+	if s.cat() != nil {
+		for id, p := range s.cat().Providers {
 			providers[id] = p
 		}
 	}

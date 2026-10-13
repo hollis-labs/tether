@@ -25,7 +25,7 @@ func (s *Service) compileSharedLaunch(ctx context.Context, plan *launch.Plan) er
 	if err != nil {
 		return err
 	}
-	compiled, err := launcher.Compile(ctx, lp, launcher.WithSourceCatalog(s.CatalogRoot, s.Catalog.Global.Version))
+	compiled, err := launcher.Compile(ctx, lp, launcher.WithSourceCatalog(s.CatalogRoot, s.cat().Global.Version))
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 		}
 	}
 	lp.Workspace.TempPrefix = bootRoot
-	compiled, err := launcher.Compile(ctx, lp, launcher.WithSourceCatalog(s.CatalogRoot, s.Catalog.Global.Version))
+	compiled, err := launcher.Compile(ctx, lp, launcher.WithSourceCatalog(s.CatalogRoot, s.cat().Global.Version))
 	if err != nil {
 		return nil, err
 	}

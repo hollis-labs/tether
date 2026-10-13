@@ -131,7 +131,7 @@ func (s *Service) recoverRetainedCodexTeam(ctx context.Context, key string, row 
 		return err
 	}
 	err = ts.WithTransaction(ctx, func(conn *sql.Conn) error {
-		_, err := s.Store.PrepareCodexTeamReplacementTx(ctx, conn, store.TeamReplacementInput{Source: *row, SourcePlanJSON: sourcePlanJSON, DestinationID: id, Workspace: ws.Root, IntentKey: key, Plan: plan, CredentialMode: s.Catalog.Global.Identity.EffectiveMode()}, proof, canonical)
+		_, err := s.Store.PrepareCodexTeamReplacementTx(ctx, conn, store.TeamReplacementInput{Source: *row, SourcePlanJSON: sourcePlanJSON, DestinationID: id, Workspace: ws.Root, IntentKey: key, Plan: plan, CredentialMode: s.cat().Global.Identity.EffectiveMode()}, proof, canonical)
 		return err
 	})
 	if err != nil {

@@ -16,7 +16,7 @@ func (s *Service) validatePlanMCPGrants(plan *launch.Plan, profile bootgen.Profi
 	if profile.MCPServers == nil && !explicit {
 		return nil
 	}
-	cat := s.Catalog
+	cat := s.cat()
 	if s.CatalogRoot != "" {
 		entries, err := config.LoadMCPServerCatalog(config.Expand(s.CatalogRoot))
 		if err != nil {

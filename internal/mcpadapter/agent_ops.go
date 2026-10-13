@@ -302,7 +302,7 @@ func (a *Adapter) layerRoot(layer config.Layer, projectID string) (string, error
 		if projectID == "" {
 			return "", toolError("invalid_argument", "scope=project requires the 'project' argument (a catalog project ID)")
 		}
-		proj, ok := a.svc.Catalog.Projects[projectID]
+		proj, ok := a.svc.CurrentCatalog().Projects[projectID]
 		if !ok {
 			return "", toolError("not_found", fmt.Sprintf("unknown project %q", projectID))
 		}

@@ -93,7 +93,7 @@ func TestRunDoesNotModifyTheCatalog(t *testing.T) {
 func TestEntityOf(t *testing.T) {
 	for msg, want := range map[string]string{
 		`launch "x" references unknown agent "y"`: "launch:x",
-		`agent "ops" has unknown mcp_scopes`:     "agent:ops",
+		`agent "ops" has unknown mcp_scopes`:      "agent:ops",
 		`nothing named here`:                      "",
 	} {
 		if got := entityOf(msg); got != want {

@@ -265,13 +265,13 @@ func (s *Service) controlPlane(opts config.ProtectionOptions) ([]string, config.
 	if err != nil {
 		return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: catalog root: %w", err)
 	}
-	prepared, err := config.PrepareCatalogProtectionWith(catalog, s.Catalog, opts)
+	prepared, err := config.PrepareCatalogProtectionWith(catalog, s.cat(), opts)
 	if err != nil {
 		return nil, config.CatalogProtection{}, err
 	}
 	s.reportProtectionLayers(prepared)
 	dirs := prepared.Dirs
-	if s.Catalog == nil {
+	if s.cat() == nil {
 		return dirs, prepared, nil
 	}
 	roots := []string{filepath.Dir(catalog)}
@@ -280,7 +280,7 @@ func (s *Service) controlPlane(opts config.ProtectionOptions) ([]string, config.
 			roots = append(roots, tetherHome)
 		}
 	}
-	for _, candidate := range runDirs(s.Catalog.Global.Daemon) {
+	for _, candidate := range runDirs(s.cat().Global.Daemon) {
 		dir, err := realDir(candidate)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -293,7 +293,7 @@ func (s *Service) controlPlane(opts config.ProtectionOptions) ([]string, config.
 		}
 		dirs = append(dirs, dir)
 	}
-	if db := config.ResolveStateDB(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths); db != "" {
+	if db := config.ResolveStateDB(s.cat().Global.Catalog.Defaults, s.cat().Paths); db != "" {
 		dir, err := realDir(filepath.Dir(config.Expand(db)))
 		switch {
 		case errors.Is(err, fs.ErrNotExist):

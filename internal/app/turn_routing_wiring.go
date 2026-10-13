@@ -19,7 +19,7 @@ type turnFeedRegistration struct {
 
 func (s *Service) installTurnFeeds() {
 	s.turnFeeds = make(map[string]turnFeedRegistration)
-	for _, p := range s.Catalog.Providers {
+	for _, p := range s.cat().Providers {
 		runtimeID, _, _, err := resolvedRuntimeRouting(p)
 		if err != nil {
 			continue

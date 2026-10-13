@@ -47,7 +47,7 @@ func (s *Service) createWorkerSession(in CreateSessionInput) (*Launched, error) 
 	}
 	s.applyCatalogIdentity(plan)
 	id := uuid.NewString()
-	root := filepath.Join(config.ResolveWorkspaceRoot(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths), "worker-sessions")
+	root := filepath.Join(config.ResolveWorkspaceRoot(s.cat().Global.Catalog.Defaults, s.cat().Paths), "worker-sessions")
 	ws, err := workspace.Create(root, id, plan)
 	if err != nil {
 		return nil, err
@@ -97,13 +97,13 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	}
 	var err error
 	if p.SandboxProfile != "" {
-		profile, ok, e := s.Catalog.SandboxProfile(p.CatalogAgent(), p.SandboxProfile)
+		profile, ok, e := s.cat().SandboxProfile(p.CatalogAgent(), p.SandboxProfile)
 		err = e
 		if ok {
 			spec.Sandbox = &profile
 		}
 	} else {
-		profile, ok, e := s.Catalog.AgentSandbox(p.CatalogAgent())
+		profile, ok, e := s.cat().AgentSandbox(p.CatalogAgent())
 		err = e
 		if ok {
 			spec.Sandbox = &profile

@@ -200,7 +200,7 @@ Mutating tools require a **token** and the corresponding **scope**:
 | `registry.write` | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_scoped_binding_set` |
 | `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
 | `delivery.write` | `tether_message_redrive`, `tether_message_purge` |
-| `catalog.write` | `tether_agent_create`, `tether_agent_edit`, `tether_catalog_plan`, `tether_catalog_apply` |
+| `catalog.write` | `tether_agent_create`, `tether_agent_edit`, `tether_catalog_plan`, `tether_catalog_apply`, `tether_catalog_reload` |
 | `ai.invoke` | `tether_ai_chat`, `tether_ai_chat_stream`, `tether_ai_embeddings`, `tether_ai_decide` |
 
 Scopes are per capability group, not a hierarchy — `registry.write` does not
@@ -1551,6 +1551,11 @@ Create an agent profile in the catalog.
 | `scope` | string | — | Discovery layer: project (default) \| user \| system. |
 | `skills` | string | — | Comma-separated skill ID list (optional). |
 | `system_prompt` | string | — | Agent system prompt (optional). |
+
+#### `tether_catalog_reload` _(catalog.write)_
+Make the daemon re-read its catalog from disk and use it for new launches, without a restart. The catalog is loaded and validated first; one that does not load or validate is refused with the reason, and nothing changes. Agents, projects, providers, launches and sandbox profiles are swapped in atomically; running sessions keep what they started with. `global.yaml` settings the daemon reads once at start (listener, identity, AI providers, MCP gateway, modules) are not swapped: the running values are kept and the report lists the edit under `restart_required`. Returns `{reloaded, added, removed, changed, restart_required}` with entity ids per kind. HTTP: `POST /catalog/reload`.
+
+_No parameters._
 
 #### `tether_agent_edit` _(catalog.write)_
 Edit an existing agent profile. Only fields present in the call are changed.

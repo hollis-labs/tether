@@ -81,10 +81,10 @@ func (s *Service) BootResumeSessions(ctx context.Context, options ...BootResumeO
 
 // bootReadinessFailure returns why boot recovery must not run at all, or "".
 func (s *Service) bootReadinessFailure() string {
-	if s.Catalog == nil {
+	if s.cat() == nil {
 		return "catalog unavailable"
 	}
-	root := config.ResolveWorkspaceRoot(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths)
+	root := config.ResolveWorkspaceRoot(s.cat().Global.Catalog.Defaults, s.cat().Paths)
 	info, err := os.Stat(root)
 	if err != nil {
 		return "workspace_root " + root + " unavailable: " + err.Error()
@@ -191,10 +191,10 @@ func (agentOnlySource) GetContext(context.Context, string) (*launchprofile.Launc
 // policy (extends chain resolved over agents only) is auto, else the skip
 // reason and, for an unresolved chain, the resolver error.
 func (s *Service) bootRecoveryPolicyReason(ctx context.Context, agentID string) (reason, detail string) {
-	if s.Catalog == nil {
+	if s.cat() == nil {
 		return "recovery_not_auto", ""
 	}
-	profile, err := launchprofile.NewResolver(agentOnlySource{s.Catalog}).ResolveProfile(ctx, agentID)
+	profile, err := launchprofile.NewResolver(agentOnlySource{s.cat()}).ResolveProfile(ctx, agentID)
 	if err != nil {
 		return "recovery_policy_unresolved", err.Error()
 	}

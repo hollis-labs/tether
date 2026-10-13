@@ -13,6 +13,8 @@ func (a *Adapter) registerTools(s *gomcp.Server) {
 	a.registerTeamTools(s)
 	a.registerCatalogTools(s)
 	a.registerAgentOpsTools(s)
+	a.registerCatalogReloadTools(s)
+
 	a.registerCatalogApplyTools(s)
 	a.registerSkillTools(s)
 	a.registerSessionTools(s)

@@ -347,14 +347,16 @@ var daemonRunCmd = &cobra.Command{
 			Registry:            svc.Registry,
 			Settings:            svc.Settings,
 			RegistryCatalogRoot: svc.CatalogRoot,
-			CatalogApply:        newCatalogApplyEngine(svc),
-			Groups:              svc.Registry,
-			Publisher:           svc.Bus,
-			WakeSweeper:         svc,
-			RoutingReplies:      svc,
-			ReplySweeper:        svc,
-			SessionDrainer:      svc,
-			EventRetention:      svc,
+			CatalogReload:       svc,
+
+			CatalogApply:   newCatalogApplyEngine(svc),
+			Groups:         svc.Registry,
+			Publisher:      svc.Bus,
+			WakeSweeper:    svc,
+			RoutingReplies: svc,
+			ReplySweeper:   svc,
+			SessionDrainer: svc,
+			EventRetention: svc,
 			Hardening: func() *daemon.HealthHardening {
 				st := svc.ClaudeStrictMCPStatus()
 				countCtx, cancelCounts := context.WithTimeout(ctx, 200*time.Millisecond)
