@@ -188,6 +188,8 @@ func TestEveryNativeLaunchHasChainedTypedCallback(t *testing.T) {
 			for _, ev := range all {
 				found = found || ev.Kind == events.KindProviderPermissionDenied
 			}
+			// Runtimes that report approvals (antigravity, and claude/codex when
+			// their provider is in the catalog) publish denials for stall detection.
 			if found != (brand == "antigravity") {
 				t.Fatalf("legacy permission event changed for runtime %s: %v", brand, found)
 			}

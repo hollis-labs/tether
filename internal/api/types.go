@@ -255,6 +255,24 @@ type RuntimeHealthResponse struct {
 	ProviderID   string          `json:"provider_id"`
 	ProviderKind string          `json:"provider_kind"`
 	Caps         CapabilitiesDTO `json:"caps"`
+	// Stall is set when the daemon can report stall signals for the session.
+	Stall *StallStatus `json:"stall,omitempty"`
+}
+
+// StallStatus is the stalled-session signal: repeated refused tool actions
+// and/or a long silence. Stalled is true when the evidence says the session
+// is not making progress; IdleSeconds is informational.
+type StallStatus struct {
+	Stalled           bool   `json:"stalled"`
+	Reason            string `json:"reason,omitempty"`
+	DeniedSinceOutput int    `json:"denied_since_output"`
+	IdleSeconds       int64  `json:"idle_seconds"`
+}
+
+// StallReporter is an optional Service capability that reports stall status
+// for a session. Services that do not implement it simply omit the signal.
+type StallReporter interface {
+	SessionStall(id string) (StallStatus, bool)
 }
 
 // ResizeRequest is the body of POST /sessions/{id}/resize. Rows and
@@ -295,6 +313,11 @@ type SessionDTO struct {
 	SessionGroupID  string  `json:"session_group_id,omitempty"`
 	// WorkstreamID is the workstream the session is assigned to, if any.
 	WorkstreamID string `json:"workstream_id,omitempty"`
+	// Stalled is true for a running session that is not making progress
+	// (see StallStatus). Omitted otherwise.
+	Stalled bool `json:"stalled,omitempty"`
+	// StallReason names why Stalled is set.
+	StallReason string `json:"stall_reason,omitempty"`
 }
 
 // AttachmentDTO is the on-the-wire shape for a client attachment row.
