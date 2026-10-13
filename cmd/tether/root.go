@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -24,8 +25,13 @@ func init() {
 	// --catalog explicitly rather than silently hitting the wrong path.
 	home, _ := os.UserHomeDir()
 	defaultCatalog := filepath.Join(home, ".tether", "catalog")
+	// TETHER_CATALOG lets a hub/operator environment point every command at
+	// the real catalog root without passing --catalog each time.
+	if env := strings.TrimSpace(os.Getenv("TETHER_CATALOG")); env != "" {
+		defaultCatalog = env
+	}
 	rootCmd.PersistentFlags().StringVar(&tokenFilePath, "token-file", "", "bearer credential file (overrides TETHER_TOKEN and operator.token)")
-	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
+	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory (env: TETHER_CATALOG)")
 	rootCmd.SetVersionTemplate(fmt.Sprintf("tether %s (commit %s, built %s)\n", version, commit, buildDate))
 	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, serveCmd, workspacesCmd, bootPromptsCmd, mcpCmd, acpCmd, messagesCmd, mailboxCmd, aiCmd, eventsCmd)
 	// Top-level aliases for discoverability.
