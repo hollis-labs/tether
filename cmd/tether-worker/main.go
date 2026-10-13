@@ -41,6 +41,12 @@ func main() {
 	}}
 	shimCmd.Flags().StringVar(&descriptor, "launch", "", "private shim launch descriptor")
 	cmd.AddCommand(shimCmd)
+	var relayToken string
+	relayCmd := &cobra.Command{Use: "mcp-relay", Hidden: true, SilenceUsage: true, Args: cobra.MinimumNArgs(1), RunE: func(c *cobra.Command, args []string) error {
+		return workerruntime.RunRelay(relayToken, args, os.Stdin, os.Stdout, os.Stderr)
+	}}
+	relayCmd.Flags().StringVar(&relayToken, "token-file", "", "0600 file holding the session credential")
+	cmd.AddCommand(relayCmd)
 	var hub, code, label, mcpSource string
 	var install bool
 	var mailSocket string

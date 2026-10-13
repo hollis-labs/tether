@@ -200,7 +200,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	}
 	args := append([]string(nil), spec.Args...)
 	if spec.Provider == "claude" {
-		if err := e.plantMCP(cwd); err != nil {
+		if err := e.plantHubMCP(cwd, filepath.Join(ws.Root, "mcp-cred"), spec); err != nil {
 			return nil, err
 		}
 		args = claudeArgs(args, spec.PermissionMode, filepath.Join(cwd, ".mcp.json"))

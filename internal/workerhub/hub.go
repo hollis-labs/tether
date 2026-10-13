@@ -80,6 +80,14 @@ func (h *Hub) Connected(id string) bool {
 	defer h.mu.RUnlock()
 	return h.connections[id] != nil
 }
+
+// Supports reports whether the connected worker advertised feature in its hello.
+func (h *Hub) Supports(id, name string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	c := h.connections[id]
+	return c != nil && feature(c.features, name)
+}
 func (h *Hub) Resolve(ctx context.Context, name string) (string, error) {
 	var id string
 	err := h.db.QueryRowContext(ctx, `SELECT id FROM workers WHERE id=? OR label=? ORDER BY id LIMIT 1`, name, name).Scan(&id)

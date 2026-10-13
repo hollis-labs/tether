@@ -74,8 +74,11 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		if err = s.Store.UpdateSessionState(f.Session, state, int(row.PID.Int64), f.ExitCode); err != nil {
 			return err
 		}
-		if (state == "completed" || state == "failed" || state == "killed") && s.Registry != nil {
-			_, _ = s.Registry.RevokeSessionBindings(context.Background(), row.ID)
+		if state == "completed" || state == "failed" || state == "killed" {
+			s.releaseWorkerIdentity(row.ID)
+			if s.Registry != nil {
+				_, _ = s.Registry.RevokeSessionBindings(context.Background(), row.ID)
+			}
 		}
 		raw, _ := json.Marshal(map[string]any{"from": row.State, "to": state, "exit_code": f.ExitCode})
 		return s.publishWorkerEvent(f.Session, "session.state_changed", raw)

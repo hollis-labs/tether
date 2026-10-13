@@ -14,6 +14,13 @@ type CallerSessionLookup interface {
 	GetSession(string) (*store.SessionRow, error)
 }
 
+// CallerIdentityLookup is optionally implemented by the session source to
+// report the stable URN a session was launched to act as. The claim is only
+// honored when the matching registry binding names the session.
+type CallerIdentityLookup interface {
+	SessionIdentityURN(string) string
+}
+
 type CallerBindingLookup interface {
 	CurrentBinding(context.Context, string) (registry.RuntimeBinding, error)
 }
@@ -41,6 +48,15 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 		target := registry.LogicalAgentBindingTarget(row.LogicalAgentID)
 		if binding, err := bindings.CurrentBinding(ctx, target); err == nil && binding.SessionID == row.ID && binding.TargetURN == target {
 			out.AgentURN = binding.TargetURN
+		}
+	}
+	// A launch bound to a stable registry URN acts as that identity, but only
+	// while the registry's current binding for the URN names this exact session.
+	if il, ok := sessions.(CallerIdentityLookup); ok && bindings != nil {
+		if urn := il.SessionIdentityURN(row.ID); urn != "" {
+			if binding, err := bindings.CurrentBinding(ctx, urn); err == nil && binding.SessionID == row.ID && binding.TargetURN == urn {
+				out.AgentURN = urn
+			}
 		}
 	}
 	return out

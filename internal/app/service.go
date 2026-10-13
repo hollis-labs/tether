@@ -508,6 +508,7 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 		if s.retainedTeamRecoveryEligible(ctx, row) {
 			continue
 		}
+		s.releaseWorkerIdentity(id)
 		n, err := s.Registry.RevokeSessionBindings(ctx, id)
 		if err != nil {
 			log.Printf("registry: revoke bindings of ended session %q failed: %v", id, err)

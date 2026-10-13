@@ -45,6 +45,7 @@ func (s *Service) createWorkerSession(in CreateSessionInput) (*Launched, error) 
 	if err != nil {
 		return nil, err
 	}
+	s.applyCatalogIdentity(plan)
 	id := uuid.NewString()
 	root := filepath.Join(config.ResolveWorkspaceRoot(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths), "worker-sessions")
 	ws, err := workspace.Create(root, id, plan)
@@ -120,17 +121,26 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err != nil {
 		return nil, err
 	}
+	undoIdentity, err := s.prepareWorkerIdentity(ctx, row, p, &spec)
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
+		return nil, err
+	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
+		undoIdentity()
 		return nil, err
 	}
 	if err = s.Store.UpdateSessionState(row.ID, "launching", 0, nil); err != nil {
+		undoIdentity()
 		return nil, err
 	}
 	wait, cancel := context.WithTimeout(ctx, workerLaunchWait)
 	defer cancel()
 	result, err := s.Workers.Send(wait, row.WorkerID, workerwire.Frame{T: "launch", CmdID: "launch:" + row.ID, Session: row.ID, Spec: raw})
 	if err != nil {
+		undoIdentity()
 		exit := 1
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
 		return nil, err

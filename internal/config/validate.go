@@ -9,6 +9,7 @@ import (
 
 	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/hollis-labs/substrate/harness/sandbox"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
@@ -72,7 +73,23 @@ func (c *Catalog) Validate() error {
 	if err := c.Global.Federation.Validate(); err != nil {
 		return err
 	}
+	urns := map[string]string{}
 	for id, a := range c.Agents {
+		if a.URN != "" {
+			addr, err := messaging.ParseURN(a.URN)
+			if err != nil || addr.Kind != messaging.KindAgent || addr.SubID != "" || addr.URN() != a.URN {
+				return fmt.Errorf("agent %q has invalid urn %q (want msg://agent/<authority>/<id>)", id, a.URN)
+			}
+			if other, dup := urns[a.URN]; dup {
+				return fmt.Errorf("agents %q and %q declare the same urn %q", other, id, a.URN)
+			}
+			urns[a.URN] = id
+		}
+		for _, scope := range a.MCPScopes {
+			if !launchprofile.ValidMCPScope(scope) {
+				return fmt.Errorf("agent %q has unknown mcp_scopes entry %q", id, scope)
+			}
+		}
 		if !launchprofile.ValidRecovery(a.Recovery) {
 			return fmt.Errorf("agent %q has invalid recovery %q (want %q or %q)", id, a.Recovery, launchprofile.RecoveryNever, launchprofile.RecoveryAuto)
 		}

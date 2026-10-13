@@ -373,6 +373,11 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 		if p.Recovery != "" {
 			resolved.Recovery = p.Recovery
 		}
+		// Identity is per agent: the leaf's URN, never an ancestor's.
+		resolved.URN = p.URN
+		if len(p.MCPScopes) > 0 {
+			resolved.MCPScopes = append([]string(nil), p.MCPScopes...)
+		}
 		if p.Permissions.PermissionMode != "" {
 			resolved.Permissions.PermissionMode = p.Permissions.PermissionMode
 		}
