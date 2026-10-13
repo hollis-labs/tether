@@ -15,6 +15,32 @@ This file was backfilled from the git history and is a good-faith summary, not a
   `enabled`. A daemon build that predates this field ignores it, so deploy the
   build before disabling anything.
 
+- Add `tether_catalog_files` and `tether_catalog_history` (CW-20261013-0004):
+  `GET /catalog/files[?path=]` reads agent, launch, project, skill, boot-profile
+  and team-definition files raw so an agent can edit and re-plan them (providers,
+  MCP servers, sandbox profiles and `global.yaml` are never served, and a file
+  holding a secret is refused); `GET /catalog/audit` lists applied changes with
+  who planned them (principal, session, agent), when they were approved, and the
+  backup that undoes them. Plans now record their caller.
+- Add `tether_catalog_validate` and `POST /catalog/validate` (CW-20261013-0003):
+  structured findings (severity, check, entity, message, remedy) for the live
+  catalog or for a draft bundle overlaid on a scratch copy, so an agent can test
+  a change before planning it. The catalog-structural `tether doctor` checks move
+  to `internal/catalogcheck` and doctor calls them unchanged; `tether doctor
+  --json` gains an optional `entity` field. Plans now validate with the same
+  checks.
+- Add approval-gated catalog changes (CW-20261012-0124). New MCP tools
+  `tether_catalog_plan`, `tether_catalog_plan_get`, `tether_catalog_apply` and
+  `tether_catalog_backups`; HTTP `POST /catalog/plans`, `GET /catalog/plans/{id}`,
+  `POST /catalog/plans/{id}/approve`, `POST /catalog/plans/{id}/apply` and
+  `GET /catalog/backups`; CLI `tether catalog show|approve|backups|approver set`.
+  The daemon validates a bundle on a scratch copy, a human approves it by digest
+  with a passphrase no agent session holds, and apply backs the catalog up,
+  installs atomically and restores on failure. Rollback is a plan with
+  `rollback_of`. This supersedes the "writes are not registered" fence on
+  `/catalog/*` (ADR 0012) for these routes only. `golang.org/x/crypto` becomes a
+  direct dependency (scrypt).
+
 - Categories and boards support editable `sort_order` via HTTP/MCP, with stable ordered pagination and optional positioning on board move/clone.
 
 - Extend Forums with optional single-level categories, shared namespace boards,

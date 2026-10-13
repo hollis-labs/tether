@@ -78,6 +78,10 @@ type Deps struct {
 	// to a temp catalog dir.
 	RegistryCatalogRoot string
 
+	// CatalogApply, when non-nil, enables the /catalog/plans and
+	// /catalog/backups routes (CW-20261012-0124).
+	CatalogApply CatalogApplyService
+
 	// Groups, when non-nil, enables the /groups/... + /mentions
 	// v060-05 group-messaging routes (registerGroupRoutes). In
 	// production this is the same *registry.Service instance used by
@@ -173,6 +177,7 @@ type Server struct {
 	Registry            RegistryService
 	Settings            SettingsService
 	RegistryCatalogRoot string
+	CatalogApply        CatalogApplyService
 	Groups              GroupsService
 	LogsDir             string
 	DeliveryClaims      DeliveryClaimer
@@ -219,6 +224,7 @@ func NewHandler(deps Deps) http.Handler {
 		Registry:            deps.Registry,
 		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
+		CatalogApply:        deps.CatalogApply,
 		Groups:              deps.Groups,
 		LogsDir:             deps.LogsDir,
 		DeliveryClaims:      deps.DeliveryClaims,
@@ -239,6 +245,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEventRoutes(router)
 	s.registerEnvironmentRoutes(router)
 	s.registerCatalogRoutes(router)
+	s.registerCatalogApplyRoutes(router)
 	s.registerChatRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)

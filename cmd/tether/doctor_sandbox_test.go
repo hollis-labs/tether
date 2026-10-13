@@ -6,6 +6,7 @@ import (
 
 	"github.com/hollis-labs/substrate/harness/sandbox"
 
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/config"
 )
 
@@ -17,14 +18,14 @@ func TestCheckSandboxProfiles(t *testing.T) {
 		Agents:          map[string]config.Agent{"a": {ID: "a", Permissions: config.AgentPermissions{DefaultSandbox: "workspace-only"}}, "b": {ID: "b"}},
 		SandboxProfiles: profiles,
 	}
-	if r := checkSandboxProfiles(good); r.Status != statusOK {
+	if r := catalogcheck.SandboxProfiles(good); r.Status != statusOK {
 		t.Fatalf("good catalog: %+v; want ok", r)
 	}
 	bad := &config.Catalog{
 		Agents:          map[string]config.Agent{"a": {ID: "a", Permissions: config.AgentPermissions{DefaultSandbox: "gone"}}},
 		SandboxProfiles: profiles,
 	}
-	r := checkSandboxProfiles(bad)
+	r := catalogcheck.SandboxProfiles(bad)
 	if r.Status != statusFail || !strings.Contains(r.Message, `"gone"`) || r.Remedy == "" {
 		t.Fatalf("bad catalog: %+v; want a failure naming the profile, with a remedy", r)
 	}

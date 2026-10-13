@@ -200,7 +200,7 @@ Mutating tools require a **token** and the corresponding **scope**:
 | `registry.write` | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_scoped_binding_set` |
 | `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
 | `delivery.write` | `tether_message_redrive`, `tether_message_purge` |
-| `catalog.write` | `tether_agent_create`, `tether_agent_edit` |
+| `catalog.write` | `tether_agent_create`, `tether_agent_edit`, `tether_catalog_plan`, `tether_catalog_apply` |
 | `ai.invoke` | `tether_ai_chat`, `tether_ai_chat_stream`, `tether_ai_embeddings`, `tether_ai_decide` |
 
 Scopes are per capability group, not a hierarchy — `registry.write` does not
@@ -1578,6 +1578,96 @@ read-only-filesystem error. On Linux it holds against a symlink re-pointed while
 the call runs: the destination directory is opened once and judged, and the file is
 written relative to it without following a symlink. `--protect-path` is repeatable and is set only on a
 launched agent's server, never on `tether boot` or your own `tether mcp`.
+
+### Catalog changes (plan, approve, apply)
+
+An agent changes the catalog as a reviewed bundle, not file by file. The daemon,
+which is not sandboxed and holds the catalog, does the writing; the agent never
+touches the read-only catalog mount. Approval is a separate act by the operator.
+
+1. `tether_catalog_plan` — send whole files (or `rollback_of` a backup). Nothing
+   live changes. The daemon refuses paths outside the allowlist (`agents/`,
+   `launches/`, `projects/`, `providers/`, `skills/`, `boot-profiles/`,
+   `mcp-servers/`, `sandbox-profiles/`, `team-definitions/`, `global.yaml`,
+   `teams-policy.yaml`; never `credentials/`), symlinked destinations and obvious
+   plaintext secrets, applies the bundle to a scratch copy, validates the copy and
+   returns a diff, a digest, the privileged changes (permissions, network, scopes,
+   daemon defaults) and the running sessions that use the touched definitions. A
+   session cannot plan a change to its own agent or launch.
+2. The operator runs `tether catalog show <plan_id>` and `tether catalog approve
+   <plan_id>` at a terminal and types the digest prefix and the approval
+   passphrase (`tether catalog approver set`, once). There is no MCP tool for
+   this step, and the daemon refuses an approval from any session, remote or
+   device principal.
+3. `tether_catalog_apply` — installs an approved, unexpired plan whose files still
+   match what was reviewed: backs up the whole catalog, installs file by file,
+   restores the touched files on any failure or if the catalog no longer
+   validates, and returns the backup id, the files changed and an audit note.
+   `activation: restart_required` means agents, projects or providers changed and
+   the daemon still runs the old ones until it restarts; only launch changes take
+   effect at once.
+
+`tether_catalog_backups` lists backups (`catalog-backups/` beside the state
+database). A rollback is a plan with `rollback_of` and goes through the same
+approval.
+
+**What approval guarantees.** An agent that does not know the passphrase cannot
+approve a plan, even as the same OS user with the same socket and operator token
+file: the daemon stores only a scrypt hash, rate-limits attempts, and the CLI reads
+the passphrase from `/dev/tty`. It does **not** guard against anyone who can type
+as the operator (a keylogger or `ptrace` on their terminal), or who can write the
+catalog files directly: an unsandboxed same-user shell can edit the catalog with no
+tool at all. This gates the MCP path, which is the one an agent is given.
+
+#### `tether_catalog_plan` _(catalog.write)_
+Review a catalog change without applying it.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | — | Short bundle name (letters, digits, `.`, `_`, `-`). Required unless `rollback_of` is set. |
+| `files` | array | — | Objects `{path, content}` or `{path, delete: true}`. |
+| `rollback_of` | string | — | Backup id to restore instead of sending files. |
+| `task_id` | string | — | Torque task id, for the audit trail. |
+
+#### `tether_catalog_validate`
+Validate the catalog and return structured findings, failures first: `{ok, failures, warnings, results[{name, status, message, remedy, entity}]}`. With no `files` it checks the **live** catalog; with `files` it checks the catalog as it would be with that draft applied, on a scratch copy. Nothing is stored or written. It runs the catalog-structural subset of `tether doctor` (`internal/catalogcheck`): the layered load and parse, MCP grants against the declared servers, references between agents, launches, projects and providers, sandbox profiles, MCP discovery modes, profiles, server names and credential files. It reads files only: no daemon, database or upstream is contacted, so host checks (daemon reachable, migrations, provider binaries) stay in `tether doctor`. Read-only; no scope required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `files` | array | — | Draft files to overlay: `{path, content}` or `{path, delete: true}`. |
+
+#### `tether_catalog_files`
+List the catalog files you can read raw, or read one with `path`, so an agent can fetch an agent, launch, project, skill, boot profile or team definition, edit it and send the whole file to `tether_catalog_plan`. Providers, MCP servers, sandbox profiles and `global.yaml` are not readable (credentials and daemon policy), and a file containing an obvious secret is refused. Read-only; no scope required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | — | Catalog-relative path. Omit to list. |
+
+#### `tether_catalog_history`
+Applied catalog changes, newest first: when, plan name and task, files changed, who planned it (principal, session, agent), when it was approved, privileged changes, and the backup id that undoes it (`rollback_of`). Stored as `catalog-backups/apply-audit.jsonl`. Read-only; no scope required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `limit` | number | — | Default 20, max 200. |
+
+#### `tether_catalog_plan_get`
+Read a plan's state, digest, diff and validation.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `plan_id` | string | ✓ | Plan id. |
+
+#### `tether_catalog_apply` _(catalog.write)_
+Install an approved plan. Backs up first; restores on failure.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `plan_id` | string | ✓ | Approved plan id. |
+
+#### `tether_catalog_backups`
+List catalog backups, newest first.
+
+_No parameters._
 
 ---
 
