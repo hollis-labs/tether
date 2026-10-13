@@ -34,12 +34,12 @@ func mapErr(e error) error {
 
 type scanner interface{ Scan(...any) error }
 
-const forumCols = `id,namespace,title,owner_type,owner_id,config_json,policy_json,metadata_json,created_at,updated_at,last_seq`
+const forumCols = `id,namespace,title,owner_type,owner_id,config_json,policy_json,metadata_json,created_at,updated_at,last_seq,category_id,description,archived,sort_order`
 
 func scanForum(s scanner) (f.Forum, error) {
 	var v f.Forum
 	var c, p, m string
-	e := s.Scan(&v.ID, &v.Namespace, &v.Title, &v.OwnerType, &v.OwnerID, &c, &p, &m, &v.CreatedAt, &v.UpdatedAt, &v.LastSeq)
+	e := s.Scan(&v.ID, &v.Namespace, &v.Title, &v.OwnerType, &v.OwnerID, &c, &p, &m, &v.CreatedAt, &v.UpdatedAt, &v.LastSeq, &v.CategoryID, &v.Description, &v.Archived, &v.SortOrder)
 	v.Config = json.RawMessage(c)
 	v.Metadata = json.RawMessage(m)
 	if e == nil {
@@ -51,9 +51,18 @@ func (s *Store) GetForum(ctx context.Context, id string) (f.Forum, error) {
 	return scanForum(s.db.QueryRowContext(ctx, `SELECT `+forumCols+` FROM forums WHERE id=?`, id))
 }
 func (s *Store) CreateForum(ctx context.Context, v f.Forum) (f.Forum, error) {
-	p, _ := json.Marshal(v.Policy)
-	_, e := s.db.ExecContext(ctx, `INSERT INTO forums (`+forumCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.Namespace, v.Title, v.OwnerType, v.OwnerID, string(v.Config), string(p), string(v.Metadata), v.CreatedAt, v.UpdatedAt, v.LastSeq)
-	return v, mapErr(e)
+	tx, e := s.db.BeginTx(ctx, nil)
+	if e != nil {
+		return v, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	if e = categoryTarget(ctx, tx, v.CategoryID, v.Namespace); e != nil {
+		return v, e
+	}
+	if e = insertForum(ctx, tx, v); e != nil {
+		return v, e
+	}
+	return v, tx.Commit()
 }
 
 // Cursors are bound to operation, scope and filters, so a token cannot silently
@@ -69,7 +78,10 @@ func scopeKey(scope string, o f.Options) string {
 	o.Detail = ""
 	o.Fields = ""
 	o.MaxChars = 0
-	b, _ := json.Marshal(o)
+	b, _ := json.Marshal(struct {
+		f.Options
+		Namespace string
+	}{o, o.NamespaceFilter})
 	h := sha256.Sum256(append([]byte(scope), b...))
 	return fmt.Sprintf("%x", h[:])
 }
@@ -91,11 +103,11 @@ func nextCursor(scope, key string, o f.Options) string {
 func (s *Store) ListForums(ctx context.Context, c f.Caller, o f.Options) (f.Page[f.Forum], error) {
 	pg := f.Page[f.Forum]{Items: []f.Forum{}}
 	scope := "forums:" + c.ID + ":" + c.Kind
-	key, e := decodeCursor(scope, o)
+	key, e := decodeOrderCursor(scope, o)
 	if e != nil {
 		return pg, e
 	}
-	rows, e := s.db.QueryContext(ctx, `SELECT `+forumCols+` FROM forums WHERE id>? AND (? OR (owner_id=? AND owner_type=?) OR EXISTS (SELECT 1 FROM forum_participants g WHERE g.forum_id=forums.id AND g.principal_id=? AND g.principal_kind=?)) ORDER BY id LIMIT ?`, key, c.Operator, c.ID, c.Kind, c.ID, c.Kind, o.Limit+1)
+	rows, e := s.db.QueryContext(ctx, `SELECT `+forumCols+` FROM forums WHERE (? OR (sort_order,id)>(?,?)) AND (? OR (owner_id=? AND owner_type=?) OR EXISTS (SELECT 1 FROM forum_participants g WHERE g.forum_id=forums.id AND g.principal_id=? AND g.principal_kind=?)) AND (?='' OR namespace=?) AND (? OR category_id=?) AND (? OR archived=?) ORDER BY sort_order,id LIMIT ?`, o.Cursor == "", key.SortOrder, key.ID, c.Operator, c.ID, c.Kind, c.ID, c.Kind, o.NamespaceFilter, o.NamespaceFilter, o.CategoryID == nil, stringVal(o.CategoryID), o.Archived == nil, boolVal(o.Archived), o.Limit+1)
 	if e != nil {
 		return pg, e
 	}
@@ -113,31 +125,45 @@ func (s *Store) ListForums(ctx context.Context, c f.Caller, o f.Options) (f.Page
 	if len(pg.Items) > o.Limit {
 		pg.HasMore = true
 		pg.Items = pg.Items[:o.Limit]
-		pg.NextCursor = nextCursor(scope, pg.Items[len(pg.Items)-1].ID, o)
+		pg.NextCursor = nextCursor(scope, orderKey(pg.Items[len(pg.Items)-1].SortOrder, pg.Items[len(pg.Items)-1].ID), o)
 	}
 	return pg, nil
 }
 
-const topicCols = `id,forum_id,title,status,author_id,author_kind,post_count,created_at,last_activity_at,last_seq`
+const topicCols = `id,forum_id,title,status,author_id,author_kind,post_count,created_at,last_activity_at,last_seq,source_topic_id,archived`
 
 func scanTopic(s scanner) (f.Topic, error) {
 	var v f.Topic
-	e := s.Scan(&v.ID, &v.ForumID, &v.Title, &v.Status, &v.CreatedBy.ID, &v.CreatedBy.Kind, &v.PostCount, &v.CreatedAt, &v.LastActivityAt, &v.LastSeq)
+	e := s.Scan(&v.ID, &v.ForumID, &v.Title, &v.Status, &v.CreatedBy.ID, &v.CreatedBy.Kind, &v.PostCount, &v.CreatedAt, &v.LastActivityAt, &v.LastSeq, &v.SourceTopicID, &v.Archived)
 	return v, mapErr(e)
 }
 func (s *Store) GetTopic(ctx context.Context, id string) (f.Topic, error) {
 	return scanTopic(s.db.QueryRowContext(ctx, `SELECT `+topicCols+` FROM forum_topics WHERE id=?`, id))
 }
 func (s *Store) CreateTopic(ctx context.Context, v f.Topic) (f.Topic, error) {
-	_, e := s.db.ExecContext(ctx, `INSERT INTO forum_topics (`+topicCols+`) SELECT ?,id,?,?,?,?,?,?,?,? FROM forums WHERE id=?`, v.ID, v.Title, v.Status, v.CreatedBy.ID, v.CreatedBy.Kind, v.PostCount, v.CreatedAt, v.LastActivityAt, v.LastSeq, v.ForumID)
-	return v, mapErr(e)
+	tx, e := s.db.BeginTx(ctx, nil)
+	if e != nil {
+		return v, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	if e = writableForum(ctx, tx, v.ForumID); e != nil {
+		return v, e
+	}
+	if e = insertTopic(ctx, tx, v); e != nil {
+		return v, e
+	}
+	return v, tx.Commit()
 }
 
-const postCols = `p.id,p.topic_id,p.forum_id,p.parent_post_id,p.seq,p.body_md,p.body_chars,p.author_id,p.author_kind,p.verified,p.session_id,p.agent_urn,p.workstream_id,p.project_id,p.launch_id,p.created_at,p.edited_at,p.depth,p.reply_count,t.title`
+const postCols = `p.id,p.topic_id,p.forum_id,p.parent_post_id,p.seq,p.body_md,p.body_chars,p.author_id,p.author_kind,p.verified,p.session_id,p.agent_urn,p.workstream_id,p.project_id,p.launch_id,p.created_at,p.edited_at,p.depth,p.reply_count,t.title,p.subject,p.attachments_json,p.source_post_id`
 
 func scanPost(s scanner) (f.Post, error) {
 	var v f.Post
-	e := s.Scan(&v.ID, &v.TopicID, &v.ForumID, &v.ParentPostID, &v.Seq, &v.BodyMD, &v.BodyChars, &v.Provenance.ID, &v.Provenance.Kind, &v.Provenance.Verified, &v.Provenance.SessionID, &v.Provenance.AgentURN, &v.Provenance.WorkstreamID, &v.Provenance.ProjectID, &v.Provenance.LaunchID, &v.CreatedAt, &v.EditedAt, &v.Depth, &v.ReplyCount, &v.TopicTitle)
+	var attachments string
+	e := s.Scan(&v.ID, &v.TopicID, &v.ForumID, &v.ParentPostID, &v.Seq, &v.BodyMD, &v.BodyChars, &v.Provenance.ID, &v.Provenance.Kind, &v.Provenance.Verified, &v.Provenance.SessionID, &v.Provenance.AgentURN, &v.Provenance.WorkstreamID, &v.Provenance.ProjectID, &v.Provenance.LaunchID, &v.CreatedAt, &v.EditedAt, &v.Depth, &v.ReplyCount, &v.TopicTitle, &v.Subject, &attachments, &v.SourcePostID)
+	if e == nil {
+		e = json.Unmarshal([]byte(attachments), &v.Attachments)
+	}
 	return v, mapErr(e)
 }
 func (s *Store) GetPost(ctx context.Context, id string) (f.Post, error) {
@@ -150,15 +176,19 @@ func (s *Store) CreatePost(ctx context.Context, v f.Post) (out f.Post, err error
 	}
 	defer func() { _ = tx.Rollback() }()
 	var title, status, forum string
-	e = tx.QueryRowContext(ctx, `SELECT title,status,forum_id FROM forum_topics WHERE id=?`, v.TopicID).Scan(&title, &status, &forum)
+	var archived bool
+	e = tx.QueryRowContext(ctx, `SELECT title,status,forum_id,archived FROM forum_topics WHERE id=?`, v.TopicID).Scan(&title, &status, &forum, &archived)
 	if e != nil {
 		return v, mapErr(e)
 	}
 	if forum != v.ForumID {
 		return v, f.ErrInvalid
 	}
-	if status != "open" {
+	if status != "open" || archived {
 		return v, f.ErrForbidden
+	}
+	if e = writableForum(ctx, tx, v.ForumID); e != nil {
+		return v, e
 	}
 	if v.ParentPostID != "" {
 		var topic string
@@ -178,7 +208,7 @@ func (s *Store) CreatePost(ctx context.Context, v f.Post) (out f.Post, err error
 	if e != nil {
 		return v, mapErr(e)
 	}
-	_, e = tx.ExecContext(ctx, `INSERT INTO forum_posts (id,topic_id,forum_id,parent_post_id,seq,body_md,body_chars,author_id,author_kind,verified,session_id,agent_urn,workstream_id,project_id,launch_id,created_at,depth) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.TopicID, v.ForumID, v.ParentPostID, v.Seq, v.BodyMD, v.BodyChars, v.Provenance.ID, v.Provenance.Kind, v.Provenance.Verified, v.Provenance.SessionID, v.Provenance.AgentURN, v.Provenance.WorkstreamID, v.Provenance.ProjectID, v.Provenance.LaunchID, v.CreatedAt, v.Depth)
+	_, e = tx.ExecContext(ctx, `INSERT INTO forum_posts (id,topic_id,forum_id,parent_post_id,seq,body_md,body_chars,author_id,author_kind,verified,session_id,agent_urn,workstream_id,project_id,launch_id,created_at,depth,subject,attachments_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.TopicID, v.ForumID, v.ParentPostID, v.Seq, v.BodyMD, v.BodyChars, v.Provenance.ID, v.Provenance.Kind, v.Provenance.Verified, v.Provenance.SessionID, v.Provenance.AgentURN, v.Provenance.WorkstreamID, v.Provenance.ProjectID, v.Provenance.LaunchID, v.CreatedAt, v.Depth, v.Subject, jsonText(v.Attachments))
 	if e != nil {
 		return v, mapErr(e)
 	}
@@ -192,7 +222,7 @@ func (s *Store) CreatePost(ctx context.Context, v f.Post) (out f.Post, err error
 			return v, e
 		}
 	}
-	_, e = tx.ExecContext(ctx, `INSERT INTO forum_post_fts (forum_id,post_id,topic_title,body_md) VALUES (?,?,?,?)`, v.ForumID, v.ID, title, v.BodyMD)
+	_, e = tx.ExecContext(ctx, `INSERT INTO forum_post_fts (forum_id,post_id,topic_title,body_md) VALUES (?,?,?,?)`, v.ForumID, v.ID, title, v.Subject+" "+v.BodyMD)
 	if e != nil {
 		return v, e
 	}
@@ -212,8 +242,8 @@ func (s *Store) CreatePost(ctx context.Context, v f.Post) (out f.Post, err error
 // Filters are all bound parameters. Topic filters match post attributes within
 // that topic, while author/date refer to the topic's own creation attributes.
 func postFilters(o f.Options) (string, []any) {
-	where := ` AND (?='' OR p.author_id=? OR p.agent_urn=?) AND (?='' OR p.author_kind=?) AND (?='' OR p.created_at>=?) AND (?='' OR p.created_at<=?) AND (?='' OR p.workstream_id=?) AND (?='' OR p.project_id=?) AND (?='' OR t.status=?)`
-	args := []any{o.Author, o.Author, o.Author, o.AuthorKind, o.AuthorKind, o.CreatedAfter, o.CreatedAfter, o.CreatedBefore, o.CreatedBefore, o.WorkstreamID, o.WorkstreamID, o.ProjectID, o.ProjectID, o.Status, o.Status}
+	where := ` AND (?='' OR p.author_id=? OR p.agent_urn=?) AND (?='' OR p.author_kind=?) AND (?='' OR p.created_at>=?) AND (?='' OR p.created_at<=?) AND (?='' OR p.workstream_id=?) AND (?='' OR p.project_id=?) AND (?='' OR t.status=?) AND (? OR t.archived=?)`
+	args := []any{o.Author, o.Author, o.Author, o.AuthorKind, o.AuthorKind, o.CreatedAfter, o.CreatedAfter, o.CreatedBefore, o.CreatedBefore, o.WorkstreamID, o.WorkstreamID, o.ProjectID, o.ProjectID, o.Status, o.Status, o.Archived == nil, boolVal(o.Archived)}
 	if o.HasReplies != nil {
 		where += ` AND (p.reply_count>0)=?`
 		args = append(args, *o.HasReplies)
@@ -227,8 +257,8 @@ func (s *Store) ListTopics(ctx context.Context, id string, o f.Options) (f.Page[
 	if e != nil {
 		return pg, e
 	}
-	where := ` WHERE forum_id=? AND id>? AND last_seq>=? AND (?='' OR status=?) AND (?='' OR author_id=?) AND (?='' OR author_kind=?) AND (?='' OR created_at>=?) AND (?='' OR created_at<=?)`
-	args := []any{id, key, o.SinceSeq, o.Status, o.Status, o.Author, o.Author, o.AuthorKind, o.AuthorKind, o.CreatedAfter, o.CreatedAfter, o.CreatedBefore, o.CreatedBefore}
+	where := ` WHERE forum_id=? AND id>? AND last_seq>=? AND (?='' OR status=?) AND (?='' OR author_id=?) AND (? OR archived=?) AND (?='' OR author_kind=?) AND (?='' OR created_at>=?) AND (?='' OR created_at<=?)`
+	args := []any{id, key, o.SinceSeq, o.Status, o.Status, o.Author, o.Author, o.Archived == nil, boolVal(o.Archived), o.AuthorKind, o.AuthorKind, o.CreatedAfter, o.CreatedAfter, o.CreatedBefore, o.CreatedBefore}
 	if o.SinceSeq > 0 {
 		where = strings.Replace(where, "last_seq>=?", "last_seq>?", 1)
 	}

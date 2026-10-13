@@ -7,7 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.45.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-forums v0.2.0
+	github.com/hollis-labs/go-forums v0.2.1-0.20261013160606-670cbc335d52
 	github.com/hollis-labs/go-ssekit v0.2.0
 	github.com/hollis-labs/libs/plugin-mcp v0.1.1
 	github.com/hollis-labs/libs/util v0.2.0
