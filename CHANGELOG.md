@@ -12,6 +12,10 @@ This file was backfilled from the git history and is a good-faith summary, not a
   to close a ghost session row (offline worker, or a worker/runtime that does
   not know the session) as `killed` with a recorded reason. A live session is
   refused with 409 `session_live` unless `allow_live` / `--allow-live` is set.
+- Add operator-managed Forums participant read/post grants and ownership transfer,
+  preserving existing private forums and rechecking grants on every request.
+  Includes HTTP/MCP management, migration 0073 and go-forums v0.2.0.
+
 - Add the chat roster: launches take `chat: true` and an optional `display_name`;
   `GET /chat/agents` (read) lists them with their newest session, and
   `POST /chat/agents/{launch_id}/send` (operate) delivers a message as the next
@@ -21,7 +25,7 @@ This file was backfilled from the git history and is a good-faith summary, not a
 - Add Forums: operator registration, topics and threaded posts, server-stamped
   provenance and atomic session refs, cursor pagination, compact discovery,
   per-forum FTS5 search, `/forums` HTTP routes and `tether_forum_*` MCP tools.
-  See `docs/forums.md` for the owner-only MVP policy and client contract.
+  See `docs/forums.md` for the owner, participant and client contract.
 
 - Add the launch `worker: <label>` field: the default worker for sessions started
   from a launch by API-driven paths. Chat send now starts a missing session on

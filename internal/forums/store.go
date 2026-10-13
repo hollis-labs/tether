@@ -95,7 +95,7 @@ func (s *Store) ListForums(ctx context.Context, c f.Caller, o f.Options) (f.Page
 	if e != nil {
 		return pg, e
 	}
-	rows, e := s.db.QueryContext(ctx, `SELECT `+forumCols+` FROM forums WHERE id>? AND (? OR (owner_id=? AND owner_type=?)) ORDER BY id LIMIT ?`, key, c.Operator, c.ID, c.Kind, o.Limit+1)
+	rows, e := s.db.QueryContext(ctx, `SELECT `+forumCols+` FROM forums WHERE id>? AND (? OR (owner_id=? AND owner_type=?) OR EXISTS (SELECT 1 FROM forum_participants g WHERE g.forum_id=forums.id AND g.principal_id=? AND g.principal_kind=?)) ORDER BY id LIMIT ?`, key, c.Operator, c.ID, c.Kind, c.ID, c.Kind, o.Limit+1)
 	if e != nil {
 		return pg, e
 	}
@@ -345,3 +345,56 @@ func (s *Store) posts(ctx context.Context, scope, where string, args []any, o f.
 
 var _ f.Store = (*Store)(nil)
 var _ f.Searcher = (*Store)(nil)
+
+func (s *Store) GetParticipant(ctx context.Context, id string, p f.Principal) (f.Participant, error) {
+	v := f.Participant{Principal: p}
+	err := s.db.QueryRowContext(ctx, `SELECT access FROM forum_participants WHERE forum_id=? AND principal_kind=? AND principal_id=?`, id, p.Kind, p.ID).Scan(&v.Access)
+	return v, mapErr(err)
+}
+func (s *Store) SetParticipant(ctx context.Context, id string, v f.Participant) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO forum_participants (forum_id,principal_kind,principal_id,access) VALUES (?,?,?,?) ON CONFLICT(forum_id,principal_kind,principal_id) DO UPDATE SET access=excluded.access`, id, v.Kind, v.ID, v.Access)
+	return mapErr(err)
+}
+func (s *Store) RevokeParticipant(ctx context.Context, id string, p f.Principal) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM forum_participants WHERE forum_id=? AND principal_kind=? AND principal_id=?`, id, p.Kind, p.ID)
+	return err
+}
+func (s *Store) ListParticipants(ctx context.Context, id string, o f.Options) (f.Page[f.Participant], error) {
+	pg := f.Page[f.Participant]{Items: []f.Participant{}}
+	scope := "participants:" + id
+	key, err := decodeCursor(scope, o)
+	if err != nil {
+		return pg, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT principal_kind,principal_id,access FROM forum_participants WHERE forum_id=? AND principal_kind || ':' || principal_id > ? ORDER BY principal_kind || ':' || principal_id LIMIT ?`, id, key, o.Limit+1)
+	if err != nil {
+		return pg, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v f.Participant
+		if err := rows.Scan(&v.Kind, &v.ID, &v.Access); err != nil {
+			return pg, err
+		}
+		pg.Items = append(pg.Items, v)
+	}
+	if err := rows.Err(); err != nil {
+		return pg, err
+	}
+	if len(pg.Items) > o.Limit {
+		pg.HasMore = true
+		pg.Items = pg.Items[:o.Limit]
+		v := pg.Items[len(pg.Items)-1]
+		pg.NextCursor = nextCursor(scope, v.Kind+":"+v.ID, o)
+	}
+	return pg, nil
+}
+func (s *Store) SetOwner(ctx context.Context, id string, p f.Principal, at string) (f.Forum, error) {
+	_, err := s.db.ExecContext(ctx, `UPDATE forums SET owner_type=?,owner_id=?,updated_at=MAX(updated_at,?) WHERE id=?`, p.Kind, p.ID, at, id)
+	if err != nil {
+		return f.Forum{}, err
+	}
+	return s.GetForum(ctx, id)
+}
+
+var _ f.ParticipantStore = (*Store)(nil)
