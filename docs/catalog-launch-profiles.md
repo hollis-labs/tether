@@ -369,6 +369,11 @@ without a visible failure. For dev-mode task workers select an agent that sets
 `permission_mode: bypass`; `examples/catalog/agents/worker-agent.yaml` is the
 template. Release-time posture stays strict.
 
+The same template sets `lifecycle.idle_timeout`, which ends a worker session
+that has gone quiet after its final turn (see *Session lifecycle policy* in
+`docs/api/README.md`); without it a finished worker keeps running until stopped.
+There is no explicit "done" signal yet: end-on-idle is the only auto-end.
+
 `tether launch --torque-task <id>` plants task bundles by fetching the tasks
 from Torque. Export `TORQUE_API_TOKEN` in the launching CLI's environment when
 Torque requires auth; it is sent as a bearer token and a 401/403 names it.
