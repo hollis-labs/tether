@@ -64,3 +64,30 @@ func TestHandleCreateSession_WorkerUnavailable(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleCreateSession_RequireWorker(t *testing.T) {
+	cat := &fakeCatalogLoader{cat: &config.Catalog{Launches: map[string]config.Launch{"pm": {}, "wk": {Worker: "agent-os"}}}}
+
+	svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "s1"}}
+	rr := postSession(t, svc, cat, LaunchRequest{Launch: "pm", RequireWorker: true})
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if env := decodeErr(t, rr); env.Error.Code != CodeWorkerNotConfigured {
+		t.Fatalf("code = %q, want %q", env.Error.Code, CodeWorkerNotConfigured)
+	}
+	if len(svc.createInputs) != 0 || len(svc.createIDs) != 0 {
+		t.Fatalf("session was created despite refusal: %+v %v", svc.createInputs, svc.createIDs)
+	}
+
+	// A launch-declared worker satisfies the requirement.
+	svc = &fakeLaunchService{createRes: LaunchResult{SessionID: "s2"}}
+	if rr := postSession(t, svc, cat, LaunchRequest{Launch: "wk", RequireWorker: true}); rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	// So does an explicit one.
+	svc = &fakeLaunchService{createRes: LaunchResult{SessionID: "s3"}}
+	if rr := postSession(t, svc, cat, LaunchRequest{Launch: "pm", Worker: "w1", RequireWorker: true}); rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+}

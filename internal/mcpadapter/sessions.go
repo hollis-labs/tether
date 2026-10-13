@@ -52,6 +52,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 			gomcp.StringProp("override", "v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map).", false),
 			gomcp.StringProp("prompt_append", "Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt.", false),
 			gomcp.StringProp("worker", "Optional. Place the session on this connected outpost (label or id). Defaults to the launch's `worker:` when it declares one. Fails with worker_unavailable when the worker is not enrolled or offline.", false),
+			gomcp.BooleanProp("require_worker", "Optional. Refuse with worker_not_configured when no worker resolves (none passed and the launch declares no `worker:`) instead of running the session on the hub.", false),
 			gomcp.StringProp("idempotency_key", "Optional. Makes the create idempotent: a retry with the same key and the same request returns the session the first one created (replayed=true); the same key with a different request fails with idempotency_conflict. Keys are scoped to the authenticated caller, so another caller's identical key never collides with yours.", false),
 			gomcp.StringProp("injection", "Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.", false),
 		),
@@ -215,8 +216,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 	injection := str(args, "injection")
 	idempotencyKey := str(args, "idempotency_key")
 	worker := str(args, "worker")
+	requireWorker := boolArg(args, "require_worker")
 	// A keyed request always takes the input path, where the key is recorded.
-	withInput := worker != "" || idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != ""
+	withInput := requireWorker || worker != "" || idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != ""
 
 	if a.client != nil {
 		// Daemon-routed path (production "tether mcp"): the daemon owns session
@@ -225,6 +227,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		creq := api.LaunchRequest{
 			Launch:          launchID,
 			Worker:          worker,
+			RequireWorker:   requireWorker,
 			BootPrompt:      bootPrompt,
 			AgentFile:       agentFile,
 			AgentInline:     agentInline,
@@ -246,6 +249,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		if err != nil {
 			if isDaemonUnreachable(err) {
 				return nil, daemonUnreachableError(err)
+			}
+			if strings.Contains(err.Error(), "("+api.CodeWorkerNotConfigured+")") {
+				return nil, toolError(api.CodeWorkerNotConfigured, err.Error())
 			}
 			if strings.Contains(err.Error(), "("+api.CodeWorkerUnavailable+")") {
 				return nil, toolError(api.CodeWorkerUnavailable, err.Error())

@@ -139,9 +139,13 @@ type LaunchResult struct {
 // contract; rename with care.
 
 type LaunchRequest struct {
-	Worker string               `json:"worker,omitempty"`
-	Route  *launchprofile.Route `json:"route,omitempty"`
-	Launch string               `json:"launch"`
+	Worker string `json:"worker,omitempty"`
+	// RequireWorker refuses the create with worker_not_configured when no
+	// worker resolves (neither Worker nor the launch's own `worker:`), instead
+	// of running the session on the hub.
+	RequireWorker bool                 `json:"require_worker,omitempty"`
+	Route         *launchprofile.Route `json:"route,omitempty"`
+	Launch        string               `json:"launch"`
 	// BootPrompt, when non-empty, overrides the catalog's static boot prompt
 	// fragments. Used by `tether boot <profile_id>` to inject a dynamically
 	// generated boot prompt without modifying the catalog.
