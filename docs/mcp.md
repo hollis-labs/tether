@@ -39,8 +39,9 @@ publish input/output schemas and return the unchanged service Result as
 structured JSON, mirrored as text. Typed failures use those same stable codes
 without exposing causes. Principal or operator claims are never arguments;
 identity comes from the authenticated daemon view, and the service refuses
-unverified identities. Team services require strict authority; no development
-mode bypass exists. An idempotent retry retains the original selection/result.
+unverified identities. Under identity `off`/`observe` (dev mode) the only admitted team caller is the verified local
+operator over the accepted Unix socket; agents, services and remote callers still
+require `enforce`. An idempotent retry retains the original selection/result.
 
 Activation follow-ups: agent session credentials are currently minted without
 `team.write`, making all nine MCP team verbs unreachable to agents until the
