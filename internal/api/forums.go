@@ -77,6 +77,14 @@ func ForumRoute(op string, r f.Request) (method, path string, err error) {
 		return "GET", "/forums/topics/" + r.TopicID + "/posts", nil
 	case "post_get":
 		return "GET", "/forums/posts/" + r.PostID, nil
+	case "participant_list":
+		return "GET", "/forums/" + r.ForumID + "/participants", nil
+	case "participant_add":
+		return "POST", "/forums/" + r.ForumID + "/participants", nil
+	case "participant_revoke":
+		return "POST", "/forums/" + r.ForumID + "/participants/revoke", nil
+	case "owner_set":
+		return "POST", "/forums/" + r.ForumID + "/owner", nil
 	case "forum_search":
 		return "GET", "/forums/" + r.ForumID + "/search", nil
 	}
@@ -111,6 +119,18 @@ func (s *Server) handleForums(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case len(parts) == 3 && parts[2] == "participants":
+		req.ForumID = parts[1]
+		op = "participant_list"
+		if r.Method == "POST" {
+			op = "participant_add"
+		}
+	case len(parts) == 4 && parts[2] == "participants" && parts[3] == "revoke" && r.Method == "POST":
+		req.ForumID = parts[1]
+		op = "participant_revoke"
+	case len(parts) == 3 && parts[2] == "owner" && r.Method == "POST":
+		req.ForumID = parts[1]
+		op = "owner_set"
 	case len(parts) == 1:
 		if r.Method == "GET" {
 			op = "forum_list"

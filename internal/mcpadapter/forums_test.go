@@ -45,6 +45,16 @@ func TestForumToolsRouteThroughCredentialedDaemon(t *testing.T) {
 		return out
 	}
 	call("tether_forum_create", map[string]any{"id": "portfolio", "namespace": "app/torque/forum/portfolio", "title": "Portfolio"})
+	call("tether_forum_participant_add", map[string]any{"forum_id": "portfolio", "principal_kind": "agent", "principal_id": "msg://agent/env/pm", "access": "post"})
+	grants := call("tether_forum_participant_list", map[string]any{"forum_id": "portfolio", "limit": 1})
+	if len(grants["items"].([]any)) != 1 {
+		t.Fatal("participant management did not route through daemon")
+	}
+	call("tether_forum_owner_set", map[string]any{"forum_id": "portfolio"})
+	call("tether_forum_participant_revoke", map[string]any{"forum_id": "portfolio", "principal_kind": "agent", "principal_id": "msg://agent/env/pm"})
+	if len(call("tether_forum_participant_list", map[string]any{"forum_id": "portfolio"})["items"].([]any)) != 0 {
+		t.Fatal("grant not revoked")
+	}
 	topic := call("tether_forum_topic_create", map[string]any{"forum_id": "portfolio", "title": "Review"})["topic"].(map[string]any)["id"].(string)
 	post := call("tether_forum_post_create", map[string]any{"topic_id": topic, "body_md": strings.Repeat("hello ", 1000)})["post"].(map[string]any)["id"].(string)
 	pg := call("tether_forum_topic_get", map[string]any{"topic_id": topic})["outline"].(map[string]any)

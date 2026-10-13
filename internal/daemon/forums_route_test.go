@@ -99,6 +99,52 @@ func TestForumsThroughAuthenticatedDaemon(t *testing.T) {
 	if ap["provenance"].(map[string]any)["kind"] != "agent" {
 		t.Fatal("agent stamped as user")
 	}
+	// Participant access is resolved from independent authenticated credentials.
+	call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"session-principal","access":"post"}`, token, 201)
+	call("POST", "/forums/portfolio/owner", `{}`, token, 201)
+	if err := db.CreateSession(store.SessionRow{ID: "second-session", State: "running", LaunchID: "second-launch", ProjectID: "project", WorkstreamID: sql.NullString{String: "workstream", Valid: true}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	secondToken, err := ids.Mint(context.Background(), identity.Principal{ID: "second-principal", Kind: "session", SessionID: "second-session", Scopes: []string{"operate", "read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateSession(store.SessionRow{ID: "stranger-session", State: "running"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	strangerToken, err := ids.Mint(context.Background(), identity.Principal{ID: "uninvited-principal", Kind: "session", SessionID: "stranger-session", Scopes: []string{"operate", "read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"second-principal","access":"post"}`, token, 201)
+	call("GET", "/forums/portfolio/participants", "", agentToken, 403)
+	call("POST", "/forums/portfolio/participants/revoke", `{"principal_kind":"agent","principal_id":"second-principal"}`, agentToken, 403)
+	call("POST", "/forums/portfolio/owner", `{}`, secondToken, 403)
+	first := call("POST", "/forums/topics/"+topic+"/posts", `{"body_md":"PM participant"}`, agentToken, 201)["post"].(map[string]any)["id"].(string)
+	replyBody, _ := json.Marshal(map[string]string{"body_md": "Second agent participant", "parent_post_id": first})
+	reply := call("POST", "/forums/topics/"+topic+"/posts", string(replyBody), secondToken, 201)["post"].(map[string]any)
+	if stamp := reply["provenance"].(map[string]any); stamp["id"] != "second-principal" || stamp["session_id"] != "second-session" || stamp["workstream_id"] != "workstream" {
+		t.Fatal(stamp)
+	}
+	for _, credential := range []string{token, agentToken, secondToken} {
+		call("GET", "/forums", "", credential, 200)
+		call("GET", "/forums/portfolio", "", credential, 200)
+		call("GET", "/forums/topics/"+topic, "", credential, 200)
+		call("GET", "/forums/posts/"+first, "", credential, 200)
+		call("GET", "/forums/portfolio/search?query=participant", "", credential, 200)
+	}
+	pg := call("GET", "/forums/topics/"+topic+"/posts?limit=1", "", secondToken, 200)
+	cursor := pg["next_cursor"].(string)
+	call("GET", "/forums/portfolio", "", strangerToken, 403)
+	call("POST", "/forums/portfolio/participants/revoke", `{"principal_kind":"agent","principal_id":"second-principal"}`, token, 201)
+	call("GET", "/forums/topics/"+topic+"/posts?limit=1&cursor="+cursor, "", secondToken, 403)
+	call("GET", "/forums/topics/"+topic+"/posts?since_seq=1", "", secondToken, 403)
+	call("POST", "/forums/topics/"+topic+"/posts", `{"body_md":"denied"}`, secondToken, 403)
+	call("GET", "/forums/portfolio/search?query=participant", "", secondToken, 403)
+	refs, err = db.ListSessionRefs("second-session", store.ListSessionRefsOptions{Kind: store.KindForumPost})
+	if err != nil || len(refs) != 1 {
+		t.Fatalf("invited refs: %v %v", refs, err)
+	}
 	for _, path := range []string{"/forums", "/forums/portfolio", "/forums/portfolio/topics", "/forums/portfolio/search", "/forums/topics/" + topic, "/forums/topics/" + topic + "/posts", "/forums/posts/" + p["id"].(string)} {
 		if _, _, ok := api.RequiredLocalScope(httptest.NewRequest(http.MethodGet, path, nil)); !ok {
 			t.Fatalf("unscoped forum route: %s", path)

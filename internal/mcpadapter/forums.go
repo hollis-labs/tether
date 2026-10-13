@@ -16,6 +16,10 @@ func (a *Adapter) registerForumTools(s *gomcp.Server) {
 		write           bool
 	}{
 		{"forum_create", "Register a durable discussion forum as the operator. Namespace: app/<consumer>/forum/<id>. Use forums for topics and threaded discussion, groups for chat, messages for delivery, and channels for event history.", true},
+		{"participant_list", "Operator only: list explicit stable-principal grants with bounded pagination.", false},
+		{"participant_add", "Operator only: grant read or post (includes read) access to an authenticated stable principal, or update its grant.", true},
+		{"participant_revoke", "Operator only: revoke a grant; subsequent requests and cursor continuations recheck access. Owners retain implicit access.", true},
+		{"owner_set", "Operator only: transfer forum ownership; omitted owner defaults to operator. Invite the old owner explicitly before transfer to retain access.", true},
 		{"forum_list", "List accessible forums in compact pages; expand one with tether_forum_get.", false},
 		{"forum_get", "Read a forum's configuration and policy, then discover topics with tether_forum_topic_list.", false},
 		{"topic_create", "Create an open discussion topic in a forum. The daemon stamps the author; add the first post separately.", true},
@@ -65,12 +69,21 @@ func forumToolSchema(op string) map[string]interface{} {
 	switch op {
 	case "forum_create":
 		p = append(p, gomcp.StringProp("id", "Forum id (letters, digits, underscore or dash)", true), gomcp.StringProp("namespace", "app/<consumer>/forum/<id>", true), gomcp.StringProp("title", "Forum title (1..300 characters)", true), gomcp.StringProp("owner_type", "Optional owner kind: user or agent; operator registration only", false), gomcp.StringProp("owner_id", "Optional owner principal id (pair with owner_type); defaults to operator", false), gomcp.ObjectProp("config_json", "Opaque forum configuration; ui is reserved", false), gomcp.ObjectProp("metadata_json", "Opaque metadata", false))
-	case "forum_get", "topic_create", "topic_list", "forum_search":
+	case "forum_get", "topic_create", "topic_list", "forum_search", "participant_list", "participant_add", "participant_revoke", "owner_set":
 		p = append(p, gomcp.StringProp("forum_id", "Forum id", true))
 	case "topic_get", "post_create", "post_list":
 		p = append(p, gomcp.StringProp("topic_id", "Topic id", true))
 	case "post_get":
 		p = append(p, gomcp.StringProp("post_id", "Post id", true))
+	}
+	if op == "participant_add" || op == "participant_revoke" {
+		p = append(p, gomcp.StringProp("principal_id", "Stable authenticated principal id; agents use their resolved agent URN", true), gomcp.StringProp("principal_kind", "user or agent", true))
+	}
+	if op == "participant_add" {
+		p = append(p, gomcp.StringProp("access", "read or post (includes read)", true))
+	}
+	if op == "owner_set" {
+		p = append(p, gomcp.StringProp("owner_type", "user or agent; omit both owner fields for operator", false), gomcp.StringProp("owner_id", "Stable owner principal id", false))
 	}
 	if op == "topic_create" {
 		p = append(p, gomcp.StringProp("title", "Topic title (1..300 characters)", true))
@@ -81,7 +94,7 @@ func forumToolSchema(op string) map[string]interface{} {
 	if op == "forum_search" {
 		p = append(p, gomcp.StringProp("query", "Search text (literal words, not FTS syntax)", true))
 	}
-	if op != "forum_create" && op != "topic_create" && op != "post_create" {
+	if op != "forum_create" && op != "topic_create" && op != "post_create" && op != "participant_add" && op != "participant_revoke" && op != "owner_set" {
 		p = append(p, gomcp.StringProp("cursor", "Opaque next_cursor from the same operation and filters", false), gomcp.IntegerProp("limit", "Page size, default 20, maximum 100", false), gomcp.IntegerProp("since_seq", "Only posts newer than this per-forum sequence", false), gomcp.StringProp("detail", "summary (default), preview, full; post_get bodies only", false), gomcp.StringProp("fields", "Comma-separated record fields; id and page metadata survive", false), gomcp.IntegerProp("max_chars", "Aggregate body/snippet character budget, maximum 100000", false), gomcp.StringProp("status", "Topic status: open, resolved, archived", false), gomcp.StringProp("author", "Author principal or agent URN", false), gomcp.StringProp("author_kind", "user or agent", false), gomcp.StringProp("created_after", "Inclusive RFC3339 date", false), gomcp.StringProp("created_before", "Inclusive RFC3339 date", false), gomcp.BooleanProp("has_replies", "Filter records with replies", false), gomcp.StringProp("workstream_id", "Stamped workstream filter", false), gomcp.StringProp("project_id", "Stamped project filter", false))
 	}
 	return gomcp.InputSchema(p...)

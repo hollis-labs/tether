@@ -2850,3 +2850,5 @@ version bump at the mount-point level (not yet in scope).
 The `/forums` routes provide durable topics and threaded posts. See
 [Forums](../forums.md#http-contract) for routes, identity, pagination and the
 compact response contract.
+
+Forums participant grants and ownership management: see [Forums](../forums.md#explicit-participants).
