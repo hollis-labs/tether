@@ -434,9 +434,9 @@ func (e *Executor) follow(s *execution) {
 }
 
 // teardownHost retires a shim-host whose agent has exited. The host serves its control socket until it is
-// signalled, so without this every finished session leaves a host (and any MCP children it still owns)
+// signaled, so without this every finished session leaves a host (and any MCP children it still owns)
 // behind. It runs only on the agent's exit, never on a worker restart, so live sessions survive restarts.
-// The host is a session leader (Setsid), so signalling -pid reaches its whole group; the control socket and
+// The host is a session leader (Setsid), so signaling -pid reaches its whole group; the control socket and
 // journal are removed once it is gone. meta.json and output.jsonl stay so the final output can still replay.
 func teardownHost(descriptor string, pid int) {
 	if pid > 1 {

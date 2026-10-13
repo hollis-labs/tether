@@ -14,7 +14,7 @@ import (
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
-// A stop kills the agent but the shim-host keeps serving until signalled. When the agent's exit arrives the
+// A stop kills the agent but the shim-host keeps serving until signaled. When the agent's exit arrives the
 // worker must end the host's process group and remove its control socket, or every stopped session leaks one.
 func TestAgentExitTearsDownShimHost(t *testing.T) {
 	dir := t.TempDir()
