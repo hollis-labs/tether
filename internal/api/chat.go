@@ -46,12 +46,15 @@ const (
 
 // ChatAgent is one row of the operator chat roster.
 type ChatAgent struct {
-	LaunchID    string       `json:"launch_id"`
-	AgentID     string       `json:"agent_id"`
-	DisplayName string       `json:"display_name"`
-	Channel     string       `json:"channel"`
-	Worker      string       `json:"worker,omitempty"`
-	Session     *ChatSession `json:"session"`
+	LaunchID    string `json:"launch_id"`
+	AgentID     string `json:"agent_id"`
+	DisplayName string `json:"display_name"`
+	Channel     string `json:"channel"`
+	Worker      string `json:"worker,omitempty"`
+	// Enabled is false when the launch or its agent is disabled. The roster
+	// omits disabled entries unless ?include_disabled=true.
+	Enabled bool         `json:"enabled"`
+	Session *ChatSession `json:"session"`
 }
 
 // ChatSession is the newest session of a roster launch. AtTurnBoundary is
@@ -115,8 +118,9 @@ func (s *Server) handleListChatAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ids := make([]string, 0)
+	includeDisabled := r.URL.Query().Get("include_disabled") == "true" || r.URL.Query().Get("include_disabled") == "1"
 	for id, l := range cat.Launches {
-		if l.Chat {
+		if l.Chat && (includeDisabled || chatEnabled(cat, l)) {
 			ids = append(ids, id)
 		}
 	}
@@ -135,6 +139,7 @@ func (s *Server) handleListChatAgents(w http.ResponseWriter, r *http.Request) {
 			DisplayName: chatDisplayName(l),
 			Channel:     chatChannel(cat, l),
 			Worker:      l.Worker,
+			Enabled:     chatEnabled(cat, l),
 			Session:     s.chatSession(row),
 		})
 	}
@@ -239,6 +244,10 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request, launchID
 		writeError(w, http.StatusNotFound, CodeNotFound, "chat agent not found")
 		return
 	}
+	if !chatEnabled(cat, l) {
+		writeError(w, http.StatusConflict, CodeAgentDisabled, "chat agent "+launchID+" is disabled (enabled: false); sending is blocked, a running session is untouched")
+		return
+	}
 
 	sum := sha256.Sum256([]byte(launchID + "\x00" + req.Text))
 	digest := hex.EncodeToString(sum[:])
@@ -305,6 +314,8 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 			return resp, http.StatusConflict, CodeIdempotencyConflict, err.Error()
 		case errors.Is(err, launch.ErrLaunchNotFound):
 			return resp, http.StatusNotFound, CodeNotFound, "chat agent not found"
+		case errors.Is(err, launch.ErrDisabled):
+			return resp, http.StatusConflict, CodeAgentDisabled, err.Error()
 		case errors.Is(err, workerhub.ErrNotEnrolled), errors.Is(err, workerhub.ErrOffline), errors.Is(err, workerhub.ErrChannelUnavailable):
 			return resp, http.StatusBadGateway, CodeWorkerUnavailable, "launch " + launchID + " worker unavailable: " + err.Error()
 		}
@@ -359,4 +370,13 @@ func (c *chatReplays) abandon(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, key)
+}
+
+// chatEnabled reports whether neither the launch nor its agent is disabled.
+func chatEnabled(cat *config.Catalog, l config.Launch) bool {
+	if !l.IsEnabled() {
+		return false
+	}
+	a, ok := cat.Agents[l.Agent]
+	return !ok || a.IsEnabled()
 }

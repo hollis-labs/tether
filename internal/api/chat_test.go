@@ -12,6 +12,7 @@ import (
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
@@ -232,5 +233,63 @@ func TestChatSendWorkerFailuresAre502NamingTheWorker(t *testing.T) {
 	svc := &fakeLaunchService{createErr: errors.New("boom")}
 	if rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"hi","idempotency_key":"k2"}`); rr.Code != http.StatusInternalServerError {
 		t.Fatalf("unrelated error status %d", rr.Code)
+	}
+}
+
+func disabledChatCatalog() *fakeCatalogLoader {
+	off := false
+	return &fakeCatalogLoader{cat: &config.Catalog{
+		Agents: map[string]config.Agent{"pm": {ID: "pm"}, "retired": {ID: "retired", Enabled: &off}},
+		Launches: map[string]config.Launch{
+			"pm-launch":      {ID: "pm-launch", Agent: "pm", Chat: true, Worker: "agent-os"},
+			"off-launch":     {ID: "off-launch", Agent: "pm", Chat: true, Worker: "agent-os", Enabled: &off},
+			"retired-launch": {ID: "retired-launch", Agent: "retired", Chat: true, Worker: "agent-os"},
+		},
+	}}
+}
+
+func TestChatRosterHidesDisabledAndSendIsRefused(t *testing.T) {
+	svc := &fakeLaunchService{}
+	h := NewHandler(Deps{Service: svc, Catalog: disabledChatCatalog()})
+
+	list := func(query string) ListChatAgentsResponse {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/chat/agents"+query, nil))
+		var got ListChatAgentsResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%v: %s", err, rr.Body)
+		}
+		return got
+	}
+	if got := list(""); len(got.Agents) != 1 || got.Agents[0].LaunchID != "pm-launch" || !got.Agents[0].Enabled {
+		t.Fatalf("roster = %+v, want only the enabled launch", got.Agents)
+	}
+	all := list("?include_disabled=true")
+	if len(all.Agents) != 3 {
+		t.Fatalf("include_disabled roster = %+v", all.Agents)
+	}
+	for _, a := range all.Agents {
+		if a.Enabled != (a.LaunchID == "pm-launch") {
+			t.Errorf("%s enabled = %v", a.LaunchID, a.Enabled)
+		}
+	}
+
+	for _, id := range []string{"off-launch", "retired-launch"} {
+		rr := chatSend(h, id, `{"text":"hi","idempotency_key":"k1"}`)
+		if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), CodeAgentDisabled) {
+			t.Errorf("send to %s = %d %s, want 409 agent_disabled", id, rr.Code, rr.Body)
+		}
+	}
+}
+
+// A session create that the launch resolver refuses as disabled is a 409
+// agent_disabled, not a 500 or a 404.
+func TestSessionCreateDisabledLaunchIs409(t *testing.T) {
+	svc := &fakeLaunchService{createErr: fmt.Errorf("launch %q is %w (enabled: false)", "off-launch", launch.ErrDisabled)}
+	h := NewHandler(Deps{Service: svc, Catalog: disabledChatCatalog()})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/sessions", strings.NewReader(`{"launch":"off-launch"}`)))
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), CodeAgentDisabled) {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
 	}
 }

@@ -399,6 +399,9 @@ type Launch struct {
 	// Chat lists the launch in the operator chat roster (GET /chat/agents).
 	// DisplayName is the roster label; empty falls back to the agent id.
 	Chat bool `yaml:"chat,omitempty" json:"chat,omitempty"`
+	// Enabled turns the launch off without removing its file: false blocks new
+	// launches and chat sends, never a running session. Absent means enabled.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Worker is the default worker label (or id) for sessions started from
 	// this launch by API-driven paths such as chat send. Empty means no
 	// default: those paths refuse to start a session rather than run on the hub.
@@ -414,6 +417,9 @@ type Launch struct {
 	MCP         MCPConfig       `yaml:"mcp" json:"mcp,omitempty"`
 	Injection   LaunchInjection `yaml:"injection" json:"injection,omitempty"`
 }
+
+// IsEnabled reports whether the launch may be started; absent means yes.
+func (l Launch) IsEnabled() bool { return l.Enabled == nil || *l.Enabled }
 
 type LaunchWorkspace struct {
 	Mode         string `yaml:"mode" json:"mode"`

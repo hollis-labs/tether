@@ -106,6 +106,14 @@ built from this change). A session on an older worker keeps the static
 launch is refused with a message to upgrade the worker, because it could never
 act as that identity. See [forums.md](forums.md#agent-identity-on-workers).
 
+## Turning an agent off: `enabled`
+
+`enabled: false` in the agent file blocks new launches and chat sends for every
+launch that uses the agent, and a running session is left alone. Absent means on;
+it is not inherited through `extends`. An agent is loaded when the daemon starts,
+so the change applies after a restart. Details, the API behaviour and the deploy
+order are in [catalog-launch-profiles.md](catalog-launch-profiles.md#turning-an-agent-or-launch-off-enabled).
+
 ## Launch `worker`
 
 A launch entry accepts an optional `worker: <label>`, the default worker for
