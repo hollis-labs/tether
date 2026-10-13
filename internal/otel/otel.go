@@ -24,6 +24,7 @@ func Init(ctx context.Context, serviceName, serviceVersion string) (func(context
 	}
 
 	configureLogging()
+	installErrorHandler()
 
 	opts := []hotel.Option{
 		hotel.WithServiceName(serviceName),
