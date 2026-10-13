@@ -118,6 +118,9 @@ type Worker struct {
 	pending   map[string]chan workerwire.Frame
 	commands  chan workerwire.Frame
 	launches  chan struct{}
+	// Now and Rand are test seams for the reconnect schedule; nil means time.Now and math/rand.
+	Now  func() time.Time
+	Rand func() float64
 }
 
 func (w *Worker) capabilities(ctx context.Context) json.RawMessage {
@@ -166,24 +169,28 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 	}()
-	backoff := time.Second
+	bo := newReconnectBackoff(w.Now, w.Rand)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil //nolint:nilerr // context cancellation is the clean shutdown path, not a failure
 		}
-		err := w.connect(ctx, func() { backoff = time.Second })
+		var upSince time.Time
+		err := w.connect(ctx, func() { upSince = bo.now() })
 		if ctx.Err() != nil {
 			return nil //nolint:nilerr // shutdown during connect is a clean exit; err is only the canceled dial
 		}
+		if !upSince.IsZero() {
+			bo.connectionEnded(bo.now().Sub(upSince))
+		}
+		delay := bo.next()
 		if err != nil {
-			log.Printf("worker channel: %v; reconnect in %s", err, backoff)
+			log.Printf("worker channel: %v; reconnect in %s", err, delay)
 		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(backoff):
+		case <-time.After(delay):
 		}
-		backoff = min(15*time.Second, backoff*2)
 	}
 }
 func (w *Worker) connect(ctx context.Context, welcomed func()) error {
