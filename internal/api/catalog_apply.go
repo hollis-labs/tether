@@ -16,11 +16,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/catalogapply"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
@@ -32,6 +34,7 @@ type CatalogApplyService interface {
 	Approve(req catalogapply.ApprovalRequest) (*catalogapply.Plan, error)
 	Apply(ctx context.Context, planID string) (*catalogapply.Result, error)
 	Backups() ([]catalogapply.BackupInfo, error)
+	ValidateBundle(files []catalogapply.File, opt catalogapply.Options) (catalogcheck.Report, error)
 }
 
 // catalogWriteScope is the session credential scope that lets a launched
@@ -45,6 +48,7 @@ func (s *Server) registerCatalogApplyRoutes(router *http.ServeMux) {
 	router.HandleFunc("/catalog/plans", s.handleCatalogPlans)
 	router.HandleFunc("/catalog/plans/", s.handleCatalogPlanItem)
 	router.HandleFunc("/catalog/backups", s.handleCatalogBackups)
+	router.HandleFunc("/catalog/validate", s.handleCatalogValidate)
 }
 
 // CatalogPlanRequest is the POST /catalog/plans body. Exactly one of Files or
@@ -207,6 +211,31 @@ func (s *Server) handleCatalogBackups(w http.ResponseWriter, r *http.Request) {
 		backups = []catalogapply.BackupInfo{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"backups": backups})
+}
+
+// CatalogValidateRequest is the POST /catalog/validate body. With no files the
+// live catalog is validated; with files, the catalog as it would be with them
+// applied. Nothing is stored or written.
+type CatalogValidateRequest struct {
+	Files []catalogapply.File `json:"files,omitempty"`
+}
+
+func (s *Server) handleCatalogValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req CatalogValidateRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	report, err := s.CatalogApply.ValidateBundle(req.Files, catalogapply.Options{})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 // callerDefinitionPaths names the catalog files that define the calling

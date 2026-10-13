@@ -24,8 +24,10 @@ import (
 	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
+	"github.com/hollis-labs/tether/internal/mcptransport"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -146,7 +148,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool, live .
 	if cat != nil {
 		checks = append(checks, catalogcheck.RoleModules(cat)...)
 		checks = append(checks, catalogcheck.SandboxProfiles(cat))
-		checks = append(checks, catalogcheck.MCPDiscoveryMode(cat), catalogcheck.MCPEndpoint(cat))
+		checks = append(checks, catalogcheck.MCPDiscoveryMode(cat), checkMCPEndpoint(cat))
 		checks = append(checks, catalogcheck.MCPProfiles(cat, catalogRoot)...)
 		checks = append(checks, catalogcheck.MCPNamingConfig(catalogRoot)...)
 		if len(live) > 0 && live[0] {
@@ -506,4 +508,24 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 		out = append(out, ok("mcp-live-names", "bounded live tools/list probe found no name or metadata issues"))
 	}
 	return out
+}
+
+func checkMCPEndpoint(cat *config.Catalog) checkResult {
+	if profile, err := cat.Global.Profile(); err == nil && !profile.Enabled(environment.LocalMCP) {
+		return ok("mcp-endpoint", "disabled by modules.local_mcp")
+	}
+	if !cat.Global.Daemon.MCPEndpoint.Enabled {
+		return ok("mcp-endpoint", "disabled (daemon.mcp_endpoint.enabled defaults false)")
+	}
+	addr := cat.Global.Daemon.ListenAddr
+	if addr == "" {
+		addr = "unix:~/.tether/run/tetherd.sock"
+	}
+	if strings.HasPrefix(addr, "unix:") {
+		addr = "unix:" + config.Expand(strings.TrimPrefix(addr, "unix:"))
+	}
+	if err := mcptransport.ValidateEndpoint(addr, identity.Mode(cat.Global.Identity.ModeFor("mcp_gateway"))); err != nil {
+		return fail("mcp-endpoint", err.Error(), "fix daemon.listen_addr or disable daemon.mcp_endpoint.enabled")
+	}
+	return ok("mcp-endpoint", "enabled; strict verified admission on /mcp and /p/<profile>")
 }

@@ -57,6 +57,16 @@ func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
 	}, Destroys("replaces catalog files; the previous catalog is kept as a backup and can be restored with tether_catalog_plan rollback_of"))
 
 	a.addTool(s, gomcp.Tool{
+		Name: "tether_catalog_validate",
+		Description: "Validate the catalog and return structured findings (severity, check, entity, message, remedy), failures first. With no files it checks the LIVE catalog. With files it checks what the catalog would be with that bundle applied, on a scratch copy; nothing is stored or written, so use it to test a draft before tether_catalog_plan. " +
+			"Checks: the layered load and parse, MCP grants against the declared servers, references between agents, launches, projects and providers, sandbox profiles, MCP discovery modes, profiles, server names and credential files. It reads files only; it does not contact a daemon, a database or an upstream. Read-only; no scope required.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.ArrayProp("files", "Optional draft files to overlay on the live catalog: {path, content} or {path, delete: true}.", false, fileItem),
+		),
+		Handler: a.handleCatalogValidate,
+	}, Reads("catalog validation on a scratch copy"))
+
+	a.addTool(s, gomcp.Tool{
 		Name:        "tether_catalog_backups",
 		Description: "List catalog backups, newest first. Each is the whole catalog as it was before an apply; pass its id as rollback_of to tether_catalog_plan. Read-only; no scope required.",
 		InputSchema: gomcp.EmptyObjectSchema(),
@@ -130,6 +140,28 @@ func (a *Adapter) handleCatalogApply(ctx context.Context, args map[string]any) (
 		return nil, a.catalogApplyErr(err)
 	}
 	return toolJSON(res), nil
+}
+
+func (a *Adapter) handleCatalogValidate(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.catalogApplyClient("tether_catalog_validate"); err != nil {
+		return nil, toolError("internal_error", err.Error())
+	}
+	var files []catalogapply.File
+	if raw, ok := args["files"].([]any); ok {
+		for i, item := range raw {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return nil, toolError("invalid_argument", fmt.Sprintf("files[%d] must be an object with path and content", i))
+			}
+			del, _ := m["delete"].(bool)
+			files = append(files, catalogapply.File{Path: str(m, "path"), Content: str(m, "content"), Delete: del})
+		}
+	}
+	report, err := a.client.CatalogApply().Validate(ctx, files)
+	if err != nil {
+		return nil, a.catalogApplyErr(err)
+	}
+	return toolJSON(report), nil
 }
 
 func (a *Adapter) handleCatalogBackups(ctx context.Context, _ map[string]any) (any, error) {

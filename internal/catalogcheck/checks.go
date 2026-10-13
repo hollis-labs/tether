@@ -7,12 +7,10 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/environment"
-	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
-	"github.com/hollis-labs/tether/internal/mcptransport"
 )
 
-// checkSandboxProfiles fails when an agent names a sandbox profile the
+// SandboxProfiles fails when an agent names a sandbox profile the
 // catalog does not define. The daemon still starts, but refuses every
 // launch of that agent (CW-20261001-0130), so it is a failure here.
 func SandboxProfiles(cat *config.Catalog) Result {
@@ -35,7 +33,7 @@ func MCPDiscoveryMode(cat *config.Catalog) Result {
 	return OK("mcp-discovery-mode", "configured discovery modes are valid")
 }
 
-// Doctor validates all authored profiles without connecting upstreams or reading
+// MCPProfiles validates all authored profiles without connecting upstreams or reading
 // credentials. Exact order/load names can only be verified against live tools.
 func MCPProfiles(cat *config.Catalog, catalogRoot string) []Result {
 	entries, err := config.LoadMCPServerCatalog(catalogRoot)
@@ -124,26 +122,6 @@ func MCPNamingConfig(root string) []Result {
 		out = append(out, OK("mcp-naming", "catalog origin/prefix declarations checked; live collision/name/metadata checks require --mcp-live"))
 	}
 	return out
-}
-
-func MCPEndpoint(cat *config.Catalog) Result {
-	if profile, err := cat.Global.Profile(); err == nil && !profile.Enabled(environment.LocalMCP) {
-		return OK("mcp-endpoint", "disabled by modules.local_mcp")
-	}
-	if !cat.Global.Daemon.MCPEndpoint.Enabled {
-		return OK("mcp-endpoint", "disabled (daemon.mcp_endpoint.enabled defaults false)")
-	}
-	addr := cat.Global.Daemon.ListenAddr
-	if addr == "" {
-		addr = "unix:~/.tether/run/tetherd.sock"
-	}
-	if strings.HasPrefix(addr, "unix:") {
-		addr = "unix:" + config.Expand(strings.TrimPrefix(addr, "unix:"))
-	}
-	if err := mcptransport.ValidateEndpoint(addr, identity.Mode(cat.Global.Identity.ModeFor("mcp_gateway"))); err != nil {
-		return Fail("mcp-endpoint", err.Error(), "fix daemon.listen_addr or disable daemon.mcp_endpoint.enabled")
-	}
-	return OK("mcp-endpoint", "enabled; strict verified admission on /mcp and /p/<profile>")
 }
 
 func MCPCredentialFiles(catalogRoot string) []Result {
