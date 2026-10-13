@@ -1989,8 +1989,9 @@ lifecycle:
 Idle, duration and session lease limits default to disabled; no implicit 12-hour
 ceiling applies. Duration and configured session lease budgets start at launch;
 expiry of a current runtime binding also triggers lease reaping. Genuine runtime
-activity resets the idle budget. The daemon checks every five seconds, gives
-launches an orphan grace, and retains unknown/live process identities. Verified
+activity resets the idle budget. The daemon checks every five minutes, so a limit
+is enforced up to one sweep late. Launches get an orphan grace, and unknown or
+live process identities are retained. Verified
 missing processes become `orphaned` with authority revoked and their workspaces
 preserved; late terminal transitions remain terminal.
 

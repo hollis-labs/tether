@@ -9,3 +9,10 @@ skills: []
 permissions:
   network: true
   permission_mode: bypass
+# A finished headless worker has no one to hand off to, so end it once it goes
+# quiet instead of leaving it running until someone stops it. The reaper checks
+# every five minutes, so the session ends within idle_timeout + 5m of its last
+# activity. max_duration is the backstop for a worker that never goes quiet.
+lifecycle:
+  idle_timeout: 10m
+  max_duration: 4h
