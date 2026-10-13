@@ -375,6 +375,8 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 		}
 		// Identity is per agent: the leaf's URN, never an ancestor's.
 		resolved.URN = p.URN
+		// Enabled is per agent as well: an ancestor being off does not turn the child off.
+		resolved.Enabled = p.Enabled
 		if len(p.MCPScopes) > 0 {
 			resolved.MCPScopes = append([]string(nil), p.MCPScopes...)
 		}

@@ -106,7 +106,16 @@ type LaunchProfile struct {
 	// this agent's worker sessions (for example message.write, registry.write,
 	// groups.write). Empty means the default set. Closest definition wins.
 	MCPScopes []string `yaml:"mcp_scopes,omitempty" json:"mcp_scopes,omitempty"`
+
+	// Enabled turns the agent off without removing its file: false blocks new
+	// launches and chat sends for it, and never touches a session that is
+	// already running. Absent means enabled. It is per agent and not
+	// inherited through extends.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 }
+
+// IsEnabled reports whether the agent may be launched; absent means yes.
+func (p LaunchProfile) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
 
 // DefaultMCPScopes are the session credential scopes of a worker session whose
 // agent declares no mcp_scopes. They match the static scopes workers used before

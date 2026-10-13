@@ -63,6 +63,11 @@ const (
 	// (CW-20260930-0229).
 	CodeIdempotencyConflict = "idempotency_conflict"
 
+	// CodeAgentDisabled is a 409: the launch or its agent is marked enabled:
+	// false in the catalog. New launches and chat sends are refused; a running
+	// session is untouched.
+	CodeAgentDisabled = "agent_disabled"
+
 	// CodeDecisionFailed means a decision provider could not answer (auth,
 	// rate limit, overload, timeout, open circuit or an unusable response).
 	// ErrorDetail.Details carries "kind" and, when the caller declared one,
