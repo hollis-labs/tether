@@ -1722,6 +1722,15 @@ or missing session returns an unverified context. It grants no authorization.
 See [trusted session context](../trusted-session-context.md) for the wire fields
 and provenance/forwarded-metadata contract.
 
+For a worker session the hub mints the bearer at launch (scopes from the agent's
+`mcp_scopes`). When the catalog agent declares `urn`, `agent_urn` is that stable
+registry URN, but only while the registry's current binding for it names the
+session; otherwise it is the logical-agent binding target as before. The bearer is
+revoked when the session ends. See
+[agent-config-reference.md](../agent-config-reference.md#worker-identity-urn-and-mcp_scopes).
+`tether mcp --token-stdin` reads such a bearer from the first stdin line and fails
+closed (no operator fallback) when it is missing or malformed.
+
 ### `GET /proxy/events`
 
 Rows include an `attribution` object and an optional `claimed_session_id`.

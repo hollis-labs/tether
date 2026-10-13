@@ -71,6 +71,41 @@ provider_overrides:                # optional v005-08
 
 Empty / omitted fields take their zero values; existing pre-v005-08 catalog YAML loads unchanged.
 
+### Worker identity: `urn` and `mcp_scopes`
+
+Two optional agent fields apply to sessions placed on a worker (a launch with
+`worker:` or `--worker`). Both are read from the **catalog** agent only; an
+`agent_file`/`agent_inline` override cannot set them.
+
+```yaml
+urn: msg://agent/agent-mux/agt_454f2timi7   # stable registry URN this agent acts as
+mcp_scopes: [message.write, registry.write, groups.write]
+```
+
+- `mcp_scopes` are the scopes of the session-bound credential the hub mints for
+  the session (any of `session.write`, `message.write`, `registry.write`,
+  `groups.write`, `catalog.write`, `ai.invoke`, `team.write`). Omitted means
+  `message.write`, `registry.write`, `groups.write`, which matches the static
+  scopes workers used before. Forum and channel read/write tools need no scope.
+  An unknown scope fails catalog validation. Inherited through `extends`.
+- `urn` is looked up in the registry, never minted from the catalog (the registry
+  mints URNs on registration). The URN must be registered and a valid
+  `msg://agent/<authority>/<id>`; two agents cannot declare the same URN. It is
+  **not** inherited through `extends`, and team members never take it. At session
+  creation the hub leases a runtime binding for the URN to the session, so the
+  session's bearer resolves in `GET /auth/context` to `principal_kind=session`,
+  its `session_id` and `agent_urn` = the stable URN. The binding is released and the
+  credential revoked when the session ends, is stopped or is force-closed.
+  If another live session holds the URN the launch fails with
+  `stable agent identity is already bound to another live session` and names the
+  holder; a lease left by an ended session is released automatically.
+
+Both need a worker that advertises the `session-cred` feature (a `tether-worker`
+built from this change). A session on an older worker keeps the static
+`hub-mcp.json` entry and runs as the operator; if its agent declares `urn` the
+launch is refused with a message to upgrade the worker, because it could never
+act as that identity. See [forums.md](forums.md#agent-identity-on-workers).
+
 ## Launch `worker`
 
 A launch entry accepts an optional `worker: <label>`, the default worker for

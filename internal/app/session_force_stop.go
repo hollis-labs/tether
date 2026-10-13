@@ -45,6 +45,10 @@ func (s *Service) ForceStopSession(ctx context.Context, id string, opts api.Forc
 	if strings.TrimSpace(row.LogicalAgentID) != "" {
 		s.revokeActorBindingIfCurrent(id, row.LogicalAgentID)
 	}
+	s.releaseWorkerIdentity(id)
+	if s.Registry != nil {
+		_, _ = s.Registry.RevokeSessionBindings(ctx, id)
+	}
 	payload, _ := json.Marshal(map[string]any{"from": row.State, "to": res.To, "reason": reason, "was_live": res.WasLive, "worker_id": row.WorkerID})
 	if s.Bus == nil {
 		_, _, err = s.Store.InsertEventContext(ctx, events.ScopeSession, id, sessionForceClosedEvent, string(payload))

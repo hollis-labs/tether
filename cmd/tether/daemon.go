@@ -996,6 +996,12 @@ func (a *serviceAdapter) ListSessions(opts store.ListSessionsOptions) ([]store.S
 	return a.svc.ListSessions(opts)
 }
 
+// SessionIdentityURN lets /auth/context and forums resolve a worker session's stable agent URN
+// (api.CallerIdentityLookup). Without it the optional lookup is silently skipped.
+func (a *serviceAdapter) SessionIdentityURN(id string) string { return a.svc.SessionIdentityURN(id) }
+
+var _ api.CallerIdentityLookup = (*serviceAdapter)(nil)
+
 func (a *serviceAdapter) GetSession(id string) (*store.SessionRow, error) {
 	return a.svc.GetSession(id)
 }

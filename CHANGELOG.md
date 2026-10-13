@@ -8,6 +8,18 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add per-session credentials and stable identity for worker sessions. The hub
+  mints a session-bound bearer at launch (scopes from the new optional agent
+  field `mcp_scopes`, default `message.write,registry.write,groups.write`),
+  delivers it in the launch spec to workers advertising the new `session-cred`
+  hello feature, and revokes it when the session ends, is stopped or force-closed.
+  The new optional agent field `urn: msg://agent/<authority>/<id>` binds that
+  registry URN to the session, so `/auth/context` returns `agent_urn` and forums
+  grants to the URN match; a URN held by another live session fails the launch.
+  New hidden `tether-worker mcp-relay` and `tether mcp --token-stdin` carry the
+  bearer over the existing ssh MCP path without putting it in argv or env.
+  Both fields are optional and older catalogs and workers behave as before.
+
 - Add `POST /sessions/{id}/stop?force=true` and `tether sessions stop --force`
   to close a ghost session row (offline worker, or a worker/runtime that does
   not know the session) as `killed` with a recorded reason. A live session is

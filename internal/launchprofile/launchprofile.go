@@ -94,6 +94,32 @@ type LaunchProfile struct {
 	// default when empty) or "auto". Only "auto" lets boot recovery resume a
 	// logical agent that has no live session.
 	Recovery string `yaml:"recovery,omitempty" json:"recovery,omitempty"`
+
+	// URN names the stable registry identity (msg://agent/<authority>/<id>) this
+	// agent's worker sessions act as. It is looked up in the registry, never
+	// minted from here, and is NOT inherited through extends: identity belongs
+	// to one agent. Read only from the catalog agent, never from an
+	// agent_file/agent_inline override. Optional.
+	URN string `yaml:"urn,omitempty" json:"urn,omitempty"`
+
+	// MCPScopes are the scopes of the session-bound credential the hub mints for
+	// this agent's worker sessions (for example message.write, registry.write,
+	// groups.write). Empty means the default set. Closest definition wins.
+	MCPScopes []string `yaml:"mcp_scopes,omitempty" json:"mcp_scopes,omitempty"`
+}
+
+// DefaultMCPScopes are the session credential scopes of a worker session whose
+// agent declares no mcp_scopes. They match the static scopes workers used before
+// per-session credentials; the read-only forum and channel tools need no scope.
+var DefaultMCPScopes = []string{"message.write", "registry.write", "groups.write"}
+
+// ValidMCPScope reports whether scope may appear in an agent's mcp_scopes.
+func ValidMCPScope(scope string) bool {
+	switch scope {
+	case "session.write", "message.write", "registry.write", "groups.write", "catalog.write", "ai.invoke", "team.write":
+		return true
+	}
+	return false
 }
 
 // Boot-recovery policy values for LaunchProfile.Recovery.

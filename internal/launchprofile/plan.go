@@ -56,6 +56,11 @@ type Plan struct {
 	// Empty means no override: the catalog agent's profile applies, as for
 	// every plan created before this field existed.
 	SandboxProfile string `json:"sandbox_profile,omitempty"`
+	// IdentityURN and MCPScopes come from the CATALOG agent (never an override)
+	// when a worker session is created: the stable registry URN the session's
+	// runtime is bound to, and the scopes of its session credential.
+	IdentityURN string   `json:"identity_urn,omitempty"`
+	MCPScopes   []string `json:"mcp_scopes,omitempty"`
 	// ExtractRefs records whether proxy-side identifier extraction (--extract-refs)
 	// was enabled for this launch plan.
 	ExtractRefs bool   `json:"extract_refs,omitempty"`

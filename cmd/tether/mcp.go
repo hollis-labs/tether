@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -73,6 +74,7 @@ var (
 	mcpConfine       bool
 	mcpDaemonOnly    bool
 	mcpProtect       []string
+	mcpTokenStdin    bool
 )
 
 func init() {
@@ -81,6 +83,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpExtractRefs, "extract-refs", false, "record identifiers seen in proxied tool arguments as session refs (requires --session; off by default)")
 	mcpCmd.Flags().StringVar(&mcpSession, "session", "", "Tether session id this proxy serves; attributes proxied tool calls to it (set automatically in a launched worker's .mcp.json)")
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "legacy adapter presence marker; daemon credentials use --token-file or TETHER_TOKEN")
+	mcpCmd.Flags().BoolVar(&mcpTokenStdin, "token-stdin", false, "read the session bearer credential from the first line of stdin (used by a worker's mcp-relay over ssh); fails closed, never falling back to the operator credential")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: TETHER_MCP_SCOPES)")
 	mcpCmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "MCP discovery mode: flat (default) or search (env: TETHER_MCP_DISCOVERY_MODE)")
 	mcpCmd.Flags().Bool("no-discover", false, "expose allowed tools directly (same as --discovery-mode flat)")
@@ -94,6 +97,16 @@ func init() {
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
+	if mcpTokenStdin {
+		token, err := readTokenLine(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("--token-stdin: %w", err)
+		}
+		// Process-local: this adapter is the only reader, and nothing it spawns sees an operator fallback.
+		if err := os.Setenv("TETHER_TOKEN", token); err != nil {
+			return err
+		}
+	}
 	if mcpForwardDaemon {
 		return runMCPForwardDaemon(cmd)
 	}
@@ -523,4 +536,28 @@ func resolveMCPToolFloors() ([]mcpgateway.ProfileSelection, error) {
 		return nil, err
 	}
 	return []mcpgateway.ProfileSelection{{Source: "boot tools", Profile: profile}}, nil
+}
+
+// readTokenLine reads one credential line without buffering past it, so the MCP stream that follows on the
+// same stdin is untouched.
+func readTokenLine(r io.Reader) (string, error) {
+	var line []byte
+	one := make([]byte, 1)
+	for len(line) <= 512 {
+		n, err := r.Read(one)
+		if n == 1 {
+			if one[0] == '\n' {
+				token := strings.TrimSpace(string(line))
+				if token == "" || strings.ContainsAny(token, " \t") {
+					return "", fmt.Errorf("empty or malformed credential line")
+				}
+				return token, nil
+			}
+			line = append(line, one[0])
+		}
+		if err != nil {
+			return "", fmt.Errorf("credential line not received: %w", err)
+		}
+	}
+	return "", fmt.Errorf("credential line too long")
 }
