@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/catalogapply"
@@ -92,6 +93,39 @@ func (cc *CatalogApplyClient) Validate(ctx context.Context, files []catalogapply
 		return nil, err
 	}
 	return &out, nil
+}
+
+// Files lists the catalog files an agent may read raw.
+func (cc *CatalogApplyClient) Files(ctx context.Context) ([]catalogapply.FileInfo, error) {
+	var out struct {
+		Files []catalogapply.FileInfo `json:"files"`
+	}
+	if err := cc.do(ctx, http.MethodGet, "/catalog/files", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Files, nil
+}
+
+// ReadFile returns one catalog file's raw content.
+func (cc *CatalogApplyClient) ReadFile(ctx context.Context, path string) (string, error) {
+	var out struct {
+		Content string `json:"content"`
+	}
+	if err := cc.do(ctx, http.MethodGet, "/catalog/files?path="+url.QueryEscape(path), nil, &out); err != nil {
+		return "", err
+	}
+	return out.Content, nil
+}
+
+// History lists applied catalog changes, newest first.
+func (cc *CatalogApplyClient) History(ctx context.Context, limit int) ([]catalogapply.AuditRecord, error) {
+	var out struct {
+		Changes []catalogapply.AuditRecord `json:"changes"`
+	}
+	if err := cc.do(ctx, http.MethodGet, "/catalog/audit?limit="+strconv.Itoa(limit), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Changes, nil
 }
 
 // Backups lists catalog backups, newest first.

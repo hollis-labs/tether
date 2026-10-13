@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Result is the outcome of Apply.
@@ -157,16 +158,16 @@ func activationOf(p *Plan) string {
 }
 
 func (e *Engine) audit(res *Result, p *Plan) {
-	rec := map[string]any{
-		"at": e.now().UTC().Format("2006-01-02T15:04:05Z"), "plan_id": p.ID, "name": p.Name, "task_id": p.TaskID,
-		"digest": p.Digest, "files": res.Changed, "backup_id": res.BackupID, "activation": res.Activation,
-		"privileged": p.Privileged, "rollback_of": p.RollbackOf,
+	rec := AuditRecord{
+		At: e.now().UTC().Format(time.RFC3339), PlanID: p.ID, Name: p.Name, TaskID: p.TaskID,
+		Digest: p.Digest, Files: res.Changed, BackupID: res.BackupID, Activation: res.Activation,
+		Privileged: p.Privileged, RollbackOf: p.RollbackOf, PlannedBy: p.PlannedBy, ApprovedAt: p.ApprovedAt,
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return
 	}
-	f, err := os.OpenFile(filepath.Join(e.BackupRoot, "apply-audit.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(filepath.Join(e.BackupRoot, auditFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}

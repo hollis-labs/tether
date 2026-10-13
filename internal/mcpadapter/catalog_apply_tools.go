@@ -67,6 +67,21 @@ func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
 	}, Reads("catalog validation on a scratch copy"))
 
 	a.addTool(s, gomcp.Tool{
+		Name: "tether_catalog_files",
+		Description: "List the catalog files you can read raw, or read one with path. Use it to fetch the current content of an agent, launch, project, skill, boot profile or team definition before editing it, then send the whole edited file to tether_catalog_plan. " +
+			"Providers, MCP servers, sandbox profiles and global.yaml are not readable (they hold credentials or daemon policy), and a file that contains an obvious secret is refused. Read-only; no scope required.",
+		InputSchema: gomcp.InputSchema(gomcp.StringProp("path", "Catalog-relative path, e.g. agents/helper.yaml. Omit to list the readable files.", false)),
+		Handler:     a.handleCatalogFiles,
+	}, Reads("catalog file listing and reading"))
+
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_catalog_history",
+		Description: "List applied catalog changes, newest first: when, the plan name and task, the files changed, who planned it (principal, session, agent), when it was approved, the privileged changes, and the backup id that undoes it (pass it as rollback_of to tether_catalog_plan). Read-only; no scope required.",
+		InputSchema: gomcp.InputSchema(gomcp.NumberProp("limit", "How many changes to return (default 20, max 200).", false)),
+		Handler:     a.handleCatalogHistory,
+	}, Reads("catalog change history"))
+
+	a.addTool(s, gomcp.Tool{
 		Name:        "tether_catalog_backups",
 		Description: "List catalog backups, newest first. Each is the whole catalog as it was before an apply; pass its id as rollback_of to tether_catalog_plan. Read-only; no scope required.",
 		InputSchema: gomcp.EmptyObjectSchema(),
@@ -162,6 +177,39 @@ func (a *Adapter) handleCatalogValidate(ctx context.Context, args map[string]any
 		return nil, a.catalogApplyErr(err)
 	}
 	return toolJSON(report), nil
+}
+
+func (a *Adapter) handleCatalogFiles(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.catalogApplyClient("tether_catalog_files"); err != nil {
+		return nil, toolError("internal_error", err.Error())
+	}
+	if path := str(args, "path"); path != "" {
+		content, err := a.client.CatalogApply().ReadFile(ctx, path)
+		if err != nil {
+			return nil, a.catalogApplyErr(err)
+		}
+		return toolJSON(map[string]any{"path": path, "content": content}), nil
+	}
+	files, err := a.client.CatalogApply().Files(ctx)
+	if err != nil {
+		return nil, a.catalogApplyErr(err)
+	}
+	return toolJSON(map[string]any{"files": files}), nil
+}
+
+func (a *Adapter) handleCatalogHistory(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.catalogApplyClient("tether_catalog_history"); err != nil {
+		return nil, toolError("internal_error", err.Error())
+	}
+	limit := 0
+	if v, ok := args["limit"].(float64); ok {
+		limit = int(v)
+	}
+	changes, err := a.client.CatalogApply().History(ctx, limit)
+	if err != nil {
+		return nil, a.catalogApplyErr(err)
+	}
+	return toolJSON(map[string]any{"changes": changes}), nil
 }
 
 func (a *Adapter) handleCatalogBackups(ctx context.Context, _ map[string]any) (any, error) {

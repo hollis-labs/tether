@@ -8,6 +8,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add `tether_catalog_files` and `tether_catalog_history` (CW-20261013-0004):
+  `GET /catalog/files[?path=]` reads agent, launch, project, skill, boot-profile
+  and team-definition files raw so an agent can edit and re-plan them (providers,
+  MCP servers, sandbox profiles and `global.yaml` are never served, and a file
+  holding a secret is refused); `GET /catalog/audit` lists applied changes with
+  who planned them (principal, session, agent), when they were approved, and the
+  backup that undoes them. Plans now record their caller.
 - Add `tether_catalog_validate` and `POST /catalog/validate` (CW-20261013-0003):
   structured findings (severity, check, entity, message, remedy) for the live
   catalog or for a draft bundle overlaid on a scratch copy, so an agent can test

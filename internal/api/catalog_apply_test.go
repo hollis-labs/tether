@@ -296,3 +296,32 @@ func TestValidateRouteReportsFindingsWithoutWriting(t *testing.T) {
 		t.Fatalf("live validate = %d", code)
 	}
 }
+
+func TestFilesAndAuditRoutes(t *testing.T) {
+	d := newCatalogApplyDaemon(t)
+	code, b := d.call("GET", "/catalog/files", nil, asBareSession)
+	if code != 200 || !strings.Contains(string(b), "agents/general.yaml") {
+		t.Fatalf("list = %d %s", code, b)
+	}
+	code, b = d.call("GET", "/catalog/files?path=agents/general.yaml", nil, asBareSession)
+	if code != 200 || !strings.Contains(string(b), "id: general") {
+		t.Fatalf("read = %d %s", code, b)
+	}
+	if code, _ = d.call("GET", "/catalog/files?path=global.yaml", nil, asBareSession); code != http.StatusBadRequest {
+		t.Fatalf("global.yaml read = %d, want 400", code)
+	}
+
+	// A planned-and-applied change is attributed to the session that planned it.
+	p := d.plan(helperFiles, asSession)
+	if p.PlannedBy.SessionID != "sess-mgr" || p.PlannedBy.AgentID != "manager" || p.PlannedBy.Principal != "session:sess-mgr" {
+		t.Fatalf("planned_by = %+v", p.PlannedBy)
+	}
+	d.call("POST", "/catalog/plans/"+p.ID+"/approve", api.CatalogApproveRequest{Digest: p.Digest, Passphrase: applyPass}, asOperator)
+	if code, b := d.call("POST", "/catalog/plans/"+p.ID+"/apply", nil, asSession); code != 200 {
+		t.Fatalf("apply = %d %s", code, b)
+	}
+	code, b = d.call("GET", "/catalog/audit?limit=5", nil, asBareSession)
+	if code != 200 || !strings.Contains(string(b), `"agent_id":"manager"`) || !strings.Contains(string(b), p.ID) {
+		t.Fatalf("audit = %d %s", code, b)
+	}
+}

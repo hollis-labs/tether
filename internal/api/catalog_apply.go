@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/catalogapply"
@@ -34,6 +35,9 @@ type CatalogApplyService interface {
 	Approve(req catalogapply.ApprovalRequest) (*catalogapply.Plan, error)
 	Apply(ctx context.Context, planID string) (*catalogapply.Result, error)
 	Backups() ([]catalogapply.BackupInfo, error)
+	ListFiles() ([]catalogapply.FileInfo, error)
+	ReadFile(rel string) (string, error)
+	History(limit int) ([]catalogapply.AuditRecord, error)
 	ValidateBundle(files []catalogapply.File, opt catalogapply.Options) (catalogcheck.Report, error)
 }
 
@@ -49,6 +53,8 @@ func (s *Server) registerCatalogApplyRoutes(router *http.ServeMux) {
 	router.HandleFunc("/catalog/plans/", s.handleCatalogPlanItem)
 	router.HandleFunc("/catalog/backups", s.handleCatalogBackups)
 	router.HandleFunc("/catalog/validate", s.handleCatalogValidate)
+	router.HandleFunc("/catalog/files", s.handleCatalogFiles)
+	router.HandleFunc("/catalog/audit", s.handleCatalogAudit)
 }
 
 // CatalogPlanRequest is the POST /catalog/plans body. Exactly one of Files or
@@ -110,7 +116,7 @@ func (s *Server) handleCatalogPlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
 		return
 	}
-	opt := catalogapply.Options{ProtectedPaths: s.callerDefinitionPaths(r)}
+	opt := catalogapply.Options{ProtectedPaths: s.callerDefinitionPaths(r), Caller: s.callerOf(r)}
 	var (
 		plan *catalogapply.Plan
 		err  error
@@ -236,6 +242,60 @@ func (s *Server) handleCatalogValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+// callerOf names the caller for the audit trail.
+func (s *Server) callerOf(r *http.Request) catalogapply.Caller {
+	p, ok := identity.FromContext(r.Context())
+	if !ok {
+		return catalogapply.Caller{Principal: "local"}
+	}
+	c := catalogapply.Caller{Principal: p.Kind + ":" + p.ID, SessionID: p.SessionID}
+	if p.SessionID != "" && s.Service != nil {
+		if row, err := s.Service.GetSession(p.SessionID); err == nil && row != nil {
+			c.AgentID = row.LogicalAgentID
+		}
+	}
+	return c
+}
+
+// handleCatalogFiles lists the raw-readable catalog files, or with ?path=
+// returns one file's content.
+func (s *Server) handleCatalogFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	if path := r.URL.Query().Get("path"); path != "" {
+		content, err := s.CatalogApply.ReadFile(path)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"path": path, "content": content})
+		return
+	}
+	files, err := s.CatalogApply.ListFiles()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// handleCatalogAudit lists applied changes, newest first.
+func (s *Server) handleCatalogAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	recs, err := s.CatalogApply.History(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changes": recs})
 }
 
 // callerDefinitionPaths names the catalog files that define the calling

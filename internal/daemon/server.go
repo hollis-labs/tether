@@ -908,6 +908,8 @@ func (s *Server) apiMounts() []apiMount {
 		{"/catalog/plans/", s.CatalogApply != nil},
 		{"/catalog/backups", s.CatalogApply != nil},
 		{"/catalog/validate", s.CatalogApply != nil},
+		{"/catalog/files", s.CatalogApply != nil},
+		{"/catalog/audit", s.CatalogApply != nil},
 
 		// Chat roster (CW-20261012-0099). api registers these only when it has
 		// both a LaunchService and a catalog (registerChatRoutes), so the mount
