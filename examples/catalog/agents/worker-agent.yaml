@@ -1,0 +1,11 @@
+id: worker-agent
+name: Headless Task Worker
+roles: [worker]
+skills: []
+# Dev-mode headless worker. A headless launch cannot answer permission prompts,
+# so permission_mode: default denies every MCP tool call (Torque, Tesseract,
+# Tether) and the session idles silently. bypass is the dev-mode posture;
+# release-time posture stays strict (explicit MCP allowlist, CW-20261012-0123).
+permissions:
+  network: true
+  permission_mode: bypass

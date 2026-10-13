@@ -121,6 +121,9 @@ func fetchTorqueTask(ctx context.Context, client *http.Client, baseURL, taskID s
 	if err != nil {
 		return nil, fmt.Errorf("build Torque task request %s: %w", taskID, err)
 	}
+	if tok := strings.TrimSpace(os.Getenv("TORQUE_API_TOKEN")); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch Torque task %s from %s: %w", taskID, endpoint, err)
@@ -131,7 +134,11 @@ func fetchTorqueTask(ctx context.Context, client *http.Client, baseURL, taskID s
 		return nil, fmt.Errorf("read Torque task %s response: %w", taskID, readErr)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("fetch Torque task %s: HTTP %d: %s", taskID, resp.StatusCode, strings.TrimSpace(string(body)))
+		hint := ""
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			hint = " (set TORQUE_API_TOKEN in the launching CLI's environment)"
+		}
+		return nil, fmt.Errorf("fetch Torque task %s: HTTP %d%s: %s", taskID, resp.StatusCode, hint, strings.TrimSpace(string(body)))
 	}
 	var task map[string]any
 	if err := json.Unmarshal(body, &task); err != nil {

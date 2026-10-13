@@ -359,3 +359,16 @@ materialized worktree, while Torque task bundles remain in the planted boot
 directory. Use `$CODEX_HOME/tasks/README.md` from Codex app-server commands, or
 the bootdir-relative `tasks/README.md` when reading files from the boot
 directory itself.
+
+## Headless task workers
+
+A headless launch cannot answer permission prompts. An agent whose
+`permissions.permission_mode` resolves to `default` (the fallback) has every MCP
+tool call denied, so a worker launched with it cannot reach Torque and idles
+without a visible failure. For dev-mode task workers select an agent that sets
+`permission_mode: bypass`; `examples/catalog/agents/worker-agent.yaml` is the
+template. Release-time posture stays strict.
+
+`tether launch --torque-task <id>` plants task bundles by fetching the tasks
+from Torque. Export `TORQUE_API_TOKEN` in the launching CLI's environment when
+Torque requires auth; it is sent as a bearer token and a 401/403 names it.
