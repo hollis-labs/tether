@@ -865,6 +865,22 @@ exits, the session's state becomes `killed`. That is distinct from
 `completed` and `failed`, whatever exit code the process returned.
 `GET /sessions/{id}/wait` returns once that state is recorded.
 
+#### Force close: `POST /sessions/{id}/stop?force=true`
+
+Closes a session row that has no live worker or agent, such as a ghost left
+`running` after the hub gave up on a launch the worker started later. Query:
+`reason` (recorded), `allow_live=true` (override the live guard). CLI:
+`tether sessions stop <id> --force [--reason ...] [--allow-live]`.
+
+The row is ghost when its worker is offline or does not report the session, or
+(hub-local) the runtime no longer has it. A live session is refused with 409
+`session_live` unless `allow_live` is set. An already terminal row is 409
+`conflict`; unknown id is 404; a daemon without support answers 501.
+
+Response (200): `{"session_id","from","to":"killed","reason","was_live"}`. The
+row gets `exit_code` -1 (not an observed exit) and a `session.force_closed`
+event carrying the reason.
+
 ### `GET /sessions/{id}/wait`
 
 Long-poll until the session reaches a terminal state. Returns the exit code.

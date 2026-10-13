@@ -8,6 +8,10 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add `POST /sessions/{id}/stop?force=true` and `tether sessions stop --force`
+  to close a ghost session row (offline worker, or a worker/runtime that does
+  not know the session) as `killed` with a recorded reason. A live session is
+  refused with 409 `session_live` unless `allow_live` / `--allow-live` is set.
 - Add the chat roster: launches take `chat: true` and an optional `display_name`;
   `GET /chat/agents` (read) lists them with their newest session, and
   `POST /chat/agents/{launch_id}/send` (operate) delivers a message as the next

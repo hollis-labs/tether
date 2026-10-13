@@ -63,14 +63,31 @@ var sessionsGetCmd = &cobra.Command{
 	},
 }
 
+var (
+	sessionsStopForce     bool
+	sessionsStopReason    string
+	sessionsStopAllowLive bool
+)
+
 var sessionsStopCmd = &cobra.Command{
 	Use:   "stop <id>",
-	Short: "Stop a running session",
+	Short: "Stop a running session (--force closes a ghost row with no live worker or agent)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := newDaemonClient(catalogPath)
 		if err != nil {
 			return err
+		}
+		if sessionsStopForce {
+			res, err := c.ForceStopSession(cmd.Context(), args[0], sessionsStopReason, sessionsStopAllowLive)
+			if err != nil {
+				if errors.Is(err, client.ErrDaemonUnreachable) {
+					return fmt.Errorf("tether daemon is not running; run `tether daemon start` first")
+				}
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "force-closed: %s (%s -> %s, reason: %s)\n", res.SessionID, res.From, res.To, res.Reason)
+			return nil
 		}
 		if err := c.StopSession(cmd.Context(), args[0]); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
@@ -379,6 +396,11 @@ func getSessionFromStore(catalogRoot, id string) (api.SessionDTO, error) {
 }
 
 func init() {
+	sessionsStopCmd.Flags().BoolVar(&sessionsStopForce, "force", false,
+		"force-close a session row that has no live worker or agent (refused when it is live)")
+	sessionsStopCmd.Flags().StringVar(&sessionsStopReason, "reason", "", "reason recorded with a --force close")
+	sessionsStopCmd.Flags().BoolVar(&sessionsStopAllowLive, "allow-live", false,
+		"with --force, close the row even when a live worker or agent holds it")
 	sessionsTailCmd.Flags().BoolVar(&sessionsTailFollow, "follow", true,
 		"follow live output (default); use --follow=false for a one-shot snapshot")
 	sessionsCmd.AddCommand(
