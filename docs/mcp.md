@@ -1636,6 +1636,20 @@ Validate the catalog and return structured findings, failures first: `{ok, failu
 |---|---|---|---|
 | `files` | array | — | Draft files to overlay: `{path, content}` or `{path, delete: true}`. |
 
+#### `tether_catalog_files`
+List the catalog files you can read raw, or read one with `path`, so an agent can fetch an agent, launch, project, skill, boot profile or team definition, edit it and send the whole file to `tether_catalog_plan`. Providers, MCP servers, sandbox profiles and `global.yaml` are not readable (credentials and daemon policy), and a file containing an obvious secret is refused. Read-only; no scope required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | — | Catalog-relative path. Omit to list. |
+
+#### `tether_catalog_history`
+Applied catalog changes, newest first: when, plan name and task, files changed, who planned it (principal, session, agent), when it was approved, privileged changes, and the backup id that undoes it (`rollback_of`). Stored as `catalog-backups/apply-audit.jsonl`. Read-only; no scope required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `limit` | number | — | Default 20, max 200. |
+
 #### `tether_catalog_plan_get`
 Read a plan's state, digest, diff and validation.
 

@@ -83,6 +83,7 @@ type Plan struct {
 	RunningSessions  []string      `json:"running_sessions,omitempty"`
 	Touches          []string      `json:"touches,omitempty"`
 	RollbackOf       string        `json:"rollback_of,omitempty"`
+	PlannedBy        Caller        `json:"planned_by"`
 	ApprovedAt       *time.Time    `json:"approved_at,omitempty"`
 	AllowRunning     bool          `json:"allow_running,omitempty"`
 	AppliedAt        *time.Time    `json:"applied_at,omitempty"`
@@ -91,8 +92,18 @@ type Plan struct {
 	ApprovalRequired string        `json:"approval_required,omitempty"`
 }
 
+// Caller names who planned a change: the verified principal and, for a
+// launched agent, its session and agent. It is recorded, not trusted for access.
+type Caller struct {
+	Principal string `json:"principal,omitempty"` // principal kind:id, or "local" for an unauthenticated local caller
+	SessionID string `json:"session_id,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
+}
+
 // Options carries the caller's context into planning.
 type Options struct {
+	// Caller identifies who asked, for the audit record. Zero means unknown.
+	Caller Caller
 	// ProtectedPaths are catalog paths the caller may not change (its own
 	// definition). A plan touching one is refused.
 	ProtectedPaths []string
@@ -198,7 +209,7 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 
 	p := &Plan{
 		ID: newID(), Name: b.Name, TaskID: b.TaskID, State: StatePlanned,
-		CreatedAt: e.now().UTC(),
+		CreatedAt: e.now().UTC(), PlannedBy: opt.Caller,
 	}
 	p.ExpiresAt = p.CreatedAt.Add(e.ttl())
 
