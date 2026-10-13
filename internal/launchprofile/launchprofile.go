@@ -112,6 +112,13 @@ type LaunchProfile struct {
 	// already running. Absent means enabled. It is per agent and not
 	// inherited through extends.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+
+	// MachineAuthority marks the agent (Fleet Operations and its team/workers)
+	// as allowed to change machines: it may be granted the MCP upstreams in
+	// launch.MachineChangingMCPServers (Cerberus ssh/resource tools). Every
+	// agent can still be placed on any machine; only this flag gates the
+	// authority to change them. Per agent, not inherited through extends.
+	MachineAuthority bool `yaml:"machine_authority,omitempty" json:"machine_authority,omitempty"`
 }
 
 // IsEnabled reports whether the agent may be launched; absent means yes.

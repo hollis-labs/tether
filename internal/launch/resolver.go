@@ -3,6 +3,7 @@ package launch
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -99,6 +100,20 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		if err := cat.ValidateMCPGrantEnv(fmt.Sprintf("launch %q effective grant", l.ID), value); err != nil {
 			return nil, err
 		}
+	}
+
+	// Role check: machine-changing upstreams (Cerberus) go only to agents with
+	// machine_authority. Checked on the effective grant, whichever owner set it.
+	effective := EffectiveMCPServers(map[string]string{MCPServersEnv: overrides[MCPServersEnv]})
+	if _, set := overrides[MCPServersEnv]; !set {
+		effective = EffectiveMCPServers(agent.Env)
+	}
+	if bad := MachineGrantViolations(effective); len(bad) > 0 && !agent.MachineAuthority {
+		slog.Warn("machine authority denied", "launch", l.ID, "agent", l.Agent, "upstreams", bad)
+		return nil, fmt.Errorf("launch %q grants %s to agent %q, which lacks machine_authority (only Fleet Operations and its team may change machines)", l.ID, strings.Join(bad, ","), l.Agent)
+	}
+	if len(MachineGrantViolations(effective)) > 0 {
+		slog.Info("machine authority granted", "launch", l.ID, "agent", l.Agent)
 	}
 
 	mode := prov.Env.Mode
