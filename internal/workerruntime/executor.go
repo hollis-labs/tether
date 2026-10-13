@@ -34,6 +34,7 @@ type execution struct {
 	Descriptor string `json:"descriptor"`
 	Workspace  string `json:"workspace"`
 	PID        int    `json:"pid"`
+	HostPID    int    `json:"host_pid,omitempty"`
 	State      string `json:"state"`
 	Sandboxed  bool   `json:"sandboxed"`
 	LastSeq    int64  `json:"last_seq"`
@@ -269,6 +270,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	s := &execution{ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
 	if child != nil {
 		s.PID = child.Process.Pid
+		s.HostPID = child.Process.Pid
 	}
 	if err := e.persist(s); err != nil {
 		return nil, err
@@ -422,6 +424,39 @@ func (e *Executor) follow(s *execution) {
 			_ = e.Send(workerwire.Frame{T: "state", Session: s.ID, State: "exited", ExitCode: &exit.Status})
 		}
 		_ = e.persist(s)
+		exited := event.Kind == "shim.exit"
+		hostPID := s.HostPID
 		s.mu.Unlock()
+		if exited {
+			go teardownHost(s.Descriptor, hostPID)
+		}
 	}
 }
+
+// teardownHost retires a shim-host whose agent has exited. The host serves its control socket until it is
+// signalled, so without this every finished session leaves a host (and any MCP children it still owns)
+// behind. It runs only on the agent's exit, never on a worker restart, so live sessions survive restarts.
+// The host is a session leader (Setsid), so signalling -pid reaches its whole group; the control socket and
+// journal are removed once it is gone. meta.json and output.jsonl stay so the final output can still replay.
+func teardownHost(descriptor string, pid int) {
+	if pid > 1 {
+		signalHost(pid, syscall.SIGTERM)
+		deadline := time.Now().Add(5 * time.Second)
+		for hostAlive(pid) && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if hostAlive(pid) {
+			signalHost(pid, syscall.SIGKILL)
+		}
+	}
+	dir := filepath.Dir(descriptor)
+	for _, name := range []string{"c", "j", "pin", "launch.json"} {
+		_ = os.RemoveAll(filepath.Join(dir, name))
+	}
+}
+func signalHost(pid int, sig syscall.Signal) {
+	if syscall.Kill(-pid, sig) != nil {
+		_ = syscall.Kill(pid, sig)
+	}
+}
+func hostAlive(pid int) bool { return syscall.Kill(pid, 0) == nil }
