@@ -12,6 +12,7 @@ import (
 
 	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -180,14 +181,14 @@ func TestDaemonMCPEndpointOptInGuardsAuthority(t *testing.T) {
 			t.Fatalf("disabled endpoint changes startup: %v %v", h, err)
 		}
 		cat.Global.Daemon.ListenAddr = addr
-		if got := checkMCPEndpoint(cat); got.Status != statusOK {
+		if got := catalogcheck.MCPEndpoint(cat); got.Status != statusOK {
 			t.Fatal(got)
 		}
 		cat.Global.Daemon.MCPEndpoint.Enabled = true
 		if _, err := buildDaemonMCP(context.Background(), svc, cfg, nil, nil); err == nil {
 			t.Fatal("enabled bad authority accepted")
 		}
-		if got := checkMCPEndpoint(cat); got.Status != statusFail {
+		if got := catalogcheck.MCPEndpoint(cat); got.Status != statusFail {
 			t.Fatal(got)
 		}
 	}

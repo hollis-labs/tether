@@ -21,13 +21,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
-	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
-	"github.com/hollis-labs/tether/internal/mcpgateway"
-	"github.com/hollis-labs/tether/internal/mcptransport"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -115,12 +113,7 @@ func init() {
 }
 
 // checkResult is the stable JSON shape for tether doctor --json.
-type checkResult struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"` // "ok", "warn", "fail"
-	Message string `json:"message"`
-	Remedy  string `json:"remedy,omitempty"`
-}
+type checkResult = catalogcheck.Result
 
 const (
 	statusOK   = "ok"
@@ -128,12 +121,12 @@ const (
 	statusFail = "fail"
 )
 
-func ok(name, msg string) checkResult { return checkResult{Name: name, Status: statusOK, Message: msg} }
+func ok(name, msg string) checkResult { return catalogcheck.OK(name, msg) }
 func warn(name, msg, remedy string) checkResult {
-	return checkResult{Name: name, Status: statusWarn, Message: msg, Remedy: remedy}
+	return catalogcheck.Warn(name, msg, remedy)
 }
 func fail(name, msg, remedy string) checkResult {
-	return checkResult{Name: name, Status: statusFail, Message: msg, Remedy: remedy}
+	return catalogcheck.Fail(name, msg, remedy)
 }
 
 var doctorProtect []string
@@ -151,18 +144,18 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool, live .
 	cat = loadedCat
 	checks = append(checks, checkShimHosting(cat)...)
 	if cat != nil {
-		checks = append(checks, checkRoleModules(cat)...)
-		checks = append(checks, checkSandboxProfiles(cat))
-		checks = append(checks, checkMCPDiscoveryMode(cat), checkMCPEndpoint(cat))
-		checks = append(checks, checkMCPProfiles(cat, catalogRoot)...)
-		checks = append(checks, checkMCPNamingConfig(catalogRoot)...)
+		checks = append(checks, catalogcheck.RoleModules(cat)...)
+		checks = append(checks, catalogcheck.SandboxProfiles(cat))
+		checks = append(checks, catalogcheck.MCPDiscoveryMode(cat), catalogcheck.MCPEndpoint(cat))
+		checks = append(checks, catalogcheck.MCPProfiles(cat, catalogRoot)...)
+		checks = append(checks, catalogcheck.MCPNamingConfig(catalogRoot)...)
 		if len(live) > 0 && live[0] {
 			checks = append(checks, checkMCPLiveNames(cat, catalogRoot)...)
 		}
 		checks = append(checks, ok("events-retention", retentionMessage(cat.Global.Daemon.EventsRetention)))
 	}
 	checks = append(checks, doctorSandboxProtect(cat, catalogRoot)...)
-	checks = append(checks, checkMCPCredentialFiles(catalogRoot)...)
+	checks = append(checks, catalogcheck.MCPCredentialFiles(catalogRoot)...)
 
 	// 3. Daemon reachable (requires catalog for listen addr).
 	checks = append(checks, checkDaemon(cat), checkIdentity(cat), checkMCPUpstreamOwnership(cat))
@@ -235,37 +228,10 @@ func checkStateDir(stateDir string) checkResult {
 	return ok("state-dir", stateDir)
 }
 
-// checkSandboxProfiles fails when an agent names a sandbox profile the
-// catalog does not define. The daemon still starts, but refuses every
-// launch of that agent (CW-20261001-0130), so it is a failure here.
-func checkSandboxProfiles(cat *config.Catalog) checkResult {
-	issues := cat.SandboxIssues()
-	if len(issues) == 0 {
-		return ok("catalog-sandbox-profiles", fmt.Sprintf("every agent's sandbox profile is defined (%d profiles)", len(cat.SandboxProfiles)))
-	}
-	msgs := make([]string, len(issues))
-	for i, issue := range issues {
-		msgs[i] = issue.Error()
-	}
-	return fail("catalog-sandbox-profiles", strings.Join(msgs, "; "),
-		"add the missing profile under sandbox-profiles/ or fix the agent's permissions.default_sandbox, then restart the daemon")
-}
-
 // checkCatalog loads and validates the catalog. Returns the loaded catalog (nil on failure).
 func checkCatalog(catalogRoot string) (checkResult, *config.Catalog) {
-	cat, err := config.LoadLayered(catalogRoot)
-	if err != nil {
-		return fail("catalog-present", fmt.Sprintf("load failed: %v", err),
-			"run: tether init"), nil
-	}
-	if err := cat.ValidateMCPGrants(); err != nil {
-		return fail("catalog-mcp-grants", err.Error(), "fix the named grant or enable its upstream under mcp-servers/"), nil
-	}
-	if err := cat.Validate(); err != nil {
-		return fail("catalog-valid", fmt.Sprintf("validation failed: %v", err),
-			"check your catalog YAML files or run: tether init --force"), nil
-	}
-	return ok("catalog-present", catalogRoot), cat
+	cat, res := catalogcheck.LoadAndValidate(catalogRoot)
+	return res, cat
 }
 
 // checkDaemon pings the daemon. Requires a loaded catalog for the listen address.
@@ -476,103 +442,6 @@ func checkIdentity(cat *config.Catalog) checkResult {
 	return ok("caller-identity", summary+"; operator credentials available")
 }
 
-func checkMCPDiscoveryMode(cat *config.Catalog) checkResult {
-	if _, err := mcpgateway.ResolveMode(mcpgateway.ModeInputs{Gateway: cat.Global.MCP.DiscoveryMode}); err != nil {
-		return fail("mcp-discovery-mode", err.Error(), "fix mcp.discovery_mode and mcp.profiles fields in global.yaml")
-	}
-	return ok("mcp-discovery-mode", "configured discovery modes are valid")
-}
-
-// Doctor validates all authored profiles without connecting upstreams or reading
-// credentials. Exact order/load names can only be verified against live tools.
-func checkMCPProfiles(cat *config.Catalog, catalogRoot string) []checkResult {
-	entries, err := config.LoadMCPServerCatalog(catalogRoot)
-	if err != nil {
-		return []checkResult{fail("mcp-profiles", err.Error(), "fix the MCP server catalog")}
-	}
-	known := map[string]bool{"tether": true}
-	for _, entry := range entries {
-		if entry.ID != "tether" {
-			known[entry.ID] = entry.IsEnabled()
-		}
-	}
-	var results []checkResult
-	for id, profile := range cat.Global.MCP.Profiles {
-		name := "mcp-profile-" + id
-		if id == "" {
-			results = append(results, fail(name, "empty profile ID", "name the profile"))
-			continue
-		}
-		if err := profile.Validate(); err != nil {
-			results = append(results, fail(name, err.Error(), "fix profile fields in global.yaml"))
-			continue
-		}
-		if _, err := mcpgateway.SelectOrigins(known, nil, &profile); err != nil {
-			results = append(results, fail(name, err.Error(), "use enabled catalog origins or reserved native tether"))
-			continue
-		}
-
-		collision := false
-		for _, id := range profile.Servers {
-			if id == "tether" {
-				for _, entry := range entries {
-					if entry.ID == "tether" {
-						collision = true
-					}
-				}
-			}
-		}
-		if collision {
-			results = append(results, fail(name, "reserved native tether origin conflicts with catalog upstream tether", "rename the upstream before selecting the reserved native origin"))
-			continue
-		}
-		if len(profile.Order)+len(profile.AlwaysLoad) > 0 {
-			results = append(results, warn(name, "order/always_load tool names require live upstream discovery", "start the selected gateway profile to validate exact names"))
-		} else {
-			results = append(results, ok(name, "profile syntax and origins are valid"))
-		}
-	}
-	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
-	return results
-}
-
-func checkMCPNamingConfig(root string) []checkResult {
-	entries, err := config.LoadMCPServerCatalog(config.Expand(root))
-	if err != nil {
-		return []checkResult{fail("mcp-naming", "cannot read MCP server catalog", "fix catalog YAML")}
-	}
-	var out []checkResult
-	ids := []string{}
-	for _, entry := range entries {
-		if entry.IsEnabled() {
-			if entry.ID == "tether" {
-				out = append(out, warn("mcp-origins", mcpgateway.ValidateOriginIDs([]string{"tether"}).Error(), "rename the upstream ID; startup fails only when this upstream is selected"))
-				continue
-			}
-			ids = append(ids, entry.ID)
-		}
-	}
-	if err := mcpgateway.ValidateOriginIDs(ids); err != nil {
-		out = append(out, fail("mcp-origins", err.Error(), "fix enabled upstream IDs; tether is reserved"))
-	}
-	for _, entry := range entries {
-		if entry.ToolPrefixInvalid {
-			out = append(out, warn("mcp-prefix:"+entry.ID, entry.CatalogFile+": tool_prefix must be a string; invalid value ignored", "declare a string tool_prefix"))
-		}
-		if !entry.IsEnabled() {
-			continue
-		}
-		if entry.ToolPrefix != "" {
-			for _, finding := range mcpgateway.LintName(entry.ID, entry.ToolPrefix) {
-				out = append(out, warn("mcp-prefix:"+entry.ID, finding.Message, "fix declared tool_prefix; live names require --mcp-live"))
-			}
-		}
-	}
-	if len(out) == 0 {
-		out = append(out, ok("mcp-naming", "catalog origin/prefix declarations checked; live collision/name/metadata checks require --mcp-live"))
-	}
-	return out
-}
 func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 	adapter := mcpadapter.New(&app.Service{Catalog: cat}, "", nil)
 	adapter.SetProtectedPaths(doctorProtect)
@@ -637,24 +506,4 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 		out = append(out, ok("mcp-live-names", "bounded live tools/list probe found no name or metadata issues"))
 	}
 	return out
-}
-
-func checkMCPEndpoint(cat *config.Catalog) checkResult {
-	if profile, err := cat.Global.Profile(); err == nil && !profile.Enabled(environment.LocalMCP) {
-		return ok("mcp-endpoint", "disabled by modules.local_mcp")
-	}
-	if !cat.Global.Daemon.MCPEndpoint.Enabled {
-		return ok("mcp-endpoint", "disabled (daemon.mcp_endpoint.enabled defaults false)")
-	}
-	addr := cat.Global.Daemon.ListenAddr
-	if addr == "" {
-		addr = "unix:~/.tether/run/tetherd.sock"
-	}
-	if strings.HasPrefix(addr, "unix:") {
-		addr = "unix:" + config.Expand(strings.TrimPrefix(addr, "unix:"))
-	}
-	if err := mcptransport.ValidateEndpoint(addr, identity.Mode(cat.Global.Identity.ModeFor("mcp_gateway"))); err != nil {
-		return fail("mcp-endpoint", err.Error(), "fix daemon.listen_addr or disable daemon.mcp_endpoint.enabled")
-	}
-	return ok("mcp-endpoint", "enabled; strict verified admission on /mcp and /p/<profile>")
 }

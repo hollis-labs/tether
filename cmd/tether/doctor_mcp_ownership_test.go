@@ -1,8 +1,10 @@
 package main
 
 import (
-	"github.com/hollis-labs/tether/internal/config"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/catalogcheck"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 func TestDoctorDaemonOwnershipRequiresEndpoint(t *testing.T) {
@@ -20,12 +22,12 @@ func TestDoctorMCPEndpointExpandsUnixPathOnly(t *testing.T) {
 	cat.Global.Daemon.MCPEndpoint.Enabled = true
 	for _, addr := range []string{"", "unix:~/.tether/run/tetherd.sock", "unix:/absolute/tetherd.sock", "tcp:127.0.0.1:8994"} {
 		cat.Global.Daemon.ListenAddr = addr
-		if got := checkMCPEndpoint(cat); got.Status != statusOK {
+		if got := catalogcheck.MCPEndpoint(cat); got.Status != statusOK {
 			t.Fatalf("%s: %+v", addr, got)
 		}
 	}
 	cat.Global.Daemon.ListenAddr = "tcp:0.0.0.0:8994"
-	if got := checkMCPEndpoint(cat); got.Status != statusFail {
+	if got := catalogcheck.MCPEndpoint(cat); got.Status != statusFail {
 		t.Fatalf("unsafe listener: %+v", got)
 	}
 }

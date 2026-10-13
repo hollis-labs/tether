@@ -3,14 +3,16 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/hollis-labs/tether/internal/api"
-	"github.com/hollis-labs/tether/internal/app"
-	"github.com/hollis-labs/tether/internal/daemon"
-	"github.com/hollis-labs/tether/internal/store"
-	"github.com/spf13/cobra"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
+	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/store"
+	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/environment"
@@ -34,13 +36,13 @@ func TestWorkerCompositionSkipsHubModulesAndReportsUnavailable(t *testing.T) {
 	if ai := buildAIServiceFromConfig(context.Background(), cat, aiServiceDeps{}); ai != nil {
 		t.Fatal("worker composed AI")
 	}
-	for _, c := range checkRoleModules(cat) {
+	for _, c := range catalogcheck.RoleModules(cat) {
 		if c.Name == "module:llm_gateway" && c.Message != "off" {
 			t.Fatal(c)
 		}
 	}
 	cat.Global.Role = "hub"
-	checks := checkRoleModules(cat)
+	checks := catalogcheck.RoleModules(cat)
 	found := false
 	for _, c := range checks {
 		if c.Name == "module:environment_directory" {
