@@ -28,3 +28,21 @@ func EffectiveMCPServers(env map[string]string) []string {
 	}
 	return out
 }
+
+// MachineChangingMCPServers are upstreams that can change machines (ssh,
+// resources, enrollment, installs). Only agents with machine_authority may be
+// granted them; placement on a machine needs no such grant.
+var MachineChangingMCPServers = []string{"cerberus"}
+
+// MachineGrantViolations returns the machine-changing upstreams in granted.
+func MachineGrantViolations(granted []string) []string {
+	var out []string
+	for _, id := range granted {
+		for _, m := range MachineChangingMCPServers {
+			if id == m {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}

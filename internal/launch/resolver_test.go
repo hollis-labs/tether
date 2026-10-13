@@ -167,7 +167,7 @@ func TestResolve_MCPServerChain(t *testing.T) {
 	t.Run("project overrides launch servers", func(t *testing.T) {
 		cat := base()
 		proj := cat.Projects["proj"]
-		proj.MCP = config.MCPConfig{Servers: []string{"cerberus"}}
+		proj.MCP = config.MCPConfig{Servers: []string{"hadron"}}
 		cat.Projects["proj"] = proj
 		cat.Launches["l"] = config.Launch{
 			ID: "l", Project: "proj", Agent: "a", Provider: "p",
@@ -177,8 +177,25 @@ func TestResolve_MCPServerChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
-		if plan.Env["TETHER_MCP_SERVERS"] != "cerberus" {
+		if plan.Env["TETHER_MCP_SERVERS"] != "hadron" {
 			t.Fatalf("want project servers to win; got %q", plan.Env["TETHER_MCP_SERVERS"])
+		}
+	})
+
+	t.Run("cerberus needs machine_authority", func(t *testing.T) {
+		cat := base()
+		cat.Launches["l"] = config.Launch{
+			ID: "l", Project: "proj", Agent: "a", Provider: "p",
+			MCP: config.MCPConfig{Servers: []string{"cerberus"}},
+		}
+		if _, err := Resolve(cat, Input{LaunchID: "l"}); err == nil {
+			t.Fatal("want denial for agent without machine_authority")
+		}
+		a := cat.Agents["a"]
+		a.MachineAuthority = true
+		cat.Agents["a"] = a
+		if _, err := Resolve(cat, Input{LaunchID: "l"}); err != nil {
+			t.Fatalf("authorized agent: %v", err)
 		}
 	})
 
