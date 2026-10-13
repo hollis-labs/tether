@@ -398,7 +398,11 @@ type Launch struct {
 	Route     *launchprofile.Route           `yaml:"route,omitempty" json:"route,omitempty"`
 	// Chat lists the launch in the operator chat roster (GET /chat/agents).
 	// DisplayName is the roster label; empty falls back to the agent id.
-	Chat        bool            `yaml:"chat,omitempty" json:"chat,omitempty"`
+	Chat bool `yaml:"chat,omitempty" json:"chat,omitempty"`
+	// Worker is the default worker label (or id) for sessions started from
+	// this launch by API-driven paths such as chat send. Empty means no
+	// default: those paths refuse to start a session rather than run on the hub.
+	Worker      string          `yaml:"worker,omitempty" json:"worker,omitempty"`
 	DisplayName string          `yaml:"display_name,omitempty" json:"display_name,omitempty"`
 	ID          string          `yaml:"id" json:"id"`
 	Project     string          `yaml:"project" json:"project"`

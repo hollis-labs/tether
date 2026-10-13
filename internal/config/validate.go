@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/hollis-labs/substrate/harness/sandbox"
@@ -182,6 +183,9 @@ func (c *Catalog) validateLaunchRefs(id string) error {
 	}
 	if _, ok := c.Providers[l.Provider]; !ok {
 		return fmt.Errorf("launch %q references unknown provider %q", id, l.Provider)
+	}
+	if l.Worker != "" && strings.ContainsFunc(l.Worker, unicode.IsSpace) {
+		return fmt.Errorf("launch %q worker %q must be a worker label without whitespace", id, l.Worker)
 	}
 	return validateLaunchInjection(id, l.Injection)
 }

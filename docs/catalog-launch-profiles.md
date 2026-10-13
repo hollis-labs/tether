@@ -140,6 +140,24 @@ change how the launch starts. The agent's replies reach the operator through the
 launch's `route`, so a chat launch normally has one. See
 [Chat roster](api/README.md#chat-roster) for the endpoints.
 
+### Default worker (`worker:`)
+
+```yaml
+id: portfolio-manager
+...
+worker: agent-os        # optional worker label (or id)
+```
+
+`worker` is the default placement for sessions that an API-driven path starts
+from this launch without an explicit worker: today the chat send endpoint, and
+the intended hook for wake/resume and team members. The hub is the control plane
+and never runs agents, so a path that needs a new session and finds no `worker`
+refuses with 409 `worker_not_configured` instead of running it on the hub. The
+label must name an enrolled, connected worker; otherwise the path answers 502
+`worker_unavailable` with the label in the message. It has no effect on
+`tether launch`, where `--worker` stays the explicit choice; the launch's
+`route` is honored either way. Omitted means no default.
+
 ### Workspace roots and worktree lifecycle
 
 Three roots are easy to confuse — they are distinct:

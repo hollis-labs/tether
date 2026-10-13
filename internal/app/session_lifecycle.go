@@ -825,7 +825,14 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 // "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
 	if row, worker := s.workerSession(id); worker {
-		return s.sendWorkerCommand(context.Background(), row, "stop", nil)
+		// Mark before signaling, as the local path does: the worker reports the
+		// SIGTERM exit (143) as a plain exit, which ingest would call failed.
+		s.stops.mark(id)
+		err := s.sendWorkerCommand(context.Background(), row, "stop", nil)
+		if err != nil {
+			s.stops.clear(id)
+		}
+		return err
 	}
 	return s.stopSessionWithLifecycle(id)
 }

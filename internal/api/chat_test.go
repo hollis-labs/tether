@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,15 +14,17 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 func chatCatalog() *fakeCatalogLoader {
 	return &fakeCatalogLoader{cat: &config.Catalog{
 		Agents: map[string]config.Agent{"pm": {ID: "pm"}},
 		Launches: map[string]config.Launch{
-			"pm-launch": {ID: "pm-launch", Agent: "pm", Chat: true, DisplayName: "Portfolio Manager",
+			"pm-launch": {ID: "pm-launch", Agent: "pm", Chat: true, DisplayName: "Portfolio Manager", Worker: "agent-os",
 				Route: &launchprofile.Route{Channel: "owner-inbox", Kinds: []string{"final", "failure"}}},
-			"plain": {ID: "plain", Agent: "pm"},
+			"no-worker": {ID: "no-worker", Agent: "pm", Chat: true},
+			"plain":     {ID: "plain", Agent: "pm"},
 		},
 	}}
 }
@@ -49,11 +53,14 @@ func TestChatRosterListsOnlyFlaggedLaunches(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Agents) != 1 {
+	if len(got.Agents) != 2 || got.Agents[0].LaunchID != "no-worker" || got.Agents[0].Worker != "" {
 		t.Fatalf("roster = %+v", got.Agents)
 	}
-	a := got.Agents[0]
-	if a.LaunchID != "pm-launch" || a.AgentID != "pm" || a.DisplayName != "Portfolio Manager" || a.Channel != "owner-inbox" {
+	if strings.Contains(rr.Body.String(), `"worker":""`) {
+		t.Fatalf("empty worker must be omitted: %s", rr.Body)
+	}
+	a := got.Agents[1]
+	if a.LaunchID != "pm-launch" || a.Worker != "agent-os" || a.AgentID != "pm" || a.DisplayName != "Portfolio Manager" || a.Channel != "owner-inbox" {
 		t.Fatalf("agent = %+v", a)
 	}
 	if a.Session == nil || a.Session.ID != "s1" || !a.Session.AtTurnBoundary || a.Session.LastActivityAt != "2026-10-12T10:00:00Z" {
@@ -144,7 +151,7 @@ func TestChatSendLaunchesWhenNoRunningSession(t *testing.T) {
 				t.Fatalf("creates = %+v", svc.createInputs)
 			}
 			in := svc.createInputs[0]
-			if in.LaunchID != "pm-launch" || in.PromptAppend != "start here" || in.IdempotencyKey != "chat:pm-launch:k9" {
+			if in.LaunchID != "pm-launch" || in.Worker != "agent-os" || in.PromptAppend != "start here" || in.IdempotencyKey != "chat:pm-launch:k9" {
 				t.Fatalf("create input = %+v", in)
 			}
 			if len(svc.launchIDs) != 1 || svc.launchIDs[0] != "new" || len(svc.inputLog) != 0 {
@@ -182,5 +189,48 @@ func TestChatSendValidation(t *testing.T) {
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/chat/agents/pm-launch/send", nil))
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET send: %d", rr.Code)
+	}
+}
+
+func TestChatSendNoSessionNoWorkerIs409(t *testing.T) {
+	svc := &fakeLaunchService{}
+	rr := chatSend(chatHandler(svc), "no-worker", `{"text":"hi","idempotency_key":"k"}`)
+	e := decodeErr(t, rr).Error
+	if rr.Code != http.StatusConflict || e.Code != CodeWorkerNotConfigured || !strings.Contains(e.Message, "worker:") {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
+	}
+	if len(svc.createInputs) != 0 || len(svc.launchIDs) != 0 {
+		t.Fatalf("nothing may be created: %+v %v", svc.createInputs, svc.launchIDs)
+	}
+}
+
+func TestChatSendRunningSessionNeedsNoWorker(t *testing.T) {
+	svc := &fakeLaunchService{
+		listRes:         []store.SessionRow{{ID: "s1", LaunchID: "no-worker", State: "running"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+	}
+	rr := chatSend(chatHandler(svc), "no-worker", `{"text":"hi","idempotency_key":"k"}`)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"mode":"turn"`) {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
+	}
+}
+
+func TestChatSendWorkerFailuresAre502NamingTheWorker(t *testing.T) {
+	for name, err := range map[string]error{
+		"not enrolled": fmt.Errorf("worker %q: %w", "agent-os", workerhub.ErrNotEnrolled),
+		"offline":      fmt.Errorf("worker %q: %w", "agent-os", workerhub.ErrOffline),
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeLaunchService{createErr: err}
+			rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"hi","idempotency_key":"k"}`)
+			e := decodeErr(t, rr).Error
+			if rr.Code != http.StatusBadGateway || e.Code != CodeWorkerUnavailable || !strings.Contains(e.Message, "agent-os") {
+				t.Fatalf("status %d: %s", rr.Code, rr.Body)
+			}
+		})
+	}
+	svc := &fakeLaunchService{createErr: errors.New("boom")}
+	if rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"hi","idempotency_key":"k2"}`); rr.Code != http.StatusInternalServerError {
+		t.Fatalf("unrelated error status %d", rr.Code)
 	}
 }

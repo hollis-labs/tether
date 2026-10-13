@@ -71,6 +71,13 @@ provider_overrides:                # optional v005-08
 
 Empty / omitted fields take their zero values; existing pre-v005-08 catalog YAML loads unchanged.
 
+## Launch `worker`
+
+A launch entry accepts an optional `worker: <label>`, the default worker for
+sessions started from it by API-driven paths such as chat send. Omitted means
+no default (those paths return `worker_not_configured`). See
+[catalog-launch-profiles.md](catalog-launch-profiles.md#default-worker-worker).
+
 ## Boot profile schema (`bootgen.Profile`)
 
 ```yaml

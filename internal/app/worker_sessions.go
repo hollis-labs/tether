@@ -9,6 +9,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/hollis-labs/tether/internal/workspace"
 	"os"
@@ -20,14 +21,14 @@ import (
 
 func (s *Service) createWorkerSession(in CreateSessionInput) (*Launched, error) {
 	if s.Workers == nil {
-		return nil, fmt.Errorf("worker channel unavailable")
+		return nil, workerhub.ErrChannelUnavailable
 	}
 	workerID, err := s.Workers.Resolve(context.Background(), in.Worker)
 	if err != nil {
 		return nil, err
 	}
 	if !s.Workers.Connected(workerID) {
-		return nil, fmt.Errorf("worker offline")
+		return nil, fmt.Errorf("worker %q: %w", in.Worker, workerhub.ErrOffline)
 	}
 	var key *store.SessionIdempotency
 	if in.IdempotencyKey != "" {

@@ -873,3 +873,26 @@ func TestLoadLaunchChatFlag(t *testing.T) {
 		t.Fatalf("default launch = %+v, %v", plain, err)
 	}
 }
+
+func TestLoadLaunchWorker(t *testing.T) {
+	var l Launch
+	if err := yaml.Unmarshal([]byte("id: pm\nproject: p\nagent: a\nprovider: x\nworker: agent-os\n"), &l); err != nil || l.Worker != "agent-os" {
+		t.Fatalf("launch = %+v, %v", l, err)
+	}
+	var plain Launch
+	if err := yaml.Unmarshal([]byte("id: q\nproject: p\nagent: a\nprovider: x\n"), &plain); err != nil || plain.Worker != "" {
+		t.Fatalf("default launch = %+v, %v", plain, err)
+	}
+	cat := &Catalog{
+		Projects:  map[string]Project{"p": {}},
+		Agents:    map[string]Agent{"a": {}},
+		Providers: map[string]Provider{"x": {}},
+		Launches:  map[string]Launch{"ok": {ID: "ok", Project: "p", Agent: "a", Provider: "x", Worker: "agent-os"}, "bad": {ID: "bad", Project: "p", Agent: "a", Provider: "x", Worker: "agent os"}},
+	}
+	if err := cat.validateLaunchRefs("ok"); err != nil {
+		t.Fatalf("valid worker refused: %v", err)
+	}
+	if err := cat.validateLaunchRefs("bad"); err == nil || !strings.Contains(err.Error(), "worker") {
+		t.Fatalf("whitespace worker accepted: %v", err)
+	}
+}

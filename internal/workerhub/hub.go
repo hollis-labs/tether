@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -15,6 +16,13 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/workerwire"
+)
+
+// Worker placement failures callers can classify with errors.Is.
+var (
+	ErrNotEnrolled        = errors.New("not enrolled")
+	ErrOffline            = errors.New("offline")
+	ErrChannelUnavailable = errors.New("worker channel unavailable")
 )
 
 type Record struct {
@@ -76,7 +84,7 @@ func (h *Hub) Resolve(ctx context.Context, name string) (string, error) {
 	var id string
 	err := h.db.QueryRowContext(ctx, `SELECT id FROM workers WHERE id=? OR label=? ORDER BY id LIMIT 1`, name, name).Scan(&id)
 	if err != nil {
-		return "", fmt.Errorf("worker %q not enrolled", name)
+		return "", fmt.Errorf("worker %q: %w", name, ErrNotEnrolled)
 	}
 	return id, nil
 }
