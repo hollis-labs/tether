@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
@@ -17,7 +18,14 @@ type ReaperSession struct {
 	StartedAt    time.Time
 }
 
-func (s *Store) ReaperSessions(ctx context.Context) ([]ReaperSession, error) {
+// reaperActivityKinds are the only event kinds that count as genuine runtime activity. Noise kinds
+// (session.output, session.shim_status, session.state_changed re-asserts) never do: a dead session whose
+// recovery bookkeeping keeps writing diagnostics must not look alive, and must not be re-scanned for them.
+var reaperActivityKinds = []string{"session.activity", "session.turn_output", "session.turn_routed", "tool_call_start", "tool_call_end", "provider.permission_denied"}
+
+// ReaperCandidates lists hub-local sessions the reaper may act on, without touching the events table.
+// Start and activity times are loaded lazily with ReaperTimes, only for sessions that are actually examined.
+func (s *Store) ReaperCandidates(ctx context.Context) ([]ReaperSession, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(pid_started_at,'') FROM sessions WHERE worker_id='' AND state IN ('launching','running','detached') ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -43,25 +51,98 @@ func (s *Store) ReaperSessions(ctx context.Context) ([]ReaperSession, error) {
 		}
 		ids[i].SessionRow = *row
 		ids[i].StartedAt, _ = time.Parse(time.RFC3339Nano, row.CreatedAt)
-		var started sql.NullString
-		err = s.db.QueryRowContext(ctx, `SELECT MIN(at) FROM events WHERE session_id=? AND kind='session.state_changed' AND json_valid(payload_json) AND json_extract(payload_json,'$.to') IN ('launching','running')`, row.ID).Scan(&started)
-		if err != nil {
-			return nil, err
-		}
-		if started.Valid {
-			ids[i].StartedAt, _ = time.Parse(time.RFC3339Nano, started.String)
-		}
+	}
+	return ids, nil
+}
 
-		var at sql.NullString
-		err = s.db.QueryRowContext(ctx, `SELECT MAX(CASE WHEN kind='session.activity' THEN json_extract(payload_json,'$.at') ELSE at END) FROM events WHERE session_id=? AND kind IN ('session.activity','session.turn_output','session.turn_routed','tool_call_start','tool_call_end','provider.permission_denied')`, row.ID).Scan(&at)
-		if err != nil {
-			return nil, err
+// ReaperTimes fills StartedAt and LastActivity from indexed, bounded lookups
+// (idx_events_session_kind_at). It never aggregates over a session's whole event history and never
+// runs a JSON function across many rows: session.state_changed rows per session are few, and each
+// activity kind is a single newest-row lookup.
+func (s *Store) ReaperTimes(ctx context.Context, r *ReaperSession) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT at,payload_json FROM events WHERE session_id=? AND kind='session.state_changed' ORDER BY at ASC,id ASC LIMIT 256`, r.ID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var at string
+		var payload sql.NullString
+		if err = rows.Scan(&at, &payload); err != nil {
+			_ = rows.Close()
+			return err
 		}
-		if at.Valid {
-			ids[i].LastActivity, _ = time.Parse(time.RFC3339Nano, at.String)
+		var change struct {
+			To string `json:"to"`
+		}
+		if payload.Valid && json.Unmarshal([]byte(payload.String), &change) == nil && (change.To == "launching" || change.To == "running") {
+			if t, perr := time.Parse(time.RFC3339Nano, at); perr == nil {
+				r.StartedAt = t
+			}
+			break
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	var last time.Time
+	for _, kind := range reaperActivityKinds {
+		var at string
+		var payload sql.NullString
+		err = s.db.QueryRowContext(ctx, `SELECT at,payload_json FROM events WHERE session_id=? AND kind=? ORDER BY at DESC,id DESC LIMIT 1`, r.ID, kind).Scan(&at, &payload)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		stamp := at
+		if kind == "session.activity" && payload.Valid {
+			var body struct {
+				At string `json:"at"`
+			}
+			if json.Unmarshal([]byte(payload.String), &body) == nil && body.At != "" {
+				stamp = body.At
+			}
+		}
+		if t, perr := time.Parse(time.RFC3339Nano, stamp); perr == nil && t.After(last) {
+			last = t
+		}
+	}
+	r.LastActivity = last
+	return nil
+}
+
+// ReaperSessions loads every candidate with its times. The daemon sweep uses ReaperCandidates and
+// ReaperTimes so unchanged sessions are skipped without any event reads; this form remains for callers
+// and tests that want the full picture.
+func (s *Store) ReaperSessions(ctx context.Context) ([]ReaperSession, error) {
+	ids, err := s.ReaperCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range ids {
+		if err := s.ReaperTimes(ctx, &ids[i]); err != nil {
+			return nil, err
 		}
 	}
 	return ids, nil
+}
+
+// LatestSessionEvent returns the newest event of one kind for a session via idx_events_session_kind_at,
+// or nil when there is none. Unlike QueryEvents it never reads the session's other events.
+func (s *Store) LatestSessionEvent(ctx context.Context, sessionID, kind string) (*events.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,scope,session_id,at,kind,payload_json FROM events WHERE session_id=? AND kind=? ORDER BY at DESC,id DESC LIMIT 1`, sessionID, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out, err := scanEvents(rows)
+	if err != nil || len(out) == 0 {
+		return nil, err
+	}
+	return &out[0], nil
 }
 
 // RecordReaperOrphan commits authority revocation and a visible outcome together.
