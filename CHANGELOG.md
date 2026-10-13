@@ -16,6 +16,15 @@ This file was backfilled from the git history and is a good-faith summary, not a
   preserving existing private forums and rechecking grants on every request.
   Includes HTTP/MCP management, migration 0073 and go-forums v0.2.0.
 
+- Fix the hub daemon's runaway CPU (CW-20261012-0120). The session reaper ran every 5 seconds and, for every
+  hub-local session still marked detached (including Codex sessions whose shim host is gone and whose custody
+  is deliberately retained), ran two JSON aggregates over that session's whole event history; 42 such
+  sessions owned 800k of 1M events and pinned a core. The reaper now runs every 5 minutes, reads times from
+  a new index (`idx_events_session_kind_at`, migration 0074, one-time build of a few seconds on a ~1M-row
+  table) with one newest-row lookup per activity kind, examines at most 64 sessions / 30s per sweep (rotating
+  cursor), backs off 10m..6h exponentially per session it cannot resolve (skipped with no queries while the
+  session's identity is unchanged), logs slow or truncated sweeps, and no longer re-records an unchanged
+  retained-shim condition on every pass. Shim health reads one indexed row and caches it for 2s.
 - Add the chat roster: launches take `chat: true` and an optional `display_name`;
   `GET /chat/agents` (read) lists them with their newest session, and
   `POST /chat/agents/{launch_id}/send` (operate) delivers a message as the next

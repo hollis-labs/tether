@@ -67,6 +67,7 @@ func (s *Service) shimDiagnostic(id string, r *shimhost.Receipt, state, reason s
 		status.Socket = r.SocketPath
 	}
 	log.Printf("session %q shim state=%s reason=%s key=%q backend=%q unit=%q socket=%q", id, status.State, status.Reason, status.Key, status.Backend, status.Unit, status.Socket)
+	s.shimDiagSeen.Store(id, state+"|"+reason)
 	publishSessionEvent(s.Bus, id, "", "session.shim_status", status)
 }
 
@@ -74,6 +75,14 @@ func (s *Service) retainShim(row store.SessionShimRow, receipt *shimhost.Receipt
 	if receipt == nil {
 		// Diagnostic identity only; never pass this synthesized value to the host.
 		receipt = &shimhost.Receipt{OperationKey: row.ShimKey, Backend: row.HostBackend, UnitName: row.UnitName, SocketPath: row.SocketPath}
+	}
+	// An unchanged "still retained" condition is recorded once. Re-asserting it on every reconcile rewrote
+	// the session row and appended a session.shim_status event each time, which for sessions that stay
+	// retained forever (a gone Codex host keeps its obligations) was an unbounded stream of noise.
+	if v, ok := s.shimDiagSeen.Load(row.SessionID); ok && v.(string) == "detached|"+reason {
+		if cur, err := s.Store.GetSession(row.SessionID); err == nil && cur.State == "detached" {
+			return
+		}
 	}
 	if err := s.MarkSessionDetached(row.SessionID, reason); err != nil {
 		log.Printf("session %q: retain detached shim failed: %v", row.SessionID, err)
