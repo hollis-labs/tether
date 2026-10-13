@@ -39,4 +39,8 @@ type LaunchSpec struct {
 	Credential string `json:"credential,omitempty"`
 	// MCPScopes are the scopes the credential carries; the planted tether MCP entry requests the same set.
 	MCPScopes []string `json:"mcp_scopes,omitempty"`
+	// MCPServers is the resolved catalog mcp-servers grant (agent/launch cascade). The worker plants the
+	// tether entry plus only these entries from its hub-mcp.json. Nil (a hub that predates the field)
+	// plants every imported entry; an empty non-nil list plants tether alone.
+	MCPServers []string `json:"mcp_servers"`
 }
