@@ -8,6 +8,17 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add approval-gated catalog changes (CW-20261012-0124). New MCP tools
+  `tether_catalog_plan`, `tether_catalog_plan_get`, `tether_catalog_apply` and
+  `tether_catalog_backups`; HTTP `POST /catalog/plans`, `GET /catalog/plans/{id}`,
+  `POST /catalog/plans/{id}/approve`, `POST /catalog/plans/{id}/apply` and
+  `GET /catalog/backups`; CLI `tether catalog show|approve|backups|approver set`.
+  The daemon validates a bundle on a scratch copy, a human approves it by digest
+  with a passphrase no agent session holds, and apply backs the catalog up,
+  installs atomically and restores on failure. Rollback is a plan with
+  `rollback_of`. This supersedes the "writes are not registered" fence on
+  `/catalog/*` (ADR 0012) for these routes only. `golang.org/x/crypto` becomes a
+  direct dependency (scrypt).
 - Add per-session credentials and stable identity for worker sessions. The hub
   mints a session-bound bearer at launch (scopes from the new optional agent
   field `mcp_scopes`, default `message.write,registry.write,groups.write`),
