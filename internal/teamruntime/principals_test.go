@@ -155,3 +155,37 @@ func TestVerifiedSessionUsesOnlyItsRetainedActorAndBinding(t *testing.T) {
 		t.Fatal("session selector trusted", err)
 	}
 }
+func TestDevModeAdmitsOnlyVerifiedLocalOperator(t *testing.T) {
+	socketRoot, err := os.MkdirTemp("/var/tmp", "team-dev.")
+	check(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(socketRoot) })
+	listener, err := net.Listen("unix", filepath.Join(socketRoot, "socket"))
+	check(t, err)
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() { c, _ := listener.Accept(); accepted <- c }()
+	client, err := net.Dial("unix", listener.Addr().String())
+	check(t, err)
+	defer client.Close()
+	connection := <-accepted
+	defer connection.Close()
+	local := identity.ConnectionContext(ctx, connection)
+	operator := identity.WithPrincipal(local, identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"})
+	agent := identity.WithPrincipal(local, identity.Principal{Verified: true, ID: "msg://session/local/s", Kind: "session", SessionID: "s"})
+	for _, mode := range []identity.Mode{identity.Off, identity.Observe} {
+		r := Principals{Mode: mode}
+		out, err := r.ResolvePrincipal(operator)
+		if err != nil || !out.LocalOperator {
+			t.Fatal(mode, "local operator refused", out, err)
+		}
+		if _, err = r.ResolvePrincipal(local); !errors.Is(err, teamsvc.ErrUnauthenticated) {
+			t.Fatal(mode, "anonymous local caller admitted", err)
+		}
+		if _, err = r.ResolvePrincipal(agent); !errors.Is(err, teamsvc.ErrUnauthenticated) {
+			t.Fatal(mode, "agent admitted outside enforce", err)
+		}
+		if _, err = r.ResolvePrincipal(identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"})); !errors.Is(err, teamsvc.ErrUnauthenticated) {
+			t.Fatal(mode, "nonlocal operator admitted", err)
+		}
+	}
+}
