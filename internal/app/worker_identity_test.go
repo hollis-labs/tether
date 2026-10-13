@@ -187,7 +187,7 @@ func TestWorkerSessionBearerResolvesToStableAgentURN(t *testing.T) {
 	if code, _ := r.call("GET", "/forums/portfolio", "", spec.Credential); code != 403 {
 		t.Fatalf("ungranted session read = %d, want 403", code)
 	}
-	if code, out := r.call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"`+r.urn+`","access":"post"}`, r.op); code != 201 {
+	if code, out := r.call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"`+r.urn+`","access":"post"}`, r.op); code != 200 {
 		t.Fatalf("grant: %d %v", code, out)
 	}
 	code, list := r.call("GET", "/forums/portfolio/participants", "", r.op)

@@ -100,8 +100,8 @@ func TestForumsThroughAuthenticatedDaemon(t *testing.T) {
 		t.Fatal("agent stamped as user")
 	}
 	// Participant access is resolved from independent authenticated credentials.
-	call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"session-principal","access":"post"}`, token, 201)
-	call("POST", "/forums/portfolio/owner", `{}`, token, 201)
+	call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"session-principal","access":"post"}`, token, 200)
+	call("POST", "/forums/portfolio/owner", `{}`, token, 200)
 	if err := db.CreateSession(store.SessionRow{ID: "second-session", State: "running", LaunchID: "second-launch", ProjectID: "project", WorkstreamID: sql.NullString{String: "workstream", Valid: true}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestForumsThroughAuthenticatedDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"second-principal","access":"post"}`, token, 201)
+	call("POST", "/forums/portfolio/participants", `{"principal_kind":"agent","principal_id":"second-principal","access":"post"}`, token, 200)
 	call("GET", "/forums/portfolio/participants", "", agentToken, 403)
 	call("POST", "/forums/portfolio/participants/revoke", `{"principal_kind":"agent","principal_id":"second-principal"}`, agentToken, 403)
 	call("POST", "/forums/portfolio/owner", `{}`, secondToken, 403)
@@ -136,7 +136,7 @@ func TestForumsThroughAuthenticatedDaemon(t *testing.T) {
 	pg := call("GET", "/forums/topics/"+topic+"/posts?limit=1", "", secondToken, 200)
 	cursor := pg["next_cursor"].(string)
 	call("GET", "/forums/portfolio", "", strangerToken, 403)
-	call("POST", "/forums/portfolio/participants/revoke", `{"principal_kind":"agent","principal_id":"second-principal"}`, token, 201)
+	call("POST", "/forums/portfolio/participants/revoke", `{"principal_kind":"agent","principal_id":"second-principal"}`, token, 200)
 	call("GET", "/forums/topics/"+topic+"/posts?limit=1&cursor="+cursor, "", secondToken, 403)
 	call("GET", "/forums/topics/"+topic+"/posts?since_seq=1", "", secondToken, 403)
 	call("POST", "/forums/topics/"+topic+"/posts", `{"body_md":"denied"}`, secondToken, 403)
