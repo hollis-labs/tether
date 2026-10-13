@@ -18,15 +18,84 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-const sessionReaperInterval = 5 * time.Second
+// The reaper enforces lifecycle limits (max duration, lease, idle timeout) that are measured in minutes
+// or hours, so it does not need to run every few seconds. At five seconds it was also the daemon's
+// dominant CPU consumer on the hub (CW-20261012-0120).
+const sessionReaperInterval = 5 * time.Minute
 const sessionReaperEvent = "session.reaper"
+
+// Self-limiting rules. A sweep can never become a runaway: it examines a bounded number of sessions for a
+// bounded time (the rest continue on the next sweep from a rotating cursor), sessions it cannot resolve
+// are backed off exponentially, and a session whose identity has not changed since it was last examined
+// is skipped without reading its events at all.
+const (
+	reaperMaxPerSweep = 64
+	reaperSweepBudget = 30 * time.Second
+	reaperSlowSweep   = 5 * time.Second
+	reaperBackoffBase = 10 * time.Minute
+	reaperBackoffMax  = 6 * time.Hour
+)
 
 type sessionReaper struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	sweep  sync.Mutex
 	stops  sync.Map
+	cursor int // rotating start index, guarded by sweep
+	// lastExamined and lastSkipped describe the previous sweep (guarded by sweep; read by tests).
+	lastExamined, lastSkipped int
+	backoff                   sync.Map // session id -> reaperBackoff
 }
+
+// reaperBackoff records that a session was examined and left unresolved (a retained shim, a live
+// process of unknown identity). It applies only while the session's identity signature is unchanged.
+type reaperBackoff struct {
+	sig   string
+	fails int
+	until time.Time
+}
+
+// reaperBackoffFor is 10m, 20m, 40m ... capped at 6h.
+func reaperBackoffFor(fails int) time.Duration {
+	if fails < 1 {
+		fails = 1
+	}
+	d := reaperBackoffBase
+	for i := 1; i < fails && d < reaperBackoffMax; i++ {
+		d *= 2
+	}
+	if d > reaperBackoffMax {
+		d = reaperBackoffMax
+	}
+	return d
+}
+
+// reaperSignature identifies a session's observable lifecycle identity. updated_at is deliberately
+// excluded: recovery bookkeeping rewrites it without changing anything the reaper cares about.
+func reaperSignature(row store.ReaperSession) string {
+	return fmt.Sprintf("%s|%d|%s|%s", row.State, row.PID.Int64, row.PIDStartedAt, row.CreatedAt)
+}
+
+func (r *sessionReaper) backedOff(id, sig string, now time.Time) bool {
+	v, ok := r.backoff.Load(id)
+	if !ok {
+		return false
+	}
+	b := v.(reaperBackoff)
+	return b.sig == sig && now.Before(b.until)
+}
+
+func (r *sessionReaper) park(id, sig string, now time.Time) {
+	fails := 1
+	if v, ok := r.backoff.Load(id); ok {
+		if b := v.(reaperBackoff); b.sig == sig {
+			fails = b.fails + 1
+		}
+	}
+	r.backoff.Store(id, reaperBackoff{sig: sig, fails: fails, until: now.Add(reaperBackoffFor(fails))})
+}
+
+func (r *sessionReaper) clear(id string) { r.backoff.Delete(id) }
 
 type reaperStop struct {
 	done chan struct{}
@@ -110,16 +179,41 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 	r := s.reaperState()
 	r.sweep.Lock()
 	defer r.sweep.Unlock()
-	rows, err := s.Store.ReaperSessions(ctx)
+	began := time.Now()
+	rows, err := s.Store.ReaperCandidates(ctx)
 	if err != nil {
 		return err
 	}
 	var failures []error
-	for _, row := range rows {
+	examined, skipped := 0, 0
+	n := len(rows)
+	start := 0
+	if n > 0 {
+		start = r.cursor % n
+	}
+	truncated := false
+	for i := 0; i < n; i++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if examined >= reaperMaxPerSweep || time.Since(began) > reaperSweepBudget {
+			r.cursor = (start + i) % n
+			truncated = true
+			break
+		}
+		row := rows[(start+i)%n]
 		if session.State(row.State).Terminal() || row.State == string(session.StateOrphaned) {
+			r.clear(row.ID)
+			continue
+		}
+		sig := reaperSignature(row)
+		if r.backedOff(row.ID, sig, now) {
+			skipped++
+			continue
+		}
+		examined++
+		if err := s.Store.ReaperTimes(ctx, &row); err != nil {
+			failures = append(failures, err)
 			continue
 		}
 		plan, err := s.Store.GetLaunchPlan(row.ID)
@@ -149,6 +243,7 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 		if !live && !now.Before(started.Add(d.OrphanGrace)) {
 			stale := store.StaleSession{ID: row.ID, State: row.State, PID: int(row.PID.Int64), CreatedAt: row.CreatedAt, PIDStartedAt: row.PIDStartedAt}
 			if s.reconcileShimContext(ctx, stale) { // provider owns identity and outcome
+				r.park(row.ID, sig, now)
 				continue
 			}
 			procs := s.procs
@@ -160,6 +255,7 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 				// transient inspection failure. Verified reused PIDs are orphans.
 				actual, known := procs.startTime(int(row.PID.Int64))
 				if !known || row.PIDStartedAt == "" || actual == row.PIDStartedAt {
+					r.park(row.ID, sig, now)
 					continue
 				}
 			}
@@ -167,10 +263,12 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 			if err != nil {
 				failures = append(failures, err)
 			} else if changed {
+				r.clear(row.ID)
 				s.publishSessionStateChange(store.SessionStateChange{SessionID: row.ID, LogicalAgentID: row.LogicalAgentID, From: row.State, To: string(session.StateOrphaned), Reason: "process_missing"})
 			}
 			continue
 		}
+		r.clear(row.ID)
 		activity := row.LastActivity
 		if at := s.SessionLastActivity(row.ID); at.After(activity) {
 			if err := s.Store.RecordSessionActivity(ctx, row.ID, at); err != nil {
@@ -190,6 +288,13 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 				failures = append(failures, fmt.Errorf("%s: %w", row.ID, err))
 			}
 		}
+	}
+	if !truncated {
+		r.cursor = 0
+	}
+	r.lastExamined, r.lastSkipped = examined, skipped
+	if took := time.Since(began); took > reaperSlowSweep || truncated {
+		log.Printf("session reaper: slow or truncated sweep: candidates=%d examined=%d skipped_backoff=%d truncated=%t took=%s", n, examined, skipped, truncated, took.Round(time.Millisecond))
 	}
 	return errors.Join(failures...)
 }

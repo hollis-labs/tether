@@ -94,11 +94,16 @@ type Service struct {
 	// (CW-20260914-0042) for onboarding and deployment configuration.
 	Settings *settings.Service
 
-	launchMu    sync.Mutex
-	reaperMu    sync.Mutex
-	reaper      *sessionReaper
-	resumeLocks sync.Map      // logical agent ID -> context-aware resume gate
-	resumeGrace time.Duration // zero selects the bounded native fast-death window
+	launchMu sync.Mutex
+	reaperMu sync.Mutex
+	reaper   *sessionReaper
+	// shimDiagSeen remembers the last retained-shim diagnostic per session so an unchanged
+	// "still retained" condition is recorded once, not on every sweep (CW-20261012-0120).
+	shimDiagSeen sync.Map
+	// shimHealthCache holds the last shim health per session for a short time (see shim_health.go).
+	shimHealthCache sync.Map
+	resumeLocks     sync.Map      // logical agent ID -> context-aware resume gate
+	resumeGrace     time.Duration // zero selects the bounded native fast-death window
 	// RecoveryReadTool is a trusted daemon read port over its existing MCP
 	// runtime and grants. Nil/unavailable inputs are explicit pack omissions.
 	RecoveryReadTool func(context.Context, string, string, string, map[string]any) (json.RawMessage, error)
