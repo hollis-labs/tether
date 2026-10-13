@@ -27,6 +27,11 @@ type Input struct {
 // ("launch \"x\" not found").
 var ErrLaunchNotFound = errors.New("not found")
 
+// ErrDisabled is wrapped by the error Resolve returns for a launch, or a
+// launch's agent, that the catalog marks enabled: false. It blocks new
+// launches only; a session that is already running is not touched.
+var ErrDisabled = errors.New("disabled")
+
 // maxKnownLaunchesInError caps how many known launch IDs a not-found error
 // lists.
 const maxKnownLaunchesInError = 20
@@ -36,8 +41,14 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	if !ok {
 		return nil, launchNotFound(cat, in.LaunchID)
 	}
+	if !l.IsEnabled() {
+		return nil, fmt.Errorf("launch %q is %w (enabled: false in its launch file); enable it to start new sessions", in.LaunchID, ErrDisabled)
+	}
 	proj := cat.Projects[l.Project]
 	agent := cat.Agents[l.Agent]
+	if !agent.IsEnabled() {
+		return nil, fmt.Errorf("agent %q (launch %q) is %w (enabled: false in its agent file); enable it to start new sessions", l.Agent, in.LaunchID, ErrDisabled)
+	}
 	prov := cat.Providers[l.Provider]
 
 	if err := cat.ValidateLaunchMCPGrants(in.LaunchID); err != nil {

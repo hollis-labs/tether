@@ -8,6 +8,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add `enabled: false` to agents and launches (CW-20261013-0001): blocks new
+  launches and chat sends (409 `agent_disabled`, naming the entity) without
+  removing the file and without touching a running session. `GET /chat/agents`
+  hides disabled entries unless `?include_disabled=true` and each entry carries
+  `enabled`. A daemon build that predates this field ignores it, so deploy the
+  build before disabling anything.
+
 - Add `tether_catalog_files` and `tether_catalog_history` (CW-20261013-0004):
   `GET /catalog/files[?path=]` reads agent, launch, project, skill, boot-profile
   and team-definition files raw so an agent can edit and re-plan them (providers,
