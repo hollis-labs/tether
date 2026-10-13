@@ -1629,6 +1629,13 @@ Review a catalog change without applying it.
 | `rollback_of` | string | — | Backup id to restore instead of sending files. |
 | `task_id` | string | — | Torque task id, for the audit trail. |
 
+#### `tether_catalog_validate`
+Validate the catalog and return structured findings, failures first: `{ok, failures, warnings, results[{name, status, message, remedy, entity}]}`. With no `files` it checks the **live** catalog; with `files` it checks the catalog as it would be with that draft applied, on a scratch copy. Nothing is stored or written. It runs the catalog-structural subset of `tether doctor` (`internal/catalogcheck`): the layered load and parse, MCP grants against the declared servers, references between agents, launches, projects and providers, sandbox profiles, MCP discovery modes, profiles, server names and credential files. It reads files only: no daemon, database or upstream is contacted, so host checks (daemon reachable, migrations, provider binaries) stay in `tether doctor`. Read-only; no scope required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `files` | array | — | Draft files to overlay: `{path, content}` or `{path, delete: true}`. |
+
 #### `tether_catalog_plan_get`
 Read a plan's state, digest, diff and validation.
 

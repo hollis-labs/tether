@@ -128,7 +128,7 @@ var subClientWrites = map[string]bool{
 	"Register": true, "Deregister": true, "UpdateSelf": true, "Sync": true,
 	"Merge": true, "Lease": true, "Renew": true, "Revoke": true, "Set": true,
 	// Catalog apply (CW-20261012-0124).
-	"Plan": true, "Apply": true, "Backups": false,
+	"Plan": true, "Apply": true, "Backups": false, "Validate": false,
 }
 
 type registration struct {

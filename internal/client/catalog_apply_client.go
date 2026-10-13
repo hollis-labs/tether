@@ -10,6 +10,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/catalogapply"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 )
 
 // CatalogApplyClient calls the daemon's /catalog/plans and /catalog/backups
@@ -78,6 +79,16 @@ func (cc *CatalogApplyClient) Approve(ctx context.Context, id string, req api.Ca
 func (cc *CatalogApplyClient) Apply(ctx context.Context, id string) (*catalogapply.Result, error) {
 	var out catalogapply.Result
 	if err := cc.do(ctx, http.MethodPost, "/catalog/plans/"+url.PathEscape(id)+"/apply", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Validate checks the live catalog (no files) or the catalog as it would be
+// with files applied. Nothing is stored or written.
+func (cc *CatalogApplyClient) Validate(ctx context.Context, files []catalogapply.File) (*catalogcheck.Report, error) {
+	var out catalogcheck.Report
+	if err := cc.do(ctx, http.MethodPost, "/catalog/validate", api.CatalogValidateRequest{Files: files}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -8,6 +8,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add `tether_catalog_validate` and `POST /catalog/validate` (CW-20261013-0003):
+  structured findings (severity, check, entity, message, remedy) for the live
+  catalog or for a draft bundle overlaid on a scratch copy, so an agent can test
+  a change before planning it. The catalog-structural `tether doctor` checks move
+  to `internal/catalogcheck` and doctor calls them unchanged; `tether doctor
+  --json` gains an optional `entity` field. Plans now validate with the same
+  checks.
 - Add approval-gated catalog changes (CW-20261012-0124). New MCP tools
   `tether_catalog_plan`, `tether_catalog_plan_get`, `tether_catalog_apply` and
   `tether_catalog_backups`; HTTP `POST /catalog/plans`, `GET /catalog/plans/{id}`,

@@ -267,3 +267,32 @@ func TestAnonymousLocalCallerCanPlanButNotApproveWithoutPassphrase(t *testing.T)
 		t.Errorf("approve with no passphrase = %d, want 403", code)
 	}
 }
+
+func TestValidateRouteReportsFindingsWithoutWriting(t *testing.T) {
+	d := newCatalogApplyDaemon(t)
+	// The stub catalog is not a real one, so validation reports failures; the
+	// route must return them as a report, not an error, and write nothing.
+	code, b := d.call("POST", "/catalog/validate", api.CatalogValidateRequest{Files: helperFiles}, asBareSession)
+	if code != 200 {
+		t.Fatalf("validate = %d %s", code, b)
+	}
+	var rep struct {
+		OK      bool              `json:"ok"`
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(b, &rep); err != nil || len(rep.Results) == 0 {
+		t.Fatalf("report = %s (%v)", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(d.root, "agents/helper.yaml")); err == nil {
+		t.Fatal("validation wrote to the catalog")
+	}
+	// An illegal path is a 400, not a report.
+	code, _ = d.call("POST", "/catalog/validate", api.CatalogValidateRequest{Files: []catalogapply.File{{Path: "credentials/x.yaml", Content: "a: b\n"}}}, nil)
+	if code != http.StatusBadRequest {
+		t.Fatalf("illegal path = %d, want 400", code)
+	}
+	// No body validates the live catalog.
+	if code, _ = d.call("POST", "/catalog/validate", nil, nil); code != 200 {
+		t.Fatalf("live validate = %d", code)
+	}
+}

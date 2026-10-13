@@ -30,7 +30,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 )
 
 // File is one catalog file in a bundle. Delete removes it.
@@ -140,17 +140,17 @@ func (e *Engine) validate(root string) error {
 }
 
 func defaultValidate(root string) error {
-	cat, err := config.LoadLayered(root)
-	if err != nil {
-		return fmt.Errorf("load: %w", err)
+	rep := catalogcheck.Run(root)
+	if rep.OK {
+		return nil
 	}
-	if err := cat.ValidateMCPGrants(); err != nil {
-		return fmt.Errorf("mcp grants: %w", err)
+	var msgs []string
+	for _, r := range rep.Results {
+		if r.Status == catalogcheck.StatusFail {
+			msgs = append(msgs, r.Name+": "+r.Message)
+		}
 	}
-	if err := cat.Validate(); err != nil {
-		return fmt.Errorf("validate: %w", err)
-	}
-	return nil
+	return errors.New(strings.Join(msgs, "; "))
 }
 
 func sha(s string) string {
@@ -181,42 +181,9 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 	if len(b.Files) == 0 {
 		return nil, fmt.Errorf("bundle %q has no files", b.Name)
 	}
-	protected := map[string]bool{}
-	for _, p := range opt.ProtectedPaths {
-		protected[p] = true
-	}
-	seen := map[string]bool{}
-	files := append([]File(nil), b.Files...)
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	for _, f := range files {
-		if err := ValidatePath(f.Path); err != nil {
-			return nil, err
-		}
-		if seen[f.Path] {
-			return nil, fmt.Errorf("path %q appears twice in the bundle", f.Path)
-		}
-		seen[f.Path] = true
-		if protected[f.Path] {
-			return nil, fmt.Errorf("%s is the caller's own definition; an agent does not change its own definition or permissions", f.Path)
-		}
-		if f.Delete {
-			if f.Content != "" {
-				return nil, fmt.Errorf("%s: a delete carries no content", f.Path)
-			}
-		} else {
-			if len(f.Content) > maxFileBytes {
-				return nil, fmt.Errorf("%s: larger than %d bytes", f.Path, maxFileBytes)
-			}
-			if f.Content == "" {
-				return nil, fmt.Errorf("%s: empty content (use delete to remove a file)", f.Path)
-			}
-			if why := ScanSecrets(f.Content); why != "" && !skipSecretScan {
-				return nil, fmt.Errorf("%s: refused, the content %s; reference secrets instead of embedding them", f.Path, why)
-			}
-		}
-		if err := checkNoSymlinks(e.Root, f.Path); err != nil {
-			return nil, err
-		}
+	files, err := e.checkFiles(b.Files, opt, skipSecretScan)
+	if err != nil {
+		return nil, err
 	}
 
 	scratch, err := os.MkdirTemp("", "tether-catalog-plan-*")
@@ -411,6 +378,92 @@ func privilegedReasons(p, old, next string, deleted bool) []string {
 		}
 	}
 	return reasons
+}
+
+// checkFiles applies the input rules every bundle meets before anything is
+// copied or written: allowlisted paths, no duplicates, no change to the
+// caller's own definition, bounded non-empty content free of obvious secrets,
+// no symlinked destinations. It returns the files sorted by path.
+func (e *Engine) checkFiles(in []File, opt Options, skipSecretScan bool) ([]File, error) {
+	protected := map[string]bool{}
+	for _, p := range opt.ProtectedPaths {
+		protected[p] = true
+	}
+	seen := map[string]bool{}
+	files := append([]File(nil), in...)
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	for _, f := range files {
+		if err := ValidatePath(f.Path); err != nil {
+			return nil, err
+		}
+		if seen[f.Path] {
+			return nil, fmt.Errorf("path %q appears twice in the bundle", f.Path)
+		}
+		seen[f.Path] = true
+		if protected[f.Path] {
+			return nil, fmt.Errorf("%s is the caller's own definition; an agent does not change its own definition or permissions", f.Path)
+		}
+		if f.Delete {
+			if f.Content != "" {
+				return nil, fmt.Errorf("%s: a delete carries no content", f.Path)
+			}
+		} else {
+			if len(f.Content) > maxFileBytes {
+				return nil, fmt.Errorf("%s: larger than %d bytes", f.Path, maxFileBytes)
+			}
+			if f.Content == "" {
+				return nil, fmt.Errorf("%s: empty content (use delete to remove a file)", f.Path)
+			}
+			if why := ScanSecrets(f.Content); why != "" && !skipSecretScan {
+				return nil, fmt.Errorf("%s: refused, the content %s; reference secrets instead of embedding them", f.Path, why)
+			}
+		}
+		if err := checkNoSymlinks(e.Root, f.Path); err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+}
+
+// ValidateLive checks the live catalog and returns structured findings.
+func (e *Engine) ValidateLive() catalogcheck.Report { return catalogcheck.Run(e.Root) }
+
+// ValidateBundle checks what the catalog would be with the bundle applied,
+// without storing a plan or touching the live catalog. An empty bundle is the
+// live catalog.
+func (e *Engine) ValidateBundle(files []File, opt Options) (catalogcheck.Report, error) {
+	if len(files) == 0 {
+		return e.ValidateLive(), nil
+	}
+	checked, err := e.checkFiles(files, opt, false)
+	if err != nil {
+		return catalogcheck.Report{}, err
+	}
+	scratch, err := os.MkdirTemp("", "tether-catalog-validate-*")
+	if err != nil {
+		return catalogcheck.Report{}, err
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+	root := filepath.Join(scratch, "catalog")
+	if err := copyTree(e.Root, root); err != nil {
+		return catalogcheck.Report{}, fmt.Errorf("copy catalog for validation: %w", err)
+	}
+	for _, f := range checked {
+		dst := filepath.Join(root, filepath.FromSlash(f.Path))
+		if f.Delete {
+			if err := os.Remove(dst); err != nil {
+				return catalogcheck.Report{}, fmt.Errorf("%s: cannot delete, it does not exist", f.Path)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil { //nolint:gosec // G301: scratch copy, removed after validation
+			return catalogcheck.Report{}, err
+		}
+		if err := os.WriteFile(dst, []byte(f.Content), 0o644); err != nil { //nolint:gosec // G306: scratch copy; catalog files are 0644
+			return catalogcheck.Report{}, err
+		}
+	}
+	return catalogcheck.Run(root), nil
 }
 
 // Get returns a copy of a plan.
