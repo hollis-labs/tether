@@ -13,7 +13,9 @@ import (
 )
 
 type mcpEntry struct {
-	Command string            `json:"command"`
+	Type    string            `json:"type,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env,omitempty"`
 }
@@ -38,6 +40,17 @@ func ImportHubMCP(root, source string) error {
 		}
 		selected.Servers[name] = entry
 	}
+	// Any further entry (tangent, nanite, ...) is imported as configured; which sessions get it is decided
+	// per launch by the hub's resolved mcp.servers grant.
+	for name, entry := range config.Servers {
+		if _, done := selected.Servers[name]; done {
+			continue
+		}
+		if entry.Command == "" && entry.URL == "" {
+			return fmt.Errorf("configured hub MCP entry %s needs a command or url", name)
+		}
+		selected.Servers[name] = entry
+	}
 	if err := validateHubMCP(selected); err != nil {
 		return err
 	}
@@ -48,13 +61,17 @@ func validateHubMCP(config mcpConfig) error {
 	if !ok || entry.Command != "ssh" {
 		return fmt.Errorf("tether MCP must run on the hub over SSH")
 	}
+	for name, other := range config.Servers {
+		for _, arg := range other.Args {
+			if arg == "--proxy" {
+				return fmt.Errorf("MCP entry %s: local/legacy Tether MCP proxy is not an outpost", name)
+			}
+		}
+	}
 	daemonOnly := false
 	for _, arg := range entry.Args {
 		if arg == "--daemon-only" {
 			daemonOnly = true
-		}
-		if arg == "--proxy" {
-			return fmt.Errorf("local/legacy Tether MCP proxy is not an outpost")
 		}
 	}
 	if !daemonOnly {
@@ -62,7 +79,7 @@ func validateHubMCP(config mcpConfig) error {
 	}
 	return nil
 }
-func (e *Executor) plantMCP(cwd string) error {
+func (e *Executor) plantMCP(cwd string, granted []string) error {
 	b, err := os.ReadFile(filepath.Join(e.Root, "hub-mcp.json"))
 	if err != nil {
 		return err
@@ -74,7 +91,26 @@ func (e *Executor) plantMCP(cwd string) error {
 	if err = validateHubMCP(config); err != nil {
 		return err
 	}
-	return plant(cwd, ".mcp.json", b)
+	out, err := json.Marshal(grantedOnly(config, granted))
+	if err != nil {
+		return err
+	}
+	return plant(cwd, ".mcp.json", out)
+}
+
+// grantedOnly keeps the tether entry (the session's own link to the hub) plus the entries named in granted.
+// A nil granted keeps everything; granted names the hub does not define are skipped.
+func grantedOnly(config mcpConfig, granted []string) mcpConfig {
+	if granted == nil {
+		return config
+	}
+	out := mcpConfig{Servers: map[string]mcpEntry{"tether": config.Servers["tether"]}}
+	for _, name := range granted {
+		if entry, ok := config.Servers[name]; ok {
+			out.Servers[name] = entry
+		}
+	}
+	return out
 }
 
 // plantHubMCP plants the hub MCP config. With a session credential the tether entry no longer runs ssh
@@ -83,7 +119,7 @@ func (e *Executor) plantMCP(cwd string) error {
 // therefore never in any process argument or environment.
 func (e *Executor) plantHubMCP(cwd, credDir string, spec workerwire.LaunchSpec) error {
 	if spec.Credential == "" {
-		return e.plantMCP(cwd)
+		return e.plantMCP(cwd, spec.MCPServers)
 	}
 	b, err := os.ReadFile(filepath.Join(e.Root, "hub-mcp.json"))
 	if err != nil {
@@ -103,6 +139,7 @@ func (e *Executor) plantHubMCP(cwd, credDir string, spec workerwire.LaunchSpec) 
 	if err = os.WriteFile(tokenFile, []byte(spec.Credential+"\n"), 0600); err != nil {
 		return err
 	}
+	config = grantedOnly(config, spec.MCPServers)
 	entry := config.Servers["tether"]
 	args := withScopes(entry.Args, spec.MCPScopes)
 	entry.Args = append([]string{"mcp-relay", "--token-file", tokenFile, "--", entry.Command}, append(args, "--token-stdin")...)
