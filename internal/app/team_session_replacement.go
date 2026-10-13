@@ -53,7 +53,7 @@ func (s *Service) replaceRetainedTeamExecution(ctx context.Context, key string, 
 		return err
 	}
 	err = ts.WithTransaction(ctx, func(conn *sql.Conn) error {
-		_, err := s.Store.PrepareTeamReplacementTx(ctx, conn, store.TeamReplacementInput{Source: *row, SourcePlanJSON: sourcePlanJSON, DestinationID: id, Workspace: ws.Root, IntentKey: key, Plan: plan, CheckedPID: row.PID.Int64, CredentialMode: s.Catalog.Global.Identity.EffectiveMode()})
+		_, err := s.Store.PrepareTeamReplacementTx(ctx, conn, store.TeamReplacementInput{Source: *row, SourcePlanJSON: sourcePlanJSON, DestinationID: id, Workspace: ws.Root, IntentKey: key, Plan: plan, CheckedPID: row.PID.Int64, CredentialMode: s.cat().Global.Identity.EffectiveMode()})
 		return err
 	})
 	if err != nil {

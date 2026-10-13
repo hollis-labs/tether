@@ -141,7 +141,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 	if wsRoot == "" {
 		// Explicit catalog workspace_root wins; cat.Paths supplies the
 		// go-apppaths fallback only when global.yaml omits the key.
-		wsRoot = filepath.Join(config.ResolveWorkspaceRoot(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths), plan.ProjectID)
+		wsRoot = filepath.Join(config.ResolveWorkspaceRoot(s.cat().Global.Catalog.Defaults, s.cat().Paths), plan.ProjectID)
 	}
 	if err = workspace.MaterializeWorkRoot(wsRoot, sessID, plan); err != nil {
 		return nil, err
@@ -318,13 +318,13 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		hasProfile bool
 	)
 	if plan.SandboxProfile != "" {
-		sp, hasProfile, err = s.Catalog.SandboxProfile(plan.CatalogAgent(), plan.SandboxProfile)
+		sp, hasProfile, err = s.cat().SandboxProfile(plan.CatalogAgent(), plan.SandboxProfile)
 		if err == nil {
 			// The catalog agent may have been pinned since create.
-			err = s.Catalog.CheckSandboxOverride(plan.CatalogAgent(), plan.SandboxProfile)
+			err = s.cat().CheckSandboxOverride(plan.CatalogAgent(), plan.SandboxProfile)
 		}
 	} else {
-		sp, hasProfile, err = s.Catalog.AgentSandbox(plan.CatalogAgent())
+		sp, hasProfile, err = s.cat().AgentSandbox(plan.CatalogAgent())
 	}
 	if err != nil {
 		exit := 1
@@ -375,8 +375,8 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	// extractRefs comes from the resolved launch plan (CW-20260912-0112),
 	// falling back to catalog config if unpopulated on an older plan.
 	extractRefs := plan.ExtractRefs
-	if !extractRefs && s.Catalog != nil {
-		extractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
+	if !extractRefs && s.cat() != nil {
+		extractRefs = config.EffectiveExtractRefs(s.cat().Global, s.cat().Projects[plan.ProjectID], s.cat().Launches[plan.LaunchID])
 	}
 	ownership, err := s.mcpOwnership()
 	if err != nil {
@@ -385,8 +385,8 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, err
 	}
 	var policyConfig mcpgateway.Config
-	if s.Catalog != nil {
-		policyConfig = s.Catalog.Global.MCP
+	if s.cat() != nil {
+		policyConfig = s.cat().Global.MCP
 	}
 	policy, err := sessionMCPPolicy(sessionID, row.LogicalAgentID, plan, policyConfig)
 	if err == nil {
@@ -409,7 +409,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 	token, err := s.mintSessionCredential(ctx, sessionID)
 	if err != nil {
-		if plan.NativeResumeOnly || errors.Is(err, store.ErrSessionReplacementUnavailable) || s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
+		if plan.NativeResumeOnly || errors.Is(err, store.ErrSessionReplacementUnavailable) || s.cat() != nil && s.cat().Global.Identity.EffectiveMode() == string(identity.Enforce) {
 			return nil, err
 		}
 		log.Print("WARNING: session credential unavailable; observe launch continuing anonymously")

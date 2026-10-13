@@ -30,5 +30,5 @@ func resolveLaunchHost(cat *config.Catalog) LaunchHost {
 
 // LaunchHost reports the current hosting selection without creating a host.
 func (s *Service) LaunchHost() LaunchHost {
-	return resolveLaunchHost(s.Catalog)
+	return resolveLaunchHost(s.cat())
 }

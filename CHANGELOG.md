@@ -8,6 +8,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add catalog hot reload (CW-20261013-0002): `POST /catalog/reload` and the
+  `tether_catalog_reload` MCP tool re-read the catalog, validate it, and only then
+  swap it in, so agents, projects, providers, launches and sandbox profiles edited
+  on disk apply to new launches without a daemon restart. A catalog that does not
+  validate changes nothing. `global.yaml` daemon settings are not swapped and are
+  reported as `restart_required`. `app.Service` readers now go through
+  `CurrentCatalog()`.
 - Add per-session credentials and stable identity for worker sessions. The hub
   mints a session-bound bearer at launch (scopes from the new optional agent
   field `mcp_scopes`, default `message.write,registry.write,groups.write`),

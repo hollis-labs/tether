@@ -12,8 +12,8 @@ import (
 
 // ListProjects returns a flat slice of the catalog projects in iteration order.
 func (s *Service) ListProjects() []config.Project {
-	out := make([]config.Project, 0, len(s.Catalog.Projects))
-	for _, p := range s.Catalog.Projects {
+	out := make([]config.Project, 0, len(s.cat().Projects))
+	for _, p := range s.cat().Projects {
 		out = append(out, p)
 	}
 	return out
@@ -26,8 +26,8 @@ func (s *Service) ListLaunchContexts() []config.LaunchContext {
 
 // ListAgents returns a flat slice of the catalog agents in iteration order.
 func (s *Service) ListAgents() []config.Agent {
-	out := make([]config.Agent, 0, len(s.Catalog.Agents))
-	for _, a := range s.Catalog.Agents {
+	out := make([]config.Agent, 0, len(s.cat().Agents))
+	for _, a := range s.cat().Agents {
 		out = append(out, a)
 	}
 	return out
@@ -40,8 +40,8 @@ func (s *Service) ListLaunchProfiles() []config.LaunchProfile {
 
 // ListProviders returns a flat slice of the catalog providers in iteration order.
 func (s *Service) ListProviders() []config.Provider {
-	out := make([]config.Provider, 0, len(s.Catalog.Providers))
-	for _, p := range s.Catalog.Providers {
+	out := make([]config.Provider, 0, len(s.cat().Providers))
+	for _, p := range s.cat().Providers {
 		out = append(out, p)
 	}
 	return out
@@ -77,7 +77,7 @@ func (s *Service) resolveWithInput(in CreateSessionInput) (*launch.Plan, error) 
 //
 // Launches and upstream enablement are refreshed. Projects, agents, providers and sandbox
 // profiles stay as loaded at startup, because session creation reads the
-// agent's permission mode and sandbox profile from s.Catalog directly; a
+// agent's permission mode and sandbox profile from s.cat() directly; a
 // fresh agent here would reach that code with no sandbox entry to find. A
 // launch that names something added after startup is refused by
 // ValidateLaunch with an error that says so.
@@ -88,28 +88,28 @@ func (s *Service) resolveWithInput(in CreateSessionInput) (*launch.Plan, error) 
 // load errors are logged, and added to the not-found error when the startup
 // launches do not have launchID either.
 func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
-	if s.Catalog == nil || s.CatalogRoot == "" {
-		return s.Catalog, nil
+	if s.cat() == nil || s.CatalogRoot == "" {
+		return s.cat(), nil
 	}
 	fresh, err := config.LoadLayered(s.CatalogRoot)
 	if err != nil {
 		log.Printf("app: launch %q: re-reading catalog launches failed, using the launches loaded at startup: %v", launchID, err)
-		if _, ok := s.Catalog.Launches[launchID]; !ok {
+		if _, ok := s.cat().Launches[launchID]; !ok {
 			return nil, fmt.Errorf("launch %q %w in the launches loaded at startup, and re-reading the catalog failed: %w", launchID, launch.ErrLaunchNotFound, err)
 		}
-		return s.Catalog, nil
+		return s.cat(), nil
 	}
 	if err := fresh.ValidateLaunchMCPGrants(launchID); err != nil {
 		return nil, err
 	}
-	cat := *s.Catalog
+	cat := *s.cat()
 	cat.Launches = fresh.Launches
 	cat.MCPServerEnabled = fresh.MCPServerEnabled
 	if _, ok := cat.Launches[launchID]; !ok {
 		return &cat, nil // launch.Resolve reports the not-found
 	}
 	if err := cat.ValidateLaunch(launchID); err != nil {
-		return nil, fmt.Errorf("%w (projects, agents and providers are loaded when the daemon starts; restart it to pick up new ones)", err)
+		return nil, fmt.Errorf("%w (agents, projects and providers are loaded when the daemon starts or when the catalog is reloaded; reload the catalog or restart the daemon to pick up new ones)", err)
 	}
 	return &cat, nil
 }
@@ -117,13 +117,13 @@ func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
 // ResolveComposition resolves a launch through the compositional launch resolution engine
 // (internal/launchprofile), walking extends chains and folding project scope and launch inputs.
 func (s *Service) ResolveComposition(ctx context.Context, in launchprofile.CompositionInput) (*launchprofile.ResolvedComposition, error) {
-	resolver := launchprofile.NewResolver(s.Catalog)
+	resolver := launchprofile.NewResolver(s.cat())
 	return resolver.Resolve(ctx, in)
 }
 
 // ResolveCompositionSnapshot produces an immutable, deterministic snapshot and SHA-256 digest
 // for a compositional launch.
 func (s *Service) ResolveCompositionSnapshot(ctx context.Context, in launchprofile.CompositionInput) (*launchprofile.Snapshot, error) {
-	resolver := launchprofile.NewResolver(s.Catalog)
+	resolver := launchprofile.NewResolver(s.cat())
 	return resolver.ResolveSnapshot(ctx, in)
 }

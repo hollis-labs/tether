@@ -78,6 +78,9 @@ type Deps struct {
 	// to a temp catalog dir.
 	RegistryCatalogRoot string
 
+	// CatalogReload, when non-nil, enables POST /catalog/reload (CW-20261013-0002).
+	CatalogReload CatalogReloader
+
 	// Groups, when non-nil, enables the /groups/... + /mentions
 	// v060-05 group-messaging routes (registerGroupRoutes). In
 	// production this is the same *registry.Service instance used by
@@ -173,6 +176,7 @@ type Server struct {
 	Registry            RegistryService
 	Settings            SettingsService
 	RegistryCatalogRoot string
+	CatalogReload       CatalogReloader
 	Groups              GroupsService
 	LogsDir             string
 	DeliveryClaims      DeliveryClaimer
@@ -219,6 +223,7 @@ func NewHandler(deps Deps) http.Handler {
 		Registry:            deps.Registry,
 		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
+		CatalogReload:       deps.CatalogReload,
 		Groups:              deps.Groups,
 		LogsDir:             deps.LogsDir,
 		DeliveryClaims:      deps.DeliveryClaims,
@@ -239,6 +244,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEventRoutes(router)
 	s.registerEnvironmentRoutes(router)
 	s.registerCatalogRoutes(router)
+	s.registerCatalogReloadRoutes(router)
 	s.registerChatRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)

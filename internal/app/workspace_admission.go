@@ -307,8 +307,8 @@ func (s *Service) launchScratchControlRoots(ctx context.Context, workspaceRoot s
 		return nil, store.ErrWorkspaceAllocationConflict
 	}
 	roots := []string{filepath.Dir(databasePath), config.Expand(s.CatalogRoot)}
-	if s.Catalog != nil {
-		for _, root := range runDirs(s.Catalog.Global.Daemon) {
+	if s.cat() != nil {
+		for _, root := range runDirs(s.cat().Global.Daemon) {
 			if _, err := os.Lstat(root); errors.Is(err, fs.ErrNotExist) {
 				continue
 			} else if err != nil {
@@ -316,7 +316,7 @@ func (s *Service) launchScratchControlRoots(ctx context.Context, workspaceRoot s
 			}
 			roots = append(roots, root)
 		}
-		for _, project := range s.Catalog.Projects {
+		for _, project := range s.cat().Projects {
 			root := filepath.Join(config.Expand(project.RepoRoot), ".tether")
 			if !filepath.IsAbs(root) {
 				continue // An unusable unrelated project issues no effect here.

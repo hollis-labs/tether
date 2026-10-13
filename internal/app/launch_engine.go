@@ -74,7 +74,7 @@ func normalizeLaunchEngine(raw string) LaunchEngine {
 // the toggle without a restart; the resolver itself (built over the
 // registry) is still constructed once.
 func (s *Service) launchEngine() LaunchEngine {
-	return resolveLaunchEngine(s.Catalog)
+	return resolveLaunchEngine(s.cat())
 }
 
 // specResolverFor lazily constructs the S5 Spec-path resolver and returns
@@ -93,7 +93,7 @@ func (s *Service) specResolverFor() (*specresolve.Resolver, error) {
 			return
 		}
 		var opts []specresolve.Option
-		if root := resolveLaunchSpecsRoot(s.Catalog); root != "" {
+		if root := resolveLaunchSpecsRoot(s.cat()); root != "" {
 			opts = append(opts, specresolve.WithSpecsRoot(root))
 		}
 		s.specResolver, s.specResolverErr = specresolve.NewResolver(reg, opts...)

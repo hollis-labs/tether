@@ -23,8 +23,8 @@ type nativeCredentialCeiling struct {
 func (s *Service) nativeOnlyCredentialCeiling(ctx context.Context, plan *launch.Plan) (nativeCredentialCeiling, error) {
 	var floor nativeCredentialCeiling
 	mode := string(identity.Observe)
-	if s.Catalog != nil {
-		mode = s.Catalog.Global.Identity.EffectiveMode()
+	if s.cat() != nil {
+		mode = s.cat().Global.Identity.EffectiveMode()
 	}
 	if mode == string(identity.Off) {
 		return floor, nil
@@ -74,8 +74,8 @@ func (s *Service) nativeOnlyLaunchAuthority(ctx context.Context, plan *launch.Pl
 		return err
 	}
 	var cfg mcpgateway.Config
-	if s.Catalog != nil {
-		cfg = s.Catalog.Global.MCP
+	if s.cat() != nil {
+		cfg = s.cat().Global.MCP
 	}
 	policy, err := sessionMCPPolicy(plan.ResumeSourceSessionID, plan.LogicalAgentID, plan, cfg)
 	if err != nil {
@@ -87,8 +87,8 @@ func (s *Service) nativeOnlyLaunchAuthority(ctx context.Context, plan *launch.Pl
 	}
 	policy.UpstreamOwnership = ownership
 	policy.ExtractRefs = plan.ExtractRefs
-	if !policy.ExtractRefs && s.Catalog != nil {
-		policy.ExtractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
+	if !policy.ExtractRefs && s.cat() != nil {
+		policy.ExtractRefs = config.EffectiveExtractRefs(s.cat().Global, s.cat().Projects[plan.ProjectID], s.cat().Launches[plan.LaunchID])
 	}
 	_, err = s.nativeOnlyPolicy(ctx, plan, policy.Seal())
 	return err

@@ -15,10 +15,10 @@ var (
 )
 
 func (s *Service) eventsRetention() time.Duration {
-	if s.Catalog == nil {
+	if s.cat() == nil {
 		return 0
 	}
-	return s.Catalog.Global.Daemon.EventsRetention.Window()
+	return s.cat().Global.Daemon.EventsRetention.Window()
 }
 
 // RetentionSweep is the post-delete integration hook. Counts and receipts

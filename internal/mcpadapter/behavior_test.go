@@ -98,6 +98,7 @@ var clientMethodWrites = map[string]bool{
 	"AssignSessionWorkstream":       true,
 	"EnsureSessionWorkstream":       true,
 	"AttachSessionRef":              true,
+	"ReloadCatalog":                 true,
 
 	// Sub-client accessors. Returning the sub-client modifies nothing; what it
 	// is then asked to do is classified in subClientWrites.

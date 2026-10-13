@@ -122,17 +122,17 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 	// Refuse a session whose agent, after any agent_file or agent_inline
 	// override, names a sandbox profile the catalog does not define, rather
 	// than create one that would run unsandboxed (CW-20261001-0130).
-	if _, _, err := s.Catalog.SandboxProfile(plan.CatalogAgent(), effectiveAgent.Permissions.DefaultSandbox); err != nil {
+	if _, _, err := s.cat().SandboxProfile(plan.CatalogAgent(), effectiveAgent.Permissions.DefaultSandbox); err != nil {
 		return err
 	}
 	// An override may tighten an unsandboxed catalog agent but not change a
 	// pinned one, until caller identity lands (CW-20261001-0145).
-	if err := s.Catalog.CheckSandboxOverride(plan.CatalogAgent(), effectiveAgent.Permissions.DefaultSandbox); err != nil {
+	if err := s.cat().CheckSandboxOverride(plan.CatalogAgent(), effectiveAgent.Permissions.DefaultSandbox); err != nil {
 		return err
 	}
 	// Record an override's sandbox on the plan so LaunchSession applies it;
 	// the catalog agent's is what it reads otherwise (CW-20261001-0145).
-	if eff := effectiveAgent.Permissions.DefaultSandbox; eff != s.Catalog.Agents[plan.CatalogAgent()].Permissions.DefaultSandbox {
+	if eff := effectiveAgent.Permissions.DefaultSandbox; eff != s.cat().Agents[plan.CatalogAgent()].Permissions.DefaultSandbox {
 		plan.SandboxProfile = eff
 	}
 
@@ -141,7 +141,7 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 		return err
 	}
 
-	if effectiveAgent.Route != s.Catalog.Agents[plan.CatalogAgent()].Route {
+	if effectiveAgent.Route != s.cat().Agents[plan.CatalogAgent()].Route {
 		plan.Route = effectiveAgent.Route
 	}
 	if in.AgentFile != "" || in.AgentInline != "" {
@@ -170,7 +170,7 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 	if err := s.validatePlanMCPGrants(plan, bootProfile, in.BootProfileFile); err != nil {
 		return err
 	}
-	applyPermissionMode(plan, s.Catalog.Global, effectiveAgent)
+	applyPermissionMode(plan, s.cat().Global, effectiveAgent)
 	if err := s.applyCallerInjection(plan, in.Injection); err != nil {
 		return err
 	}
@@ -235,7 +235,7 @@ func (s *Service) RefreshBootProfilePrompt(ctx context.Context, plan *launch.Pla
 // resolveEffectiveAgent starts from the catalog-resolved agent and applies the
 // Tier-2 file then inline merges (inline wins).
 func (s *Service) resolveEffectiveAgent(plan *launch.Plan, in CreateSessionInput) (config.Agent, error) {
-	baseAgent, ok := s.Catalog.Agents[plan.CatalogAgent()]
+	baseAgent, ok := s.cat().Agents[plan.CatalogAgent()]
 	if !ok {
 		// The catalog should always have the agent the launch references;
 		// missing here means the launch resolver let through an inconsistent

@@ -39,7 +39,7 @@ var apiTopLevelPaths = []string{
 	"/auth/context",
 	"/broker/envelopes", "/broker/envelopes/", "/broker/requests",
 	"/channels", "/channels/",
-	"/catalog/agents", "/catalog/launches", "/catalog/projects", "/catalog/providers",
+	"/catalog/agents", "/catalog/launches", "/catalog/projects", "/catalog/providers", "/catalog/reload",
 	"/chat/agents", "/chat/agents/",
 	"/docs/mcp", "/docs/mcp/",
 	"/events", "/events/stream",
