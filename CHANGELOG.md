@@ -8,6 +8,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Extend Forums with optional single-level categories, shared namespace boards,
+  category/board/thread/message CRUD, archive/restore, board/thread/message
+  move and clone, subtree forks, subjects and attachment references over HTTP/MCP.
+  Transfers maintain reply structure, counts, search and correlation refs atomically;
+  management requires board ownership/operator access. Migration 0075 removes
+  namespace uniqueness while preserving existing forum data.
+
 - Add per-session credentials and stable identity for worker sessions. The hub
   mints a session-bound bearer at launch (scopes from the new optional agent
   field `mcp_scopes`, default `message.write,registry.write,groups.write`),
