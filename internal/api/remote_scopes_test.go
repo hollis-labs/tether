@@ -100,6 +100,18 @@ func TestRemoteScopesEnforceIndependentAndPayloadCases(t *testing.T) {
 		scopes             []string
 		want               int
 	}{
+
+		{"GET", "/forums/categories", "", []string{"read"}, 204},
+		{"POST", "/forums/categories", `{}`, []string{"operate", "admin"}, 403},
+		{"PATCH", "/forums/categories/plans", `{}`, []string{"operate"}, 403},
+		{"PATCH", "/forums/board", `{}`, []string{"read"}, 403},
+		{"PATCH", "/forums/board", `{}`, []string{"operate"}, 204},
+		{"DELETE", "/forums/topics/thread", `{}`, []string{"operate"}, 204},
+		{"POST", "/forums/topics/thread/fork", `{}`, []string{"operate"}, 204},
+		{"POST", "/forums/posts/post/move", `{}`, []string{"read"}, 403},
+		{"POST", "/forums/posts/post/move", `{}`, []string{"operate"}, 204},
+		{"POST", "/forums/board/archive", `{}`, []string{"operate"}, 204},
+		{"POST", "/forums/board/participants", `{}`, []string{"operate", "admin"}, 403},
 		{"GET", "/sessions", "", []string{"read"}, 204},
 		{"POST", "/sessions", `{"launch":"demo"}`, []string{"read"}, 403},
 		{"POST", "/sessions", `{"launch":"demo"}`, []string{"operate"}, 204},
