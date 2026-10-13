@@ -129,6 +129,16 @@ const (
 	wakeParkEntryTTL = 10 * time.Minute
 )
 
+// wakeMaxMessageAge bounds how old a message may be for the sweep to wake a
+// recipient for it. Binding a URN to a live session makes the agent the
+// recipient of mail addressed to that URN earlier; without a bound, that
+// backlog replays as one turn per old message (13 three-day-old mails woke
+// a portfolio manager on 2026-10-13). A message older than this stays in the
+// inbox, unread and consumable, but is never woken for by the sweep; the
+// recipient pulls it with tether_message_inbox. Zero or negative disables
+// the bound. A variable so tests can shorten it.
+var wakeMaxMessageAge = 6 * time.Hour
+
 // Retry backoffs for a Nacked wake attempt: short for "try again once the
 // current turn probably finished," longer for "nothing observable changed."
 // Variables so tests can make a nacked delivery immediately ready again.
@@ -905,6 +915,11 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			}
 			msg, err := st.MessagingStore().Get(ctx, string(lr.rd.MessageID))
 			if err != nil {
+				park.parkIneligible(lr.rd.ID, now)
+				continue
+			}
+			if wakeMaxMessageAge > 0 && !msg.CreatedAt.IsZero() && now.Sub(msg.CreatedAt) > wakeMaxMessageAge {
+				// Quiet backlog: old mail is left for the inbox, not replayed as a turn.
 				park.parkIneligible(lr.rd.ID, now)
 				continue
 			}
