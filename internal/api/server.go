@@ -81,6 +81,10 @@ type Deps struct {
 	// CatalogReload, when non-nil, enables POST /catalog/reload (CW-20261013-0002).
 	CatalogReload CatalogReloader
 
+	// CatalogApply, when non-nil, enables the /catalog/plans and
+	// /catalog/backups routes (CW-20261012-0124).
+	CatalogApply CatalogApplyService
+
 	// Groups, when non-nil, enables the /groups/... + /mentions
 	// v060-05 group-messaging routes (registerGroupRoutes). In
 	// production this is the same *registry.Service instance used by
@@ -177,14 +181,16 @@ type Server struct {
 	Settings            SettingsService
 	RegistryCatalogRoot string
 	CatalogReload       CatalogReloader
-	Groups              GroupsService
-	LogsDir             string
-	DeliveryClaims      DeliveryClaimer
-	SessionBootstrap    SessionBootstrapStore
-	DeliveryTrace       DeliveryTraceStore
-	DeliveryRepair      DeliveryTraceStore
-	Retention           RetentionStore
-	RoutingReplies      RoutingReplyService
+
+	CatalogApply     CatalogApplyService
+	Groups           GroupsService
+	LogsDir          string
+	DeliveryClaims   DeliveryClaimer
+	SessionBootstrap SessionBootstrapStore
+	DeliveryTrace    DeliveryTraceStore
+	DeliveryRepair   DeliveryTraceStore
+	Retention        RetentionStore
+	RoutingReplies   RoutingReplyService
 	// IdentityMode and IdentityAudit drive sender stamping and ?as=
 	// verification on /messages. Enforce refuses with 403; any other mode
 	// records the finding and keeps the request.
@@ -224,16 +230,18 @@ func NewHandler(deps Deps) http.Handler {
 		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		CatalogReload:       deps.CatalogReload,
-		Groups:              deps.Groups,
-		LogsDir:             deps.LogsDir,
-		DeliveryClaims:      deps.DeliveryClaims,
-		SessionBootstrap:    deps.SessionBootstrap,
-		DeliveryTrace:       deps.DeliveryTrace,
-		DeliveryRepair:      deps.DeliveryRepair,
-		Retention:           deps.Retention,
-		RoutingReplies:      deps.RoutingReplies,
-		IdentityMode:        deps.IdentityMode,
-		IdentityAudit:       deps.IdentityAudit,
+
+		CatalogApply:     deps.CatalogApply,
+		Groups:           deps.Groups,
+		LogsDir:          deps.LogsDir,
+		DeliveryClaims:   deps.DeliveryClaims,
+		SessionBootstrap: deps.SessionBootstrap,
+		DeliveryTrace:    deps.DeliveryTrace,
+		DeliveryRepair:   deps.DeliveryRepair,
+		Retention:        deps.Retention,
+		RoutingReplies:   deps.RoutingReplies,
+		IdentityMode:     deps.IdentityMode,
+		IdentityAudit:    deps.IdentityAudit,
 	}
 	router := http.NewServeMux()
 	s.registerDocsRoutes(router)
@@ -245,6 +253,8 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEnvironmentRoutes(router)
 	s.registerCatalogRoutes(router)
 	s.registerCatalogReloadRoutes(router)
+
+	s.registerCatalogApplyRoutes(router)
 	s.registerChatRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)

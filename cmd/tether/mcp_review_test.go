@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -68,7 +69,7 @@ func TestBadGatewayModeDoesNotBrickCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generic catalog load: %v", err)
 	}
-	if result := checkMCPDiscoveryMode(cat); result.Status != statusFail {
+	if result := catalogcheck.MCPDiscoveryMode(cat); result.Status != statusFail {
 		t.Fatalf("doctor=%+v", result)
 	}
 	cmd := &cobra.Command{}
@@ -152,7 +153,7 @@ func TestDoctorValidatesEveryProfileCatalogOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	cat := &config.Catalog{Global: config.Global{MCP: mcpgateway.Config{Profiles: map[string]mcpgateway.Profile{"unknown": {Servers: []string{"nonexistent"}}, "disabled": {Servers: []string{"gamma"}}, "bad": {Tools: mcpgateway.ToolRules{Allow: []string{"["}}}, "pins": {Servers: []string{"tether"}, Order: []string{"typo"}}}}}}
-	results := checkMCPProfiles(cat, root)
+	results := catalogcheck.MCPProfiles(cat, root)
 	counts := map[string]int{}
 	for _, result := range results {
 		counts[result.Status]++
@@ -171,7 +172,7 @@ func TestDoctorNamingOfflineDoesNotSpawnOrLoadSecrets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "tether.yaml"), []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	checks := checkMCPNamingConfig(root)
+	checks := catalogcheck.MCPNamingConfig(root)
 	reserved, prefix := false, false
 	for _, c := range checks {
 		if strings.Contains(c.Message, "reserved") {
@@ -200,7 +201,7 @@ func TestDoctorInvalidPrefixReportsFileWithoutBreakingCatalog(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "broken.yaml"), []byte("id: alpha\ntool_prefix: [not, a, string]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	checks := checkMCPNamingConfig(root)
+	checks := catalogcheck.MCPNamingConfig(root)
 	if len(checks) != 1 || checks[0].Status != statusWarn || !strings.Contains(checks[0].Message, "broken.yaml") || !strings.Contains(checks[0].Message, "ignored") {
 		t.Fatalf("checks %+v", checks)
 	}

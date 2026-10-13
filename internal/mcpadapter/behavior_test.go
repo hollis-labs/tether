@@ -106,6 +106,7 @@ var clientMethodWrites = map[string]bool{
 	"Groups":         false,
 	"Registry":       false,
 	"ScopedBindings": false,
+	"CatalogApply":   false,
 }
 
 // subClientWrites classifies the methods called ON a sub-client, e.g.
@@ -121,12 +122,14 @@ var subClientWrites = map[string]bool{
 	"ListForMember": false, "Lookup": false, "LookupWithInclude": false, "LookupFull": false, "Search": false, "LookupBy": false,
 	"LookupByWithInclude": false, "LookupByFull": false,
 	"Current": false, "List": false, "Resolve": false, "Revisions": false,
-	"ListForTarget": false, "ResolveSingle": false, "ListRevisions": false,
+	"ListForTarget": false, "ResolveSingle": false, "ListRevisions": false, "Get": false,
 	// Writes.
 	"Create": true, "AddMember": true, "RemoveMember": true, "Leave": true,
 	"Send": true, "MarkRead": true, "SetMemberRole": true, "Archive": true,
 	"Register": true, "Deregister": true, "UpdateSelf": true, "Sync": true,
 	"Merge": true, "Lease": true, "Renew": true, "Revoke": true, "Set": true,
+	// Catalog apply (CW-20261012-0124).
+	"Plan": true, "Apply": true, "Backups": false, "Validate": false, "Files": false, "ReadFile": false, "History": false,
 }
 
 type registration struct {

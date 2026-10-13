@@ -57,7 +57,7 @@ func (c *Client) ForumExecute(ctx context.Context, op string, in f.Request) (any
 	if e != nil {
 		return nil, e
 	}
-	if method == http.MethodPost {
+	if method != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, e := c.http.Do(req)

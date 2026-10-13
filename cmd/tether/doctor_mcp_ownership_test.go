@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/hollis-labs/tether/internal/config"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 func TestDoctorDaemonOwnershipRequiresEndpoint(t *testing.T) {

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 )
 
 func TestDoctorMCPCredentialFiles(t *testing.T) {
@@ -24,14 +26,14 @@ func TestDoctorMCPCredentialFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp-servers", "test.yaml"), yaml, 0600); err != nil {
 		t.Fatal(err)
 	}
-	checks := checkMCPCredentialFiles(dir)
+	checks := catalogcheck.MCPCredentialFiles(dir)
 	if len(checks) != 1 || checks[0].Status != statusOK {
 		t.Fatalf("unexpected pass: %+v", checks)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	checks = checkMCPCredentialFiles(dir)
+	checks = catalogcheck.MCPCredentialFiles(dir)
 	if len(checks) != 1 || checks[0].Status != statusFail || !strings.Contains(checks[0].Message, path) {
 		t.Fatalf("unexpected fail: %+v", checks)
 	}

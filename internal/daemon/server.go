@@ -126,6 +126,10 @@ type Server struct {
 	RegistryCatalogRoot string
 	// CatalogReload is optional; when set, POST /catalog/reload is mounted.
 	CatalogReload api.CatalogReloader
+
+	// CatalogApply is optional; when set, /catalog/plans and /catalog/backups
+	// are mounted (CW-20261012-0124).
+	CatalogApply api.CatalogApplyService
 	// Groups is optional; when set, /groups/* + /mentions v060-05
 	// group-messaging endpoints are mounted. In production this is the
 	// same *registry.Service instance used by Registry — the
@@ -574,15 +578,17 @@ func (s *Server) handler(remote bool) http.Handler {
 			Settings:            s.Settings,
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			CatalogReload:       s.CatalogReload,
-			Groups:              s.Groups,
-			LogsDir:             s.LogsDir,
-			SessionBootstrap:    s.SessionBootstrap,
-			DeliveryTrace:       s.DeliveryTrace,
-			DeliveryRepair:      s.DeliveryRepair,
-			Retention:           s.Retention,
-			RoutingReplies:      s.RoutingReplies,
-			IdentityMode:        s.Config.IdentityMode,
-			IdentityAudit:       s.recordIdentityObservation,
+
+			CatalogApply:     s.CatalogApply,
+			Groups:           s.Groups,
+			LogsDir:          s.LogsDir,
+			SessionBootstrap: s.SessionBootstrap,
+			DeliveryTrace:    s.DeliveryTrace,
+			DeliveryRepair:   s.DeliveryRepair,
+			Retention:        s.Retention,
+			RoutingReplies:   s.RoutingReplies,
+			IdentityMode:     s.Config.IdentityMode,
+			IdentityAudit:    s.recordIdentityObservation,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -904,6 +910,13 @@ func (s *Server) apiMounts() []apiMount {
 		{"/catalog/providers", s.Catalog != nil},
 		{"/catalog/launches", s.Catalog != nil},
 		{"/catalog/reload", s.CatalogReload != nil},
+
+		{"/catalog/plans", s.CatalogApply != nil},
+		{"/catalog/plans/", s.CatalogApply != nil},
+		{"/catalog/backups", s.CatalogApply != nil},
+		{"/catalog/validate", s.CatalogApply != nil},
+		{"/catalog/files", s.CatalogApply != nil},
+		{"/catalog/audit", s.CatalogApply != nil},
 
 		// Chat roster (CW-20261012-0099). api registers these only when it has
 		// both a LaunchService and a catalog (registerChatRoutes), so the mount
