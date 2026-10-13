@@ -192,3 +192,67 @@ func TestHierarchyAuthorizationAndRollback(t *testing.T) {
 		t.Fatal("partial move committed")
 	}
 }
+
+func TestHierarchySortOrder(t *testing.T) {
+	s, _, c := fixture(t)
+	ctx := context.Background()
+	ns := "app/torque/forum/ordered"
+	run := func(op string, r f.Request) map[string]any { t.Helper(); return execute(t, s, c, op, r) }
+	// IDs deliberately disagree with sort order; tied values must paginate by ID.
+	for _, item := range []struct {
+		id    string
+		order int64
+	}{{"a", 20}, {"z", -10}, {"y", -10}} {
+		run("category_create", f.Request{ID: item.id, Namespace: ns, Title: item.id, SortOrder: ptr(item.order)})
+		run("forum_create", f.Request{ID: item.id, Namespace: ns, Title: item.id, SortOrder: ptr(item.order), Options: f.Options{CategoryID: ptr("a")}})
+	}
+	for _, op := range []string{"category_list", "forum_list"} {
+		r := f.Request{Namespace: ns, Options: f.Options{Limit: 1}}
+		if op == "forum_list" {
+			r.CategoryID = ptr("a")
+		}
+		for i, want := range []string{"y", "z", "a"} {
+			pg := run(op, r)
+			rows := pg["items"].([]any)
+			if len(rows) != 1 || rows[0].(map[string]any)["id"] != want || pg["has_more"] != (i < 2) {
+				t.Fatalf("%s: %v", op, pg)
+			}
+			if i < 2 {
+				r.Cursor = pg["next_cursor"].(string)
+			}
+		}
+		r.Namespace = "app/torque/forum/other"
+		if _, err := s.Execute(ctx, c, op, r); !errors.Is(err, f.ErrInvalid) {
+			t.Fatalf("cursor crossed namespace: %v", err)
+		}
+	}
+	// Explicit zero is a change; omission preserves the stored order.
+	run("category_update", f.Request{Options: f.Options{CategoryID: ptr("a")}, SortOrder: ptr(int64(0))})
+	run("category_update", f.Request{Options: f.Options{CategoryID: ptr("a")}, Title: "Renamed"})
+	if got := run("category_get", f.Request{Options: f.Options{CategoryID: ptr("a")}})["category"].(map[string]any)["sort_order"]; got != float64(0) {
+		t.Fatal(got)
+	}
+	run("forum_update", f.Request{ForumID: "a", SortOrder: ptr(int64(0))})
+	run("forum_update", f.Request{ForumID: "a", Title: "Renamed"})
+	if got := run("forum_get", f.Request{ForumID: "a"})["forum"].(map[string]any)["sort_order"]; got != float64(0) {
+		t.Fatal(got)
+	}
+	run("forum_move", f.Request{ForumID: "z", DestinationCategoryID: ptr("")})
+	run("forum_clone", f.Request{ForumID: "z", ID: "copy"})
+	run("forum_clone", f.Request{ForumID: "z", ID: "first", SortOrder: ptr(int64(-20))})
+	pg := run("forum_list", f.Request{Namespace: ns, Options: f.Options{CategoryID: ptr("")}})
+	for i, want := range []string{"first", "copy", "z"} {
+		if pg["items"].([]any)[i].(map[string]any)["id"] != want {
+			t.Fatal(pg)
+		}
+	}
+	run("forum_move", f.Request{ForumID: "z", DestinationCategoryID: ptr("a"), SortOrder: ptr(int64(30))})
+	if got, err := s.Store.GetForum(ctx, "z"); err != nil || got.SortOrder != 30 || got.CategoryID != "a" {
+		t.Fatalf("move: %+v %v", got, err)
+	}
+	for _, op := range []string{"forum_create", "category_create"} {
+		if _, err := s.Execute(ctx, c, op, f.Request{ID: "invalid", Namespace: ns, Title: "Invalid", SortOrder: ptr(int64(9007199254740992))}); !errors.Is(err, f.ErrInvalid) {
+			t.Fatalf("unsafe sort_order: %v", err)
+		}
+	}
+}

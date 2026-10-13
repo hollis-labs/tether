@@ -19,11 +19,11 @@ func stringVal(v *string) string {
 func boolVal(v *bool) bool  { return v != nil && *v }
 func jsonText(v any) string { b, _ := json.Marshal(v); return string(b) }
 
-const categoryCols = `id,namespace,title,description,archived,owner_type,owner_id,created_at,updated_at`
+const categoryCols = `id,namespace,title,description,archived,owner_type,owner_id,created_at,updated_at,sort_order`
 
 func scanCategory(s scanner) (f.Category, error) {
 	var c f.Category
-	e := s.Scan(&c.ID, &c.Namespace, &c.Title, &c.Description, &c.Archived, &c.OwnerType, &c.OwnerID, &c.CreatedAt, &c.UpdatedAt)
+	e := s.Scan(&c.ID, &c.Namespace, &c.Title, &c.Description, &c.Archived, &c.OwnerType, &c.OwnerID, &c.CreatedAt, &c.UpdatedAt, &c.SortOrder)
 	return c, mapErr(e)
 }
 
@@ -35,11 +35,11 @@ func (s *Store) GetCategory(ctx context.Context, c f.Caller, id string) (f.Categ
 func (s *Store) ListCategories(ctx context.Context, c f.Caller, o f.Options) (f.Page[f.Category], error) {
 	pg := f.Page[f.Category]{Items: []f.Category{}}
 	scope := "categories:" + c.Kind + ":" + c.ID
-	key, e := decodeCursor(scope, o)
+	key, e := decodeOrderCursor(scope, o)
 	if e != nil {
 		return pg, e
 	}
-	rows, e := s.db.QueryContext(ctx, `SELECT `+categoryCols+` FROM forum_categories WHERE id>? AND (?='' OR namespace=?) AND (? OR archived=?) AND `+categoryVisible+` ORDER BY id LIMIT ?`, key, o.NamespaceFilter, o.NamespaceFilter, o.Archived == nil, boolVal(o.Archived), c.Operator, c.ID, c.Kind, c.ID, c.Kind, c.ID, c.Kind, o.Limit+1)
+	rows, e := s.db.QueryContext(ctx, `SELECT `+categoryCols+` FROM forum_categories WHERE (? OR (sort_order,id)>(?,?)) AND (?='' OR namespace=?) AND (? OR archived=?) AND `+categoryVisible+` ORDER BY sort_order,id LIMIT ?`, o.Cursor == "", key.SortOrder, key.ID, o.NamespaceFilter, o.NamespaceFilter, o.Archived == nil, boolVal(o.Archived), c.Operator, c.ID, c.Kind, c.ID, c.Kind, c.ID, c.Kind, o.Limit+1)
 	if e != nil {
 		return pg, e
 	}
@@ -57,7 +57,7 @@ func (s *Store) ListCategories(ctx context.Context, c f.Caller, o f.Options) (f.
 	if len(pg.Items) > o.Limit {
 		pg.HasMore = true
 		pg.Items = pg.Items[:o.Limit]
-		pg.NextCursor = nextCursor(scope, pg.Items[len(pg.Items)-1].ID, o)
+		pg.NextCursor = nextCursor(scope, orderKey(pg.Items[len(pg.Items)-1].SortOrder, pg.Items[len(pg.Items)-1].ID), o)
 	}
 	return pg, nil
 }
@@ -115,7 +115,7 @@ func nextSeq(ctx context.Context, tx *sql.Tx, id, at string) (int64, error) {
 	return seq, mapErr(e)
 }
 func insertForum(ctx context.Context, tx *sql.Tx, v f.Forum) error {
-	_, e := tx.ExecContext(ctx, `INSERT INTO forums (`+forumCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.Namespace, v.Title, v.OwnerType, v.OwnerID, string(v.Config), jsonText(v.Policy), string(v.Metadata), v.CreatedAt, v.UpdatedAt, v.LastSeq, v.CategoryID, v.Description, v.Archived)
+	_, e := tx.ExecContext(ctx, `INSERT INTO forums (`+forumCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.Namespace, v.Title, v.OwnerType, v.OwnerID, string(v.Config), jsonText(v.Policy), string(v.Metadata), v.CreatedAt, v.UpdatedAt, v.LastSeq, v.CategoryID, v.Description, v.Archived, v.SortOrder)
 	return mapErr(e)
 }
 func insertTopic(ctx context.Context, tx *sql.Tx, v f.Topic) error {
@@ -351,8 +351,8 @@ func mutateCategory(ctx context.Context, tx *sql.Tx, op string, r f.Request, c f
 	var v f.Category
 	var e error
 	if op == "category_create" {
-		v = f.Category{ID: r.ID, Namespace: r.Namespace, Title: r.Title, Description: stringVal(r.Description), OwnerType: c.Kind, OwnerID: c.ID, CreatedAt: at, UpdatedAt: at}
-		_, e = tx.ExecContext(ctx, `INSERT INTO forum_categories (`+categoryCols+`) VALUES (?,?,?,?,?,?,?,?,?)`, v.ID, v.Namespace, v.Title, v.Description, v.Archived, v.OwnerType, v.OwnerID, v.CreatedAt, v.UpdatedAt)
+		v = f.Category{SortOrder: sortVal(r.SortOrder), ID: r.ID, Namespace: r.Namespace, Title: r.Title, Description: stringVal(r.Description), OwnerType: c.Kind, OwnerID: c.ID, CreatedAt: at, UpdatedAt: at}
+		_, e = tx.ExecContext(ctx, `INSERT INTO forum_categories (`+categoryCols+`) VALUES (?,?,?,?,?,?,?,?,?,?)`, v.ID, v.Namespace, v.Title, v.Description, v.Archived, v.OwnerType, v.OwnerID, v.CreatedAt, v.UpdatedAt, v.SortOrder)
 	} else {
 		v, e = scanCategory(tx.QueryRowContext(ctx, `SELECT `+categoryCols+` FROM forum_categories WHERE id=?`, stringVal(r.CategoryID)))
 		if e != nil {
@@ -393,6 +393,9 @@ func mutateCategory(ctx context.Context, tx *sql.Tx, op string, r f.Request, c f
 		case "category_unarchive":
 			v.Archived = false
 		case "category_update":
+			if r.SortOrder != nil {
+				v.SortOrder = *r.SortOrder
+			}
 			if v.Archived {
 				return nil, f.ErrForbidden
 			}
@@ -406,7 +409,7 @@ func mutateCategory(ctx context.Context, tx *sql.Tx, op string, r f.Request, c f
 			return nil, f.ErrInvalid
 		}
 		v.UpdatedAt = at
-		_, e = tx.ExecContext(ctx, `UPDATE forum_categories SET title=?,description=?,archived=?,updated_at=? WHERE id=?`, v.Title, v.Description, v.Archived, at, v.ID)
+		_, e = tx.ExecContext(ctx, `UPDATE forum_categories SET title=?,description=?,archived=?,updated_at=?,sort_order=? WHERE id=?`, v.Title, v.Description, v.Archived, at, v.SortOrder, v.ID)
 	}
 	return map[string]any{"category": v, "next": "tether_forum_category_get"}, e
 }
@@ -496,9 +499,15 @@ func mutateContent(ctx context.Context, tx *sql.Tx, op string, r f.Request, c f.
 			b.CategoryID = stringVal(r.DestinationCategoryID)
 		}
 		b.UpdatedAt = at
-		_, e = tx.ExecContext(ctx, `UPDATE forums SET title=?,description=?,config_json=?,metadata_json=?,archived=?,category_id=?,updated_at=? WHERE id=?`, b.Title, b.Description, string(b.Config), string(b.Metadata), b.Archived, b.CategoryID, at, b.ID)
+		if r.SortOrder != nil && (op == "forum_update" || op == "forum_move") {
+			b.SortOrder = *r.SortOrder
+		}
+		_, e = tx.ExecContext(ctx, `UPDATE forums SET title=?,description=?,config_json=?,metadata_json=?,archived=?,category_id=?,updated_at=?,sort_order=? WHERE id=?`, b.Title, b.Description, string(b.Config), string(b.Metadata), b.Archived, b.CategoryID, at, b.SortOrder, b.ID)
 		return map[string]any{"forum": b}, e
 	case "forum_clone":
+		if r.SortOrder != nil {
+			b.SortOrder = *r.SortOrder
+		}
 		source := b.ID
 		b.ID = r.ID
 		b.OwnerID = c.ID
@@ -690,3 +699,29 @@ func mutateContent(ctx context.Context, tx *sql.Tx, op string, r f.Request, c f.
 }
 
 var _ f.ManagementStore = (*Store)(nil)
+
+func sortVal(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// Sorting and cursor boundaries use the same tuple, including an ID tie-breaker.
+type orderCursor struct {
+	SortOrder int64  `json:"order"`
+	ID        string `json:"id"`
+}
+
+func orderKey(order int64, id string) string { return jsonText(orderCursor{order, id}) }
+func decodeOrderCursor(scope string, o f.Options) (orderCursor, error) {
+	var c orderCursor
+	key, err := decodeCursor(scope, o)
+	if err != nil || key == "" {
+		return c, err
+	}
+	if json.Unmarshal([]byte(key), &c) != nil || c.ID == "" {
+		return c, fmt.Errorf("%w: invalid sort cursor", f.ErrInvalid)
+	}
+	return c, nil
+}

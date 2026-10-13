@@ -83,13 +83,13 @@ func TestForumToolsRouteThroughCredentialedDaemon(t *testing.T) {
 
 	// Exercise the hierarchy management contract through MCP, client routing,
 	// bearer authentication, HTTP decoding, policy and the SQLite transaction.
-	call("tether_forum_category_create", map[string]any{"id": "plans", "namespace": "app/torque/forum/portfolio", "title": "Plans"})
-	call("tether_forum_category_update", map[string]any{"category_id": "plans", "description": "Planning boards"})
+	call("tether_forum_category_create", map[string]any{"id": "plans", "namespace": "app/torque/forum/portfolio", "title": "Plans", "sort_order": 20})
+	call("tether_forum_category_update", map[string]any{"category_id": "plans", "description": "Planning boards", "sort_order": -20})
 	call("tether_forum_category_get", map[string]any{"category_id": "plans"})
 	call("tether_forum_category_list", map[string]any{"namespace": "app/torque/forum/portfolio", "archived": false})
-	call("tether_forum_move", map[string]any{"forum_id": "portfolio", "destination_category_id": "plans"})
-	call("tether_forum_create", map[string]any{"id": "second", "namespace": "app/torque/forum/portfolio", "title": "Second"})
-	call("tether_forum_update", map[string]any{"forum_id": "second", "description": "Updated", "config_json": map[string]any{"enabled": true}})
+	call("tether_forum_move", map[string]any{"forum_id": "portfolio", "destination_category_id": "plans", "sort_order": 30})
+	call("tether_forum_create", map[string]any{"id": "second", "namespace": "app/torque/forum/portfolio", "title": "Second", "sort_order": 10})
+	call("tether_forum_update", map[string]any{"forum_id": "second", "description": "Updated", "sort_order": -10, "config_json": map[string]any{"enabled": true}})
 	rootBoards := call("tether_forum_list", map[string]any{"namespace": "app/torque/forum/portfolio", "category_id": ""})
 	if rows := rootBoards["items"].([]any); len(rows) != 1 || rows[0].(map[string]any)["id"] != "second" {
 		t.Fatal(rootBoards)
@@ -103,7 +103,19 @@ func TestForumToolsRouteThroughCredentialedDaemon(t *testing.T) {
 	call("tether_forum_post_clone", map[string]any{"post_id": post, "destination_topic_id": cloneTopic})
 	call("tether_forum_post_move", map[string]any{"post_id": post, "destination_topic_id": cloneTopic})
 	call("tether_forum_topic_move", map[string]any{"topic_id": topic, "destination_forum_id": "second"})
-	call("tether_forum_clone", map[string]any{"forum_id": "second", "id": "board-copy", "destination_category_id": "plans"})
+	call("tether_forum_clone", map[string]any{"forum_id": "second", "id": "board-copy", "destination_category_id": "plans", "sort_order": 0})
+	sorted := call("tether_forum_list", map[string]any{"namespace": "app/torque/forum/portfolio", "category_id": "plans", "limit": 1})
+	if row := sorted["items"].([]any)[0].(map[string]any); row["id"] != "board-copy" || row["sort_order"] != float64(0) {
+		t.Fatal(sorted)
+	}
+	next := call("tether_forum_list", map[string]any{"namespace": "app/torque/forum/portfolio", "category_id": "plans", "limit": 1, "cursor": sorted["next_cursor"]})
+	if row := next["items"].([]any)[0].(map[string]any); row["id"] != "portfolio" || row["sort_order"] != float64(30) {
+		t.Fatal(next)
+	}
+	cats := call("tether_forum_category_list", map[string]any{"namespace": "app/torque/forum/portfolio"})
+	if cats["items"].([]any)[0].(map[string]any)["sort_order"] != float64(-20) {
+		t.Fatal(cats)
+	}
 	call("tether_forum_archive", map[string]any{"forum_id": "portfolio"})
 	call("tether_forum_unarchive", map[string]any{"forum_id": "portfolio"})
 	call("tether_forum_category_archive", map[string]any{"category_id": "plans"})

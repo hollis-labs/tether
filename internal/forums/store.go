@@ -34,12 +34,12 @@ func mapErr(e error) error {
 
 type scanner interface{ Scan(...any) error }
 
-const forumCols = `id,namespace,title,owner_type,owner_id,config_json,policy_json,metadata_json,created_at,updated_at,last_seq,category_id,description,archived`
+const forumCols = `id,namespace,title,owner_type,owner_id,config_json,policy_json,metadata_json,created_at,updated_at,last_seq,category_id,description,archived,sort_order`
 
 func scanForum(s scanner) (f.Forum, error) {
 	var v f.Forum
 	var c, p, m string
-	e := s.Scan(&v.ID, &v.Namespace, &v.Title, &v.OwnerType, &v.OwnerID, &c, &p, &m, &v.CreatedAt, &v.UpdatedAt, &v.LastSeq, &v.CategoryID, &v.Description, &v.Archived)
+	e := s.Scan(&v.ID, &v.Namespace, &v.Title, &v.OwnerType, &v.OwnerID, &c, &p, &m, &v.CreatedAt, &v.UpdatedAt, &v.LastSeq, &v.CategoryID, &v.Description, &v.Archived, &v.SortOrder)
 	v.Config = json.RawMessage(c)
 	v.Metadata = json.RawMessage(m)
 	if e == nil {
@@ -103,11 +103,11 @@ func nextCursor(scope, key string, o f.Options) string {
 func (s *Store) ListForums(ctx context.Context, c f.Caller, o f.Options) (f.Page[f.Forum], error) {
 	pg := f.Page[f.Forum]{Items: []f.Forum{}}
 	scope := "forums:" + c.ID + ":" + c.Kind
-	key, e := decodeCursor(scope, o)
+	key, e := decodeOrderCursor(scope, o)
 	if e != nil {
 		return pg, e
 	}
-	rows, e := s.db.QueryContext(ctx, `SELECT `+forumCols+` FROM forums WHERE id>? AND (? OR (owner_id=? AND owner_type=?) OR EXISTS (SELECT 1 FROM forum_participants g WHERE g.forum_id=forums.id AND g.principal_id=? AND g.principal_kind=?)) AND (?='' OR namespace=?) AND (? OR category_id=?) AND (? OR archived=?) ORDER BY id LIMIT ?`, key, c.Operator, c.ID, c.Kind, c.ID, c.Kind, o.NamespaceFilter, o.NamespaceFilter, o.CategoryID == nil, stringVal(o.CategoryID), o.Archived == nil, boolVal(o.Archived), o.Limit+1)
+	rows, e := s.db.QueryContext(ctx, `SELECT `+forumCols+` FROM forums WHERE (? OR (sort_order,id)>(?,?)) AND (? OR (owner_id=? AND owner_type=?) OR EXISTS (SELECT 1 FROM forum_participants g WHERE g.forum_id=forums.id AND g.principal_id=? AND g.principal_kind=?)) AND (?='' OR namespace=?) AND (? OR category_id=?) AND (? OR archived=?) ORDER BY sort_order,id LIMIT ?`, o.Cursor == "", key.SortOrder, key.ID, c.Operator, c.ID, c.Kind, c.ID, c.Kind, o.NamespaceFilter, o.NamespaceFilter, o.CategoryID == nil, stringVal(o.CategoryID), o.Archived == nil, boolVal(o.Archived), o.Limit+1)
 	if e != nil {
 		return pg, e
 	}
@@ -125,7 +125,7 @@ func (s *Store) ListForums(ctx context.Context, c f.Caller, o f.Options) (f.Page
 	if len(pg.Items) > o.Limit {
 		pg.HasMore = true
 		pg.Items = pg.Items[:o.Limit]
-		pg.NextCursor = nextCursor(scope, pg.Items[len(pg.Items)-1].ID, o)
+		pg.NextCursor = nextCursor(scope, orderKey(pg.Items[len(pg.Items)-1].SortOrder, pg.Items[len(pg.Items)-1].ID), o)
 	}
 	return pg, nil
 }

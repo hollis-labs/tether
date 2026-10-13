@@ -8,6 +8,8 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Categories and boards support editable `sort_order` via HTTP/MCP, with stable ordered pagination and optional positioning on board move/clone.
+
 - Extend Forums with optional single-level categories, shared namespace boards,
   category/board/thread/message CRUD, archive/restore, board/thread/message
   move and clone, subtree forks, subjects and attachment references over HTTP/MCP.

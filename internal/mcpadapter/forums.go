@@ -122,6 +122,7 @@ func forumToolSchema(op string) map[string]interface{} {
 		p = append(p, gomcp.StringProp("title", "Topic title (1..300 characters)", true))
 	}
 	if op == "forum_create" {
+		p = append(p, forumSortProp())
 		p = append(p, gomcp.StringProp("category_id", "Optional category; omit for root board", false), gomcp.StringProp("description", "Board description", false))
 	}
 	if op == "forum_list" {
@@ -148,6 +149,10 @@ func forumToolSchema(op string) map[string]interface{} {
 func forumMessageProps() []gomcp.Prop {
 	return []gomcp.Prop{gomcp.StringProp("subject", "Optional message subject (up to 300 characters)", false), gomcp.ArrayProp("attachments", "Up to 20 external attachment references; the host does not upload or fetch them", false, map[string]interface{}{"type": "object", "properties": map[string]interface{}{"name": map[string]interface{}{"type": "string"}, "uri": map[string]interface{}{"type": "string"}, "media_type": map[string]interface{}{"type": "string"}}, "required": []string{"name", "uri"}, "additionalProperties": false})}
 }
+func forumSortProp() gomcp.Prop {
+	return gomcp.IntegerProp("sort_order", "Signed JSON-safe integer; lower sorts first, ties use id; default 0 on create, preserved when omitted on update/move/clone", false)
+}
+
 func forumManagementSchema(op string) map[string]interface{} {
 	p := []gomcp.Prop{}
 	switch op {
@@ -180,6 +185,9 @@ func forumManagementSchema(op string) map[string]interface{} {
 	}
 	if op == "topic_update" {
 		p = append(p, gomcp.StringProp("status", "open or resolved", false))
+	}
+	if op == "category_create" || op == "category_update" || op == "forum_update" || op == "forum_move" || op == "forum_clone" {
+		p = append(p, forumSortProp())
 	}
 	if op == "forum_move" || op == "forum_clone" {
 		p = append(p, gomcp.StringProp("destination_category_id", "Category in same namespace; empty string means root", op == "forum_move"))
