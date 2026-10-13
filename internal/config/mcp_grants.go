@@ -68,6 +68,7 @@ func (c *Catalog) ValidateMCPGrants() error {
 		}
 	}
 	for id, a := range c.Agents {
+		issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("agent %q mcp.servers", id), a.MCP.Servers))
 		if value, set := a.Env["TETHER_MCP_SERVERS"]; set {
 			issues = append(issues, c.ValidateMCPGrantEnv(fmt.Sprintf("agent %q env.TETHER_MCP_SERVERS", id), value))
 		}
@@ -103,6 +104,7 @@ func (c *Catalog) ValidateLaunchMCPGrants(id string) error {
 	p := c.Projects[l.Project]
 	a := c.Agents[l.Agent]
 	var issues []error
+	issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("agent %q mcp.servers", l.Agent), a.MCP.Servers))
 	issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("launch %q mcp.servers", id), l.MCP.Servers))
 	issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("project %q mcp.servers", l.Project), p.MCP.Servers))
 	for owner, env := range map[string]map[string]string{

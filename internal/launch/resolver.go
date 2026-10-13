@@ -91,6 +91,9 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	if mcpServers == nil {
 		mcpServers = l.MCP.Servers
 	}
+	if mcpServers == nil {
+		mcpServers = agent.MCP.Servers
+	}
 	if mcpServers != nil {
 		overrides["TETHER_MCP_SERVERS"] = strings.Join(mcpServers, ",")
 	}

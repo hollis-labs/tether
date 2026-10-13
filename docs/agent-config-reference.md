@@ -71,6 +71,18 @@ provider_overrides:                # optional v005-08
 
 Empty / omitted fields take their zero values; existing pre-v005-08 catalog YAML loads unchanged.
 
+### MCP servers: `mcp.servers`
+
+```yaml
+mcp:
+  servers: [tether, torque, tesseract]
+```
+
+IDs of `mcp-servers/` catalog entries (IDs only, never credentials) the agent's
+sessions expose through the proxy (`TETHER_MCP_SERVERS`). A project's or
+launch's `mcp.servers` wins; omitted inherits through `extends`; `[]` grants
+none. Unknown or disabled IDs fail catalog validation.
+
 ### Worker identity: `urn` and `mcp_scopes`
 
 Two optional agent fields apply to sessions placed on a worker (a launch with

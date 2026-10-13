@@ -107,6 +107,11 @@ type LaunchProfile struct {
 	// groups.write). Empty means the default set. Closest definition wins.
 	MCPScopes []string `yaml:"mcp_scopes,omitempty" json:"mcp_scopes,omitempty"`
 
+	// MCP lists the catalog mcp-servers/ IDs this agent's sessions expose
+	// (TETHER_MCP_SERVERS). Project and launch grants win over it; nil
+	// inherits through extends, [] grants none. IDs only, never credentials.
+	MCP MCPConfig `yaml:"mcp,omitempty" json:"mcp,omitempty"`
+
 	// Enabled turns the agent off without removing its file: false blocks new
 	// launches and chat sends for it, and never touches a session that is
 	// already running. Absent means enabled. It is per agent and not

@@ -17,6 +17,7 @@ func TestCatalogRejectsInvalidMCPGrantsWithoutBlockingLoad(t *testing.T) {
 		{"typo", "projects/p.yaml", "id: p\nmcp:\n  servers: [torqe]\n", `project "p"`, "torqe"},
 		{"wrong case", "launches/l.yaml", "id: l\nmcp:\n  servers: [Torque]\n", `launch "l"`, "Torque"},
 		{"disabled", "boot-profiles/b.yaml", "id: b\nmcp_servers: [disabled]\n", `boot profile "b"`, "disabled"},
+		{"agent mcp", "agents/a.yaml", "id: a\nmcp:\n  servers: [missing]\n", `agent "a"`, "missing"},
 		{"agent env", "agents/a.yaml", "id: a\nenv:\n  TETHER_MCP_SERVERS: missing\n", `agent "a"`, "missing"},
 		{"provider override", "agents/a.yaml", "id: a\nprovider_overrides:\n  codex:\n    env:\n      TETHER_MCP_SERVERS: missing\n", `agent "a" provider "codex"`, "missing"},
 		{"launch override", "launches/l.yaml", "id: l\noverrides:\n  env:\n    TETHER_MCP_SERVERS: missing\n", `launch "l"`, "missing"},
