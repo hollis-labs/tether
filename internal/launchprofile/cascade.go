@@ -380,6 +380,9 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 		if len(p.MCPScopes) > 0 {
 			resolved.MCPScopes = append([]string(nil), p.MCPScopes...)
 		}
+		if p.MCP.Servers != nil {
+			resolved.MCP.Servers = append([]string{}, p.MCP.Servers...)
+		}
 		if p.Permissions.PermissionMode != "" {
 			resolved.Permissions.PermissionMode = p.Permissions.PermissionMode
 		}
