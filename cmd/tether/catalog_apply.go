@@ -112,7 +112,7 @@ var catalogApproveCmd = &cobra.Command{
 		if err != nil || !term.IsTerminal(int(tty.Fd())) {
 			return errors.New("approval needs a terminal: run `tether catalog approve` yourself, from a shell you are typing in")
 		}
-		defer tty.Close()
+		defer func() { _ = tty.Close() }() // /dev/tty is never buffered; nothing to flush
 		h, err := localOnlyClient(catalogPath)
 		if err != nil {
 			return err
@@ -173,7 +173,7 @@ var catalogApproverSetCmd = &cobra.Command{
 		if err != nil || !term.IsTerminal(int(tty.Fd())) {
 			return errors.New("setting the passphrase needs a terminal")
 		}
-		defer tty.Close()
+		defer func() { _ = tty.Close() }() // /dev/tty is never buffered; nothing to flush
 		cat, err := config.LoadLayered(catalogPath)
 		if err != nil {
 			return err

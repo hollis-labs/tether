@@ -170,8 +170,13 @@ func (e *Engine) audit(res *Result, p *Plan) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	_, _ = f.Write(append(b, '\n'))
+	// Best effort: an unwritable audit line must not fail an apply that has
+	// already landed, but a failed write is closed and not silently dropped.
+	if _, werr := f.Write(append(b, '\n')); werr != nil {
+		_ = f.Close()
+		return
+	}
+	_ = f.Close()
 }
 
 // PlanRollback plans restoring the allowlisted catalog files to the state in
@@ -327,7 +332,7 @@ func copyTree(src, dst string) error {
 				return err
 			}
 			if _, err := io.Copy(out, in); err != nil {
-				out.Close()
+				_ = out.Close() // the copy error is the one to report
 				return err
 			}
 			return out.Close()
