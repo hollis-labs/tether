@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launchartifacts"
 	"github.com/hollis-labs/tether/internal/launchartifacts/testfixture"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 func TestTeamBootContextSurvivesBothLaunchEngines(t *testing.T) {
@@ -125,5 +126,19 @@ func TestTeamBootContextRejectsCollisionsAndInvalidContext(t *testing.T) {
 	}
 	if teamCreateDigest("launch", TeamBootContext{}) != requestDigest(struct{ Op, Launch string }{"team-create", "launch"}) {
 		t.Fatal("legacy create digest changed")
+	}
+}
+
+func TestTeamSessionWithLaunchWorkerDoesNotFallBackToHub(t *testing.T) {
+	rig := newCodexRig(t)
+	l := rig.svc.Catalog.Launches["codex-launch"]
+	l.Worker = "outpost-a"
+	rig.svc.Catalog.Launches["codex-launch"] = l
+	// No worker hub is configured: the member must be refused, not run locally.
+	if _, err := rig.svc.CreateTeamSession(context.Background(), "team:worker", "codex-launch"); !errors.Is(err, workerhub.ErrChannelUnavailable) {
+		t.Fatal("expected fail-closed worker error, got", err)
+	}
+	if n := countSessions(t, rig.svc); n != 0 {
+		t.Fatalf("hub fallback created %d sessions", n)
 	}
 }
