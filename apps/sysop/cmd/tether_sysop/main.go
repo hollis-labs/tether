@@ -312,6 +312,9 @@ type agentDTO struct {
 	Name   string   `json:"name"`
 	Roles  []string `json:"roles,omitempty"`
 	Skills []string `json:"skills,omitempty"`
+	// Enabled is false when the catalog agent sets enabled: false (new launches
+	// and chat sends are blocked). Always present so the UI never guesses.
+	Enabled bool `json:"enabled"`
 }
 
 type providerDTO struct {
@@ -333,6 +336,9 @@ type launchDTO struct {
 	Profile       string `json:"profile,omitempty"`
 	LaunchPlan    string `json:"launch_plan,omitempty"`
 	PlanError     string `json:"plan_error,omitempty"`
+	// Enabled is false when the launch sets enabled: false (new launches and
+	// chat sends are blocked; a running session is untouched).
+	Enabled bool `json:"enabled"`
 }
 
 type sessionsResponse struct {
@@ -1239,10 +1245,11 @@ func (s *appServer) handleCatalog(w http.ResponseWriter, _ *http.Request) {
 	}
 	for _, a := range cat.Agents {
 		resp.Agents = append(resp.Agents, agentDTO{
-			ID:     a.ID,
-			Name:   a.Name,
-			Roles:  a.Roles,
-			Skills: a.Skills,
+			ID:      a.ID,
+			Name:    a.Name,
+			Roles:   a.Roles,
+			Skills:  a.Skills,
+			Enabled: a.IsEnabled(),
 		})
 	}
 	for _, p := range cat.Providers {
@@ -1277,6 +1284,7 @@ func (s *appServer) handleCatalog(w http.ResponseWriter, _ *http.Request) {
 			Profile:       profileJSON,
 			LaunchPlan:    planJSON,
 			PlanError:     planError,
+			Enabled:       l.IsEnabled(),
 		})
 	}
 
