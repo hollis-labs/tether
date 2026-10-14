@@ -376,6 +376,12 @@ For a faster end, set `lifecycle.stop_after_final_turn` (e.g. `30s`): the sessio
 stops with reason `final_turn` once a turn completes and nothing follows within
 that grace. It is opt-in; leave it unset for sessions that wait for further input.
 
+`examples/catalog/launches/task-worker.yaml` is the matching launch template:
+`worker-agent` on a headless claude provider in a worktree. Pass the work as
+structured input with `--torque-task <id>` (repeatable) rather than prose; the
+agent's `agent_prompt` carries the protocol, including the closing step
+(`torque_task_transition` plus `torque_comment_add` per task).
+
 `tether launch --torque-task <id>` plants task bundles by fetching the tasks
 from Torque. Export `TORQUE_API_TOKEN` in the launching CLI's environment when
 Torque requires auth; it is sent as a bearer token and a 401/403 names it.
