@@ -2880,6 +2880,7 @@ empty digest does and does not mean, is in
 | `POST` | `/sessions/{id}/workstream` | Assign, clear, or `{"ensure": true}` to create one for the lineage. |
 | `GET` | `/sessions/{id}/refs` | This session's refs. |
 | `POST` | `/sessions/{id}/refs` | Attach a ref. Idempotent on `(session, kind, ref_id, relation)`. |
+| `GET` | `/sessions/{id}/usage` | Per-session meter: `turns`, `failed_turns`, `turn_ms`, and `input_tokens`/`output_tokens`/`cost_usd` summed over the `usage_turns` turns whose runtime reported usage. `metered` is false when none did (PTY CLI agents): unmetered, not zero. Recording only; no budget is enforced from it. |
 | `GET` | `/sessions/{id}/digest` | Assembled digest for this session alone. |
 | `GET` | `/sessions/{id}/workstream-namespace` | Where the workstream's scratch belongs in Tesseract workspace. `?project=` (defaults to session's project_id), `?owner=`, `?tail=` (defaults to `scratch`). |
 

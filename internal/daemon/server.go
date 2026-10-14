@@ -81,6 +81,8 @@ type Server struct {
 	// Checkpoints is optional; when set, the checkpoint endpoints are
 	// mounted. Tests can pass nil to skip them.
 	Checkpoints api.CheckpointStore
+	// SessionUsage is optional; when set, GET /sessions/{id}/usage is served.
+	SessionUsage api.SessionUsageStore
 	// Broker is optional; when set, the broker envelope endpoints are
 	// mounted.
 	Broker api.BrokerService
@@ -576,6 +578,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			AIAudit:             s.AIAudit,
 			AIUsage:             s.AIUsage,
 			Checkpoints:         s.Checkpoints,
+			SessionUsage:        s.SessionUsage,
 			Broker:              s.Broker,
 			Bus:                 s.Bus,
 			EventsStore:         s.EventsStore,
