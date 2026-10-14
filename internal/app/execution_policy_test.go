@@ -153,3 +153,39 @@ func TestSetExecutionPolicy_PublishesAuditEvent(t *testing.T) {
 		t.Fatalf("changes = %v, want %v", got, want)
 	}
 }
+
+// A session placed on a worker holds a slot like a hub-local one: the usage
+// count has no placement filter, so caps cover worker sessions too
+// (CW-20261014-0074).
+func TestExecutionCaps_CountWorkerSessions(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	svc := &Service{Store: db}
+	for _, id := range []string{"w1", "w2"} {
+		row := store.SessionRow{ID: id, WorkerID: "worker-a", LaunchID: "l", ProjectID: "p1", LogicalAgentID: "x", ProviderID: "pv", ProviderKind: "cli", Workspace: t.TempDir(), State: string(session.StateRunning)}
+		if err := db.CreateSession(row, &launch.Plan{LaunchID: "l"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.SetExecutionPolicy(execpolicy.Policy{MaxSessions: 2}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.admitLaunch("new", "p1")
+	var r *execpolicy.Refusal
+	if !errors.As(err, &r) || r.Code != execpolicy.CodeEnvironmentCapFull {
+		t.Fatalf("environment cap with 2 worker sessions: err = %v", err)
+	}
+	if _, err := svc.SetExecutionPolicy(execpolicy.Policy{ProjectCaps: map[string]int{"p1": 2}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.admitLaunch("new", "p1")
+	if !errors.As(err, &r) || r.Code != execpolicy.CodeProjectCapFull {
+		t.Fatalf("project cap with 2 worker sessions: err = %v", err)
+	}
+	if v, err := svc.Capacity(); err != nil || v.ActiveSessions != 2 {
+		t.Fatalf("capacity = %+v, %v", v, err)
+	}
+}
