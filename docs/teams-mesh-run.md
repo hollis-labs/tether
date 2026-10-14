@@ -124,3 +124,46 @@ Observed in the 2026-10-14 run: **(unverified; not reproducible from the repo)**
 the run owner (coordinator) is the operator, so workers learn their task only
 from messages sent with `team msg`; a worker started with no message has nothing
 to act on.
+
+## 7. Follow-ups from the 2026-10-14 mesh run
+
+### Slot pins must match the policy's launch bindings (observed; repo-verifiable parts noted)
+
+Each slot in the form request binds to an agent definition through
+`definition_ref.id`, and `teams-policy.yaml` binds each launch to exactly one
+pin. A slot whose pin belongs to another launch starts that other role's launch.
+Verified from the repo: `examples/teams/team-form-claude.json` binds `workers`
+to `claude-agent` and `reviewer` to `claude-worktree-agent`, matching
+`examples/teams/teams-policy.yaml` (`tether-claude` pins `claude-agent`,
+`tether-claude-worktree` pins `claude-worktree-agent`).
+
+**(unverified; observed in the live run, not reproducible from the repo)** The
+live policy bound `team-worker` to `claude-worktree-agent` and `team-reviewer`
+to `claude-agent`, the reverse of the example. The example form request
+therefore sent `@workers` messages to the reviewer launch. Before forming,
+compare each slot's `definition_ref.id` in your request with the pin of the
+launch you want for that role in your own policy, not the example's.
+
+**(unverified; the error text is not in the repo source)** Re-forming with
+changed slot content under the same team id and version failed with
+`conflict: teams: conflicting request or version`. Bump `team.version` in the
+request file when you change slots, and use a new `--key`.
+
+### Role rules (unverified)
+
+**(unverified; the example definitions in `examples/teams/definitions/` only say
+"Message only the team members your slot may message")** The worker and
+reviewer definitions used in the run told members to message only the
+coordinator and never merge or delete branches. The coordinator (the operator
+seat) therefore relays the PR number and the reviewer's verdict, and performs
+the merge. Members report by mail to the coordinator (section 3); they do not
+message each other or the merge target.
+
+### Worker restart with live members (observed; unverified)
+
+**(unverified; observed once, not reproducible from the repo)** Restarting the
+worker on the machine hosting the members (`tether-worker-upgrade --force` on
+`worker-1`) while both members were live did not end them. Both stayed
+running, no hosts were orphaned, and the worker reconnected in under 15
+seconds. This was a single observation, so do not rely on it for other
+upgrade paths.
