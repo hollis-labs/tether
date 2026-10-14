@@ -458,12 +458,28 @@ func (s *Server) Run(ctx context.Context) error {
 		s.MCPShutdown()
 	}
 
-	// Graceful shutdown: stop accepting connections, using the same deadline.
-	for _, srv := range servers {
-		if err := srv.Shutdown(shutdownCtx); err != nil && runErr == nil {
+	// Graceful shutdown: stop accepting connections. Long-lived streams (SSE,
+	// websockets) never go idle, so Shutdown would otherwise burn the whole
+	// deadline and leave nothing for the session drain and store close. Give the
+	// listeners a third of it, concurrently, then force-close what is left; that
+	// is the expected end for a stream, not a failure.
+	httpCtx, httpCancel := context.WithTimeout(shutdownCtx, s.Config.ShutdownTimeout/3)
+	defer httpCancel()
+	httpErrs := make([]error, len(servers))
+	var closing sync.WaitGroup
+	for i, srv := range servers {
+		closing.Add(1)
+		go func() {
+			defer closing.Done()
+			httpErrs[i] = srv.Shutdown(httpCtx)
+			_ = srv.Close()
+		}()
+	}
+	closing.Wait()
+	for _, err := range httpErrs {
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) && runErr == nil {
 			runErr = fmt.Errorf("http shutdown: %w", err)
 		}
-		_ = srv.Close()
 	}
 	serving.Wait()
 

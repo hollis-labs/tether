@@ -434,3 +434,59 @@ func TestIsDaemon_RealPSRejectsAnUnrelatedProcess(t *testing.T) {
 		t.Fatal("the test binary was identified as tetherd")
 	}
 }
+
+func TestServer_RunStuckConnectionDoesNotConsumeShutdownTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket test requires unix")
+	}
+	dir := shortTempDir(t)
+	sock := filepath.Join(dir, "s.sock")
+	cfg := Config{
+		ListenAddr:      "unix:" + sock,
+		PIDFile:         filepath.Join(dir, "d.pid"),
+		ShutdownTimeout: 3 * time.Second,
+	}
+	drainLeft := make(chan time.Duration, 1)
+	srv := &Server{Config: cfg, SessionDrainer: drainerFunc(func(ctx context.Context) error {
+		dl, _ := ctx.Deadline()
+		drainLeft <- time.Until(dl)
+		return nil
+	})}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(sock); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// An unfinished request keeps the connection active, so Shutdown cannot
+	// finish by itself.
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("GET /health HTTP/1.1\r\nHost: x\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("Run returned: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	if left := <-drainLeft; left < 1500*time.Millisecond {
+		t.Fatalf("session drain had only %s of the shutdown timeout left", left)
+	}
+}
+
+type drainerFunc func(context.Context) error
+
+func (f drainerFunc) DrainSessions(ctx context.Context) error { return f(ctx) }
