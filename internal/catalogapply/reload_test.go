@@ -3,10 +3,13 @@ package catalogapply
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func applyWithReload(t *testing.T, reload func(context.Context) ([]string, error)) *Result {
+func applyWithReload(t *testing.T, reload func(context.Context) ([]string, error)) (*Engine, *Result, error) {
 	t.Helper()
 	e := newEngine(t)
 	e.Reload = reload
@@ -19,6 +22,12 @@ func applyWithReload(t *testing.T, reload func(context.Context) ([]string, error
 	}
 	approve(t, e, p)
 	res, err := e.Apply(ctx, p.ID)
+	return e, res, err
+}
+
+func applyLanded(t *testing.T, reload func(context.Context) ([]string, error)) *Result {
+	t.Helper()
+	e, res, err := applyWithReload(t, reload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,22 +38,25 @@ func applyWithReload(t *testing.T, reload func(context.Context) ([]string, error
 }
 
 func TestApplyReloadClean(t *testing.T) {
-	res := applyWithReload(t, func(context.Context) ([]string, error) { return nil, nil })
+	res := applyLanded(t, func(context.Context) ([]string, error) { return nil, nil })
 	if !res.Reloaded || res.ReloadError != "" || len(res.RestartRequired) != 0 || res.Activation != ActivationImmediate {
 		t.Fatalf("result = %+v", res)
 	}
 }
 
 func TestApplyReloadRestartRequired(t *testing.T) {
-	res := applyWithReload(t, func(context.Context) ([]string, error) { return []string{"defaults.state_db"}, nil })
+	res := applyLanded(t, func(context.Context) ([]string, error) { return []string{"defaults.state_db"}, nil })
 	if !res.Reloaded || res.ReloadError != "" || len(res.RestartRequired) != 1 || res.RestartRequired[0] != "defaults.state_db" || res.Activation != ActivationRestartRequired {
 		t.Fatalf("result = %+v", res)
 	}
 }
 
-func TestApplyReloadError(t *testing.T) {
-	res := applyWithReload(t, func(context.Context) ([]string, error) { return nil, errors.New("boom") })
-	if !res.Applied || res.Reloaded || res.ReloadError != "boom" || res.Activation != ActivationRestartRequired {
-		t.Fatalf("result = %+v", res)
+func TestApplyReloadRefusedRestoresFiles(t *testing.T) {
+	e, res, err := applyWithReload(t, func(context.Context) ([]string, error) { return nil, errors.New("boom") })
+	if err == nil || res == nil || res.Applied || !res.RolledBack || res.ReloadError != "boom" {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if _, serr := os.Stat(filepath.Join(e.Root, "agents/helper.yaml")); !errors.Is(serr, fs.ErrNotExist) {
+		t.Fatalf("refused file was not restored: %v", serr)
 	}
 }

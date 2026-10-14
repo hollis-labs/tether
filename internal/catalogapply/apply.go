@@ -24,7 +24,8 @@ type Result struct {
 	Changed    []string `json:"changed"`
 	// Reloaded is true when the daemon swapped the new catalog in live.
 	Reloaded bool `json:"reloaded,omitempty"`
-	// ReloadError is set when the files landed but the live reload was refused.
+	// ReloadError is set when the live reload was refused; the touched files are
+	// then restored (RolledBack) and Apply returns an error.
 	ReloadError string `json:"reload_error,omitempty"`
 	// RestartRequired names edits the live reload could not apply.
 	RestartRequired []string `json:"restart_required,omitempty"`
@@ -41,7 +42,7 @@ const (
 // Apply installs an approved plan. It re-checks the live catalog against the
 // plan's base, backs up the whole catalog, installs file by file and
 // restores the touched files if anything fails, including a catalog that no
-// longer validates after the install.
+// longer validates after the install or a live reload the daemon refuses.
 func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 	e.applyMu.Lock()
 	defer e.applyMu.Unlock()
@@ -141,8 +142,12 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 		rr, rerr := e.Reload(ctx)
 		switch {
 		case rerr != nil:
-			res.ReloadError = rerr.Error()
-			res.Activation = ActivationRestartRequired
+			// The daemon kept its old catalog, so files on disk that it
+			// refused would only fail the next restart. Put the previous
+			// ones back so disk and live agree.
+			restore()
+			return &Result{PlanID: planID, BackupID: backupID, RolledBack: true, Changed: changed, ReloadError: rerr.Error()},
+				fmt.Errorf("catalog reload refused: %w (restored from %s)", rerr, backupID)
 		case len(rr) > 0:
 			res.Reloaded, res.RestartRequired = true, rr
 			res.Activation = ActivationRestartRequired
