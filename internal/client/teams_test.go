@@ -49,3 +49,17 @@ func TestTeamClientRejectsInvalidKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestTeamClientKeepsOperatorCauseForClassifiedErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(503)
+		_, _ = w.Write([]byte(`{"error":{"code":"unavailable","message":"unavailable: member m (slot s): launch session: boom"}}`))
+	}))
+	defer server.Close()
+	c := New("tcp:"+strings.TrimPrefix(server.URL, "http://"), WithToken(""))
+	_, err := c.Team(context.Background(), "dissolve", "key", api.TeamRequest{RunID: "run"})
+	var failure *TeamError
+	if !errors.As(err, &failure) || failure.Code != "unavailable" || failure.Status != 503 || !strings.Contains(err.Error(), "launch session: boom") {
+		t.Fatal(err)
+	}
+}

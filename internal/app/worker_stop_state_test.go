@@ -1,6 +1,9 @@
 package app
 
 import (
+	"context"
+	"errors"
+	"github.com/hollis-labs/tether/internal/teamhost"
 	"path/filepath"
 	"testing"
 
@@ -50,5 +53,34 @@ func TestWorkerExitAfterStopRequestIsKilled(t *testing.T) {
 		if svc.stops.requested(id) {
 			t.Fatalf("%s: stop mark not cleared", id)
 		}
+	}
+}
+
+// A member that the hub recorded as failed (lost launch acknowledgement) can
+// still be alive on the worker: team stop must try the worker, and an
+// unreachable worker keeps a live-looking row retryable.
+func TestStopTeamSessionReachesWorkerRegardlessOfState(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err = db.DB().Exec(`INSERT INTO workers(id,label,device_id,platform,caps_json,last_seen,created_at) VALUES('w1','agent-os','d1','linux','{}','','')`); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{Store: db, Workers: workerhub.New(db.DB()), stops: &stopRequests{}}
+	for id, state := range map[string]string{"failed-row": "failed", "launching-row": "launching"} {
+		if err := db.CreateSession(store.SessionRow{ID: id, WorkerID: "w1", LogicalAgentID: "a", ProviderID: "p", ProviderKind: "cli", Workspace: t.TempDir(), State: state}, &launch.Plan{ProviderID: "p", LogicalAgentID: "a"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.StopTeamSession(context.Background(), "failed-row"); err != nil {
+		t.Fatalf("terminal row with unreachable worker: %v", err)
+	}
+	if err := svc.StopTeamSession(context.Background(), "launching-row"); !errors.Is(err, teamhost.ErrSessionUnavailable) {
+		t.Fatalf("live-looking row with unreachable worker = %v, want retryable unavailable", err)
+	}
+	if row, _ := db.GetSession("launching-row"); row.State != "launching" {
+		t.Fatalf("unacknowledged stop changed state to %q", row.State)
 	}
 }
