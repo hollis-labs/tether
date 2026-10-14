@@ -82,6 +82,18 @@ type Policy struct {
 // SessionFormation reports whether verified sessions may form teams.
 func (p *Policy) SessionFormation() bool { return p != nil && p.sessionForm }
 
+// LaunchIDs lists the exact launch ids the policy binds.
+func (p *Policy) LaunchIDs() []string {
+	if p == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(p.launches))
+	for _, l := range p.launches {
+		ids = append(ids, l.Launch)
+	}
+	return ids
+}
+
 // Path returns where the policy file lives under the catalog root.
 func Path(catalogRoot string) string { return filepath.Join(catalogRoot, FileName) }
 

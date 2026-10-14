@@ -75,6 +75,11 @@ var readableDirs = map[string]bool{
 	"boot-profiles": true, "team-definitions": true,
 }
 
+// readableRootFile is the one root-level file an agent may read raw: the team
+// activation policy holds launch ids and definition pins, no credentials, and
+// a plan takes whole files, so it has to be readable to be edited in place.
+const readableRootFile = "teams-policy.yaml"
+
 // FileInfo is one readable catalog file.
 type FileInfo struct {
 	Path string `json:"path"`
@@ -85,8 +90,11 @@ func readablePath(p string) error {
 	if err := ValidatePath(p); err != nil {
 		return err
 	}
+	if p == readableRootFile {
+		return nil
+	}
 	if !readableDirs[strings.SplitN(p, "/", 2)[0]] {
-		return fmt.Errorf("%s is not a file an agent reads raw (readable: agents, launches, projects, skills, boot-profiles, team-definitions); providers, MCP servers and global.yaml can hold credentials", p)
+		return fmt.Errorf("%s is not a file an agent reads raw (readable: agents, launches, projects, skills, boot-profiles, team-definitions, teams-policy.yaml); providers, MCP servers and global.yaml can hold credentials", p)
 	}
 	return nil
 }
@@ -122,6 +130,9 @@ func (e *Engine) ListFiles() ([]FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if fi, err := os.Lstat(filepath.Join(e.Root, readableRootFile)); err == nil && fi.Mode().IsRegular() {
+		out = append(out, FileInfo{Path: readableRootFile, Size: fi.Size()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil

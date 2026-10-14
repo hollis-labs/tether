@@ -37,6 +37,7 @@ func Run(root string) Report {
 		results = append(results, MCPProfiles(cat, root)...)
 		results = append(results, MCPNamingConfig(root)...)
 		results = append(results, MCPCredentialFiles(root)...)
+		results = append(results, TeamsPolicy(cat, root)...)
 	}
 	return newReport(results)
 }
