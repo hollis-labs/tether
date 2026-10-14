@@ -372,3 +372,23 @@ func TestCreateKeyedReplace_RebindsOnlyEndedSession(t *testing.T) {
 		t.Fatalf("after replace = %+v, %v; want replay of %s", again, err, second.SessionID)
 	}
 }
+
+// A failed plan build under --replace must not strand the key unbound.
+func TestCreateKeyedReplace_BuildFailureKeepsBinding(t *testing.T) {
+	svc, _ := idemHarness(t)
+	first, err := svc.createKeyed("p1", "test/k2", "digest-a", idemPlan(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.UpdateSessionState(first.SessionID, string(session.StateKilled), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	boom := errors.New("build failed")
+	if _, err := svc.createKeyedReplace("p1", "test/k2", "digest-a", true, func() (*launch.Plan, error) { return nil, boom }); !errors.Is(err, boom) {
+		t.Fatalf("err = %v; want build failure", err)
+	}
+	again, err := svc.createKeyed("p1", "test/k2", "digest-a", idemPlan(t))
+	if err != nil || !again.Replayed || again.SessionID != first.SessionID {
+		t.Fatalf("after failed replace = %+v, %v; want replay of %s", again, err, first.SessionID)
+	}
+}
