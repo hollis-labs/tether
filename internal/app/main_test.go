@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/testutil"
 )
 
@@ -34,6 +35,9 @@ func TestMain(m *testing.M) {
 			}
 		}
 	}
+	// Open starts new databases from one migrated image: replaying every
+	// migration costs ~1.8s per Open under -race and these tests open hundreds.
+	store.UseMigratedTemplate()
 	defaultProtectionStatus = func() ProtectionStatus {
 		return ProtectionStatus{Reason: "off for internal/app unit tests"}
 	}

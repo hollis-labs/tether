@@ -66,6 +66,12 @@ func Open(path string) (*Store, error) {
 	if err := seedOpenTemplate(path); err != nil {
 		return nil, err
 	}
+	return openDB(path)
+}
+
+// openDB opens path and brings its schema up to date. Open adds the directory
+// and the optional test template in front of it.
+func openDB(path string) (*Store, error) {
 	// DSN parameters are supported by modernc.org/sqlite.
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
@@ -102,26 +108,55 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db, stateDBPath: path}, nil
 }
 
-// openTemplate is nil in production. A package's TestMain may set it to the
-// bytes of a closed, fully migrated empty database so that
-// Open on a path that does not exist yet starts from that image instead of
-// replaying every migration: under -race the replay costs ~1.8s per Open (SQLite
-// re-parses the schema after each statement through the race detector's pointer
-// checks) and the test suites open hundreds of databases.
-var openTemplate []byte
+// useTemplate is false in production. A test package's TestMain turns it on
+// (UseMigratedTemplate) and the first Open then builds openTemplate, the bytes
+// of a closed, fully migrated empty database, which later Opens of a path that
+// does not exist yet start from instead of replaying every migration. Under
+// -race the replay costs ~1.8s per Open (SQLite re-parses the schema after each
+// statement through the race detector's pointer checks) and the test suites open
+// hundreds of databases. Built lazily, because a test binary is also re-executed
+// as a helper subprocess that runs TestMain but may never open a store.
+var (
+	useTemplate  bool
+	templateOnce sync.Once
+	openTemplate []byte
+	templateErr  error
+)
 
-// seedOpenTemplate copies openTemplate to path when path does not exist yet.
-// With no template, or an existing file, it does nothing, so Open behaves exactly
-// as before. Open still runs Migrate and the delivery schema afterwards, which
-// are no-ops on the template.
+// seedOpenTemplate copies the template to path when path does not exist yet.
+// With the template off, or an existing file, it does nothing, so Open behaves
+// exactly as before. Open still runs Migrate and the delivery schema afterwards,
+// which are no-ops on the template.
 func seedOpenTemplate(path string) error {
-	if openTemplate == nil {
+	if !useTemplate {
 		return nil
 	}
 	if _, err := os.Stat(path); err == nil || !errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
+	templateOnce.Do(func() { openTemplate, templateErr = buildTemplate() })
+	if templateErr != nil {
+		return fmt.Errorf("migrated template: %w", templateErr)
+	}
 	return os.WriteFile(path, openTemplate, 0o600)
+}
+
+func buildTemplate() ([]byte, error) {
+	dir, err := os.MkdirTemp("", "store-template-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	path := filepath.Join(dir, "template.db")
+	s, err := openDB(path)
+	if err != nil {
+		return nil, err
+	}
+	// Closing the last connection checkpoints the WAL into the main file.
+	if err := s.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path) //nolint:gosec // G304: the file this function just created
 }
 
 func (s *Store) Close() error { return s.db.Close() }
