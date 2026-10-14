@@ -164,6 +164,16 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSessionCheckpointsList(w, r, id)
+	case "usage":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		if s.SessionUsage == nil {
+			writeError(w, http.StatusNotFound, CodeNotFound, "session usage not configured")
+			return
+		}
+		s.handleSessionUsage(w, id)
 	case "health":
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -697,4 +707,30 @@ func writeLaunchRefused(w http.ResponseWriter, err error) bool {
 	}
 	writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
 	return true
+}
+
+// SessionUsageResponse is GET /sessions/{id}/usage. Tokens and cost cover only
+// the usage_turns turns whose runtime reported usage; metered is false when no
+// finished turn reported any (a PTY CLI agent), which is "unmetered", not zero.
+type SessionUsageResponse struct {
+	store.SessionUsage
+	Metered bool `json:"metered"`
+}
+
+// handleSessionUsage services GET /sessions/{id}/usage.
+func (s *Server) handleSessionUsage(w http.ResponseWriter, sessionID string) {
+	if _, err := s.Service.GetSession(sessionID); err != nil {
+		if errors.Is(err, store.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	u, err := s.SessionUsage.GetSessionUsage(sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, SessionUsageResponse{SessionUsage: u, Metered: u.UsageTurns > 0})
 }

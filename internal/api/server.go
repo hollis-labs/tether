@@ -20,6 +20,11 @@ type AttachmentStore interface {
 	ListClientAttachments(sessionID string) ([]store.ClientAttachmentRow, error)
 }
 
+// SessionUsageStore reads the per-session usage meter. *store.Store satisfies it.
+type SessionUsageStore interface {
+	GetSessionUsage(sessionID string) (store.SessionUsage, error)
+}
+
 // Deps bundles everything the api handlers need at construction time.
 // The daemon package builds this and calls NewHandler to get an
 // http.Handler back. Each field is optional — handlers whose
@@ -34,6 +39,7 @@ type Deps struct {
 	AIAudit           AIAuditStore
 	AIUsage           AIUsageStore
 	Checkpoints       CheckpointStore
+	SessionUsage      SessionUsageStore
 	Broker            BrokerService
 	Bus               events.Bus
 	EventsStore       EventsStore
@@ -163,6 +169,7 @@ type Server struct {
 	AIAudit             AIAuditStore
 	AIUsage             AIUsageStore
 	Checkpoints         CheckpointStore
+	SessionUsage        SessionUsageStore
 	Broker              BrokerService
 	Bus                 events.Bus
 	EventsStore         EventsStore
@@ -212,6 +219,7 @@ func NewHandler(deps Deps) http.Handler {
 		AIAudit:             deps.AIAudit,
 		AIUsage:             deps.AIUsage,
 		Checkpoints:         deps.Checkpoints,
+		SessionUsage:        deps.SessionUsage,
 		Broker:              deps.Broker,
 		Bus:                 deps.Bus,
 		EventsStore:         deps.EventsStore,

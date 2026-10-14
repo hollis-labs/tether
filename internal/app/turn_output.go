@@ -54,6 +54,7 @@ type sessionTurnOutput struct {
 	reducerTurnID            string
 	turnDone                 chan struct{}
 	finishedTurns            []string
+	turnStartedAt            map[string]time.Time
 	// finalTurnGrace is lifecycle.stop_after_final_turn; zero means opt out.
 	finalTurnGrace time.Duration
 }
@@ -144,6 +145,7 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 	if ev.TurnID != "" && slices.Contains(o.finishedTurns, ev.TurnID) {
 		return
 	}
+	o.meterTurn(ev)
 	switch ev.Kind {
 	case runtimeevents.KindTurnStarted, runtimeevents.KindAgentDelta, runtimeevents.KindAgentToolUse,
 		runtimeevents.KindAgentToolResult, runtimeevents.KindAgentSubagentSpawn, runtimeevents.KindAgentPermissionRequested,

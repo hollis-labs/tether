@@ -329,6 +329,7 @@ var daemonRunCmd = &cobra.Command{
 			AIAudit:             svc.Store,
 			AIUsage:             svc.Store,
 			Checkpoints:         svc.Store,
+			SessionUsage:        svc.Store,
 			Broker:              &brokerAdapter{write: svc.Broker, read: svc.Store},
 			Bus:                 svc.Bus,
 			EventsStore:         svc.Store,
