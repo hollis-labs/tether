@@ -30,6 +30,13 @@ func TestCheckLineageLimits(t *testing.T) {
 	if err := svc.checkLineage("root"); !errors.Is(err, ErrLineageLimit) {
 		t.Fatalf("children cap: %v", err)
 	}
+	// An ended child no longer counts against the cap.
+	if err := svc.Store.UpdateSessionState("kid", "completed", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.checkLineage("root"); err != nil {
+		t.Fatalf("ended child must not count: %v", err)
+	}
 	svc.LineageLimits = LineageLimits{MaxDepth: 1}
 	if err := svc.checkLineage("root"); err != nil {
 		t.Fatalf("depth 1 child of root allowed: %v", err)

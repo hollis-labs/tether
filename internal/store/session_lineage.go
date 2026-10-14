@@ -39,3 +39,12 @@ func (s *Store) SessionLineageDepth(id string) (int, error) {
 	}
 	return depth, nil
 }
+
+// LiveChildCount counts the direct children of id that have not ended
+// (created, ready, launching, running, detached or orphaned). Ended children
+// do not count against a parent's child cap.
+func (s *Store) LiveChildCount(id string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE parent_session_id=? AND state IN ('created','ready','launching','running','detached','orphaned')`, id).Scan(&n)
+	return n, err
+}
