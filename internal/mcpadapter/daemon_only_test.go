@@ -111,7 +111,7 @@ func newDaemonOnlyFixture(t *testing.T) *daemonOnlyFixture {
 		db:         db,
 		service:    svc,
 		inProcess:  New(&app.Service{Store: db}, "tok", nil),
-		daemonOnly: NewWithDaemon(&app.Service{}, dc, "tok", nil), // no Store, as app.NewCatalogOnly leaves it
+		daemonOnly: NewWithDaemon(&app.Service{}, dc, "tok", []string{"terminal"}), // no Store, as app.NewCatalogOnly leaves it
 	}
 }
 
@@ -425,5 +425,19 @@ func TestDaemonOnly_SessionPeekReportsUnknownSession(t *testing.T) {
 	res = callAnyTool(t, f.daemonOnly, "tether_session_peek", map[string]any{})
 	if !res.IsError || !strings.Contains(textOf(res), "invalid_request") {
 		t.Errorf("tether_session_peek without session_id = %q, want invalid_request", textOf(res))
+	}
+}
+
+func TestDaemonOnly_SessionPeekRequiresTerminalScope(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	for name, a := range map[string]*Adapter{
+		"no scopes":   NewWithDaemon(&app.Service{}, f.daemonOnly.client, "tok", nil),
+		"wrong scope": NewWithDaemon(&app.Service{}, f.daemonOnly.client, "tok", []string{"session.write"}),
+		"no token":    NewWithDaemon(&app.Service{}, f.daemonOnly.client, "", []string{"terminal"}),
+	} {
+		res := callAnyTool(t, a, "tether_session_peek", map[string]any{"session_id": "missing"})
+		if !res.IsError || strings.Contains(textOf(res), "not_found") || !(strings.Contains(textOf(res), "insufficient_scope") || strings.Contains(textOf(res), "auth_required")) {
+			t.Errorf("%s: peek = %q, want a scope refusal", name, textOf(res))
+		}
 	}
 }

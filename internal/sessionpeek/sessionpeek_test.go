@@ -3,6 +3,7 @@ package sessionpeek
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestPeekDigest(t *testing.T) {
@@ -30,5 +31,22 @@ func TestPeekDigest(t *testing.T) {
 	}
 	if tail := Digest([]byte(log), 2); len(tail) != 2 || !strings.HasPrefix(tail[1], "FINAL") {
 		t.Fatalf("tail: %q", tail)
+	}
+}
+
+func TestTruncRedactsMoreSecretsAndKeepsRunesWhole(t *testing.T) {
+	for _, in := range []string{
+		"key AKIAABCDEFGHIJKLMNOP end",
+		"-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----",
+		"Cookie: session=abcdef123456",
+	} {
+		out := trunc(in, 500)
+		if strings.Contains(out, "AKIAABC") || strings.Contains(out, "MIIabc") || strings.Contains(out, "abcdef123456") {
+			t.Errorf("secret survived: %q -> %q", in, out)
+		}
+	}
+	out := trunc("ééééé", 3)
+	if !utf8.ValidString(out) {
+		t.Errorf("truncation split a rune: %q", out)
 	}
 }
