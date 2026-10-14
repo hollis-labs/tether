@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"github.com/hollis-labs/substrate/mesh"
@@ -45,8 +47,11 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 // Launch binds one exact catalog launch id to one verified definition pin and
 // the runtime family it executes on (used for the reviewer pairing rule).
 type Launch struct {
-	Launch     string `yaml:"launch"`
-	Runtime    string `yaml:"runtime"`
+	Launch  string `yaml:"launch"`
+	Runtime string `yaml:"runtime"`
+	// Model is optional. When both reviewer and worker launches set it, a
+	// different model on the same runtime satisfies the reviewer pairing rule.
+	Model      string `yaml:"model,omitempty"`
 	Definition Pin    `yaml:"definition"`
 	// Source is the optional catalog-relative definition file ("catalog:<path>").
 	// When set the daemon indexes it at start and refuses a pin mismatch.
@@ -77,6 +82,8 @@ type Policy struct {
 	pauseMarker string
 	paused      atomic.Bool
 	sessionForm bool
+	pairingMu   sync.Mutex
+	pairing     ReviewerPairing
 }
 
 // SessionFormation reports whether verified sessions may form teams.
@@ -288,7 +295,7 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 	// Workers may be one fresh member or a pool of up to two pre-enrolled
 	// agents (concurrent activation requires a pool).
 	limits := map[string]struct{ min, max int }{SlotCoordinator: {0, 1}, SlotWorkers: {1, maxWorkers}, SlotReviewer: {1, 1}}
-	runtimes := map[string]string{}
+	runtimes, models := map[string]string{}, map[string]string{}
 	for name, bounds := range limits {
 		s, ok := slots[name]
 		if !ok {
@@ -304,7 +311,7 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 		if !ok {
 			return deny("slot %q definition is not an allowlisted exact pin", name)
 		}
-		runtimes[name] = l.Runtime
+		runtimes[name], models[name] = l.Runtime, l.Model
 	}
 	// The operator's owner seat must be the coordinator slot, and that slot
 	// must provision no member, so an agent can never take the coordinator role.
@@ -318,15 +325,44 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 	if slots[SlotCoordinator].Min != 0 || req.Launch.Counts[SlotCoordinator] != 0 {
 		return deny("the coordinator slot is the operator's seat and provisions no member")
 	}
-	// Reviewer must be on a different runtime from the workers when the
-	// allowlist offers more than one runtime; with a single runtime it is
-	// only preferred.
-	distinct := map[string]bool{}
-	for _, l := range c.Policy.launches {
-		distinct[l.Runtime] = true
+	// Reviewer must differ from the workers by runtime, or by model when both
+	// launches name one. With a single allowlisted runtime this is only
+	// preferred: the formation proceeds and the fallback is logged and recorded
+	// in the pairing report for later evals.
+	pairing := ReviewerPairing{WorkerRuntime: runtimes[SlotWorkers], WorkerModel: models[SlotWorkers], ReviewerRuntime: runtimes[SlotReviewer], ReviewerModel: models[SlotReviewer]}
+	pairing.Different = pairing.WorkerRuntime != pairing.ReviewerRuntime || (pairing.WorkerModel != "" && pairing.ReviewerModel != "" && pairing.WorkerModel != pairing.ReviewerModel)
+	if !pairing.Different {
+		distinct := map[string]bool{}
+		for _, l := range c.Policy.launches {
+			distinct[l.Runtime] = true
+		}
+		if len(distinct) > 1 {
+			return deny("reviewer must run on a different runtime or model than the workers (%s)", pairing.WorkerRuntime)
+		}
+		log.Printf("teams: reviewer pairing fallback for run %q: only runtime %q is allowlisted, reviewer shares runtime/model with workers", req.Key, pairing.WorkerRuntime)
 	}
-	if len(distinct) > 1 && runtimes[SlotReviewer] == runtimes[SlotWorkers] {
-		return deny("reviewer must run on a different runtime than the workers (%s)", runtimes[SlotWorkers])
-	}
+	c.Policy.recordPairing(pairing)
 	return nil
+}
+
+// ReviewerPairing records the author (worker) and reviewer runtime/model chosen
+// by the most recent admitted formation; Different is false for the recorded
+// single-runtime fallback.
+type ReviewerPairing struct {
+	WorkerRuntime, WorkerModel     string
+	ReviewerRuntime, ReviewerModel string
+	Different                      bool
+}
+
+func (p *Policy) recordPairing(r ReviewerPairing) {
+	p.pairingMu.Lock()
+	p.pairing = r
+	p.pairingMu.Unlock()
+}
+
+// LastReviewerPairing returns the pairing of the most recent admitted formation.
+func (p *Policy) LastReviewerPairing() ReviewerPairing {
+	p.pairingMu.Lock()
+	defer p.pairingMu.Unlock()
+	return p.pairing
 }
