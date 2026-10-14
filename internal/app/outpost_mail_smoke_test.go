@@ -114,6 +114,11 @@ func TestOutpostMailS2(t *testing.T) {
 	request := func(q outpostmail.Request) outpostmail.Reply {
 		t.Helper()
 		_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+		// The deadline bounds this request only. Left set, it also bounds the
+		// reader goroutine below, which keeps decoding on the same connection:
+		// once the test outlives it by a few seconds under load, that goroutine
+		// dies on "i/o timeout" and no later delivery is ever acknowledged.
+		defer func() { _ = c.SetDeadline(time.Time{}) }()
 		if err := enc.Encode(q); err != nil {
 			t.Fatal(err)
 		}
