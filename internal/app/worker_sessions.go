@@ -12,6 +12,7 @@ import (
 	"github.com/hollis-labs/tether/internal/workerhub"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/hollis-labs/tether/internal/workspace"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +155,16 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	defer cancel()
 	result, err := s.Workers.Send(wait, row.WorkerID, workerwire.Frame{T: "launch", CmdID: "launch:" + row.ID, Session: row.ID, Spec: raw})
 	if err != nil {
+		if result.Error == "" {
+			// No verdict from the worker (cancelled wait, dropped link): the
+			// launch frame was sent and the worker may still start the
+			// session. Marking it failed would hide a live process from stop and
+			// rollback, and its later state report would resurrect it. Leave it
+			// launching with its identity bound; the worker's state report or a
+			// stop by session id settles it.
+			log.Printf("worker session %s: launch outcome unknown, leaving it launching: %v", row.ID, err)
+			return nil, err
+		}
 		undoIdentity()
 		exit := 1
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)

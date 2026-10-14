@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -224,6 +225,9 @@ func (s *Service) StopTeamSession(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if row.WorkerID != "" {
+		return s.stopWorkerTeamSession(row)
+	}
 	if session.State(row.State).Terminal() {
 		return nil
 	}
@@ -258,4 +262,33 @@ func (s *Service) StopTeamSession(ctx context.Context, id string) error {
 		return waitErr
 	}
 	return teamhost.ErrSessionUnavailable
+}
+
+// stopWorkerTeamSession stops a worker-placed member by session id whatever
+// state the hub recorded: a hub-side failed/launching row can still have a live
+// process on the worker (the launch acknowledgement may have been lost), so a
+// terminal row is not proof the process is gone. An unreachable worker leaves
+// a live-looking row retryable; "unknown execution" means the worker holds
+// nothing to stop.
+func (s *Service) stopWorkerTeamSession(row *store.SessionRow) error {
+	terminal := session.State(row.State).Terminal()
+	err := s.StopSession(row.ID)
+	switch {
+	case err == nil, strings.Contains(fmt.Sprint(err), "unknown execution"):
+	case terminal:
+		log.Printf("team stop: worker session %s already %s on the hub; worker stop failed: %v", row.ID, row.State, err)
+		return nil
+	default:
+		return fmt.Errorf("%w: stop worker session %s: %v", teamhost.ErrSessionUnavailable, row.ID, err)
+	}
+	if !terminal {
+		if err = s.Store.UpdateSessionState(row.ID, string(session.StateKilled), 0, nil); err != nil {
+			return err
+		}
+		s.releaseWorkerIdentity(row.ID)
+		if s.Registry != nil {
+			_, _ = s.Registry.RevokeSessionBindings(context.Background(), row.ID)
+		}
+	}
+	return nil
 }

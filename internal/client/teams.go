@@ -17,7 +17,8 @@ import (
 type TeamError struct {
 	Code   string
 	Status int
-	// Detail is the daemon's bounded cause text, set only for internal_error.
+	// Detail is the daemon's bounded cause text. The daemon sends it only to the
+	// verified local operator, for any classified or internal failure.
 	Detail string
 }
 
@@ -61,7 +62,7 @@ func (c *Client) Team(ctx context.Context, verb, key string, req api.TeamRequest
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.http.Do(request)
 	if err != nil {
-		return result, &TeamError{Code: "unavailable", Status: 503}
+		return result, &TeamError{Code: "unavailable", Status: 503, Detail: "unavailable: request to daemon failed: " + boundedLine(err.Error())}
 	}
 	defer func() { _ = response.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(response.Body, teamsvc.MaxRequestBytes+1))
@@ -80,7 +81,11 @@ func (c *Client) Team(ctx context.Context, verb, key string, req api.TeamRequest
 		for _, cause := range []error{teamsvc.ErrUnauthenticated, teamsvc.ErrUnavailable, teamsvc.ErrDenied, teamsvc.ErrNotFound, teamsvc.ErrConflict, teamsvc.ErrInvalidRequest, errors.New("unknown")} {
 			status, detail := api.TeamError(cause)
 			if envelope.Error.Code == detail.Code && response.StatusCode == status {
-				return result, &TeamError{Code: detail.Code, Status: status}
+				te := &TeamError{Code: detail.Code, Status: status}
+				if strings.HasPrefix(envelope.Error.Message, detail.Code+": ") {
+					te.Detail = envelope.Error.Message
+				}
+				return result, te
 			}
 		}
 		code, status := "internal_error", 500
@@ -108,4 +113,12 @@ func (c *Client) Team(ctx context.Context, verb, key string, req api.TeamRequest
 		return result, &TeamError{Code: "internal_error", Status: 500}
 	}
 	return result, nil
+}
+
+func boundedLine(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > 300 {
+		text = text[:300] + "..."
+	}
+	return text
 }
