@@ -741,3 +741,26 @@ func TestClient_ResumeLogicalAgentWithOptions_SendsKey(t *testing.T) {
 		t.Fatalf("unkeyed resume: %v, opts = %+v", err, got)
 	}
 }
+
+func TestClient_MessageReply_Interrupt(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Body      string `json:"body"`
+			Interrupt bool   `json:"interrupt"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		if r.Method != http.MethodPost || r.URL.Path != "/messages/m1/reply" || r.URL.Query().Get("as") != "msg://agent/a/b" ||
+			r.Header.Get("Idempotency-Key") != "k1" || in.Body != "hi" || !in.Interrupt {
+			t.Errorf("unexpected request %s %s %+v", r.Method, r.URL, in)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"reply_id":"r1","interrupt":"cancelled"}`))
+	}))
+	defer srv.Close()
+	c := New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+	got, err := c.MessageReply(context.Background(), "m1", "hi", true, "msg://agent/a/b", "k1")
+	if err != nil || got["reply_id"] != "r1" {
+		t.Fatalf("receipt=%v err=%v", got, err)
+	}
+}

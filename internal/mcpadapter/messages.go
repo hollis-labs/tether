@@ -123,6 +123,30 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Destroys("sets canceled_at one-way; the message can never be delivered and there is no uncancel"))
 
 	a.addTool(s, gomcp.Tool{
+		Name:        "tether_message_reply",
+		Description: "Reply to the session that sent a routed message; the body is delivered as that session's next turn at its next idle boundary. Same route as POST /messages/{id}/reply. Requires message.write scope.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "ID of the routed message being replied to", true),
+			gomcp.StringProp("body", "Reply text (max 128 KiB)", true),
+			gomcp.StringProp("as", "Caller URN the reply is attributed to", true),
+			gomcp.StringProp("idempotency_key", "Optional key; a repeated key returns the earlier receipt", false),
+		),
+		Handler: a.handleMessageReply,
+	}, Writes())
+
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_message_interrupt",
+		Description: "Interrupt the running turn of the session that sent a routed message and deliver body as its next turn (reply with interrupt:true). Fails with interrupt_unsupported when the runtime cannot cancel a turn. Requires message.write scope.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "ID of the routed message whose sending session is interrupted", true),
+			gomcp.StringProp("body", "Replacement turn text (max 128 KiB)", true),
+			gomcp.StringProp("as", "Caller URN the reply is attributed to", true),
+			gomcp.StringProp("idempotency_key", "Optional key; a repeated key returns the earlier receipt", false),
+		),
+		Handler: a.handleMessageInterrupt,
+	}, Destroys("cancels the target session's in-flight turn; the cancelled work is not resumed"))
+
+	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_mark_read",
 		Description: "Mark a message as read by its recipient (idempotent). Does not consume or delete it. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
@@ -350,6 +374,38 @@ func (a *Adapter) handleMessageConsume(ctx context.Context, args map[string]any)
 		return nil, classifyClientErr(err, id)
 	}
 	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
+}
+
+func (a *Adapter) handleMessageReply(ctx context.Context, args map[string]any) (any, error) {
+	return a.messageReply(ctx, args, false, "tether_message_reply")
+}
+
+func (a *Adapter) handleMessageInterrupt(ctx context.Context, args map[string]any) (any, error) {
+	return a.messageReply(ctx, args, true, "tether_message_interrupt")
+}
+
+func (a *Adapter) messageReply(ctx context.Context, args map[string]any, interrupt bool, tool string) (any, error) {
+	if err := a.checkScope(ScopeMessageWrite); err != nil {
+		return nil, err
+	}
+	id, body, asURN := str(args, "message_id"), str(args, "body"), str(args, "as")
+	if id == "" || body == "" || asURN == "" {
+		return nil, toolError("invalid_request", "message_id, body and as are required")
+	}
+	if _, parseErr := messaging.ParseURN(asURN); parseErr != nil {
+		return nil, toolError("invalid_request", "invalid as URN: "+parseErr.Error())
+	}
+	if a.client == nil {
+		return nil, toolError("internal_error", tool+" requires daemon routing; start MCP with tether mcp")
+	}
+	receipt, err := a.client.MessageReply(ctx, id, body, interrupt, asURN, str(args, "idempotency_key"))
+	if err != nil {
+		if isDaemonUnreachable(err) {
+			return nil, daemonUnreachableError(err)
+		}
+		return nil, classifyClientErr(err, id)
+	}
+	return toolJSON(map[string]any{"ok": true, "message_id": id, "receipt": receipt}), nil
 }
 
 func (a *Adapter) handleMessageCancel(ctx context.Context, args map[string]any) (any, error) {

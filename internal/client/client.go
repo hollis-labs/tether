@@ -1133,6 +1133,38 @@ func (c *Client) MessageCancel(ctx context.Context, id string) error {
 	return readError(resp)
 }
 
+// MessageReply posts a reply to the session that sent message id via
+// POST /messages/{id}/reply. interrupt asks the daemon to cancel the session's
+// running turn first. The 202 receipt is returned as decoded JSON.
+func (c *Client) MessageReply(ctx context.Context, id, body string, interrupt bool, as, idempotencyKey string) (map[string]any, error) {
+	raw, err := json.Marshal(map[string]any{"body": body, "interrupt": interrupt})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/reply?as="+url.QueryEscape(as), bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return nil, readError(resp)
+	}
+	var receipt map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+		return nil, fmt.Errorf("decode reply receipt: %w", err)
+	}
+	return receipt, nil
+}
+
 // MessageTraceReceipt mirrors internal/api's TraceReceipt (T09, messaging
 // vNext).
 type MessageTraceReceipt struct {
