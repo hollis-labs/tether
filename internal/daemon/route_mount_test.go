@@ -61,6 +61,7 @@ var apiTopLevelPaths = []string{
 	"/registry/scoped-bindings/revisions",
 	"/session-groups", "/session-groups/",
 	"/sessions", "/sessions/", "/sessions/bootstrap",
+	"/execution/policy", "/capacity",
 	"/settings/mcp", "/settings/onboarding", "/settings/onboarding/",
 	"/teams/",
 	"/whoami",

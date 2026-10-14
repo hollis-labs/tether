@@ -961,6 +961,11 @@ func (s *Server) apiMounts() []apiMount {
 		{"/logs/daemon", s.LogsDir != ""},
 		{"/sessions/bootstrap", s.SessionBootstrap != nil},
 
+		// Execution control (CW-20261014-0074). api registers these only when the
+		// LaunchService implements the optional execution interfaces.
+		{"/execution/policy", hasService},
+		{"/capacity", hasService},
+
 		{"/fs/validate", true},
 		{"/fs/detect", true},
 	}
