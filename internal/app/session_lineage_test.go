@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/workerhub"
+	"strings"
 	"sync"
 	"testing"
 
@@ -88,5 +90,35 @@ func TestAdmitChildIsAtomicUnderConcurrency(t *testing.T) {
 	}
 	if ok != 2 {
 		t.Fatalf("admitted %d children, want exactly 2", ok)
+	}
+}
+
+// A cascade reaches worker-placed descendants through their worker: an
+// unreachable worker fails the cascade for a live row, but not for a row the
+// hub already records as ended, and the rest of the tree is still attempted.
+func TestStopSessionCascadeWorkerPlacedDescendants(t *testing.T) {
+	svc := bindingHarness(t)
+	if _, err := svc.Store.DB().Exec(`INSERT INTO workers(id,label,device_id,platform,caps_json,last_seen,created_at) VALUES('w1','agent-os','d1','linux','{}','','')`); err != nil {
+		t.Fatal(err)
+	}
+	svc.Workers = workerhub.New(svc.Store.DB())
+	svc.stops = &stopRequests{}
+	lineageSession(t, svc, "root", "")
+	workerKid := func(id, parent, state string) {
+		t.Helper()
+		row := store.SessionRow{ID: id, WorkerID: "w1", LaunchID: "l", ProjectID: "p", ProviderID: "pv", Workspace: t.TempDir(), State: state,
+			ParentSessionID: sql.NullString{String: parent, Valid: true}}
+		if err := svc.Store.CreateSession(row, &launch.Plan{LaunchID: "l"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workerKid("ended", "root", "failed")
+	if err := svc.StopSessionCascade("root"); err != nil {
+		t.Fatalf("ended worker descendant must not fail the cascade: %v", err)
+	}
+	workerKid("live", "root", "running")
+	err := svc.StopSessionCascade("root")
+	if err == nil || !strings.Contains(err.Error(), "stop live") {
+		t.Fatalf("live worker descendant with unreachable worker: err = %v", err)
 	}
 }
