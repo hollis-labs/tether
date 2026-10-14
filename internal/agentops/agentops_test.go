@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -185,5 +186,29 @@ func TestUpdate_ClearsListWithEmptySlice(t *testing.T) {
 func TestUpdate_MissingFile(t *testing.T) {
 	if _, err := Update(filepath.Join(t.TempDir(), "nope.yaml"), Params{Name: "x"}); err == nil {
 		t.Fatal("Update: expected error for missing file, got nil")
+	}
+}
+
+func TestUpdate_PreservesCommentsAndUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.yaml")
+	src := "# keep me\nid: a\nname: Old\nfuture_field:\n  nested: 1  # inline\nroles: [x]\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Update(path, Params{Name: "New", Skills: []string{"s1"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	for _, want := range []string{"# keep me", "future_field:", "nested: 1", "# inline", "name: New", "- s1", "id: a"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("result missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Old") {
+		t.Errorf("old name remains:\n%s", got)
 	}
 }

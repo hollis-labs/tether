@@ -55,7 +55,7 @@ func (a *Adapter) registerAgentOpsTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_agent_edit",
-		Description: "Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Note: edit rewrites the file in canonical YAML form, so comments and any unknown fields in the original file are not preserved.",
+		Description: "Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Edit patches only the keys you pass: comments, key order and unknown fields in the original file are preserved.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("id", "Agent ID to edit.", true),
 			gomcp.StringProp("name", "New human-readable name (optional).", false),
@@ -123,6 +123,9 @@ func (a *Adapter) handleAgentCreate(_ context.Context, args map[string]any) (any
 	if !agentops.ValidID(id) {
 		return nil, toolError("invalid_argument", "id is required and must be a single name with no path separators")
 	}
+	if refusal := a.refuseUneditableAgent(id); refusal != nil {
+		return nil, refusal
+	}
 	layer, err := agentops.ParseScope(str(args, "scope"))
 	if err != nil {
 		return nil, toolError("invalid_argument", err.Error())
@@ -164,6 +167,9 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 	id := str(args, "id")
 	if id == "" {
 		return nil, toolError("invalid_argument", "id is required")
+	}
+	if refusal := a.refuseUneditableAgent(id); refusal != nil {
+		return nil, refusal
 	}
 	cat, err := a.discoverAgents()
 	if err != nil {
@@ -209,6 +215,34 @@ const codeAgentFileIsSymlink = "agent_file_is_symlink"
 
 // agentFileIsSymlinkMessage says what to do instead.
 const agentFileIsSymlinkMessage = "the agent file is a symlink, and a launched agent's write does not follow one while Tether protects its catalog; edit the link's target, or replace the link with a regular file"
+
+// codeAgentNotEditable is the tool error code for an agent id outside the
+// adapter's editable-agent allowlist.
+const codeAgentNotEditable = "agent_not_editable"
+
+// SetEditableAgents restricts tether_agent_create and tether_agent_edit to the
+// given agent ids. An empty list lifts the restriction. Like the protected
+// paths it is set by whoever plants the server, never by the agent it serves.
+func (a *Adapter) SetEditableAgents(ids []string) {
+	a.editableAgents = nil
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			if a.editableAgents == nil {
+				a.editableAgents = map[string]bool{}
+			}
+			a.editableAgents[id] = true
+		}
+	}
+}
+
+// refuseUneditableAgent returns a tool error when an allowlist is set and id is
+// not on it.
+func (a *Adapter) refuseUneditableAgent(id string) *budget.ToolError {
+	if len(a.editableAgents) == 0 || a.editableAgents[id] {
+		return nil
+	}
+	return toolError(codeAgentNotEditable, fmt.Sprintf("this session may not create or edit agent %q: it is not on the editable-agent allowlist", id))
+}
 
 // SetProtectedPaths sets the directories this adapter refuses to write: the
 // protected directories the launch registered for the agent. It resolves each

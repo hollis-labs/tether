@@ -92,6 +92,11 @@ type Adapter struct {
 	// refusal as one that runs it inside.
 	protected []string
 
+	// editableAgents, when non-empty, is the allowlist of agent ids this
+	// adapter's tether_agent_create and tether_agent_edit may touch
+	// (SetEditableAgents). Empty means no per-agent restriction.
+	editableAgents map[string]bool
+
 	// Logger receives the warn-level telemetry emitted by the
 	// go-mcp-sanitize middleware when it cleans a polluted tool call.
 	// Optional; nil falls back to slog.Default(). The MCP stdio command
