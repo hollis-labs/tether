@@ -197,7 +197,7 @@ Mutating tools require a **token** and the corresponding **scope**:
 | Scope | Grants access to |
 |---|---|
 | `session.write` | `tether_session_create`, `tether_session_launch`, `tether_session_stop`, `tether_session_send_input`, `tether_session_send_turn`, `tether_session_resize`, `tether_logical_agent_resume` |
-| `message.write` | `tether_message_send`, `tether_message_notify`, `tether_message_consume`, `tether_message_cancel`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive` |
+| `message.write` | `tether_message_send`, `tether_message_notify`, `tether_message_consume`, `tether_message_cancel`, `tether_message_reply`, `tether_message_interrupt`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive` |
 | `registry.write` | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_scoped_binding_set` |
 | `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
 | `delivery.write` | `tether_message_redrive`, `tether_message_purge` |
@@ -1179,6 +1179,22 @@ Cancel a pending message.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `message_id` | string | ✓ | Message ID |
+
+#### `tether_message_reply` _(message.write)_
+Reply to the session that sent a routed message; delivered as its next turn at
+the next idle boundary (`POST /messages/{id}/reply`).
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `message_id` | string | ✓ | ID of the routed message being replied to |
+| `body` | string | ✓ | Reply text (max 128 KiB) |
+| `as` | string | ✓ | Caller URN the reply is attributed to |
+| `idempotency_key` | string |  | Repeated key returns the earlier receipt |
+
+#### `tether_message_interrupt` _(message.write)_
+Same route with `interrupt:true`: cancels the sending session's running turn and
+delivers `body` as its next turn. Fails with `interrupt_unsupported` when the
+runtime cannot cancel a turn. Same parameters as `tether_message_reply`.
 
 ---
 

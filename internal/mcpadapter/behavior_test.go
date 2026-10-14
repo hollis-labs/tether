@@ -83,6 +83,7 @@ var clientMethodWrites = map[string]bool{
 	"MessageNotify":                 true,
 	"MessageConsume":                true,
 	"MessageCancel":                 true,
+	"MessageReply":                  true,
 	"MessagePurge":                  true,
 	"MessageRedrive":                true,
 	"CreateSession":                 true,
