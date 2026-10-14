@@ -49,3 +49,15 @@ func TestWorkerSpecCarriesPermissionMode(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerSpecCarriesResumeSessionID(t *testing.T) {
+	s := &Service{Catalog: &config.Catalog{}}
+	spec, err := s.workerSpec(context.Background(), "sess-1", &launch.Plan{ProviderBrand: "claude", ResumeProviderSessionID: "native-1"})
+	if err != nil || spec.ResumeSessionID != "native-1" {
+		t.Fatalf("spec resume id = %q err=%v", spec.ResumeSessionID, err)
+	}
+	spec, _ = s.workerSpec(context.Background(), "sess-2", &launch.Plan{ProviderBrand: "claude"})
+	if spec.ResumeSessionID != "" {
+		t.Fatalf("fresh launch carries resume id %q", spec.ResumeSessionID)
+	}
+}

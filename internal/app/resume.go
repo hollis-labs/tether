@@ -18,6 +18,8 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
+	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
 
@@ -132,6 +134,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		sourceID = ck.SourceSessionID
 	}
 
+	workerID := ""
 	if sourceID != "" {
 		parent, err = s.Store.GetSession(sourceID)
 		if err != nil && !errors.Is(err, store.ErrSessionNotFound) {
@@ -141,10 +144,14 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 			return api.LaunchResult{}, fmt.Errorf("%w (session=%s)", session.ErrDetached, parent.ID)
 		}
 		// A worker-placed source has its workspace and native state on the
-		// outpost. The new row below carries no WorkerID, so resuming here
-		// would silently run the agent on the hub without that state.
+		// outpost. Resuming it on the hub would run the agent there without
+		// that state, so it is refused unless the opt-in same-worker path
+		// is enabled; it never falls back to the hub or another worker.
 		if parent != nil && parent.WorkerID != "" {
-			return api.LaunchResult{}, fmt.Errorf("%w: resume source %s is placed on worker %s; resume on a worker is not supported yet", session.ErrRecoveryConflict, parent.ID, parent.WorkerID)
+			if err := s.checkWorkerResume(parent, opts); err != nil {
+				return api.LaunchResult{}, err
+			}
+			workerID = parent.WorkerID
 		}
 		// Terminal state alone does not retire a shim's process or protocol
 		// custody. Its owning reattachment/retirement path must settle that
@@ -208,6 +215,9 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 			}
 		}
 	}
+	if workerID != "" && plan.ResumeProviderSessionID == "" {
+		return api.LaunchResult{}, fmt.Errorf("%w: worker resume of %s needs a native provider session id and none is recorded", session.ErrRecoveryConflict, sourceID)
+	}
 	if opts.NativeOnly {
 		if opts.ResumeWorkRoot != "" {
 			plan.NativeResumeWorkRoot, plan.WorkRoot = opts.ResumeWorkRoot, opts.ResumeWorkRoot
@@ -224,19 +234,23 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		plan.BootPrompt = pack.prompt(plan.BootPrompt)
 	}
 
-	factory, ok := s.factories[plan.ProviderID]
-	if !ok {
-		return api.LaunchResult{}, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
-	}
-	probe, err := factory(plan)
-	if err != nil {
-		return api.LaunchResult{}, fmt.Errorf("build runtime: %w", err)
-	}
-	if opts.NativeOnly && !probe.Caps().JsonRpcStdio {
-		return api.LaunchResult{}, nativeOnlyError("provider has no existing-thread RPC path")
-	}
-	if err := s.refuseUnprotectable(plan, probe.Kind()); err != nil {
-		return api.LaunchResult{}, err
+	providerKind := "cli"
+	if workerID == "" {
+		factory, ok := s.factories[plan.ProviderID]
+		if !ok {
+			return api.LaunchResult{}, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+		}
+		probe, err := factory(plan)
+		if err != nil {
+			return api.LaunchResult{}, fmt.Errorf("build runtime: %w", err)
+		}
+		if opts.NativeOnly && !probe.Caps().JsonRpcStdio {
+			return api.LaunchResult{}, nativeOnlyError("provider has no existing-thread RPC path")
+		}
+		if err := s.refuseUnprotectable(plan, probe.Kind()); err != nil {
+			return api.LaunchResult{}, err
+		}
+		providerKind = probe.Kind()
 	}
 
 	if err := s.checkLineage(sourceID); err != nil {
@@ -244,7 +258,9 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	}
 	sessID := uuid.NewString()
 	wsRoot := plan.WriteHome
-	if wsRoot == "" {
+	if workerID != "" {
+		wsRoot = filepath.Join(config.ResolveWorkspaceRoot(s.cat().Global.Catalog.Defaults, s.cat().Paths), "worker-sessions")
+	} else if wsRoot == "" {
 		// Explicit catalog workspace_root wins; cat.Paths supplies the
 		// go-apppaths fallback only when global.yaml omits the key.
 		wsRoot = filepath.Join(config.ResolveWorkspaceRoot(s.cat().Global.Catalog.Defaults, s.cat().Paths), plan.ProjectID)
@@ -260,7 +276,8 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		ProjectID:      plan.ProjectID,
 		LogicalAgentID: plan.LogicalAgentID,
 		ProviderID:     plan.ProviderID,
-		ProviderKind:   probe.Kind(),
+		ProviderKind:   providerKind,
+		WorkerID:       workerID,
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 		// Canonical-session lineage (T02, messaging vNext). Before this,
@@ -295,6 +312,32 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		ProviderKind:   l.ProviderKind,
 		LogicalAgentID: l.Plan.LogicalAgentID,
 	}, nil
+}
+
+// checkWorkerResume gates resume of a worker-placed source. Off by default
+// (the #312 refusal). When enabled it fails closed: the same worker must be
+// connected and advertise worker-resume, the provider must be claude, and
+// only the checkpoint-prompt path is allowed.
+func (s *Service) checkWorkerResume(parent *store.SessionRow, opts api.ResumeOptions) error {
+	if !s.WorkerResume {
+		return fmt.Errorf("%w: resume source %s is placed on worker %s; resume on a worker is not supported yet", session.ErrRecoveryConflict, parent.ID, parent.WorkerID)
+	}
+	if opts.NativeOnly {
+		return fmt.Errorf("%w: native-only resume is not supported for worker-placed source %s", session.ErrRecoveryConflict, parent.ID)
+	}
+	if s.Workers == nil {
+		return fmt.Errorf("%w: resume source %s needs worker %s: %w", session.ErrRecoveryConflict, parent.ID, parent.WorkerID, workerhub.ErrChannelUnavailable)
+	}
+	if !s.Workers.Connected(parent.WorkerID) {
+		return fmt.Errorf("%w: resume source %s needs worker %s: %w", session.ErrRecoveryConflict, parent.ID, parent.WorkerID, workerhub.ErrOffline)
+	}
+	if !s.Workers.Supports(parent.WorkerID, workerwire.FeatureWorkerResume) {
+		return fmt.Errorf("%w: worker %s does not support resume", session.ErrRecoveryConflict, parent.WorkerID)
+	}
+	if parent.ProviderID != "claude" && !strings.Contains(parent.ProviderID, "claude") {
+		return fmt.Errorf("%w: worker resume supports claude only, source %s uses %q", session.ErrRecoveryConflict, parent.ID, parent.ProviderID)
+	}
+	return nil
 }
 
 // resumeParentSessionID resolves the new session's lineage pointer (T02,

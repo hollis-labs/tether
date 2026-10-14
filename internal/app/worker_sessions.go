@@ -86,7 +86,7 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	if strings.Contains(brand, "claude") {
 		brand = "claude"
 	}
-	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, PermissionMode: p.PermissionMode, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}, MCPServers: append([]string{}, launch.EffectiveMCPServers(p.Env)...)}
+	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, PermissionMode: p.PermissionMode, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}, MCPServers: append([]string{}, launch.EffectiveMCPServers(p.Env)...), ResumeSessionID: p.ResumeProviderSessionID}
 	// The project's git remote is what a worker can clone; RepoRoot is a path on the hub's machine. Prefer
 	// repo_url, then a URL-shaped repo_root, then a local checkout's origin (only exists when the hub has one).
 	if p.RepoURL != "" {
