@@ -1,0 +1,15 @@
+# Task worker launch template: headless claude + worker-agent (bypass posture,
+# idle/final-turn reaping, closing-step prompt). Task ids are structured input,
+# not prose: launch with `tether launch task-worker --torque-task <id>` (repeat
+# the flag per task) and the CLI plants each task bundle under tasks/. The
+# agent's prompt protocol (worker-agent.yaml) makes closing each task part of
+# the job.
+id: task-worker
+project: tether
+agent: worker-agent
+provider: claude-code
+workspace:
+  mode: worktree
+prompt:
+  include_project_boot: true
+  include_agent_boot: true
