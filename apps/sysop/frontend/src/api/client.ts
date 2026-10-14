@@ -30,6 +30,8 @@ export interface AgentInfo {
   name: string
   roles?: string[]
   skills?: string[]
+  /** false when the catalog agent sets enabled: false. Absent from an older server: treat as enabled. */
+  enabled?: boolean
 }
 
 export interface ProviderInfo {
@@ -51,6 +53,8 @@ export interface LaunchInfo {
   profile?: string
   launch_plan?: string
   plan_error?: string
+  /** false when the launch sets enabled: false. Absent from an older server: treat as enabled. */
+  enabled?: boolean
 }
 
 export interface ActionInfo {

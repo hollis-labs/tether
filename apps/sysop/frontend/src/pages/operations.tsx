@@ -287,6 +287,17 @@ function launchColumns(
       sortValue: (launch) => launch.id,
     },
     {
+      key: 'enabled',
+      header: 'State',
+      cell: (launch) =>
+        launch.enabled === false ? (
+          <StatusBadge status="disabled" />
+        ) : (
+          <span className="text-text-subtle">enabled</span>
+        ),
+      sortValue: (launch) => (launch.enabled === false ? 'disabled' : 'enabled'),
+    },
+    {
       key: 'project',
       header: 'Project',
       cell: (launch) => launch.project,
@@ -331,8 +342,14 @@ function launchColumns(
               event.stopPropagation()
               onLaunch(launch.id)
             }}
-            disabled={pending || Boolean(launch.plan_error)}
-            title={launch.plan_error ? 'Resolve the launch plan error before launching.' : 'Launch'}
+            disabled={pending || Boolean(launch.plan_error) || launch.enabled === false}
+            title={
+              launch.enabled === false
+                ? 'This launch is disabled (enabled: false) and will not start new sessions.'
+                : launch.plan_error
+                  ? 'Resolve the launch plan error before launching.'
+                  : 'Launch'
+            }
           >
             <Play className={cn('h-3.5 w-3.5', pending && 'animate-pulse')} />
             {pending ? 'Launching' : 'Launch'}
@@ -1073,6 +1090,7 @@ function LaunchDetailDialog({
             <CopyableId id={launch.id} label={launch.id} />
             <span>{launch.project}</span>
             <span>{launch.agent}</span>
+            {launch.enabled === false && <StatusBadge status="disabled" />}
           </div>
         ) : null
       }
@@ -1236,7 +1254,7 @@ function LaunchEditDialog({
               </FormField>
               <FormField label="Agent">
                 <select className={inputClass} value={form.agent} onChange={(e) => update({ agent: e.target.value })}>
-                  {(catalog?.agents ?? []).map((agent) => <option key={agent.id} value={agent.id}>{agent.id}</option>)}
+                  {(catalog?.agents ?? []).map((agent) => <option key={agent.id} value={agent.id}>{agent.enabled === false ? `${agent.id} (disabled)` : agent.id}</option>)}
                 </select>
               </FormField>
               <FormField label="Provider">
