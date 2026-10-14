@@ -58,6 +58,7 @@ var clientMethodWrites = map[string]bool{
 	// (CW-20261001-0173); none of them consumes or marks anything.
 	"ListSessions":      false,
 	"GetSession":        false,
+	"SessionLog":        false,
 	"SessionHealth":     false,
 	"ListLogicalAgents": false,
 

@@ -8,6 +8,10 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add the `tether_session_peek` MCP tool (CW-20261014-0041): the `tether sessions peek`
+  digest (state, init, tool calls, results, FINAL; secrets redacted) as a read-only
+  tool. The digest moved to `internal/sessionpeek`.
+
 - Add catalog hot reload (CW-20261013-0002): `POST /catalog/reload` and the
   `tether_catalog_reload` MCP tool re-read the catalog, validate it, and only then
   swap it in, so agents, projects, providers, launches and sandbox profiles edited

@@ -1,4 +1,4 @@
-package main
+package sessionpeek
 
 import (
 	"strings"
@@ -13,7 +13,7 @@ func TestPeekDigest(t *testing.T) {
 		`{"type":"user","message":{"content":[{"type":"tool_result","content":"ok sk-abcdefghijkl","is_error":false}]}}`,
 		`{"type":"result","subtype":"success","num_turns":3,"total_cost_usd":0.5,"result":"done"}`,
 	}, "\n")
-	got := peekDigest([]byte(log), 0)
+	got := Digest([]byte(log), 0)
 	if len(got) != 5 {
 		t.Fatalf("lines=%d: %q", len(got), got)
 	}
@@ -28,7 +28,7 @@ func TestPeekDigest(t *testing.T) {
 			t.Fatalf("missing %q in %s", want, all)
 		}
 	}
-	if tail := peekDigest([]byte(log), 2); len(tail) != 2 || !strings.HasPrefix(tail[1], "FINAL") {
+	if tail := Digest([]byte(log), 2); len(tail) != 2 || !strings.HasPrefix(tail[1], "FINAL") {
 		t.Fatalf("tail: %q", tail)
 	}
 }

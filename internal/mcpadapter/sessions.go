@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/sessionpeek"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -39,6 +40,16 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 		),
 		Handler: a.handleSessionGet,
 	}, Reads("GET /sessions/{id}; svc.GetSession + AttachedClients"))
+
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_session_peek",
+		Description: "Digest of a session's recent stream-json output: state, init, tool calls, results and the FINAL line, with secrets redacted. Same digest as `tether sessions peek`. Read-only; needs the daemon.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+			gomcp.NumberProp("lines", "Number of most recent digest lines (default 40)", false),
+		),
+		Handler: a.handleSessionPeek,
+	}, Reads("GET /sessions/{id} and GET /sessions/{id}/log, rendered through sessionpeek.Digest"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_session_create",
@@ -197,6 +208,37 @@ func (a *Adapter) handleSessionGet(ctx context.Context, args map[string]any) (an
 	dto := api.SessionRowToDTO(*row)
 	dto.AttachedClients = a.svc.AttachedClients(id)
 	return toolJSON(map[string]any{"ok": true, "session": dto}), nil
+}
+
+func (a *Adapter) handleSessionPeek(ctx context.Context, args map[string]any) (any, error) {
+	id := str(args, "session_id")
+	if id == "" {
+		return nil, toolError("invalid_request", "session_id required")
+	}
+	n := intArg(args, "lines", sessionpeek.DefaultLines)
+	if n < 1 {
+		n = sessionpeek.DefaultLines
+	}
+	if a.client == nil {
+		return nil, toolError("daemon_unavailable", "tether_session_peek needs the daemon")
+	}
+	sess, err := a.client.GetSession(ctx, id)
+	if err != nil {
+		return nil, daemonReadError(err, id)
+	}
+	res, err := a.client.SessionLog(ctx, id, client.SessionLogOptions{Limit: api.MaxSessionLogBytes})
+	if err != nil {
+		return nil, daemonReadError(err, id)
+	}
+	return toolJSON(map[string]any{
+		"ok":         true,
+		"session_id": sess.ID,
+		"state":      sess.State,
+		"exit_code":  sess.ExitCode,
+		"provider":   sess.ProviderID,
+		"updated_at": sess.UpdatedAt,
+		"lines":      sessionpeek.Digest(res.Data, n),
+	}), nil
 }
 
 func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) (any, error) {
