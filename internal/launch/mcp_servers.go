@@ -46,3 +46,18 @@ func MachineGrantViolations(granted []string) []string {
 	}
 	return out
 }
+
+// MachineAccessEnv carries the agent's designated machine access ("read-only"
+// or "read-write") to the proxy, which enforces it on every call to a
+// MachineChangingMCPServers upstream. Absent or unknown means read-only.
+const MachineAccessEnv = "TETHER_MACHINE_ACCESS"
+
+// MachineDevModeEnv set to "1" in the proxy env grants full machine access
+// while dev mode is on; every call is still audited.
+const MachineDevModeEnv = "TETHER_DEV_MODE"
+
+// Machine access values for MachineAccessEnv and the agent's machine_access.
+const (
+	MachineAccessReadOnly  = "read-only"
+	MachineAccessReadWrite = "read-write"
+)

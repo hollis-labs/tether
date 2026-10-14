@@ -124,6 +124,12 @@ type LaunchProfile struct {
 	// agent can still be placed on any machine; only this flag gates the
 	// authority to change them. Per agent, not inherited through extends.
 	MachineAuthority bool `yaml:"machine_authority,omitempty" json:"machine_authority,omitempty"`
+
+	// MachineAccess designates what a machine_authority agent may do through
+	// the machine-changing upstreams: "read-only" (the default when absent) or
+	// "read-write". Enforced per tool call by the proxy, not only at launch.
+	// Per agent, not inherited through extends.
+	MachineAccess string `yaml:"machine_access,omitempty" json:"machine_access,omitempty"`
 }
 
 // IsEnabled reports whether the agent may be launched; absent means yes.

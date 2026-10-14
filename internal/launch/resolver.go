@@ -116,6 +116,16 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		return nil, fmt.Errorf("launch %q grants %s to agent %q, which lacks machine_authority (only Fleet Operations and its team may change machines)", l.ID, strings.Join(bad, ","), l.Agent)
 	}
 	if len(MachineGrantViolations(effective)) > 0 {
+		switch agent.MachineAccess {
+		case "", MachineAccessReadOnly, MachineAccessReadWrite:
+		default:
+			return nil, fmt.Errorf("agent %q has invalid machine_access %q (want %s or %s)", l.Agent, agent.MachineAccess, MachineAccessReadOnly, MachineAccessReadWrite)
+		}
+		access := agent.MachineAccess
+		if access == "" {
+			access = MachineAccessReadOnly
+		}
+		overrides[MachineAccessEnv] = access
 		slog.Info("machine authority granted", "launch", l.ID, "agent", l.Agent)
 	}
 
