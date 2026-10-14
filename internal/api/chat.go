@@ -323,7 +323,9 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 	}
 	if !res.Replayed {
 		if _, err := s.Service.LaunchSession(res.SessionID); err != nil {
-			return resp, http.StatusInternalServerError, CodeInternalError, "session launch failed: " + workerhub.LaunchFailureCause(err)
+			// The worker's error text can carry paths and stderr; the full cause
+			// stays in the daemon log and the session.launch_failed event.
+			return resp, http.StatusInternalServerError, CodeInternalError, "session launch failed on the worker (see the session.launch_failed event for session " + res.SessionID + ")"
 		}
 	}
 	status = http.StatusCreated
