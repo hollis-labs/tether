@@ -80,7 +80,11 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 				_, _ = s.Registry.RevokeSessionBindings(context.Background(), row.ID)
 			}
 		}
-		raw, _ := json.Marshal(map[string]any{"from": row.State, "to": state, "exit_code": f.ExitCode})
+		payload := map[string]any{"from": row.State, "to": state, "exit_code": f.ExitCode}
+		if f.Error != "" {
+			payload["detail"] = f.Error
+		}
+		raw, _ := json.Marshal(payload)
 		return s.publishWorkerEvent(f.Session, "session.state_changed", raw)
 	}
 	return nil

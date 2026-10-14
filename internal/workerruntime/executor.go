@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/hollis-labs/substrate/harness/agentlaunch"
@@ -16,12 +17,14 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/provider"
+	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/hollis-labs/tether/internal/workspace"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,6 +48,11 @@ type execution struct {
 	client     *shim.Client
 	outputs    []outputRecord
 	pending    map[string]chan shim.Frame
+	// stderrTail is the last complete-or-partial stderr line, kept so a bare
+	// non-zero exit can be reported with a reason. secrets are the launch
+	// environment values redacted from it.
+	stderrTail string
+	secrets    []string
 }
 type Executor struct {
 	Root     string
@@ -154,6 +162,11 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	binary, err = filepath.Abs(binary)
 	if err != nil {
 		return nil, err
+	}
+	if spec.Provider == "codex" {
+		if err := codexCredentialPreflight(spec.Env, os.Getenv, os.Stat); err != nil {
+			return nil, err
+		}
 	}
 	ws, err := workspace.Create(filepath.Join(e.Root, "workspaces"), spec.Session, &launch.Plan{BootPrompt: spec.BootPrompt})
 	if err != nil {
@@ -270,7 +283,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	s := &execution{ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
+	s := &execution{secrets: envSecrets(spec.Env), ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
 	if child != nil {
 		s.PID = child.Process.Pid
 		s.HostPID = child.Process.Pid
@@ -396,6 +409,9 @@ func (e *Executor) follow(s *execution) {
 						continue
 					}
 					s.outputs = append(s.outputs, out)
+					if chunk.Stream == "stderr" {
+						s.stderrTail = lastLine(s.stderrTail, data)
+					}
 					if chunk.Stream == "stdout" {
 						s.Carry = append(s.Carry, data...)
 						for {
@@ -424,7 +440,11 @@ func (e *Executor) follow(s *execution) {
 			_ = json.Unmarshal(event.Payload, &exit)
 			s.State = "exited"
 			s.ExitCode = &exit.Status
-			_ = e.Send(workerwire.Frame{T: "state", Session: s.ID, State: "exited", ExitCode: &exit.Status})
+			frame := workerwire.Frame{T: "state", Session: s.ID, State: "exited", ExitCode: &exit.Status}
+			if exit.Status != 0 {
+				frame.Error = exitDetail(s.stderrTail, s.secrets)
+			}
+			_ = e.Send(frame)
 		}
 		_ = e.persist(s)
 		exited := event.Kind == "shim.exit"
@@ -463,3 +483,85 @@ func signalHost(pid int, sig syscall.Signal) {
 	}
 }
 func hostAlive(pid int) bool { return syscall.Kill(pid, 0) == nil }
+
+const stderrTailMax = 300
+
+// lastLine returns the last non-empty line of prev+data, bounded so a
+// runaway stderr cannot grow it.
+func lastLine(prev string, data []byte) string {
+	text := prev + string(data)
+	if len(text) > 4*stderrTailMax {
+		text = text[len(text)-4*stderrTailMax:]
+	}
+	lines := strings.Split(strings.TrimRight(text, "\r\n"), "\n")
+	return lines[len(lines)-1]
+}
+
+var tokenShape = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_-]{8,}|tth_[A-Za-z0-9_-]{8,}|bearer\s+[A-Za-z0-9._~+/=-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})`)
+
+// exitDetail is the bounded, redacted stderr line reported with a failed exit.
+func exitDetail(tail string, secrets []string) string {
+	tail = strings.TrimSpace(tail)
+	if tail == "" {
+		return ""
+	}
+	tail = tokenShape.ReplaceAllString(redact.Text(tail, secrets), "[redacted]")
+	if len(tail) > stderrTailMax {
+		tail = tail[:stderrTailMax] + "..."
+	}
+	return "last stderr: " + tail
+}
+
+// envSecrets are the launch environment values to redact from reported output.
+func envSecrets(env map[string]string) []string {
+	var out []string
+	for _, v := range env {
+		if len(v) >= 8 {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// ErrCodexCredentials is returned before a codex launch starts when the worker
+// account has no codex credentials to give it.
+var ErrCodexCredentials = errors.New("codex credentials missing on this worker")
+
+// SkipCodexPreflightEnv disables the codex credential preflight, for workers
+// whose codex keeps credentials somewhere the preflight cannot see (the OS
+// keychain).
+const SkipCodexPreflightEnv = "TETHER_WORKER_SKIP_CODEX_PREFLIGHT"
+
+// codexCredentialPreflight fails a codex launch fast, with a readable error,
+// when the worker account has neither $CODEX_HOME/auth.json (default
+// ~/.codex/auth.json) nor an OPENAI_API_KEY. It is advisory: a codex that stores
+// credentials in the keychain looks the same, so SkipCodexPreflightEnv=1 turns
+// it off.
+func codexCredentialPreflight(specEnv map[string]string, getenv func(string) string, stat func(string) (os.FileInfo, error)) error {
+	if getenv(SkipCodexPreflightEnv) == "1" {
+		return nil
+	}
+	lookup := func(k string) string {
+		if v := specEnv[k]; v != "" {
+			return v
+		}
+		return getenv(k)
+	}
+	if lookup("OPENAI_API_KEY") != "" {
+		return nil
+	}
+	home := lookup("CODEX_HOME")
+	if home == "" {
+		user := lookup("HOME")
+		if user == "" {
+			return nil // cannot tell where codex looks
+		}
+		home = filepath.Join(user, ".codex")
+	}
+	if _, err := stat(filepath.Join(home, "auth.json")); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil // cannot tell reliably
+	}
+	return fmt.Errorf("%w: no OPENAI_API_KEY and no %s; run `codex login` as the worker account or set OPENAI_API_KEY in the worker's environment (set %s=1 if codex keeps its credentials in the keychain)", ErrCodexCredentials, filepath.Join(home, "auth.json"), SkipCodexPreflightEnv)
+}
