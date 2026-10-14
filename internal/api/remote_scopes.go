@@ -88,6 +88,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/sessions/", "/sessions/{id}", map[string]string{"GET": readScope}),
 	routeScope("/sessions/", "/sessions/{id}/launch", map[string]string{"POST": operateScope}),
 	routeScope("/sessions/", "/sessions/{id}/stop", map[string]string{"POST": operateScope}),
+	routeScope("/sessions/", "/sessions/{id}/retire-shim", map[string]string{"POST": maintainScope}),
 	routeScope("/sessions/", "/sessions/{id}/wait", map[string]string{"GET": readScope}),
 	routeScope("/sessions/", "/sessions/{id}/input", map[string]string{"POST": terminalScope}),
 	routeScope("/sessions/", "/sessions/{id}/turn", map[string]string{"POST": operateScope}),

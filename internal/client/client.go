@@ -795,6 +795,30 @@ func (c *Client) WaitSessionResult(ctx context.Context, id string) (api.WaitResp
 	return res, nil
 }
 
+// RetireShimSession asks the daemon to retire a detached unknown-outcome shim
+// session once its host is verified gone (POST /sessions/{id}/retire-shim).
+func (c *Client) RetireShimSession(ctx context.Context, id string, acknowledgeObligations bool) error {
+	raw, err := json.Marshal(api.RetireShimRequest{AcknowledgeObligations: acknowledgeObligations})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/sessions/"+url.PathEscape(id)+"/retire-shim", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return readError(resp)
+}
+
 // ListProjects fetches the full project catalog via GET /catalog/projects.
 // No filtering or pagination — catalog sizes are small. Callers filter
 // locally. Returns ErrDaemonUnreachable on connection failure.

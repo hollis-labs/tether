@@ -968,3 +968,29 @@ func TestHandleWaitSession_FinalTurnResult(t *testing.T) {
 		t.Errorf("unexpected wait response: %+v", res)
 	}
 }
+
+type fakeShimRetirer struct {
+	*fakeLaunchService
+	err error
+	ack bool
+}
+
+func (f *fakeShimRetirer) RetireShimSession(_ context.Context, _, _ string, ack bool) error {
+	f.ack = ack
+	return f.err
+}
+
+func TestHandleRetireShim(t *testing.T) {
+	svc := &fakeShimRetirer{fakeLaunchService: &fakeLaunchService{}}
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/sessions/s1/retire-shim", strings.NewReader(`{"acknowledge_obligations":true}`)))
+	if rr.Code != http.StatusNoContent || !svc.ack {
+		t.Fatalf("status=%d ack=%v: %s", rr.Code, svc.ack, rr.Body.String())
+	}
+	svc.err = fmt.Errorf("%w: host still present", ErrShimRetireRefused)
+	rr = httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/sessions/s1/retire-shim", nil))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("refusal status = %d", rr.Code)
+	}
+}

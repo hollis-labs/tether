@@ -100,6 +100,28 @@ var sessionsStopCmd = &cobra.Command{
 	},
 }
 
+var sessionsRetireShimAck bool
+
+var sessionsRetireShimCmd = &cobra.Command{
+	Use:   "retire-shim <id>",
+	Short: "Retire a detached unknown-outcome shim session once its host is verified gone",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return err
+		}
+		if err := c.RetireShimSession(cmd.Context(), args[0], sessionsRetireShimAck); err != nil {
+			if errors.Is(err, client.ErrDaemonUnreachable) {
+				return fmt.Errorf("tether daemon is not running; run `tether daemon start` first")
+			}
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "retired shim: %s\n", args[0])
+		return nil
+	},
+}
+
 var sessionsTailFollow bool
 
 var sessionsTailCmd = &cobra.Command{
@@ -416,10 +438,12 @@ func init() {
 		"with --force, close the row even when a live worker or agent holds it")
 	sessionsTurnCmd.Flags().StringVar(&sessionsTurnReplyTo, "reply-to", "",
 		"address the receiving agent should answer (msg://agent/... , registry URN, or torque:<task-id>); prepended as a [reply-to: ...] line")
+	sessionsRetireShimCmd.Flags().BoolVar(&sessionsRetireShimAck, "acknowledge-obligations", false,
+		"required for Codex sessions, whose custody may hold undelivered obligations")
 	sessionsTailCmd.Flags().BoolVar(&sessionsTailFollow, "follow", true,
 		"follow live output (default); use --follow=false for a one-shot snapshot")
 	sessionsCmd.AddCommand(
-		sessionsListCmd, sessionsGetCmd, sessionsStopCmd,
+		sessionsListCmd, sessionsGetCmd, sessionsStopCmd, sessionsRetireShimCmd,
 		sessionsTailCmd, sessionsAttachCmd, sessionsInputCmd, sessionsTurnCmd, sessionsPeekCmd,
 	)
 }

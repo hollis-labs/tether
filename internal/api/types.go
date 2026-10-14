@@ -294,6 +294,21 @@ type StallReporter interface {
 	SessionStall(id string) (StallStatus, bool)
 }
 
+// ErrShimRetireRefused marks a refused operator shim retirement (409): the
+// session is not a detached unknown-outcome shim, or its host is not verified gone.
+var ErrShimRetireRefused = errors.New("shim retirement refused")
+
+// ShimRetirer is an optional Service capability behind
+// POST /sessions/{id}/retire-shim.
+type ShimRetirer interface {
+	RetireShimSession(ctx context.Context, id, actor string, acknowledgeObligations bool) error
+}
+
+// RetireShimRequest is the body of POST /sessions/{id}/retire-shim.
+type RetireShimRequest struct {
+	AcknowledgeObligations bool `json:"acknowledge_obligations,omitempty"`
+}
+
 // ResizeRequest is the body of POST /sessions/{id}/resize. Rows and
 // Cols are required and must be > 0; the endpoint rejects zero-valued
 // dimensions with invalid_request so callers can't accidentally shrink

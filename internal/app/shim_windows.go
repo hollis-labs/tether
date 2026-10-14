@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -34,3 +35,7 @@ func shimBridgeTerminal(*store.Store, string, agentsessions.State) bool { return
 func (s *Service) applyShimSandboxProtection(string, *agentsessions.StartOptions) error { return nil }
 
 func (s *Service) reconcileShimContext(context.Context, store.StaleSession) bool { return false }
+
+func (s *Service) RetireShimSession(context.Context, string, string, bool) error {
+	return fmt.Errorf("%w: shim hosting is unsupported on this platform", api.ErrShimRetireRefused)
+}
