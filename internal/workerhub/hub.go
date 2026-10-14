@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"net/http"
 	"sync"
 	"time"
@@ -34,6 +35,10 @@ type Record struct {
 	LastSeen  string          `json:"last_seen"`
 	Connected bool            `json:"connected"`
 	Sessions  int             `json:"sessions"`
+	// Hosts is the worker's last-reported shim-host inventory (empty when offline or an older worker).
+	Hosts []workerwire.Host `json:"hosts,omitempty"`
+	// Orphaned counts hosts flagged orphaned in Hosts.
+	Orphaned int `json:"orphaned_hosts"`
 }
 type connection struct {
 	features  []string
@@ -42,6 +47,7 @@ type connection struct {
 	pendingMu sync.Mutex
 	pending   map[string]chan workerwire.Frame
 	inventory map[string]workerwire.Session
+	hosts     []workerwire.Host
 	replaying map[string]bool
 	done      chan struct{}
 }
@@ -111,6 +117,12 @@ func (h *Hub) List(ctx context.Context) ([]Record, error) {
 		}
 		r.Caps = json.RawMessage(caps)
 		r.Connected = h.Connected(r.ID)
+		r.Hosts = h.hosts(r.ID)
+		for _, host := range r.Hosts {
+			if host.Orphaned {
+				r.Orphaned++
+			}
+		}
 		result = append(result, r)
 	}
 	return result, rows.Err()
@@ -159,6 +171,7 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), inventory: make(map[string]workerwire.Session), replaying: make(map[string]bool), done: make(chan struct{})}
 	c.features = hello.Features
+	c.hosts = hello.Hosts
 	for _, s := range hello.Sessions {
 		c.inventory[s.ID] = s
 	}
@@ -247,6 +260,12 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		if f.T == "hosts" {
+			c.pendingMu.Lock()
+			c.hosts = f.Hosts
+			c.pendingMu.Unlock()
+			continue
+		}
 		if f.T == "replay_end" {
 			_ = c.send(workerwire.Frame{T: "replay", Session: f.Session, FromSeq: h.NextSeq(f.Session)})
 			continue
@@ -284,6 +303,63 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+func (h *Hub) hosts(id string) []workerwire.Host {
+	h.mu.RLock()
+	c := h.connections[id]
+	h.mu.RUnlock()
+	if c == nil {
+		return nil
+	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	return append([]workerwire.Host(nil), c.hosts...)
+}
+
+// Reap asks a connected worker to terminate its orphaned shim-hosts now (no grace) and returns what it reaped.
+func (h *Hub) Reap(ctx context.Context, worker string) ([]string, error) {
+	id, err := h.Resolve(ctx, worker)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := h.Send(ctx, id, workerwire.Frame{T: "reap", CmdID: uuid.NewString()})
+	if err != nil {
+		return nil, err
+	}
+	h.mu.RLock()
+	c := h.connections[id]
+	h.mu.RUnlock()
+	if c != nil {
+		c.pendingMu.Lock()
+		c.hosts = resp.Hosts
+		c.pendingMu.Unlock()
+	}
+	return resp.Reaped, nil
+}
+
+// ReapHTTP is POST /workers/reap {"worker": "<id or label>"}.
+func (h *Hub) ReapHTTP(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Worker string `json:"worker"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in) != nil || in.Worker == "" {
+		http.Error(w, "worker required", http.StatusBadRequest)
+		return
+	}
+	reaped, err := h.Reap(r.Context(), in.Worker)
+	if err != nil {
+		code := http.StatusBadGateway
+		if errors.Is(err, ErrNotEnrolled) {
+			code = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	if reaped == nil {
+		reaped = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"reaped": reaped})
 }
 func (h *Hub) SessionState(id, session string) (string, bool) {
 	h.mu.RLock()

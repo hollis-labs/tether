@@ -109,6 +109,7 @@ func main() {
 			return err
 		}
 		w.Inventory = executor.Inventory
+		w.Hosts = executor.ScanHosts
 		mail := &outpostmail.Server{Socket: cfg.MailSocket, State: filepath.Join(root, "mail.json"), AllowedUIDs: cfg.MailUIDs, GID: -1}
 		if mail.Socket == "" {
 			mail.Socket = filepath.Join(root, "run", "mail.sock")
@@ -158,6 +159,7 @@ func main() {
 		defer cancel()
 		done := make(chan error, 2)
 		go func() { done <- mail.Serve(ctx) }()
+		go executor.ReapLoop(ctx, workerruntime.HostReapInterval, workerruntime.OrphanGrace)
 		go func() { done <- w.Run(ctx) }()
 		return <-done
 	}})
