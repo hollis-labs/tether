@@ -94,7 +94,7 @@ var launchCmd = &cobra.Command{
 		}
 		if err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
-				return fmt.Errorf("tether daemon is not running; run `tether daemon start` first")
+				return fmt.Errorf("tether daemon is not running at %s; run `tether daemon start` first, or pass --target/--catalog for the intended daemon", daemonTargetDescription(catalogPath))
 			}
 			return err
 		}

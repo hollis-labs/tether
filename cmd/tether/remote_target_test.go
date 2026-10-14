@@ -91,3 +91,12 @@ func TestRemoteTargetRejectsInvalidTransportAndImplicitCredentials(t *testing.T)
 		t.Fatal("implicit daemon host launch input admitted")
 	}
 }
+
+func TestDaemonTargetDescriptionRemote(t *testing.T) {
+	old := remoteTarget
+	defer func() { remoteTarget = old }()
+	remoteTarget = "tcp:localhost:9"
+	if got := daemonTargetDescription(t.TempDir()); got != "remote target tcp:localhost:9" {
+		t.Fatalf("got %q", got)
+	}
+}
