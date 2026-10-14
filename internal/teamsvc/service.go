@@ -125,6 +125,8 @@ type Result struct {
 	Coordinator mesh.URN     `json:"coordinator,omitempty"`
 	Channel     string       `json:"channel,omitempty"`
 	Members     []MemberView `json:"members,omitempty"`
+	// Pairing is the reviewer/worker runtime pairing of an admitted formation.
+	Pairing *ReviewerPairing `json:"reviewer_pairing,omitempty"`
 }
 
 const (

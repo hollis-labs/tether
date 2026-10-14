@@ -462,3 +462,19 @@ func TestRawBodyBoundDoesNotExpandHTML(t *testing.T) {
 		})
 	}
 }
+
+type pairingCeilings struct{ ceilings }
+
+func (pairingCeilings) PairingFor(key string) (ReviewerPairing, bool) {
+	return ReviewerPairing{WorkerRuntime: "a", ReviewerRuntime: "b", Different: true}, key == "paired"
+}
+
+func TestFormEmitsReviewerPairingFromCeilings(t *testing.T) {
+	f := fixtureNew(t)
+	f.svc.deps.Ceilings = pairingCeilings{ceilings{policy: policy()}}
+	got, err := f.svc.Form(caller(verified(ownerURN)), FormRequest{Key: "paired", Team: definition()})
+	must(t, err)
+	if got.Pairing == nil || got.Pairing.ReviewerRuntime != "b" || !got.Pairing.Different {
+		t.Fatalf("pairing = %+v", got.Pairing)
+	}
+}

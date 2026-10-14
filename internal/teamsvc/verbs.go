@@ -81,6 +81,11 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 				out.Members = append(out.Members, memberView(m))
 			}
 		}
+		if reporter, ok := s.deps.Ceilings.(PairingReporter); ok {
+			if pairing, found := reporter.PairingFor(req.Key); found {
+				out.Pairing = &pairing
+			}
+		}
 		return out, nil
 	})
 }

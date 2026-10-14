@@ -23,6 +23,23 @@ type Ceilings interface {
 type FormationAdmitter interface {
 	AdmitFormation(context.Context, Principal, FormRequest) error
 }
+
+// ReviewerPairing records the author (worker) and reviewer runtime/model chosen
+// by an admitted formation; Different is false for the single-runtime fallback.
+type ReviewerPairing struct {
+	WorkerRuntime   string `json:"worker_runtime"`
+	WorkerModel     string `json:"worker_model,omitempty"`
+	ReviewerRuntime string `json:"reviewer_runtime"`
+	ReviewerModel   string `json:"reviewer_model,omitempty"`
+	Different       bool   `json:"different"`
+}
+
+// PairingReporter is an optional Ceilings extension that returns the pairing
+// recorded when the formation with request key was admitted.
+type PairingReporter interface {
+	PairingFor(key string) (ReviewerPairing, bool)
+}
+
 type FormationPolicy struct {
 	Limits                                         mesh.Limits
 	MaxSlots, MaxMembersPerSlot, MaxInitialMembers int
