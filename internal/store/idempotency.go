@@ -79,6 +79,15 @@ func (s *Store) GetSessionIdempotency(principal, key string) (*SessionIdempotenc
 	return &rec, nil
 }
 
+// ReleaseSessionIdempotency unbinds principal's key so a new request can claim
+// it. Used by launch --replace once the key's session has ended.
+func (s *Store) ReleaseSessionIdempotency(principal, key string) error {
+	if _, err := s.db.Exec(`DELETE FROM session_idempotency WHERE principal_id = ? AND key = ?`, principal, key); err != nil {
+		return fmt.Errorf("release idempotency key: %w", err)
+	}
+	return nil
+}
+
 // SessionHasIdempotencyKey reports whether sessionID was created by a keyed
 // request, which makes its launch idempotent.
 func (s *Store) SessionHasIdempotencyKey(sessionID string) (bool, error) {

@@ -176,6 +176,11 @@ type LaunchRequest struct {
 	// scoped to the authenticated caller (CW-20261010-0263); two callers may
 	// use the same key independently.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+
+	// ReplaceIdempotency, with IdempotencyKey, rebinds the key to this
+	// request when the session it was bound to has ended; a live session
+	// answers 409 idempotency_conflict.
+	ReplaceIdempotency bool `json:"replace_idempotency,omitempty"`
 }
 
 // ResumeOptions carries the optional arguments of a resume.
@@ -218,6 +223,8 @@ type CreateSessionInput struct {
 	Injection string
 	// IdempotencyKey makes the create idempotent. See LaunchRequest.
 	IdempotencyKey string
+	// ReplaceIdempotency rebinds IdempotencyKey once its session has ended.
+	ReplaceIdempotency bool
 	// IdempotencyPrincipal scopes IdempotencyKey; server-set (CW-20261010-0263).
 	IdempotencyPrincipal string
 }

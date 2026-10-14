@@ -776,6 +776,7 @@ characters). It makes a request safe to retry after a lost response:
   `"replayed": true` and HTTP **200** (a fresh create is 201), whatever state it
   is now in. A session that has since failed or stopped is returned unchanged,
   never replaced; the caller decides what to do with it.
+- `POST /sessions` also accepts `replace_idempotency: true` (CLI: `tether launch --replace`): if the key's session has ended (completed, failed, killed) the key is rebound to this request and a fresh session is created; if it is still live the request answers 409 `idempotency_conflict`.
 - The same key with a different request answers 409 `idempotency_conflict`.
   "The request" is what the caller sent, hashed: for a create, `launch` and
   every payload field; for a resume, the logical agent. It is never anything

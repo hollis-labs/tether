@@ -32,6 +32,7 @@ var (
 	launchPromptAppend string
 	launchBootPromptOR string
 	launchIdemKey      string
+	launchReplace      bool
 	launchTorqueTasks  []string
 	launchTorqueURL    string
 	launchTorqueDir    string
@@ -69,6 +70,9 @@ var launchCmd = &cobra.Command{
 			promptAppend = appendPromptText(promptAppend, torquePrompt)
 		}
 
+		if launchReplace && launchIdemKey == "" {
+			return errors.New("--replace requires --idempotency-key")
+		}
 		idemKey := launchIdemKey
 		if idemKey == autoIdempotencyKey {
 			idemKey = deriveLaunchIdempotencyKey(launchID, launchWorker, launchTorqueTasks)
@@ -88,6 +92,8 @@ var launchCmd = &cobra.Command{
 				PromptAppend:    promptAppend,
 				Injection:       injection,
 				IdempotencyKey:  idemKey,
+
+				ReplaceIdempotency: launchReplace,
 			})
 		} else {
 			res, err = c.Launch(ctx, launchID)
@@ -136,6 +142,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchPromptAppend, "prompt-append", "", "append launch-time instructions to the composed boot prompt")
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
 	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are scoped to the authenticated caller); \"auto\" derives a stable key from the launch, worker and --torque-task ids")
+	launchCmd.Flags().BoolVar(&launchReplace, "replace", false, "with --idempotency-key: rebind the key to this launch when the session it was bound to has ended (a live session refuses)")
 	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
 	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990); sends TORQUE_API_TOKEN as a bearer token when set")
 	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")

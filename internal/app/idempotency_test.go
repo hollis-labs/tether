@@ -343,3 +343,32 @@ func TestCreateKeyed_LegacyRowIsPreservedButNeverMatched(t *testing.T) {
 		t.Fatalf("legacy row not preserved: %d, %v", n, err)
 	}
 }
+
+// --replace rebinds a key once its session has ended and refuses while it is live.
+func TestCreateKeyedReplace_RebindsOnlyEndedSession(t *testing.T) {
+	svc, _ := idemHarness(t)
+	first, err := svc.createKeyed("p1", "test/k1", "digest-a", idemPlan(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.UpdateSessionState(first.SessionID, string(session.StateRunning), 42, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.createKeyedReplace("p1", "test/k1", "digest-a", true, idemPlan(t)); !errors.Is(err, store.ErrIdempotencyConflict) {
+		t.Fatalf("replace of live session err = %v; want ErrIdempotencyConflict", err)
+	}
+	if err := svc.Store.UpdateSessionState(first.SessionID, string(session.StateKilled), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.createKeyedReplace("p1", "test/k1", "digest-a", true, idemPlan(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Replayed || second.SessionID == first.SessionID {
+		t.Fatalf("second = %+v; want a fresh session", second)
+	}
+	again, err := svc.createKeyed("p1", "test/k1", "digest-a", idemPlan(t))
+	if err != nil || !again.Replayed || again.SessionID != second.SessionID {
+		t.Fatalf("after replace = %+v, %v; want replay of %s", again, err, second.SessionID)
+	}
+}

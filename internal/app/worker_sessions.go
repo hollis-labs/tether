@@ -46,6 +46,11 @@ func (s *Service) createWorkerSessionWith(in CreateSessionInput, digest string, 
 		if digest == "" {
 			digest = createRequestDigest(in)
 		}
+		if in.ReplaceIdempotency {
+			if err := s.releaseKeyForReplace(principal, in.IdempotencyKey); err != nil {
+				return nil, err
+			}
+		}
 		if l, err := s.replayIfKeyed(principal, in.IdempotencyKey, store.IdempotencyOpCreate, digest); l != nil || err != nil {
 			return l, err
 		}

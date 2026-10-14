@@ -287,6 +287,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			Injection:          req.Injection,
 			IdempotencyKey:     req.IdempotencyKey,
 
+			ReplaceIdempotency:   req.ReplaceIdempotency,
 			IdempotencyPrincipal: idemPrincipal,
 		})
 	} else if req.BootPrompt != "" {

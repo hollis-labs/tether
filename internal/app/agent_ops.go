@@ -90,6 +90,11 @@ type CreateSessionInput struct {
 	// created (CW-20260930-0229). Not part of the launch plan.
 	IdempotencyKey string
 
+	// ReplaceIdempotency rebinds IdempotencyKey to this request when the
+	// session it was bound to has ended (launch --replace). A live session
+	// keeps the key and the request fails with an idempotency conflict.
+	ReplaceIdempotency bool
+
 	// IdempotencyPrincipal scopes IdempotencyKey to the authenticated caller
 	// (CW-20261010-0263). Empty means unauthenticated.
 	IdempotencyPrincipal string
