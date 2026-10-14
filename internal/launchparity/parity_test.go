@@ -77,6 +77,43 @@ var upstreamStaleExpected = map[string]bool{
 	"expected-diff agent-mux-claude-stream-worktree/work_dir": true,
 }
 
+// agentWorkspacesWorkDirDiffs registers the work_dir divergence on the four
+// agent-workspaces-* launches. The host's live agent-workspaces project still
+// carries the pre-rename repo_root /srv/agentcow/workspaces, while the bags
+// (and the product after the agentcow -> agent-os rename) use
+// ~/dev/agent-os/workspaces. The bag is the intended value; the stale path
+// lives in host catalog data this repo does not own. Old and New are pinned
+// exactly, so any other work_dir drift on these launches still fails. The
+// diff only exists on hosts carrying the stale catalog, so the rot-guard
+// exempts it (see hostCatalogStaleExpected). Drop both once the host catalog
+// is corrected.
+var agentWorkspacesWorkDirDiffs = func() []parity.ExpectedDiff {
+	var out []parity.ExpectedDiff
+	for _, id := range []string{
+		"agent-workspaces-claude",
+		"agent-workspaces-claude-stream",
+		"agent-workspaces-claude-stream-worktree",
+		"agent-workspaces-claude-worktree",
+	} {
+		out = append(out, parity.ExpectedDiff{
+			Launch: id,
+			Field:  "work_dir",
+			Old:    "/srv/agentcow/workspaces",
+			New:    "~/dev/agent-os/workspaces",
+			Rationale: "host catalog project agent-workspaces still has the pre-rename " +
+				"repo_root /srv/agentcow/workspaces; the bag's agent-os path is correct",
+		})
+	}
+	return out
+}()
+
+// hostCatalogStaleExpected exempts the registrations above from the
+// rot-guard: they are observed only on hosts with the stale catalog path.
+func hostCatalogStaleExpected(e string) bool {
+	return strings.HasPrefix(e, "expected-diff agent-workspaces-claude") &&
+		strings.HasSuffix(e, "/work_dir")
+}
+
 // fullCorpus builds the parity corpus from every bag file on disk. Each
 // bag was authored with its filename stem equal to the legacy launch id
 // it re-expresses (S5 prep-B), so the mapping is 1:1.
@@ -133,6 +170,7 @@ func TestFullCorpusParity(t *testing.T) {
 	}
 	report, err := parity.RunParity(catalogRoot, specsRoot,
 		parity.WithCorpus(corpus),
+		parity.WithExpectedDiffs(agentWorkspacesWorkDirDiffs...),
 	)
 	if err != nil {
 		t.Fatalf("RunParity: %v", err)
@@ -153,7 +191,7 @@ func TestFullCorpusParity(t *testing.T) {
 	// registers itself are exempt — see upstreamStaleExpected.
 	var stale []string
 	for _, e := range report.StaleExpected() {
-		if upstreamStaleExpected[e] || mentionsAny(e, skipped) {
+		if upstreamStaleExpected[e] || hostCatalogStaleExpected(e) || mentionsAny(e, skipped) {
 			continue
 		}
 		stale = append(stale, e)
