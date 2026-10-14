@@ -12,7 +12,7 @@ import (
 type LineageLimits struct {
 	// MaxDepth is the most ancestors a new session may have.
 	MaxDepth int
-	// MaxChildren is the most direct children one parent may have.
+	// MaxChildren is the most live (not ended) direct children one parent may have.
 	MaxChildren int
 }
 
@@ -33,12 +33,12 @@ func (s *Service) checkLineage(parentID string) error {
 	}
 	lim := s.LineageLimits
 	if lim.MaxChildren > 0 {
-		kids, err := s.Store.ChildSessionIDs(parentID)
+		live, err := s.Store.LiveChildCount(parentID)
 		if err != nil {
 			return err
 		}
-		if len(kids) >= lim.MaxChildren {
-			return fmt.Errorf("%w: parent %s already has %d children (max %d)", ErrLineageLimit, parentID, len(kids), lim.MaxChildren)
+		if live >= lim.MaxChildren {
+			return fmt.Errorf("%w: parent %s already has %d live children (max %d)", ErrLineageLimit, parentID, live, lim.MaxChildren)
 		}
 	}
 	if lim.MaxDepth > 0 {
