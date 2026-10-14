@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -65,8 +69,13 @@ var launchCmd = &cobra.Command{
 			promptAppend = appendPromptText(promptAppend, torquePrompt)
 		}
 
+		idemKey := launchIdemKey
+		if idemKey == autoIdempotencyKey {
+			idemKey = deriveLaunchIdempotencyKey(launchID, launchWorker, launchTorqueTasks)
+		}
+
 		var res api.LaunchResponse
-		if launchWorker != "" || route != nil || launchIdemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
+		if launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Worker:          launchWorker,
 				Launch:          launchID,
@@ -78,7 +87,7 @@ var launchCmd = &cobra.Command{
 				Override:        launchOverride,
 				PromptAppend:    promptAppend,
 				Injection:       injection,
-				IdempotencyKey:  launchIdemKey,
+				IdempotencyKey:  idemKey,
 			})
 		} else {
 			res, err = c.Launch(ctx, launchID)
@@ -126,7 +135,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchInjection, "injection", "", `caller-provided JSON config.LaunchInjection, e.g. '{"native_files":[{"rel_path":"NOTES.md","content":"..."}]}' (non-secret only — persisted at rest)`)
 	launchCmd.Flags().StringVar(&launchPromptAppend, "prompt-append", "", "append launch-time instructions to the composed boot prompt")
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
-	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are scoped to the authenticated caller)")
+	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are scoped to the authenticated caller); \"auto\" derives a stable key from the launch, worker and --torque-task ids")
 	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
 	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990); sends TORQUE_API_TOKEN as a bearer token when set")
 	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")
@@ -141,4 +150,17 @@ func launchRouteFromFlags(cmd *cobra.Command) (*launchprofile.Route, error) {
 		return nil, nil
 	}
 	return launchprofile.ResolveRoute(&launchprofile.Route{Channel: launchRoute, Kinds: launchRouteKinds})
+}
+
+// autoIdempotencyKey asks the CLI to derive the launch idempotency key.
+const autoIdempotencyKey = "auto"
+
+// deriveLaunchIdempotencyKey builds a retry-stable key from the launch id,
+// target worker and Torque task ids (order-insensitive), so re-running the
+// same task launch returns the session it started instead of a duplicate.
+func deriveLaunchIdempotencyKey(launchID, worker string, tasks []string) string {
+	ids := append([]string(nil), tasks...)
+	sort.Strings(ids)
+	sum := sha256.Sum256([]byte(launchID + "\x00" + worker + "\x00" + strings.Join(ids, ",")))
+	return "launch-" + hex.EncodeToString(sum[:16])
 }
