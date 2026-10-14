@@ -415,3 +415,15 @@ func TestDaemonToolCallPublisher_ADaemonRefusesAForgedSession(t *testing.T) {
 		t.Errorf("events for a session that never ran: %+v", evs)
 	}
 }
+
+func TestDaemonOnly_SessionPeekReportsUnknownSession(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	res := callAnyTool(t, f.daemonOnly, "tether_session_peek", map[string]any{"session_id": "missing"})
+	if !res.IsError || !strings.Contains(textOf(res), "not_found") {
+		t.Errorf("tether_session_peek of an unknown session = %q, want not_found", textOf(res))
+	}
+	res = callAnyTool(t, f.daemonOnly, "tether_session_peek", map[string]any{})
+	if !res.IsError || !strings.Contains(textOf(res), "invalid_request") {
+		t.Errorf("tether_session_peek without session_id = %q, want invalid_request", textOf(res))
+	}
+}
