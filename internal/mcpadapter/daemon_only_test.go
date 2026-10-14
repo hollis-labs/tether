@@ -436,7 +436,7 @@ func TestDaemonOnly_SessionPeekRequiresTerminalScope(t *testing.T) {
 		"no token":    NewWithDaemon(&app.Service{}, f.daemonOnly.client, "", []string{"terminal"}),
 	} {
 		res := callAnyTool(t, a, "tether_session_peek", map[string]any{"session_id": "missing"})
-		if !res.IsError || strings.Contains(textOf(res), "not_found") || !(strings.Contains(textOf(res), "insufficient_scope") || strings.Contains(textOf(res), "auth_required")) {
+		if !res.IsError || strings.Contains(textOf(res), "not_found") || (!strings.Contains(textOf(res), "insufficient_scope") && !strings.Contains(textOf(res), "auth_required")) {
 			t.Errorf("%s: peek = %q, want a scope refusal", name, textOf(res))
 		}
 	}

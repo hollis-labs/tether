@@ -295,7 +295,7 @@ func (s *Service) stopWorkerTeamSession(row *store.SessionRow) error {
 		log.Printf("team stop: worker session %s already %s on the hub; worker stop failed: %v", row.ID, row.State, err)
 		return nil
 	default:
-		return fmt.Errorf("%w: stop worker session %s: %v", teamhost.ErrSessionUnavailable, row.ID, err)
+		return fmt.Errorf("%w: stop worker session %s: %w", teamhost.ErrSessionUnavailable, row.ID, err)
 	}
 	if !terminal {
 		if err = s.Store.UpdateSessionState(row.ID, string(session.StateKilled), 0, nil); err != nil {

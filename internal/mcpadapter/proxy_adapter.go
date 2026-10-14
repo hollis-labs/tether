@@ -380,7 +380,7 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 	a.upstreams = pool
 	defer pool.Shutdown()
 	var mws []ToolCallMiddleware
-	var auditPub events.Publisher = opts.Publisher
+	auditPub := opts.Publisher
 	if opts.Bus != nil {
 		auditPub = opts.Bus
 	}

@@ -21,7 +21,7 @@ func (s *Server) registerExecutionRoutes(router *http.ServeMux) {
 	if !ok {
 		return
 	}
-	if cap, ok := s.Service.(interface {
+	if capSvc, ok := s.Service.(interface {
 		Capacity() (execpolicy.CapacityView, error)
 	}); ok {
 		router.HandleFunc("/capacity", func(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +29,7 @@ func (s *Server) registerExecutionRoutes(router *http.ServeMux) {
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 				return
 			}
-			v, err := cap.Capacity()
+			v, err := capSvc.Capacity()
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, CodeInternalError, "read capacity: "+err.Error())
 				return

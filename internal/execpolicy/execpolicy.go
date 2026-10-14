@@ -97,8 +97,8 @@ func Admit(p Policy, u Usage, projectID string) error {
 	if p.MaxSessions > 0 && u.Total >= p.MaxSessions {
 		return &Refusal{Code: CodeEnvironmentCapFull, Message: fmt.Sprintf("environment session cap reached: %d of %d live sessions", u.Total, p.MaxSessions)}
 	}
-	if cap := p.ProjectCaps[projectID]; cap > 0 && u.ByProject[projectID] >= cap {
-		return &Refusal{Code: CodeProjectCapFull, Message: fmt.Sprintf("project %q session cap reached: %d of %d live sessions", projectID, u.ByProject[projectID], cap)}
+	if projectCap := p.ProjectCaps[projectID]; projectCap > 0 && u.ByProject[projectID] >= projectCap {
+		return &Refusal{Code: CodeProjectCapFull, Message: fmt.Sprintf("project %q session cap reached: %d of %d live sessions", projectID, u.ByProject[projectID], projectCap)}
 	}
 	return nil
 }

@@ -17,7 +17,7 @@ type Workspace struct {
 // workers that advertise it, so older workers keep their static MCP entry.
 const FeatureSessionCred = "session-cred"
 
-// FeatureWorkerResume is advertised by a worker that honours
+// FeatureWorkerResume is advertised by a worker that honors
 // LaunchSpec.ResumeSessionID (provider-native resume in the same worker
 // workspace). The hub resumes on a worker only when it is advertised.
 const FeatureWorkerResume = "worker-resume"
