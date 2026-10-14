@@ -385,3 +385,25 @@ func assertCatalogFailure(t *testing.T, value any, wantCategory, wantLocation st
 		t.Fatalf("catalog failure fields = %#v, want bounded category/location", failure)
 	}
 }
+
+func TestListLaunchesReportsEnabled(t *testing.T) {
+	root := newCatalogReadFixture(t, "gen")
+	writeFile(t, filepath.Join(root, "launches", "off.yaml"), "id: off-launch\nproject: gen-project\nagent: gen-agent\nprovider: gen-provider\nenabled: false\n")
+	initial, err := config.LoadLayered(root)
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	a := New(&app.Service{CatalogRoot: root, Catalog: initial}, "", nil)
+	body := parseToolJSON(t, callHandler(t, a.handleListLaunches, nil))
+	got := map[string]bool{}
+	for _, raw := range body["launches"].([]any) {
+		l := raw.(map[string]any)
+		got[l["id"].(string)] = l["enabled"].(bool)
+	}
+	if on, ok := got["gen-launch"]; !ok || !on {
+		t.Fatalf("gen-launch enabled = %v (present %v), want true", on, ok)
+	}
+	if on, ok := got["off-launch"]; !ok || on {
+		t.Fatalf("off-launch enabled = %v (present %v), want false", on, ok)
+	}
+}

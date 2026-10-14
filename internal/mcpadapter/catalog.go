@@ -323,6 +323,7 @@ func (a *Adapter) handleListLaunches(_ context.Context, _ map[string]any) (any, 
 		Project  string `json:"project"`
 		Agent    string `json:"agent"`
 		Provider string `json:"provider"`
+		Enabled  bool   `json:"enabled"`
 	}
 	launches := make([]launchBrief, 0, len(cat.Launches))
 	for id, l := range cat.Launches {
@@ -331,6 +332,7 @@ func (a *Adapter) handleListLaunches(_ context.Context, _ map[string]any) (any, 
 			Project:  l.Project,
 			Agent:    l.Agent,
 			Provider: l.Provider,
+			Enabled:  l.IsEnabled(),
 		})
 	}
 	sort.Slice(launches, func(i, j int) bool { return launches[i].ID < launches[j].ID })
