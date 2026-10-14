@@ -19,7 +19,7 @@ func (c *capturePub) Publish(_ context.Context, e events.Event) error {
 func TestIsReadOnlyMachineTool(t *testing.T) {
 	for tool, want := range map[string]bool{
 		"cerberus_list_resources": true, "cerberus_ssh_status": false, "cerberus_get_resource": true,
-		"cerberus_ssh_exec": false, "cerberus_enroll_host": false, "list_hosts": true, "cerberus_install": false, "": false,
+		"cerberus_ssh_exec": false, "cerberus_enroll_host": false, "list_hosts": true, "cerberus_install": false, "cerberus_get_and_apply": false, "cerberus_find_and_delete": false, "cerberus_check_and_fix": false, "cerberus_query_exec": false, "": false,
 	} {
 		if got := IsReadOnlyMachineTool("cerberus", tool); got != want {
 			t.Errorf("%q = %v, want %v", tool, got, want)
