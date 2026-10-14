@@ -222,7 +222,7 @@ launches:
 	if _, err := f.svc.Form(operatorContext(t), teamsvc.FormRequest{Key: "single", Team: team}); err != nil {
 		t.Fatalf("same-runtime reviewer must be allowed when no other runtime is allowlisted: %v", err)
 	}
-	if got := f.policy.LastReviewerPairing(); got.Different || got.WorkerRuntime != "claude" || got.ReviewerRuntime != "claude" {
+	if got, ok := f.policy.PairingFor("single"); !ok || got.Different || got.WorkerRuntime != "claude" || got.ReviewerRuntime != "claude" {
 		t.Fatalf("fallback not recorded: %+v", got)
 	}
 }
@@ -239,8 +239,8 @@ launches:
 	if _, err := f.svc.Form(operatorContext(t), teamsvc.FormRequest{Key: "pair", Team: team}); err != nil {
 		t.Fatal(err)
 	}
-	got := f.policy.LastReviewerPairing()
-	if !got.Different || got.WorkerRuntime != "claude" || got.WorkerModel != "opus" || got.ReviewerRuntime != "codex" || got.ReviewerModel != "gpt" {
+	got, ok := f.policy.PairingFor("pair")
+	if !ok || !got.Different || got.WorkerRuntime != "claude" || got.WorkerModel != "opus" || got.ReviewerRuntime != "codex" || got.ReviewerModel != "gpt" {
 		t.Fatalf("pairing not recorded: %+v", got)
 	}
 	team = stageATeam()
