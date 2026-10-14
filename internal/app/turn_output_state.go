@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
@@ -155,7 +156,38 @@ func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded 
 			o.completedOrder = o.completedOrder[1:]
 		}
 		o.settleTurn()
+		o.scheduleFinalTurnStop()
 	}
+}
+
+// scheduleFinalTurnStop is called with mu held after a turn completes. When the
+// launch opted in (lifecycle.stop_after_final_turn), it stops the session once the
+// grace passes with no new turn or activity, so a finished headless worker does not
+// linger until idle_timeout plus the next reaper sweep.
+func (o *sessionTurnOutput) scheduleFinalTurnStop() {
+	if o.finalTurnGrace <= 0 {
+		return
+	}
+	mark := o.lastActivity
+	time.AfterFunc(o.finalTurnGrace, func() {
+		o.mu.Lock()
+		quiet := o.turnID == "" && o.lastActivity.Equal(mark)
+		o.mu.Unlock()
+		if !quiet {
+			return
+		}
+		plan, err := o.service.Store.GetLaunchPlan(o.row.ID)
+		if err != nil {
+			return
+		}
+		d, err := plan.Lifecycle.Durations()
+		if err != nil {
+			return
+		}
+		if err := o.service.stopSessionForLifecycle(context.Background(), o.row.ID, "final_turn", d); err != nil && !errors.Is(err, agentsessions.ErrSessionNotRunning) {
+			log.Printf("session %q: stop after final turn: %v", o.row.ID, err)
+		}
+	})
 }
 
 func (o *sessionTurnOutput) settleTurn() {

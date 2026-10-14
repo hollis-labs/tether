@@ -1978,6 +1978,7 @@ when the catalog changes or the daemon restarts.
 ```yaml
 lifecycle:
   idle_timeout: 30m
+  stop_after_final_turn: 30s
   max_duration: 24h
   lease_duration: 2h
   orphan_grace: 30s
@@ -1985,6 +1986,10 @@ lifecycle:
   terminate_grace: 5s
   kill_grace: 5s
 ```
+
+`stop_after_final_turn` is opt-in: when a turn completes and no new turn or activity
+follows within that grace, the session stops with reason `final_turn` immediately,
+without waiting for `idle_timeout` and the next reaper sweep.
 
 Idle, duration and session lease limits default to disabled; no implicit 12-hour
 ceiling applies. Duration and configured session lease budgets start at launch;
