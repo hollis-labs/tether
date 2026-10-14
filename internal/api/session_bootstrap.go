@@ -126,21 +126,27 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			// question about planting, and the two are free to diverge.
 			RefAttribution: sql.NullString{String: store.RefAttributionUnlaunched, Valid: true},
 		}
+		create := func() error { return s.SessionBootstrap.CreateSession(row, nil) }
+		var lineageErr error
 		if req.ParentSessionID != "" {
-			if lc, ok := s.Service.(interface{ CheckLineage(string) error }); ok {
-				if err := lc.CheckLineage(req.ParentSessionID); err != nil {
-					var coded interface{ ErrorCode() string }
-					if errors.As(err, &coded) {
-						writeError(w, http.StatusConflict, coded.ErrorCode(), err.Error())
-						return
-					}
-					writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
-					return
+			row.ParentSessionID = sql.NullString{String: req.ParentSessionID, Valid: true}
+			// The lineage check and the insert must be atomic, or concurrent
+			// bootstraps under one parent can all pass the check.
+			if ac, ok := s.Service.(interface {
+				AdmitChild(string, func() error) error
+			}); ok {
+				create = func() error {
+					lineageErr = ac.AdmitChild(req.ParentSessionID, func() error { return s.SessionBootstrap.CreateSession(row, nil) })
+					return lineageErr
 				}
 			}
-			row.ParentSessionID = sql.NullString{String: req.ParentSessionID, Valid: true}
 		}
-		if err := s.SessionBootstrap.CreateSession(row, nil); err != nil {
+		if err := create(); err != nil {
+			var coded interface{ ErrorCode() string }
+			if lineageErr != nil && errors.As(lineageErr, &coded) {
+				writeError(w, http.StatusConflict, coded.ErrorCode(), err.Error())
+				return
+			}
 			// A concurrent bootstrap call for the SAME session_id may
 			// have already won this exact race (T11 security review,
 			// CW-20260906-0042: GetSession-then-CreateSession has no

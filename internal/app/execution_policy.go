@@ -51,19 +51,7 @@ func (s *Service) admitLaunch(sessionID, projectID string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	for id, proj := range s.admitPending {
-		if id == sessionID {
-			continue
-		}
-		if row, gerr := s.Store.GetSession(id); gerr == nil && countsAsLive(row.State) {
-			continue // already in the store's count
-		}
-		u.Total++
-		if u.ByProject == nil {
-			u.ByProject = map[string]int{}
-		}
-		u.ByProject[proj]++
-	}
+	s.addPending(&u, sessionID)
 	if err := execpolicy.Admit(p, u, projectID); err != nil {
 		return nil, err
 	}
@@ -78,6 +66,24 @@ func (s *Service) admitLaunch(sessionID, projectID string) (func(), error) {
 	}, nil
 }
 
+// addPending adds reservations not yet visible in the store's live count to u,
+// skipping skipID. The caller must hold admitMu.
+func (s *Service) addPending(u *execpolicy.Usage, skipID string) {
+	for id, proj := range s.admitPending {
+		if id == skipID {
+			continue
+		}
+		if row, gerr := s.Store.GetSession(id); gerr == nil && countsAsLive(row.State) {
+			continue // already in the store's count
+		}
+		u.Total++
+		if u.ByProject == nil {
+			u.ByProject = map[string]int{}
+		}
+		u.ByProject[proj]++
+	}
+}
+
 // countsAsLive mirrors Store.ExecutionUsage's state filter.
 func countsAsLive(state string) bool {
 	switch state {
@@ -89,10 +95,14 @@ func countsAsLive(state string) bool {
 
 // Capacity maps the execution status onto CapacityView.
 func (s *Service) Capacity() (execpolicy.CapacityView, error) {
+	s.admitMu.Lock()
+	defer s.admitMu.Unlock()
 	st, err := s.ExecutionStatus()
 	if err != nil {
 		return execpolicy.CapacityView{}, err
 	}
+	// An in-flight launch holds a slot before the store counts it.
+	s.addPending(&st.Usage, "")
 	v := execpolicy.CapacityView{EnvironmentID: "local", MaxSessions: st.Policy.MaxSessions, ActiveSessions: st.Usage.Total, Admission: "open", ObservedAt: time.Now().UTC().Format(time.RFC3339)}
 	switch {
 	case st.Policy.Paused:

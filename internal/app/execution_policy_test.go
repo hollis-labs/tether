@@ -89,6 +89,9 @@ func TestAdmitLaunch_ReservesSlot(t *testing.T) {
 	if _, err := svc.admitLaunch("b", "p1"); err == nil {
 		t.Fatal("second concurrent admit passed a cap of 1")
 	}
+	if v, err := svc.Capacity(); err != nil || v.Admission != "full" || v.ActiveSessions != 1 {
+		t.Fatalf("capacity must count the in-flight reservation: %+v, %v", v, err)
+	}
 	relA()
 	relB, err := svc.admitLaunch("b", "p1")
 	if err != nil {
