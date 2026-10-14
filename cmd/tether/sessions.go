@@ -154,6 +154,19 @@ var sessionsInputCmd = &cobra.Command{
 	},
 }
 
+var sessionsTurnReplyTo string
+
+// frameTurnText prefixes a reply-to hint so the receiving agent knows where to
+// answer (a msg:// address, URN, or "torque:<task-id>"). Empty replyTo leaves
+// the text untouched.
+func frameTurnText(text, replyTo string) string {
+	replyTo = strings.TrimSpace(replyTo)
+	if replyTo == "" {
+		return text
+	}
+	return "[reply-to: " + replyTo + "]\n" + text
+}
+
 var sessionsTurnCmd = &cobra.Command{
 	Use:   "turn <id> <text>",
 	Short: "Send a user turn with lifecycle-aware framing (streaming-stdio NDJSON, jsonrpc-stdio turn/start, or raw stdin fallback)",
@@ -167,7 +180,7 @@ var sessionsTurnCmd = &cobra.Command{
 		// no usage dump over a turn_failed stderr tail, and main prints the
 		// error once instead of cobra printing it first.
 		cmd.SilenceUsage, cmd.SilenceErrors = true, true
-		if err := c.SendTurn(cmd.Context(), args[0], args[1]); err != nil {
+		if err := c.SendTurn(cmd.Context(), args[0], frameTurnText(args[1], sessionsTurnReplyTo)); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
 				return fmt.Errorf("tether daemon is not running; run `tether daemon start` first")
 			}
@@ -401,6 +414,8 @@ func init() {
 	sessionsStopCmd.Flags().StringVar(&sessionsStopReason, "reason", "", "reason recorded with a --force close")
 	sessionsStopCmd.Flags().BoolVar(&sessionsStopAllowLive, "allow-live", false,
 		"with --force, close the row even when a live worker or agent holds it")
+	sessionsTurnCmd.Flags().StringVar(&sessionsTurnReplyTo, "reply-to", "",
+		"address the receiving agent should answer (msg://agent/... , registry URN, or torque:<task-id>); prepended as a [reply-to: ...] line")
 	sessionsTailCmd.Flags().BoolVar(&sessionsTailFollow, "follow", true,
 		"follow live output (default); use --follow=false for a one-shot snapshot")
 	sessionsCmd.AddCommand(
