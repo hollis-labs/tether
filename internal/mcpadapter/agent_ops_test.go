@@ -331,3 +331,44 @@ func TestAgentOps_EditableAgentAllowlist(t *testing.T) {
 		t.Fatalf("create of listed id failed: %s", textOf(res))
 	}
 }
+
+// An allowed id is edited through the node-patching path with the allowlist set,
+// and a comment and an unknown field in its file survive; a listed-out id is
+// refused and its file is untouched.
+func TestAgentOps_EditableAgentAllowlistEditKeepsFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	dir := filepath.Join(root, "agents")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	const src = "# keep me\nid: allowed\nname: Old\nfuture_field: {a: 1}\n"
+	for _, id := range []string{"allowed", "other"} {
+		if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(strings.Replace(src, "allowed", id, 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := newAgentOpsAdapter(t, root, nil, ScopeCatalogWrite)
+	a.SetEditableAgents([]string{"allowed"})
+
+	res := callAgentTool(t, a, "tether_agent_edit", map[string]any{"id": "allowed", "name": "New"})
+	if res.IsError {
+		t.Fatalf("edit of listed id failed: %s", textOf(res))
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "allowed.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# keep me", "future_field: {a: 1}", "name: New"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("edited file lost %q:\n%s", want, b)
+		}
+	}
+	res = callAgentTool(t, a, "tether_agent_edit", map[string]any{"id": "other", "name": "New"})
+	if !res.IsError || !strings.Contains(textOf(res), codeAgentNotEditable) {
+		t.Fatalf("edit of non-listed id = %s, want %s", textOf(res), codeAgentNotEditable)
+	}
+	if o, _ := os.ReadFile(filepath.Join(dir, "other.yaml")); strings.Contains(string(o), "New") {
+		t.Fatalf("refused edit still wrote the file:\n%s", o)
+	}
+}

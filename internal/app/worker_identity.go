@@ -36,6 +36,22 @@ func (s *Service) applyCatalogIdentity(plan *launch.Plan) {
 	}
 	plan.IdentityURN = agent.URN
 	plan.MCPScopes = slices.Clone(agent.MCPScopes)
+	plan.EditableAgents = slices.Clone(agent.EditableAgents)
+}
+
+// catalogEditableAgents returns the editable_agents allowlist of the plan's
+// catalog agent: the ids its session's tether_agent_create / tether_agent_edit
+// may touch. Like the URN it is read from the catalog agent only, never from an
+// agent_file/agent_inline override, and a team member never takes it.
+func (s *Service) catalogEditableAgents(plan *launch.Plan) []string {
+	if s.cat() == nil || plan == nil || plan.TeamMember {
+		return nil
+	}
+	agent, ok := s.cat().Agents[plan.CatalogAgent()]
+	if !ok {
+		return nil
+	}
+	return slices.Clone(agent.EditableAgents)
 }
 
 // SessionIdentityURN returns the stable URN a session was launched to act as, if any. It is only a

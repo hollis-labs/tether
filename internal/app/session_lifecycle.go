@@ -458,6 +458,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			return nil, err
 		}
 		mcpPlan := TetherMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
+		mcpPlan.Args = withEditableAgents(mcpPlan.Args, s.catalogEditableAgents(plan))
 		if ownership == config.MCPUpstreamsDaemon {
 			addr, probeErr := s.preflightDaemonMCP(ctx, token)
 			if probeErr != nil {

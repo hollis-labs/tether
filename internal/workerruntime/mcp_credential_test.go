@@ -100,3 +100,27 @@ func TestRunRelayFeedsCredentialFirstThenStream(t *testing.T) {
 		t.Fatal("relay must only run ssh")
 	}
 }
+
+func TestPlantHubMCPPlantsEditableAgents(t *testing.T) {
+	cfg, _, _ := plantedConfig(t, workerwire.LaunchSpec{Session: "s", Credential: "tth_x", MCPScopes: []string{"catalog.write"}, EditableAgents: []string{"chat", "zz-probe"}})
+	joined := strings.Join(cfg.Servers["tether"].Args, " ")
+	if !strings.Contains(joined, "--editable-agent chat --editable-agent zz-probe") {
+		t.Fatalf("allowlist not planted: %s", joined)
+	}
+	none, _, _ := plantedConfig(t, workerwire.LaunchSpec{Session: "s", Credential: "tth_x"})
+	if strings.Contains(strings.Join(none.Servers["tether"].Args, " "), "--editable-agent") {
+		t.Fatal("an agent with no editable_agents got an allowlist")
+	}
+}
+
+func TestPlantHubMCPRefusesEditableAgentsWithoutCredential(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "hub-mcp.json"), []byte(testHubMCP), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e := NewExecutor(root, "/opt/tether-worker", nil)
+	err := e.plantHubMCP(t.TempDir(), filepath.Join(t.TempDir(), "mcp-cred"), workerwire.LaunchSpec{Session: "s", EditableAgents: []string{"chat"}})
+	if err == nil || !strings.Contains(err.Error(), "editable_agents") {
+		t.Fatalf("err = %v, want refusal rather than a silently unrestricted session", err)
+	}
+}

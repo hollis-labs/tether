@@ -118,6 +118,34 @@ built from this change). A session on an older worker keeps the static
 launch is refused with a message to upgrade the worker, because it could never
 act as that identity. See [forums.md](forums.md#agent-identity-on-workers).
 
+### Editable agents: `editable_agents`
+
+An optional catalog-agent field naming which agent ids that agent's launched
+sessions may create or edit through `tether_agent_create` / `tether_agent_edit`:
+
+```yaml
+editable_agents: [chat-helper, zz-probe]
+```
+
+- Each id is planted as `--editable-agent <id>` on the session's `tether mcp`
+  entry (local launches and worker launches alike). The tools refuse any other id
+  with `agent_not_editable`, before anything is written.
+- **Absent or empty plants nothing**, so an agent that does not declare it behaves
+  exactly as before: no per-agent restriction. There is no way to say "may edit
+  nothing" with this field; omit `catalog.write` from `mcp_scopes` for that.
+- Every entry must be a catalog agent, and an id may be listed once; otherwise
+  catalog validation fails.
+- Read from the **catalog** agent only (not an `agent_file`/`agent_inline`
+  override), not inherited through `extends`, and team members never take it.
+- On a worker the allowlist rides the launch frame and needs a `tether-worker`
+  that advertises `editable-agents`. The hub refuses to launch an agent that
+  declares `editable_agents` on an older worker (it would drop the allowlist and
+  leave the session unrestricted), and the worker refuses it without a session
+  credential.
+- It narrows the agent tools only. Sessions with daemon-owned MCP upstreams get
+  catalog changes through the approval-gated `tether_catalog_plan` /
+  `tether_catalog_apply` route, which has its own gate.
+
 `hub-mcp.json` must keep the plain `--daemon-only` `tether` entry (over `ssh`):
 workers use the credential relay and must never run `--proxy`. The worker
 validates the file when it starts and logs a `WARN` if it is bad; a launch that

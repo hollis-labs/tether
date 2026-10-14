@@ -90,6 +90,16 @@ func (c *Catalog) Validate() error {
 				return fmt.Errorf("agent %q has unknown mcp_scopes entry %q", id, scope)
 			}
 		}
+		seenEditable := map[string]bool{}
+		for _, target := range a.EditableAgents {
+			if _, ok := c.Agents[target]; !ok {
+				return fmt.Errorf("agent %q has editable_agents entry %q that is not a catalog agent", id, target)
+			}
+			if seenEditable[target] {
+				return fmt.Errorf("agent %q lists editable_agents entry %q twice", id, target)
+			}
+			seenEditable[target] = true
+		}
 		if !launchprofile.ValidRecovery(a.Recovery) {
 			return fmt.Errorf("agent %q has invalid recovery %q (want %q or %q)", id, a.Recovery, launchprofile.RecoveryNever, launchprofile.RecoveryAuto)
 		}

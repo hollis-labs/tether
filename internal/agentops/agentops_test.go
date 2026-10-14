@@ -212,3 +212,31 @@ func TestUpdate_PreservesCommentsAndUnknownFields(t *testing.T) {
 		t.Errorf("old name remains:\n%s", got)
 	}
 }
+
+// patchAgent edits the node tree, so YAML features the typed profile cannot
+// round-trip must survive an edit of an unrelated key: anchors and aliases
+// (including a merge key), flow-style maps and sequences, and a quoted scalar.
+func TestUpdate_KeepsAnchorsAliasesAndFlowStyle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.yaml")
+	src := "id: a\nname: Old\nbase: &base\n  retries: 3\n  mode: fast\nwrapper:\n  <<: *base\n  extra: {k: v, n: [1, 2]}\nroles: [x, y]\nnote: \"quoted: value\"\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Update(path, Params{Name: "New"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	for _, want := range []string{"&base", "<<: *base", "{k: v, n: [1, 2]}", "[x, y]", `"quoted: value"`, "name: New"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("result lost %q:\n%s", want, got)
+		}
+	}
+	var back map[string]any
+	if err := yaml.Unmarshal(b, &back); err != nil {
+		t.Fatalf("result does not parse: %v\n%s", err, got)
+	}
+}
