@@ -222,6 +222,32 @@ launches:
 	if _, err := f.svc.Form(operatorContext(t), teamsvc.FormRequest{Key: "single", Team: team}); err != nil {
 		t.Fatalf("same-runtime reviewer must be allowed when no other runtime is allowlisted: %v", err)
 	}
+	if got := f.policy.LastReviewerPairing(); got.Different || got.WorkerRuntime != "claude" || got.ReviewerRuntime != "claude" {
+		t.Fatalf("fallback not recorded: %+v", got)
+	}
+}
+
+func TestStageAReviewerDifferentRuntimeOrModelIsRecorded(t *testing.T) {
+	raw := `version: 1
+launches:
+  - {launch: tether-claude, runtime: claude, model: opus, definition: {id: claude-agent, revision: r1, digest: d-claude}}
+  - {launch: tether-codex, runtime: codex, model: gpt, definition: {id: codex-agent, revision: r1, digest: d-codex}}
+`
+	f, _ := newPolicyFixture(t, raw)
+	team := stageATeam()
+	team.Slots[2].Definition = codexPin
+	if _, err := f.svc.Form(operatorContext(t), teamsvc.FormRequest{Key: "pair", Team: team}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.policy.LastReviewerPairing()
+	if !got.Different || got.WorkerRuntime != "claude" || got.WorkerModel != "opus" || got.ReviewerRuntime != "codex" || got.ReviewerModel != "gpt" {
+		t.Fatalf("pairing not recorded: %+v", got)
+	}
+	team = stageATeam()
+	team.Slots[2].Definition = claudePin
+	if _, err := f.svc.Form(operatorContext(t), teamsvc.FormRequest{Key: "same", Team: team}); err == nil {
+		t.Fatal("same runtime and model reviewer accepted with two runtimes allowlisted")
+	}
 }
 
 func writeFile(path, raw string) error { return os.WriteFile(path, []byte(raw), 0o600) }
