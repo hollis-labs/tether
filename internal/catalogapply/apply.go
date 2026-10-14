@@ -155,6 +155,13 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 			res.Reloaded = true
 			res.Activation = ActivationImmediate
 		}
+		// The team host reads teams-policy.yaml and the definitions it pins at
+		// daemon start; the catalog reload does not re-read them.
+		if note := teamsRestartNote(cp); note != "" {
+			res.Reloaded = true
+			res.RestartRequired = append(res.RestartRequired, note)
+			res.Activation = ActivationRestartRequired
+		}
 	}
 	res.AuditNote = fmt.Sprintf("catalog apply %q (plan %s, digest %s): %s; backup %s; activation %s", cp.Name, cp.ID, cp.Digest[:12], strings.Join(changed, ", "), backupID, res.Activation)
 
@@ -166,6 +173,20 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 	e.mu.Unlock()
 	e.audit(res, cp)
 	return res, nil
+}
+
+// teamsRestartNote names a team policy or definition edit in the plan, which
+// only takes effect when the daemon restarts.
+func teamsRestartNote(p *Plan) string {
+	for _, f := range p.Files {
+		if f.Action == "unchanged" {
+			continue
+		}
+		if f.Path == "teams-policy.yaml" || strings.HasPrefix(f.Path, "team-definitions/") {
+			return f.Path + " changed: the team host reads the teams policy and its pinned definitions at daemon start and still needs a restart"
+		}
+	}
+	return ""
 }
 
 // activationOf says whether the daemon sees the change without a restart:
