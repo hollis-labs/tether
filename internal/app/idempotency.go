@@ -97,9 +97,21 @@ func (s *Service) createKeyedReplace(principal, key, digest string, replace bool
 	unlock := s.lockIdempotencyKey(principal, key)
 	defer unlock()
 	if replace {
+		// Build before unbinding so a failed plan build leaves the key bound
+		// to its ended session instead of stranding it unbound.
+		if err := s.checkReplaceable(principal, key); err != nil {
+			return nil, err
+		}
+		plan, err := build()
+		if err != nil {
+			return nil, err
+		}
 		if err := s.releaseKeyForReplace(principal, key); err != nil {
 			return nil, err
 		}
+		return s.createSessionFromPlan(plan, &store.SessionIdempotency{
+			PrincipalID: principal, Key: key, Operation: store.IdempotencyOpCreate, RequestDigest: digest,
+		})
 	}
 	if launched, err := s.replayIfKeyed(principal, key, store.IdempotencyOpCreate, digest); launched != nil || err != nil {
 		return launched, err
@@ -117,6 +129,14 @@ func (s *Service) createKeyedReplace(principal, key, digest string, replace bool
 // request claims it afresh (launch --replace). A key bound to a live session
 // is refused: stop it first. The caller must hold the key's lock.
 func (s *Service) releaseKeyForReplace(principal, key string) error {
+	if err := s.checkReplaceable(principal, key); err != nil {
+		return err
+	}
+	return s.Store.ReleaseSessionIdempotency(principal, key)
+}
+
+// checkReplaceable refuses a key bound to a session that has not ended.
+func (s *Service) checkReplaceable(principal, key string) error {
 	rec, err := s.Store.GetSessionIdempotency(principal, key)
 	if err != nil {
 		return fmt.Errorf("look up idempotency key: %w", err)
@@ -131,7 +151,7 @@ func (s *Service) releaseKeyForReplace(principal, key string) error {
 	if !session.State(row.State).Terminal() {
 		return fmt.Errorf("%w (key is bound to session %s which is still %s; stop it before --replace)", store.ErrIdempotencyConflict, rec.SessionID, row.State)
 	}
-	return s.Store.ReleaseSessionIdempotency(principal, key)
+	return nil
 }
 
 // replayIfKeyed returns the session principal's key is bound to when the stored request
