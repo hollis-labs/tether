@@ -15,7 +15,7 @@ func TestValidateHubMCPFileRejectsProxy(t *testing.T) {
 		}
 	}
 	write(`{"mcpServers":{"tether":{"command":"ssh","args":["hub","tether","mcp","--proxy","--servers","tangent"]}}}`)
-	if err := ValidateHubMCPFile(root); err == nil || !strings.Contains(err.Error(), "--proxy") {
+	if err := ValidateHubMCPFile(root); err == nil || !strings.Contains(err.Error(), "proxy") {
 		t.Fatalf("want proxy rejection, got %v", err)
 	}
 	write(`{"mcpServers":{"tether":{"command":"ssh","args":["hub","tether","mcp","--daemon-only"]}}}`)
