@@ -348,11 +348,7 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 // ReviewerPairing records the author (worker) and reviewer runtime/model chosen
 // by an admitted formation, keyed by its request key; Different is false for the recorded
 // single-runtime fallback.
-type ReviewerPairing struct {
-	WorkerRuntime, WorkerModel     string
-	ReviewerRuntime, ReviewerModel string
-	Different                      bool
-}
+type ReviewerPairing = teamsvc.ReviewerPairing
 
 // maxPairings bounds the per-formation pairing map; it is cleared when full
 // since a pairing is only read shortly after its formation is admitted.
@@ -374,4 +370,13 @@ func (p *Policy) PairingFor(key string) (ReviewerPairing, bool) {
 	defer p.pairingMu.Unlock()
 	r, ok := p.pairings[key]
 	return r, ok
+}
+
+// PairingFor lets the formation path read the pairing AdmitFormation recorded
+// for the request key, so it can be emitted on the formation result.
+func (c Ceilings) PairingFor(key string) (teamsvc.ReviewerPairing, bool) {
+	if c.Policy == nil {
+		return teamsvc.ReviewerPairing{}, false
+	}
+	return c.Policy.PairingFor(key)
 }
