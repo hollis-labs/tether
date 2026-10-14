@@ -20,6 +20,13 @@ import (
 )
 
 func (s *Service) createWorkerSession(in CreateSessionInput) (*Launched, error) {
+	return s.createWorkerSessionWith(in, "", nil)
+}
+
+// createWorkerSessionWith is createWorkerSession with a caller-supplied
+// idempotency digest (empty means the ordinary create digest) and a plan
+// mutator applied after the plan is built (team members use both).
+func (s *Service) createWorkerSessionWith(in CreateSessionInput, digest string, mutate func(*launch.Plan) error) (*Launched, error) {
 	if s.Workers == nil {
 		return nil, workerhub.ErrChannelUnavailable
 	}
@@ -35,7 +42,9 @@ func (s *Service) createWorkerSession(in CreateSessionInput) (*Launched, error) 
 		principal := idempotencyPrincipal(in.IdempotencyPrincipal)
 		unlock := s.lockIdempotencyKey(principal, in.IdempotencyKey)
 		defer unlock()
-		digest := createRequestDigest(in)
+		if digest == "" {
+			digest = createRequestDigest(in)
+		}
 		if l, err := s.replayIfKeyed(principal, in.IdempotencyKey, store.IdempotencyOpCreate, digest); l != nil || err != nil {
 			return l, err
 		}
@@ -44,6 +53,11 @@ func (s *Service) createWorkerSession(in CreateSessionInput) (*Launched, error) 
 	plan, err := s.BuildLaunchPlan(in)
 	if err != nil {
 		return nil, err
+	}
+	if mutate != nil {
+		if err = mutate(plan); err != nil {
+			return nil, err
+		}
 	}
 	s.applyCatalogIdentity(plan)
 	id := uuid.NewString()

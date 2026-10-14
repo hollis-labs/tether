@@ -173,11 +173,7 @@ func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchI
 		return nil, err
 	}
 	digest := teamCreateDigest(launchID, boot)
-	return s.createKeyed(store.IdempotencyPrincipalTeam, key, digest, func() (*launch.Plan, error) {
-		plan, err := s.BuildLaunchPlan(CreateSessionInput{LaunchID: launchID})
-		if err != nil {
-			return nil, err
-		}
+	mutate := func(plan *launch.Plan) error {
 		plan.TeamMember = true
 		// Each keyed team create gets its own logical id; sandbox and launch
 		// policy keep resolving from the catalog agent.
@@ -185,13 +181,31 @@ func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchI
 		plan.CatalogAgentID = plan.LogicalAgentID
 		plan.LogicalAgentID += "#" + hex.EncodeToString(sum[:6])
 		if err := s.Store.UpsertLogicalAgent(agent.LogicalAgent{ID: plan.LogicalAgentID, Name: plan.LogicalAgentID, Role: "team member of " + plan.CatalogAgentID}, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+		return applyTeamBootContext(plan, boot)
+	}
+	// A launch that names a worker places its team members there; it never
+	// falls back to the hub (createWorkerSessionWith fails closed when the
+	// worker is unknown or offline). No worker configured = hub, unchanged.
+	if w := s.launchWorker(launchID); w != "" {
+		return s.createWorkerSessionWith(CreateSessionInput{LaunchID: launchID, Worker: w, IdempotencyKey: key, IdempotencyPrincipal: store.IdempotencyPrincipalTeam}, digest, mutate)
+	}
+	return s.createKeyed(store.IdempotencyPrincipalTeam, key, digest, func() (*launch.Plan, error) {
+		plan, err := s.BuildLaunchPlan(CreateSessionInput{LaunchID: launchID})
+		if err != nil {
 			return nil, err
 		}
-		if err := applyTeamBootContext(plan, boot); err != nil {
-			return nil, err
-		}
-		return plan, nil
+		return plan, mutate(plan)
 	})
+}
+
+// launchWorker returns the catalog launch's `worker:` default placement.
+func (s *Service) launchWorker(launchID string) string {
+	if c := s.cat(); c != nil {
+		return c.Launches[launchID].Worker
+	}
+	return ""
 }
 
 // StopTeamSession shares launch serialization with ordinary session launches.
