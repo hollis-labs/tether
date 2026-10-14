@@ -168,12 +168,29 @@ func (o *sessionTurnOutput) scheduleFinalTurnStop() {
 	if o.finalTurnGrace <= 0 {
 		return
 	}
-	mark := o.lastActivity
+	o.armFinalTurnStop(o.lastActivity)
+}
+
+// armFinalTurnStop waits out the grace, then stops the session only if no turn
+// began, the feed stayed quiet, and no routing reply is queued or mid-delivery.
+// Open replies re-arm the check: the reply dispatcher delivers them as a new turn,
+// whose completion schedules its own stop, but a reply that settles undeliverable
+// never makes one and would otherwise leave the session to the idle reaper.
+func (o *sessionTurnOutput) armFinalTurnStop(mark time.Time) {
 	time.AfterFunc(o.finalTurnGrace, func() {
 		o.mu.Lock()
 		quiet := o.turnID == "" && o.lastActivity.Equal(mark)
 		o.mu.Unlock()
 		if !quiet {
+			return
+		}
+		open, err := o.service.Store.SessionHasOpenRoutingReplies(context.Background(), o.row.ID)
+		if err != nil {
+			log.Printf("session %q: check queued input before final-turn stop: %v", o.row.ID, err)
+			return
+		}
+		if open {
+			o.armFinalTurnStop(mark)
 			return
 		}
 		plan, err := o.service.Store.GetLaunchPlan(o.row.ID)
