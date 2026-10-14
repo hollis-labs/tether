@@ -236,7 +236,7 @@ func RunRelay(tokenFile string, argv []string, stdin io.Reader, stdout, stderr i
 // ValidateHubMCPFile checks the planted hub-mcp.json the way a launch will, so a bad edit is reported
 // when the worker starts rather than as an opaque launch failure.
 func ValidateHubMCPFile(root string) error {
-	b, err := os.ReadFile(filepath.Join(root, "hub-mcp.json"))
+	b, err := os.ReadFile(filepath.Join(root, "hub-mcp.json")) //nolint:gosec // G304: root is the worker's own state directory
 	if err != nil {
 		return err
 	}

@@ -755,7 +755,7 @@ func TestClient_MessageReply_Interrupt(t *testing.T) {
 			t.Errorf("unexpected request %s %s %+v", r.Method, r.URL, in)
 		}
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"reply_id":"r1","interrupt":"cancelled"}`))
+		_, _ = w.Write([]byte(`{"reply_id":"r1","interrupt":"cancelled"}`)) //nolint:misspell // daemon wire value uses British spelling
 	}))
 	defer srv.Close()
 	c := New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))

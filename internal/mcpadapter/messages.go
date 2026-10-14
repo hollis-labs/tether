@@ -144,7 +144,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 			gomcp.StringProp("idempotency_key", "Optional key; a repeated key returns the earlier receipt", false),
 		),
 		Handler: a.handleMessageInterrupt,
-	}, Destroys("cancels the target session's in-flight turn; the cancelled work is not resumed"))
+	}, Destroys("cancels the target session's in-flight turn; the canceled work is not resumed"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_mark_read",

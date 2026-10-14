@@ -172,7 +172,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	result, err := s.Workers.Send(wait, row.WorkerID, workerwire.Frame{T: "launch", CmdID: "launch:" + row.ID, Session: row.ID, Spec: raw})
 	if err != nil {
 		if result.Error == "" {
-			// No verdict from the worker (cancelled wait, dropped link): the
+			// No verdict from the worker (canceled wait, dropped link): the
 			// launch frame was sent and the worker may still start the
 			// session. Marking it failed would hide a live process from stop and
 			// rollback, and its later state report would resurrect it. Leave it

@@ -9,7 +9,7 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 )
 
-// SessionActivity summarises a session's recent event history for stall
+// SessionActivity summarizes a session's recent event history for stall
 // detection: when it last did anything and how many tool actions the provider
 // refused since it last produced turn output.
 type SessionActivity struct {
