@@ -94,6 +94,31 @@ This is control-plane write protection, not same-uid secret isolation. It does n
 solve operator-token theft (0237), change interactive configs (0540), or complete
 app onboarding/fleet serve-once acceptance (0541/0254).
 
+## Manual operator and worker clients
+
+Launched sessions are not the only callers. The endpoint admits `session`,
+`operator`, `service` and `interactive` principals; `service` and `interactive`
+principals receive the upstream grant catalogued for their ID, and the operator
+principal receives every enabled upstream. A manual client (Claude, Codex or
+another stdio MCP host) reaches the same shared pool with a thin forwarder:
+
+```bash
+tether mcp --forward-daemon --daemon-address unix:/abs/run/tetherd.sock \
+  --token-file /abs/path/device.token
+```
+
+- The credential is `--token-file` (mode 0600, unsafe modes are rejected rather
+  than falling through) or, for launched sessions, `TETHER_TOKEN`. The forwarder
+  never reads `operator.token`; hand a manual client its own device/service
+  credential rather than the operator token.
+- Upstream credentials stay in the hub catalog and the daemon's children. The
+  client holds only its bearer credential.
+- Upstream calls are admitted and audited under the caller's principal. Passing
+  that identity on to the upstream service (instead of the shared hub token)
+  needs receiver-side support and is not part of this change.
+- A client using this route spawns no upstream children; run it instead of
+  `tether mcp --proxy` once the endpoint is enabled (see rollout below).
+
 ## Optional operator rollout and rollback
 
 1. Back up catalog and `tether.db` with the matching identity token backup.
