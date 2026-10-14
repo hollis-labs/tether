@@ -765,6 +765,13 @@ func (c *Client) AttachSession(ctx context.Context, id string, w io.Writer, sinc
 // the exit code recorded by the runtime manager. The ctx controls the
 // client-side timeout; the daemon itself does not apply one.
 func (c *Client) WaitSession(ctx context.Context, id string) (int, error) {
+	res, err := c.WaitSessionResult(ctx, id)
+	return res.ExitCode, err
+}
+
+// WaitSessionResult is WaitSession plus the final turn result the daemon
+// reports alongside the exit code.
+func (c *Client) WaitSessionResult(ctx context.Context, id string) (api.WaitResponse, error) {
 	var res api.WaitResponse
 	// Override the default 5s transport timeout for this specific call so
 	// long-running sessions can block.
@@ -772,20 +779,20 @@ func (c *Client) WaitSession(ctx context.Context, id string) (int, error) {
 	longClient.Timeout = 0
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/sessions/"+url.PathEscape(id)+"/wait", nil)
 	if err != nil {
-		return 0, err
+		return res, err
 	}
 	resp, err := longClient.Do(req)
 	if err != nil {
-		return 0, wrapIfUnreachable(err)
+		return res, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, readError(resp)
+		return res, readError(resp)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return 0, fmt.Errorf("decode wait response: %w", err)
+		return res, fmt.Errorf("decode wait response: %w", err)
 	}
-	return res.ExitCode, nil
+	return res, nil
 }
 
 // ListProjects fetches the full project catalog via GET /catalog/projects.

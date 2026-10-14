@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/session"
@@ -551,7 +552,16 @@ func (s *Server) handleWaitSession(w http.ResponseWriter, r *http.Request, id st
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, WaitResponse{ExitCode: code})
+	res := WaitResponse{ExitCode: code}
+	if fr, can := s.Service.(interface {
+		SessionFinalTurnResult(context.Context, string) (events.TurnOutputEvent, bool)
+	}); can {
+		if out, ok := fr.SessionFinalTurnResult(r.Context(), id); ok {
+			res.StopReason, res.OutputKind, res.OutputTurnID = out.StopReason, string(out.Kind), out.TurnID
+			res.OutputText, res.OutputTruncated = out.Text, out.TextTruncated
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // handleSessionAttachmentsList services GET /sessions/{id}/attachments.

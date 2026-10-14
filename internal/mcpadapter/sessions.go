@@ -90,7 +90,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_session_wait",
-		Description: "Block until the session exits and return its exit code. Use after tether_session_stop or for short-lived sessions.",
+		Description: "Block until the session exits and return its exit code plus the final turn result (stop_reason, output_text) when one was recorded. Use after tether_session_stop or for short-lived sessions.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
 		),
@@ -444,14 +444,19 @@ func (a *Adapter) handleSessionWait(ctx context.Context, args map[string]any) (a
 		return nil, toolError("invalid_request", "session_id required")
 	}
 	if a.client != nil {
-		code, err := a.client.WaitSession(ctx, id)
+		res, err := a.client.WaitSessionResult(ctx, id)
 		if err != nil {
 			if isDaemonUnreachable(err) {
 				return nil, daemonUnreachableError(err)
 			}
 			return nil, classifyClientErr(err, id)
 		}
-		return toolJSON(map[string]any{"ok": true, "session_id": id, "exit_code": code}), nil
+		out := map[string]any{"ok": true, "session_id": id, "exit_code": res.ExitCode}
+		if res.StopReason != "" || res.OutputText != "" {
+			out["stop_reason"], out["output_kind"], out["output_turn_id"] = res.StopReason, res.OutputKind, res.OutputTurnID
+			out["output_text"], out["output_truncated"] = res.OutputText, res.OutputTruncated
+		}
+		return toolJSON(out), nil
 	}
 	code, err := a.svc.WaitSession(ctx, id)
 	if err != nil {
@@ -460,7 +465,12 @@ func (a *Adapter) handleSessionWait(ctx context.Context, args map[string]any) (a
 		}
 		return nil, toolError("internal_error", err.Error())
 	}
-	return toolJSON(map[string]any{"ok": true, "session_id": id, "exit_code": code}), nil
+	out := map[string]any{"ok": true, "session_id": id, "exit_code": code}
+	if fr, ok := a.svc.SessionFinalTurnResult(ctx, id); ok {
+		out["stop_reason"], out["output_kind"], out["output_turn_id"] = fr.StopReason, string(fr.Kind), fr.TurnID
+		out["output_text"], out["output_truncated"] = fr.Text, fr.TextTruncated
+	}
+	return toolJSON(out), nil
 }
 
 func (a *Adapter) handleSessionSendInput(ctx context.Context, args map[string]any) (any, error) {

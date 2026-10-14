@@ -243,6 +243,14 @@ type LaunchResponse struct {
 
 type WaitResponse struct {
 	ExitCode int `json:"exit_code"`
+	// Final turn result, present when the session recorded a
+	// session.turn_output event. OutputText is the staged full text when it is
+	// still retained, otherwise the event excerpt (OutputTruncated).
+	StopReason      string `json:"stop_reason,omitempty"`
+	OutputKind      string `json:"output_kind,omitempty"`
+	OutputTurnID    string `json:"output_turn_id,omitempty"`
+	OutputText      string `json:"output_text,omitempty"`
+	OutputTruncated bool   `json:"output_truncated,omitempty"`
 }
 
 // CapabilitiesDTO is the on-the-wire representation of agentsessions.Capabilities.

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -993,6 +995,31 @@ func (s *Service) WaitSession(ctx context.Context, id string) (int, error) {
 		}
 	}
 	return s.Manager.WaitSession(ctx, id)
+}
+
+// SessionFinalTurnResult returns the newest persisted session.turn_output for
+// the session. Text is the retained staged body when available, else the event
+// excerpt. ok is false when no turn output was recorded or it cannot be read.
+func (s *Service) SessionFinalTurnResult(ctx context.Context, id string) (events.TurnOutputEvent, bool) {
+	evs, err := s.Store.QueryEvents(store.EventFilter{SessionID: id, Kinds: []string{events.KindSessionTurnOutput}, Limit: 1})
+	if err != nil || len(evs) == 0 {
+		return events.TurnOutputEvent{}, false
+	}
+	var out events.TurnOutputEvent
+	if json.Unmarshal([]byte(evs[0].PayloadJSON), &out) != nil {
+		return events.TurnOutputEvent{}, false
+	}
+	if out.MessageID != "" {
+		if env, err := s.Store.StagedTurnOutput(ctx, out.MessageID); err == nil {
+			var body struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(env.Payload, &body) == nil {
+				out.Text, out.TextTruncated = body.Text, false
+			}
+		}
+	}
+	return out, true
 }
 
 // AttachSession streams the named session's live output to w until ctx is

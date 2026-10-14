@@ -21,6 +21,7 @@ import (
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 
 	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -940,5 +941,30 @@ func TestSessionRoutes_NotRegisteredWithoutService(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected 404 when Service is nil; got %d", rr.Code)
+	}
+}
+
+type fakeFinalResultService struct {
+	*fakeLaunchService
+	out events.TurnOutputEvent
+}
+
+func (f fakeFinalResultService) SessionFinalTurnResult(context.Context, string) (events.TurnOutputEvent, bool) {
+	return f.out, true
+}
+
+func TestHandleWaitSession_FinalTurnResult(t *testing.T) {
+	svc := fakeFinalResultService{
+		fakeLaunchService: &fakeLaunchService{waitRes: map[string]int{"s1": 0}},
+		out:               events.TurnOutputEvent{TurnID: "t1", Kind: "final", StopReason: "end_turn", Text: "done"},
+	}
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/sessions/s1/wait", nil))
+	var res WaitResponse
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res.StopReason != "end_turn" || res.OutputText != "done" || res.OutputTurnID != "t1" || res.OutputKind != "final" {
+		t.Errorf("unexpected wait response: %+v", res)
 	}
 }
