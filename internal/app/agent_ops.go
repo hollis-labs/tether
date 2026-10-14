@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -493,6 +494,30 @@ func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
 // updating plan.PermissionMode is the whole reconciliation.
 func applyPermissionMode(plan *launch.Plan, global config.Global, effectiveAgent config.Agent) {
 	plan.PermissionMode = config.EffectivePermissionMode(global, effectiveAgent)
+	if msg := headlessDefaultPermissionWarning(plan); msg != "" {
+		slog.Warn(msg, "launch", plan.LaunchID, "agent", plan.LogicalAgentID)
+	}
+}
+
+// headlessDefaultPermissionWarning returns a warning when a headless launch
+// resolves to permission_mode default while MCP servers are attached: the
+// provider refuses every tool action that needs approval and nobody is there
+// to approve, so the agent's MCP tools are denied. It warns rather than
+// refuses so existing launches keep working. Empty means nothing to warn.
+func headlessDefaultPermissionWarning(plan *launch.Plan) string {
+	switch plan.RuntimeKind {
+	case config.RuntimeKindStreamingStdio, config.RuntimeKindJSONRPCStdio, config.RuntimeKindSubprocess:
+	default:
+		return ""
+	}
+	if plan.PermissionMode != config.PermissionModeDefault {
+		return ""
+	}
+	servers := launch.EffectiveMCPServers(plan.Env)
+	if len(servers) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("headless launch resolves to permission_mode default with MCP servers attached (%s): MCP tool calls will be denied; set permissions.permission_mode: bypass on the agent or global defaults", strings.Join(servers, ","))
 }
 
 // loadEffectiveSkills resolves a list of skill IDs against the layered

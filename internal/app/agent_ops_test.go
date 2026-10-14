@@ -576,3 +576,22 @@ func TestApplyAgentOps_MissingSkillHardErrors(t *testing.T) {
 		t.Fatal("expected error for missing skill, got nil")
 	}
 }
+
+func TestHeadlessDefaultPermissionWarning(t *testing.T) {
+	plan := func(kind, mode string, env map[string]string) *launch.Plan {
+		return &launch.Plan{RuntimeKind: kind, PermissionMode: mode, Env: env}
+	}
+	with := map[string]string{launch.MCPServersEnv: "tether"}
+	if got := headlessDefaultPermissionWarning(plan(config.RuntimeKindStreamingStdio, config.PermissionModeDefault, with)); got == "" {
+		t.Fatal("headless default with MCP servers: want warning")
+	}
+	for name, p := range map[string]*launch.Plan{
+		"pty":    plan(config.RuntimeKindPTY, config.PermissionModeDefault, with),
+		"bypass": plan(config.RuntimeKindStreamingStdio, config.PermissionModeBypass, with),
+		"no mcp": plan(config.RuntimeKindStreamingStdio, config.PermissionModeDefault, map[string]string{launch.MCPServersEnv: ""}),
+	} {
+		if got := headlessDefaultPermissionWarning(p); got != "" {
+			t.Errorf("%s: unexpected warning %q", name, got)
+		}
+	}
+}
