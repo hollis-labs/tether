@@ -156,8 +156,14 @@ request file when you change slots, and use a new `--key`.
 reviewer definitions used in the run told members to message only the
 coordinator and never merge or delete branches. The coordinator (the operator
 seat) therefore relays the PR number and the reviewer's verdict, and performs
-the merge. Members report by mail to the coordinator (section 3); they do not
-message each other or the merge target.
+the merge.
+
+Do not read this as the authority grants forbidding member-to-member mail. The
+form grants (verified: `examples/teams/team-form-claude.json`, section 3) allow
+`workers` to message `reviewer`. What differed in the run was the instruction
+text in the role definitions, which I have not seen **(unverified)**: as
+relayed, it told members to message only the coordinator and not to merge.
+Members report by mail to the coordinator (section 3).
 
 ### Worker restart with live members (observed; unverified)
 
