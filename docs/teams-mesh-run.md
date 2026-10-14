@@ -23,7 +23,7 @@ checked against the `tether team` verbs in `internal/teamcli/` and the examples 
 - Run the CLI without a stale `TETHER_TOKEN` in the environment (it overrides the
   operator token and team verbs answer `unauthenticated`).
 
-`tether catalog validate` warns about policy launches that are missing, disabled,
+Catalog validation (`internal/catalogcheck`, also the `tether_catalog_validate` MCP tool) warns about policy launches that are missing, disabled,
 or have no `worker:` while their project `repo_root` is a placeholder
 (`internal/catalogcheck/teams_policy.go`).
 
@@ -93,8 +93,8 @@ worker: worker-b
   worker's filesystem**. The project's `repo_root` therefore has to exist on that
   worker; `repo_root` is never edited or deleted. See
   [catalog-launch-profiles.md](catalog-launch-profiles.md#workspace-roots-and-worktree-lifecycle).
-  Whether a stale hub-side `work_dir` is accepted for a worker launch is
-  **(unverified)**; see the launchparity note for `agent-workspaces-*` launches.
+  How a stale hub-side `work_dir` behaves on a worker launch is
+  **(unverified)** here.
 
 ## 5. Stop and dissolve
 
