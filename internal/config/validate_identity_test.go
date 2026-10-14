@@ -37,3 +37,31 @@ func TestDefaultMCPScopesAreValid(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateManagerRejectsBypass(t *testing.T) {
+	mgr := func(mode string) Agent {
+		return Agent{ID: "mgr", Roles: []string{launchprofile.RoleManager}, Permissions: launchprofile.AgentPermissions{PermissionMode: mode}}
+	}
+	bypassGlobal := Global{}
+	bypassGlobal.Catalog.Defaults.PermissionMode = PermissionModeBypass
+	cases := []struct {
+		name   string
+		global Global
+		agent  Agent
+		want   string
+	}{
+		{"explicit bypass", Global{}, mgr(PermissionModeBypass), "blanket bypass"},
+		{"inherited global bypass", bypassGlobal, mgr(""), "blanket bypass"},
+		{"explicit default over global bypass", bypassGlobal, mgr(PermissionModeDefault), ""},
+		{"unset", Global{}, mgr(""), ""},
+		{"worker may bypass", Global{}, Agent{ID: "mgr", Roles: []string{"worker"}, Permissions: launchprofile.AgentPermissions{PermissionMode: PermissionModeBypass}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&Catalog{Global: tc.global, Agents: map[string]Agent{"mgr": tc.agent}}).Validate()
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

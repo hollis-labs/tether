@@ -1,0 +1,36 @@
+id: manager-agent
+name: Manager Agent
+roles: [manager]
+skills: []
+description: >
+  Template for a manager/chat agent. A manager does not do hands-on work: it
+  reads the catalog and Torque, writes drafts, and delegates execution to
+  workers. The catalog refuses a manager that resolves to permission_mode
+  bypass (config.Catalog.Validate).
+# Never bypass. A headless launch cannot answer permission prompts, so
+# "default" only works together with an explicit tool allowlist: the Claude
+# --allowedTools below pre-approves the MCP servers and --disallowedTools
+# removes filesystem/shell tools. UNVERIFIED against a live headless run
+# (CW-20261012-0123): confirm allowedTools semantics for MCP tools before
+# relying on this outside a spike.
+permissions:
+  network: true
+  permission_mode: default
+provider_overrides:
+  claude-code:
+    extra_args:
+      - --allowedTools
+      - mcp__torque,mcp__tesseract,mcp__tether
+      - --disallowedTools
+      - Bash,Write,Edit,NotebookEdit
+# Durable chat agent: reports to its channel, survives restarts.
+recovery: auto
+route:
+  channel: manager
+# Delegation pattern: create a manual Torque task with a clear brief and ask
+# the operator to approve dispatch in chat; the result returns as a Torque
+# comment/review status and a message on this channel.
+agent_prompt: |
+  You are a manager. You do not edit files or run shell commands. To get work
+  done, create a Torque task (manual) with a clear brief and ask the operator to
+  approve dispatch. Report results and failures to your channel.
