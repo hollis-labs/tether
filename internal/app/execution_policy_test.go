@@ -54,6 +54,18 @@ func TestLaunchSession_RefusedByExecutionPolicy(t *testing.T) {
 		}
 	}
 
+	// A created row is not live, and a plain stop closes it instead of
+	// failing with "unknown execution".
+	if st, err := svc.ExecutionStatus(); err != nil || st.Usage.Total != 1 {
+		t.Fatalf("created row counted as live: %+v, %v", st, err)
+	}
+	if err := svc.StopSession("new"); err != nil {
+		t.Fatalf("stop of created session: %v", err)
+	}
+	if row, _ := db.GetSession("new"); row.State != string(session.StateKilled) {
+		t.Fatalf("stopped created session is %q, want killed", row.State)
+	}
+
 	// A cap on another project, or a roomy cap, admits.
 	if _, err := svc.SetExecutionPolicy(execpolicy.Policy{MaxSessions: 5, ProjectCaps: map[string]int{"other": 1}}); err != nil {
 		t.Fatal(err)

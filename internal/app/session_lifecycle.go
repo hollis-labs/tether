@@ -839,6 +839,9 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 // terminal state is recorded as "killed", distinct from "completed" and
 // "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
+	if closed, err := s.closeCreatedSession(id); closed || err != nil {
+		return err
+	}
 	if row, worker := s.workerSession(id); worker {
 		// Mark before signaling, as the local path does: the worker reports the
 		// SIGTERM exit (143) as a plain exit, which ingest would call failed.
@@ -1091,4 +1094,30 @@ func rejectLegacyMCPPlan(plan *launch.Plan) error {
 		}
 	}
 	return nil
+}
+
+// closeCreatedSession ends a session still in state created (a launch refused
+// by execution policy, or never attempted): no worker or local runtime holds
+// it, so there is nothing to signal. The row becomes killed with exit_code -1,
+// as ForceStopSession records an unobserved exit.
+func (s *Service) closeCreatedSession(id string) (bool, error) {
+	row, err := s.Store.GetSession(id)
+	if err != nil || row.State != string(session.StateCreated) {
+		return false, nil
+	}
+	if s.sessionHeldLive(row.ID, row.WorkerID) {
+		return false, nil
+	}
+	exit := -1
+	if err = s.Store.UpdateSessionState(id, string(session.StateKilled), 0, &exit); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(row.LogicalAgentID) != "" {
+		s.revokeActorBindingIfCurrent(id, row.LogicalAgentID)
+	}
+	s.releaseWorkerIdentity(id)
+	if s.Registry != nil {
+		_, _ = s.Registry.RevokeSessionBindings(context.Background(), id)
+	}
+	return true, nil
 }
