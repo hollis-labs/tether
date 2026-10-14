@@ -118,6 +118,13 @@ built from this change). A session on an older worker keeps the static
 launch is refused with a message to upgrade the worker, because it could never
 act as that identity. See [forums.md](forums.md#agent-identity-on-workers).
 
+`hub-mcp.json` must keep the plain `--daemon-only` `tether` entry (over `ssh`):
+workers use the credential relay and must never run `--proxy`. The worker
+validates the file when it starts and logs a `WARN` if it is bad; a launch that
+fails on the worker is logged by the hub at `WARN`, recorded as a
+`session.launch_failed` event carrying the cause, and the cause is returned in
+the chat-send error.
+
 ## Turning an agent off: `enabled`
 
 `enabled: false` in the agent file blocks new launches and chat sends for every

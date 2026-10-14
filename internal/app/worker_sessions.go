@@ -131,6 +131,8 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 // start). It must exceed workerruntime.WorkerLaunchTimeout so the worker gives up first.
 const workerLaunchWait = 5 * time.Minute
 
+const launchFailedPrefix = "worker launch failed"
+
 func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow, p *launch.Plan) (*Launched, error) {
 	spec, err := s.workerSpec(ctx, row.ID, p)
 	if err != nil {
@@ -168,7 +170,12 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		undoIdentity()
 		exit := 1
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
-		return nil, err
+		cause := workerhub.LaunchFailureCause(err)
+		log.Printf("WARN worker session %s: launch failed on worker %s: %s", row.ID, row.WorkerID, cause)
+		if raw, mErr := json.Marshal(map[string]string{"worker": row.WorkerID, "cause": cause}); mErr == nil {
+			_ = s.publishWorkerEvent(row.ID, "session.launch_failed", raw)
+		}
+		return nil, fmt.Errorf("%s: %w", launchFailedPrefix, err)
 	}
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err
