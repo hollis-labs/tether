@@ -15,6 +15,22 @@ const EventTypeToolCallStart = "tool_call_start"
 // call completes (or errors). PayloadJSON carries a full ToolCallEvent.
 const EventTypeToolCallEnd = "tool_call_end"
 
+// EventTypeMachineAuthorityDecision is the durable audit record of one
+// allow/deny decision on a call to a machine-changing upstream. PayloadJSON
+// carries a MachineAuthorityDecision; argument values are never recorded.
+const EventTypeMachineAuthorityDecision = "machine_authority_decision"
+
+// MachineAuthorityDecision is the payload of EventTypeMachineAuthorityDecision.
+type MachineAuthorityDecision struct {
+	Server    string    `json:"server"`
+	Tool      string    `json:"tool"`
+	Class     string    `json:"class"` // "read" or "write"
+	Mode      string    `json:"mode"`  // "dev", "read-only" or "read-write"
+	Allowed   bool      `json:"allowed"`
+	SessionID string    `json:"session_id,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // ToolCallEvent is the structured payload emitted for every proxied tool call.
 // It is serialized to JSON and stored in Event.PayloadJSON when published to
 // the Bus. Consumers that want the typed struct should unmarshal PayloadJSON.

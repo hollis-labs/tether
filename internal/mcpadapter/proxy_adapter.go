@@ -376,6 +376,13 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 	a.upstreams = pool
 	defer pool.Shutdown()
 	var mws []ToolCallMiddleware
+	var auditPub events.Publisher = opts.Publisher
+	if opts.Bus != nil {
+		auditPub = opts.Bus
+	}
+	// Outermost: a denied machine call is audited and never reaches the
+	// upstream or the call logger.
+	mws = append(mws, NewMachineAuthorityMiddleware(auditPub, os.Getenv))
 	switch {
 	case opts.Bus != nil:
 		mws = append(mws, NewLoggingMiddleware(opts.Bus).RedactWith(proxyRedactionSet(entries)))

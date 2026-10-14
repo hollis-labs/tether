@@ -199,6 +199,35 @@ func TestResolve_MCPServerChain(t *testing.T) {
 		}
 	})
 
+	t.Run("machine_access defaults read-only and validates", func(t *testing.T) {
+		cat := base()
+		cat.Launches["l"] = config.Launch{
+			ID: "l", Project: "proj", Agent: "a", Provider: "p",
+			MCP: config.MCPConfig{Servers: []string{"cerberus"}},
+		}
+		a := cat.Agents["a"]
+		a.MachineAuthority = true
+		cat.Agents["a"] = a
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if got := plan.Env[MachineAccessEnv]; got != MachineAccessReadOnly {
+			t.Fatalf("default access = %q", got)
+		}
+		a.MachineAccess = MachineAccessReadWrite
+		cat.Agents["a"] = a
+		plan, err = Resolve(cat, Input{LaunchID: "l"})
+		if err != nil || plan.Env[MachineAccessEnv] != MachineAccessReadWrite {
+			t.Fatalf("read-write: %v %q", err, plan.Env[MachineAccessEnv])
+		}
+		a.MachineAccess = "admin"
+		cat.Agents["a"] = a
+		if _, err := Resolve(cat, Input{LaunchID: "l"}); err == nil {
+			t.Fatal("want error for invalid machine_access")
+		}
+	})
+
 	t.Run("project sets servers, launch has none", func(t *testing.T) {
 		cat := base()
 		proj := cat.Projects["proj"]
