@@ -76,7 +76,7 @@ func TestCodexProtectionState(t *testing.T) {
 // registers no per-turn check, and every turn runs, including one after a
 // project config appears. claude on the same host is still refused.
 func TestCodexProtectionMode_ShippedDefaultRunsCodexAsOnMain(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	if codexProtectionMode != CodexNotProtected {
 		t.Fatalf("the build ships codexProtectionMode = %q; want %q while CW-20261001-0230 is open", codexProtectionMode, CodexNotProtected)
 	}
@@ -193,7 +193,7 @@ func TestCodexProtectionMode_FallbackRunsCodexAsBefore(t *testing.T) {
 // planted between turns is not refused (the guard is off, as on main). In
 // the guarded mode the same sequence is refused: the control for this test.
 func TestCodexProtectionMode_FallbackThroughLaunchSession(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	script := func(counter string) string {
 		return "#!/bin/sh\necho run >> \"" + counter + "\"\necho '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"RAN\"}}'\necho '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n"
 	}

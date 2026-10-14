@@ -32,7 +32,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 // skip it: the root is created holding only .tether, which is bound read-only. This
 // runs the attempt for real, through LaunchSession under bubblewrap.
 func TestProtectedAgentCannotPlantALayerInAMissingProjectRoot(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	svc, catalog, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	if err := ProbeBwrap(catalog); err != nil {
@@ -96,7 +96,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 // those things. This runs it for real, through LaunchSession under bubblewrap, with
 // the agent that would have planted.
 func TestProtectedAgentCannotPlantUnderAReadOnlyDirectoryItOwns(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	svc, catalog, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	if err := ProbeBwrap(catalog); err != nil {
@@ -159,7 +159,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 // can drop the file (and cannot touch the layer), and the dead project's own launch
 // is still refused, and still reported.
 func TestProtectedAgentCannotDefeatThePlaceholderByDroppingAFileInTheRoot(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	svc, catalog, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	if err := ProbeBwrap(catalog); err != nil {

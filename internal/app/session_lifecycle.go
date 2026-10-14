@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -470,11 +471,14 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 				mcpPlan.Attribution = store.RefAttributionProxy
 			}
 		}
-		mcpCommand, mcpArgs, err := ConfineMCPPlant(plan, tetherCommandPath(), mcpPlan.Args, mcpProtected)
+		mcpCommand, mcpArgs, usmDowngraded, err := confineMCPPlant(plan, tetherCommandPath(), mcpPlan.Args, mcpProtected, allowUnenforcedUserServiceManager(runtime.GOOS, os.Getenv))
 		if err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, err
+		}
+		if usmDowngraded {
+			s.recordUnenforcedUserServiceManager(ctx, sessionID)
 		}
 		mcpEnv := confinedMCPEnv(plan, mcpProtected)
 		if ownership == config.MCPUpstreamsDaemon {

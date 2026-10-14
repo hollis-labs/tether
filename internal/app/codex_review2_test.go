@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +131,7 @@ func TestCodexOwnsSandbox_TmpdirAboveCodexHome(t *testing.T) {
 // Through LaunchSession: the same launches are wrapped, and where Tether's
 // sandbox cannot start (this host) they fail loudly and never run the agent.
 func TestLaunchSession_CodexWithCallerEnvIsWrappedNotExempted(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	svc, _, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	bwrapAvailable = func(string) error { return errors.New("bwrap: No permissions to create a new namespace") }
@@ -248,7 +249,7 @@ func TestCodexOwnsSandbox_OnlyKnownSafeUpstreamsKeepTheExemption(t *testing.T) {
 // resolves it afresh, and refuses one that now holds a project .codex/config.toml
 // or contains the catalog.
 func TestCodexExemptSession_RetargetedProjectRootIsRefused(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	svc, catalog, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	base := t.TempDir()
@@ -350,7 +351,7 @@ func TestTetherMCPPlant_ProtectPathArgs(t *testing.T) {
 // for the catalog root, the run directory and the state directory while
 // protection is on, and none while it is off.
 func TestLaunchSession_PlantsProtectPathsInTheMCPConfig(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	plantedArgs := func(t *testing.T, svc *Service, wantProtection bool) string {
 		t.Helper()
 		_, ws := startFakeCodex(t, svc, "#!/bin/sh\n")
@@ -369,8 +370,26 @@ func TestLaunchSession_PlantsProtectPathsInTheMCPConfig(t *testing.T) {
 	state := filepath.Join(filepath.Dir(catalog), "state")
 	clearWritableRoots(t)
 	on := plantedArgs(t, svc, true)
-	if !strings.Contains(on, `"TETHER_MCP_CONFINE_REMOTE" = "1"`) || !strings.Contains(on, `"--ro-bind"`) {
+	wrapper := `"--ro-bind"` // bubblewrap
+	if runtime.GOOS == "darwin" {
+		wrapper = `"/usr/bin/sandbox-exec"`
+	}
+	if !strings.Contains(on, `"TETHER_MCP_CONFINE_REMOTE" = "1"`) || !strings.Contains(on, wrapper) {
 		t.Fatalf("Codex proxy lacks local wrapper or remote confinement: %s", on)
+	}
+	if runtime.GOOS == "darwin" {
+		// The downgrade must be auditable: one sandbox_rule_unenforced event.
+		evs, err := svc.Store.ListRecentEvents(500)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, ev := range evs {
+			found = found || ev.Kind == sandboxRuleUnenforcedEvent
+		}
+		if !found {
+			t.Errorf("darwin downgrade recorded no %s event", sandboxRuleUnenforcedEvent)
+		}
 	}
 	for _, want := range []string{`"--protect-path", "` + catalog + `"`, `"--protect-path", "` + run + `"`, `"--protect-path", "` + state + `"`} {
 		if !strings.Contains(on, want) {
