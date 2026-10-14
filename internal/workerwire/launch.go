@@ -17,6 +17,11 @@ type Workspace struct {
 // workers that advertise it, so older workers keep their static MCP entry.
 const FeatureSessionCred = "session-cred"
 
+// FeatureWorkerResume is advertised by a worker that honours
+// LaunchSpec.ResumeSessionID (provider-native resume in the same worker
+// workspace). The hub resumes on a worker only when it is advertised.
+const FeatureWorkerResume = "worker-resume"
+
 type LaunchSpec struct {
 	Session  string `json:"session"`
 	Actor    string `json:"actor"`
@@ -43,4 +48,7 @@ type LaunchSpec struct {
 	// tether entry plus only these entries from its hub-mcp.json. Nil (a hub that predates the field)
 	// plants every imported entry; an empty non-nil list plants tether alone.
 	MCPServers []string `json:"mcp_servers"`
+	// ResumeSessionID is the provider's own conversation id to continue (claude --resume). Set only for a
+	// hub-approved resume on the same worker that ran the source session.
+	ResumeSessionID string `json:"resume_session_id,omitempty"`
 }

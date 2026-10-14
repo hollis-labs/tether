@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
 	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 func TestResumeRecoveryStates(t *testing.T) {
@@ -152,5 +153,52 @@ func TestResumeRefusesWorkerPlacedSource(t *testing.T) {
 	}
 	if res, err := svc.ResumeLogicalAgent("worker", api.ResumeOptions{}); !errors.Is(err, session.ErrRecoveryConflict) {
 		t.Fatalf("resume = %+v %v; want ErrRecoveryConflict", res, err)
+	}
+}
+
+// With the opt-in on, a worker-placed source still fails closed (typed,
+// retryable) when its worker is not connected, and never creates a hub or
+// other-worker session.
+func TestResumeWorkerPlacedFailsClosed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	svc := bindingHarness(t)
+	svc.CatalogRoot = t.TempDir()
+	svc.Catalog = &config.Catalog{
+		Global:    config.Global{Version: "test"},
+		Projects:  map[string]config.Project{"p": {ID: "p", RepoRoot: t.TempDir(), Workspace: config.WorkspaceSpec{SessionRoot: t.TempDir(), DefaultMode: "shared"}}},
+		Agents:    map[string]config.Agent{"worker": {ID: "worker"}},
+		Providers: map[string]config.Provider{"stub": {ID: "stub", Provider: "claude", RuntimeKind: config.RuntimeKindPTY, Command: "test-fake"}},
+		Launches:  map[string]config.Launch{"l1": {ID: "l1", Project: "p", Agent: "worker", Provider: "stub"}},
+	}
+	svc.factories = map[string]RuntimeFactory{"stub": stub.New}
+	row := store.SessionRow{ID: "wparent", WorkerID: "w1", LaunchID: "l1", ProjectID: "p", LogicalAgentID: "worker", ProviderID: "claude", Workspace: t.TempDir(), State: string(session.StateCreated)}
+	if err := svc.Store.CreateSession(row, &launch.Plan{LaunchID: "l1", Command: "test-fake"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.UpdateSessionState("wparent", string(session.StateFailed), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.SetLogicalAgentLaunchID("worker", "l1"); err != nil {
+		t.Fatal(err)
+	}
+	svc.WorkerResume = true
+
+	if _, err := svc.ResumeLogicalAgent("worker", api.ResumeOptions{}); !errors.Is(err, session.ErrRecoveryConflict) || !errors.Is(err, workerhub.ErrChannelUnavailable) {
+		t.Fatalf("no hub channel err = %v", err)
+	}
+	svc.Workers = workerhub.New(svc.Store.DB())
+	if _, err := svc.ResumeLogicalAgent("worker", api.ResumeOptions{}); !errors.Is(err, session.ErrRecoveryConflict) || !errors.Is(err, workerhub.ErrOffline) {
+		t.Fatalf("offline worker err = %v", err)
+	}
+	if err := svc.checkWorkerResume(&row, api.ResumeOptions{NativeOnly: true}); !errors.Is(err, session.ErrRecoveryConflict) {
+		t.Fatalf("native-only err = %v", err)
+	}
+	latest, err := svc.Store.LatestSessionForAgent(context.Background(), "worker")
+	if err != nil || latest == nil || latest.ID != "wparent" {
+		t.Fatalf("a refused resume created a session: %+v %v", latest, err)
+	}
+	svc.WorkerResume = false
+	if err := svc.checkWorkerResume(&row, api.ResumeOptions{}); !errors.Is(err, session.ErrRecoveryConflict) {
+		t.Fatalf("default must refuse, err = %v", err)
 	}
 }

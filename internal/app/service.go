@@ -56,6 +56,9 @@ type Service struct {
 	lineageMu    sync.Mutex        // serializes lineage check + child insert
 	// LineageLimits caps plain session lineage; zero means unlimited.
 	LineageLimits LineageLimits
+	// WorkerResume opts in to resuming a worker-placed session on the same
+	// worker. Off by default: resume of a worker-placed source is refused.
+	WorkerResume bool
 	// Interrupt bounds are configured before use; zero selects 2s cancel/gate
 	// and 30s terminal defaults. Caller deadlines take precedence.
 	InterruptCancelTimeout time.Duration
