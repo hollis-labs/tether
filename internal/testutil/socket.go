@@ -3,6 +3,7 @@ package testutil
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -37,4 +38,16 @@ func ShortDir(t testing.TB) string {
 		}
 	})
 	return dir
+}
+
+// CanonicalizeTempEnv points TMPDIR at the symlink-resolved temporary root so
+// every later t.TempDir is canonical. On macOS os.TempDir is under /var, a
+// symlink to /private/var, and production path checks refuse non-canonical
+// roots. Call it from TestMain before m.Run.
+func CanonicalizeTempEnv() error {
+	resolved, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		return err
+	}
+	return os.Setenv("TMPDIR", resolved)
 }
