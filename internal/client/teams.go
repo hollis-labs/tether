@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/teamsvc"
@@ -16,11 +17,16 @@ import (
 type TeamError struct {
 	Code   string
 	Status int
+	// Detail is the daemon's bounded cause text, set only for internal_error.
+	Detail string
 }
 
 func (e *TeamError) Error() string {
 	if e.Code == "teams_disabled" {
 		return "teams are disabled"
+	}
+	if e.Detail != "" {
+		return e.Detail
 	}
 	return e.Code
 }
@@ -68,6 +74,9 @@ func (c *Client) Team(ctx context.Context, verb, key string, req api.TeamRequest
 			return result, &TeamError{Code: "teams_disabled", Status: 404}
 		}
 		_ = json.Unmarshal(b, &envelope)
+		if response.StatusCode == 500 && envelope.Error.Code == "internal_error" && strings.HasPrefix(envelope.Error.Message, "internal_error: ") {
+			return result, &TeamError{Code: "internal_error", Status: 500, Detail: envelope.Error.Message}
+		}
 		for _, cause := range []error{teamsvc.ErrUnauthenticated, teamsvc.ErrUnavailable, teamsvc.ErrDenied, teamsvc.ErrNotFound, teamsvc.ErrConflict, teamsvc.ErrInvalidRequest, errors.New("unknown")} {
 			status, detail := api.TeamError(cause)
 			if envelope.Error.Code == detail.Code && response.StatusCode == status {

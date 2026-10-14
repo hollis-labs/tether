@@ -537,3 +537,57 @@ func TestDaemonTeamsPolicyFileLoadedAtStart(t *testing.T) {
 		t.Fatal("denied formation wrote a definition")
 	}
 }
+
+// TestDaemonTeamsFormExampleClaudeTeam drives the shipped example policy,
+// definitions and request through the real HTTP surface as the local operator.
+func TestDaemonTeamsFormExampleClaudeTeam(t *testing.T) {
+	on := true
+	f := newDaemonTeamFixture(t, &on)
+	examples := filepath.Join("..", "..", "examples", "teams")
+	policy, err := os.ReadFile(filepath.Join(examples, "teams-policy-claude-only.yaml"))
+	teamRequire(t, err)
+	teamRequire(t, os.WriteFile(filepath.Join(f.svc.CatalogRoot, "teams-policy.yaml"), policy, 0600))
+	defs := filepath.Join(f.svc.CatalogRoot, "team-definitions")
+	teamRequire(t, os.Mkdir(defs, 0700))
+	for _, n := range []string{"claude-agent.md", "claude-worktree-agent.md"} {
+		raw, err := os.ReadFile(filepath.Join(examples, "definitions", n))
+		teamRequire(t, err)
+		teamRequire(t, os.WriteFile(filepath.Join(defs, n), raw, 0600))
+	}
+	// The activation guide requires the policy's launches to exist already.
+	catalogExamples := filepath.Join(examples, "..", "catalog")
+	for _, d := range []string{"projects", "agents", "providers", "launches"} {
+		teamRequire(t, os.MkdirAll(filepath.Join(f.svc.CatalogRoot, d), 0700))
+	}
+	copyExample := func(rel, newName string) {
+		raw, err := os.ReadFile(filepath.Join(catalogExamples, rel))
+		teamRequire(t, err)
+		teamRequire(t, os.WriteFile(filepath.Join(f.svc.CatalogRoot, newName), raw, 0600))
+	}
+	copyExample("projects/tether.yaml", "projects/tether.yaml")
+	copyExample("agents/tether-engineer.yaml", "agents/tether-engineer.yaml")
+	copyExample("providers/claude-code.yaml", "providers/claude-code.yaml")
+	for _, id := range []string{"tether-claude", "tether-claude-worktree"} {
+		launchFile := "id: " + id + "\nproject: tether\nagent: tether-engineer\nprovider: claude-code\nworkspace:\n  mode: hybrid\n"
+		teamRequire(t, os.WriteFile(filepath.Join(f.svc.CatalogRoot, "launches", id+".yaml"), []byte(launchFile), 0600))
+	}
+	f.svc.Catalog, err = config.Load(f.svc.CatalogRoot)
+	teamRequire(t, err)
+	ops, closeOps, err := buildDaemonTeams(f.svc, f.cfg)
+	teamRequire(t, err)
+	t.Cleanup(closeOps)
+	f.ops, f.server.Teams = ops, ops
+	f.serve(t, false)
+	raw, err := os.ReadFile(filepath.Join(examples, "team-form-claude.json"))
+	teamRequire(t, err)
+	var req map[string]any
+	teamRequire(t, json.Unmarshal(raw, &req))
+	token := f.token(t, identity.OperatorID, "operator", mcpadapter.ScopeTeamWrite)
+	status, body := f.post(t, token, "/teams/form", "example-form", req, nil)
+	// The fixture has no provider runtime, so launching fails after policy,
+	// definition indexing and pin resolution succeed. The response must carry
+	// that underlying cause, not a bare internal_error.
+	if status != 500 || !strings.Contains(string(body), "internal_error: no runtime for provider") {
+		t.Fatalf("form status %d without underlying cause: %s", status, body)
+	}
+}
