@@ -90,3 +90,23 @@ func TestHistoryRecordsWhoPlannedAndApproved(t *testing.T) {
 		t.Fatalf("limit = %v", recs)
 	}
 }
+
+func TestReadTeamsPolicy(t *testing.T) {
+	e := newEngine(t)
+	write(t, e.Root, "teams-policy.yaml", "version: 1\n")
+	got, err := e.ReadFile("teams-policy.yaml")
+	if err != nil || got != "version: 1\n" {
+		t.Fatalf("read = %q, %v", got, err)
+	}
+	files, err := e.ListFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range files {
+		found = found || f.Path == "teams-policy.yaml"
+	}
+	if !found {
+		t.Fatalf("teams-policy.yaml not listed: %v", files)
+	}
+}
