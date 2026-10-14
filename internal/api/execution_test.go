@@ -20,6 +20,19 @@ func (e *execLaunchService) SetExecutionPolicy(p execpolicy.Policy) (execpolicy.
 	return e.st, nil
 }
 
+func (e *execLaunchService) Capacity() (execpolicy.CapacityView, error) {
+	return execpolicy.CapacityView{EnvironmentID: "local", MaxSessions: 2, ActiveSessions: 2, Admission: "full"}, nil
+}
+
+func TestCapacityRoute(t *testing.T) {
+	h := newTestHandler(&execLaunchService{fakeLaunchService: &fakeLaunchService{}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/capacity", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"admission":"full"`) {
+		t.Fatalf("GET /capacity = %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestExecutionPolicyRoutes(t *testing.T) {
 	svc := &execLaunchService{fakeLaunchService: &fakeLaunchService{}}
 	h := newTestHandler(svc)
