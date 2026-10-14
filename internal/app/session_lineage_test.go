@@ -1,0 +1,52 @@
+package app
+
+import (
+	"database/sql"
+	"errors"
+	"testing"
+
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/store"
+)
+
+func lineageSession(t *testing.T, svc *Service, id, parent string) {
+	t.Helper()
+	row := store.SessionRow{ID: id, LaunchID: "l", ProjectID: "p", LogicalAgentID: "", ProviderID: "pv", Workspace: t.TempDir(), State: "created",
+		ParentSessionID: sql.NullString{String: parent, Valid: parent != ""}}
+	if err := svc.Store.CreateSession(row, &launch.Plan{LaunchID: "l"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckLineageLimits(t *testing.T) {
+	svc := bindingHarness(t)
+	lineageSession(t, svc, "root", "")
+	lineageSession(t, svc, "kid", "root")
+
+	if err := svc.checkLineage("kid"); err != nil {
+		t.Fatalf("zero limits must allow: %v", err)
+	}
+	svc.LineageLimits = LineageLimits{MaxChildren: 1}
+	if err := svc.checkLineage("root"); !errors.Is(err, ErrLineageLimit) {
+		t.Fatalf("children cap: %v", err)
+	}
+	svc.LineageLimits = LineageLimits{MaxDepth: 1}
+	if err := svc.checkLineage("root"); err != nil {
+		t.Fatalf("depth 1 child of root allowed: %v", err)
+	}
+	if err := svc.checkLineage("kid"); !errors.Is(err, ErrLineageLimit) {
+		t.Fatalf("depth cap: %v", err)
+	}
+	if err := svc.checkLineage(""); err != nil {
+		t.Fatalf("root session: %v", err)
+	}
+}
+
+func TestStopSessionCascadeSkipsNotRunning(t *testing.T) {
+	svc := bindingHarness(t)
+	lineageSession(t, svc, "root", "")
+	lineageSession(t, svc, "kid", "root")
+	if err := svc.StopSessionCascade("root"); err != nil {
+		t.Fatalf("cascade over idle tree: %v", err)
+	}
+}

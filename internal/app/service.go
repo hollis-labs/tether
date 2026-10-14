@@ -51,6 +51,8 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
+	// LineageLimits caps plain session lineage; zero means unlimited.
+	LineageLimits LineageLimits
 	// Interrupt bounds are configured before use; zero selects 2s cancel/gate
 	// and 30s terminal defaults. Caller deadlines take precedence.
 	InterruptCancelTimeout time.Duration
