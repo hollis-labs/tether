@@ -884,13 +884,19 @@ event carrying the reason.
 
 ### `GET /sessions/{id}/wait`
 
-Long-poll until the session reaches a terminal state. Returns the exit code.
+Long-poll until the session reaches a terminal state. Returns the exit code
+and, when the session recorded a `session.turn_output`, its newest turn result.
 
 Response (200):
 
 ```json
-{ "exit_code": 0 }
+{ "exit_code": 0, "stop_reason": "end_turn", "output_kind": "final",
+  "output_turn_id": "t1", "output_text": "done" }
 ```
+
+`stop_reason`, `output_*` are omitted when no turn output exists.
+`output_text` is the full staged text when still retained, otherwise the event
+excerpt with `output_truncated: true` if it was cut.
 
 ### `POST /sessions/{id}/input`
 

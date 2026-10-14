@@ -52,6 +52,7 @@ var clientMethodWrites = map[string]bool{
 	"MessageTrace":               false,
 	"MessageRetentionCandidates": false,
 	"WaitSession":                false,
+	"WaitSessionResult":          false,
 	"Whoami":                     false,
 
 	// A daemon-only `tether mcp` reads Tether's state through these plain GETs
