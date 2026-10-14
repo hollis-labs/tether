@@ -57,7 +57,7 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 	e.mu.Unlock()
 
 	if e.now().After(cp.ExpiresAt) {
-		return nil, fmt.Errorf("plan %q expired; plan again", planID)
+		return nil, fmt.Errorf("plan %q expired; plan the same bundle again to re-arm it", planID)
 	}
 	if cp.State == StateApplied {
 		return nil, fmt.Errorf("plan %q is already applied", planID)
