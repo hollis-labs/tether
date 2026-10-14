@@ -226,3 +226,23 @@ func RunRelay(tokenFile string, argv []string, stdin io.Reader, stdout, stderr i
 	}()
 	return cmd.Wait()
 }
+
+// ValidateHubMCPFile checks the planted hub-mcp.json the way a launch will, so a bad edit is reported
+// when the worker starts rather than as an opaque launch failure.
+func ValidateHubMCPFile(root string) error {
+	b, err := os.ReadFile(filepath.Join(root, "hub-mcp.json"))
+	if err != nil {
+		return err
+	}
+	var config mcpConfig
+	if err = json.Unmarshal(b, &config); err != nil {
+		return fmt.Errorf("parse hub-mcp.json: %w", err)
+	}
+	if len(config.Servers) == 0 {
+		return nil // freshly enrolled placeholder; ImportHubMCP fills it in
+	}
+	if err = validateHubMCP(config); err != nil {
+		return fmt.Errorf("hub-mcp.json: %w", err)
+	}
+	return nil
+}

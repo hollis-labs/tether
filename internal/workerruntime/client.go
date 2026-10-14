@@ -147,6 +147,9 @@ func (w *Worker) Send(f workerwire.Frame) error {
 	return ws.WriteJSON(f)
 }
 func (w *Worker) Run(ctx context.Context) error {
+	if err := ValidateHubMCPFile(w.Root); err != nil {
+		log.Printf("WARN worker: launches will fail until this is fixed: %v", err)
+	}
 	w.pendingMu.Lock()
 	if w.pending == nil {
 		w.pending = map[string]chan workerwire.Frame{}
