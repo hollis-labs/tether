@@ -4,6 +4,9 @@ Tether can constrain what a session is allowed to do by running it under a
 **sandbox profile**. Profiles restrict filesystem writes to sensitive paths,
 outbound network access, and subprocess spawning.
 
+Status: profiles are opt-in per agent. Elevated dev agents may run with no
+profile (`default_sandbox` omitted); auth and policy are under construction.
+
 ## How it works
 
 Every agent in your catalog can reference a named profile:

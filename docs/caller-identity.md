@@ -4,6 +4,10 @@ The local listener retains the CW-20260930-0253 phase-1 policy. Optional remote
 access uses [paired device credentials and route scopes](device-pairing.md),
 independently of local identity mode.
 
+Auth is under construction. The portfolio's Dev posture (Tailscale is the boundary
+today; dev agents may run elevated) is in `templates/standing.md` of the
+agent-setup repo.
+
 CW-20260930-0253 phase 1 starts with daemon-verified bearer identity. The approved
 record is Tesseract workspace item `01M3TVNJ02SD1C3NRXBF4FF1CC`; its section 8
 recommendations are approved by Chrispian and lead.

@@ -23,6 +23,9 @@ The release is ready when all of the following are true:
 - release-facing docs explain that Sysop ships with Tether
 - stale internal-only or historical material is either archived clearly or
   removed from public-facing paths
+- the auth, policy and key-management solution is built, or the dev posture risk
+  acceptance is explicitly renewed for release (Torque Security project, RK-052,
+  CW-20261013-0053)
 
 ## Immediate Worklist
 
