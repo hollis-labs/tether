@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -57,7 +58,15 @@ func (s *Server) registerExecutionRoutes(router *http.ServeMux) {
 				writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 				return
 			}
-			st, err := svc.SetExecutionPolicy(p)
+			var st execpolicy.Status
+			var err error
+			if cs, ok := s.Service.(interface {
+				SetExecutionPolicyContext(context.Context, execpolicy.Policy) (execpolicy.Status, error)
+			}); ok {
+				st, err = cs.SetExecutionPolicyContext(r.Context(), p)
+			} else {
+				st, err = svc.SetExecutionPolicy(p)
+			}
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, CodeInternalError, "set execution policy: "+err.Error())
 				return

@@ -54,6 +54,12 @@ const (
 	//   {"swept":<n>,"swept_session_ids":[...],"spared":<n>,"spared_session_ids":[...]}
 	KindDaemonSessionsSwept = "daemon.sessions_swept"
 
+	// KindDaemonExecutionPolicyChanged is emitted when an operator changes
+	// the execution policy (pause/resume or cap change). Unchanged PUTs emit
+	// nothing. Payload schema:
+	//   {"change":"paused|resumed|caps_changed","actor":"<principal id or empty>","at":"<RFC3339>","before":<policy>,"after":<policy>}
+	KindDaemonExecutionPolicyChanged = "daemon.execution_policy_changed"
+
 	// KindAIBudgetRejected is emitted when durable AI usage_budget policy
 	// rejects one route candidate. Payload schema:
 	//   {"request_id":"...","caller_id":"...","session_id":"...","provider":"...","model":"...","policy_version":"...","error":"..."}

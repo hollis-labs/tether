@@ -983,6 +983,10 @@ func (a *serviceAdapter) SetExecutionPolicy(p execpolicy.Policy) (execpolicy.Sta
 	return a.svc.SetExecutionPolicy(p)
 }
 
+func (a *serviceAdapter) SetExecutionPolicyContext(ctx context.Context, p execpolicy.Policy) (execpolicy.Status, error) {
+	return a.svc.SetExecutionPolicyContext(ctx, p)
+}
+
 func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, error) {
 	return a.LaunchSessionWithContext(context.Background(), sessionID)
 }

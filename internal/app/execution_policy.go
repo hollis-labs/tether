@@ -1,9 +1,14 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
+	"reflect"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/execpolicy"
+	"github.com/hollis-labs/tether/internal/identity"
 )
 
 // ExecutionStatus returns the stored execution policy and current live usage.
@@ -22,13 +27,49 @@ func (s *Service) ExecutionStatus() (execpolicy.Status, error) {
 // SetExecutionPolicy validates and stores the policy. It does not touch
 // running sessions: caps and pause only gate new launches.
 func (s *Service) SetExecutionPolicy(p execpolicy.Policy) (execpolicy.Status, error) {
+	return s.SetExecutionPolicyContext(context.Background(), p)
+}
+
+// SetExecutionPolicyContext is SetExecutionPolicy plus an audit event naming
+// the caller in ctx when the policy actually changed.
+func (s *Service) SetExecutionPolicyContext(ctx context.Context, p execpolicy.Policy) (execpolicy.Status, error) {
 	if err := p.Validate(); err != nil {
 		return execpolicy.Status{}, err
 	}
-	if err := s.Store.SetExecutionPolicy(p.Normalize()); err != nil {
+	before, err := s.Store.GetExecutionPolicy()
+	if err != nil {
 		return execpolicy.Status{}, err
 	}
+	after := p.Normalize()
+	if err := s.Store.SetExecutionPolicy(after); err != nil {
+		return execpolicy.Status{}, err
+	}
+	s.publishPolicyChange(ctx, before.Normalize(), after)
 	return s.ExecutionStatus()
+}
+
+// publishPolicyChange records who changed the policy and when. It is
+// best-effort: the policy is already stored, so a failed publish is dropped.
+func (s *Service) publishPolicyChange(ctx context.Context, before, after execpolicy.Policy) {
+	if s.Bus == nil || reflect.DeepEqual(before, after) {
+		return
+	}
+	change := "caps_changed"
+	switch {
+	case !before.Paused && after.Paused:
+		change = "paused"
+	case before.Paused && !after.Paused:
+		change = "resumed"
+	}
+	actor := ""
+	if pr, ok := identity.FromContext(ctx); ok {
+		actor = pr.ID
+	}
+	payload, err := json.Marshal(map[string]any{"change": change, "actor": actor, "at": time.Now().UTC().Format(time.RFC3339), "before": before, "after": after})
+	if err != nil {
+		return
+	}
+	_ = s.Bus.Publish(context.WithoutCancel(ctx), events.Event{Scope: events.ScopeDaemon, Kind: events.KindDaemonExecutionPolicyChanged, PayloadJSON: string(payload)})
 }
 
 // admitLaunch enforces the execution policy for one session about to launch
