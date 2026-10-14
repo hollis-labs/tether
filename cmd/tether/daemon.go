@@ -983,6 +983,8 @@ func (a *serviceAdapter) SetExecutionPolicy(p execpolicy.Policy) (execpolicy.Sta
 	return a.svc.SetExecutionPolicy(p)
 }
 
+func (a *serviceAdapter) Capacity() (execpolicy.CapacityView, error) { return a.svc.Capacity() }
+
 func (a *serviceAdapter) SetExecutionPolicyContext(ctx context.Context, p execpolicy.Policy) (execpolicy.Status, error) {
 	return a.svc.SetExecutionPolicyContext(ctx, p)
 }
