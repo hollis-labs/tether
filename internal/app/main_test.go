@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/testutil"
 )
 
 // TestMain removes the launching Codex runtime's CODEX_* environment before
@@ -16,9 +18,13 @@ import (
 //
 // It also turns control-plane protection off by default, before any test
 // runs, so a test that launches a stand-in CLI does not need bubblewrap
-// (CW-20261001-0142). The tests of protection itself set
+// (CW-20261001-0142). TMPDIR is canonicalized first (macOS /var symlink). The tests of protection itself set
 // Service.protectionStatus.
 func TestMain(m *testing.M) {
+	if err := testutil.CanonicalizeTempEnv(); err != nil {
+		fmt.Fprintln(os.Stderr, "canonical temp dir:", err)
+		os.Exit(1)
+	}
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
 		if strings.HasPrefix(name, "CODEX_") {
