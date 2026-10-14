@@ -1,11 +1,16 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/execpolicy"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -102,5 +107,49 @@ func TestAdmitLaunch_ReservesSlot(t *testing.T) {
 	v, err := svc.Capacity()
 	if err != nil || v.Admission != "open" || v.MaxSessions != 1 || v.ActiveSessions != 0 {
 		t.Fatalf("capacity = %+v, %v", v, err)
+	}
+}
+
+func TestSetExecutionPolicy_PublishesAuditEvent(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db})}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "op-1"})
+
+	for _, p := range []execpolicy.Policy{
+		{Paused: true, Reason: "night"},
+		{Paused: true, Reason: "night"}, // unchanged: no event
+		{MaxSessions: 3},
+		{},
+	} {
+		if _, err := svc.SetExecutionPolicyContext(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evs, err := db.EventsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, ev := range evs {
+		if ev.Kind != events.KindDaemonExecutionPolicyChanged {
+			continue
+		}
+		var p struct {
+			Change, Actor, At string
+		}
+		if err := json.Unmarshal([]byte(ev.PayloadJSON), &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Actor != "op-1" || p.At == "" {
+			t.Fatalf("payload = %s", ev.PayloadJSON)
+		}
+		got = append(got, p.Change)
+	}
+	if want := []string{"paused", "resumed", "caps_changed"}; !slices.Equal(got, want) {
+		t.Fatalf("changes = %v, want %v", got, want)
 	}
 }
