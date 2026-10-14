@@ -58,6 +58,18 @@ func (s *Service) checkLineage(parentID string) error {
 // used by the session bootstrap route.
 func (s *Service) CheckLineage(parentID string) error { return s.checkLineage(parentID) }
 
+// AdmitChild runs the lineage check and create under one lock, so concurrent
+// children of the same parent cannot both pass the check before either row
+// exists. create must persist the child row before returning.
+func (s *Service) AdmitChild(parentID string, create func() error) error {
+	s.lineageMu.Lock()
+	defer s.lineageMu.Unlock()
+	if err := s.checkLineage(parentID); err != nil {
+		return err
+	}
+	return create()
+}
+
 // StopSessionCascade stops id's descendants (deepest first) and then id. A
 // descendant that is not running is skipped; the first real stop error is
 // returned after every session has been attempted.

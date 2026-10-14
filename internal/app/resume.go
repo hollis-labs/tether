@@ -276,7 +276,10 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		// Audit only: the parent the resolver chose, outside the digest.
 		key.ResolvedParentSessionID = row.ParentSessionID
 	}
-	if err := s.Store.CreateSessionKeyed(row, plan, key); err != nil {
+	if err := s.AdmitChild(sourceID, func() error { return s.Store.CreateSessionKeyed(row, plan, key) }); err != nil {
+		if errors.Is(err, ErrLineageLimit) {
+			return api.LaunchResult{}, err
+		}
 		return api.LaunchResult{}, fmt.Errorf("persist session: %w", err)
 	}
 

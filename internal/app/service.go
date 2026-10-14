@@ -53,6 +53,7 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 type Service struct {
 	admitMu      sync.Mutex        // guards admitPending
 	admitPending map[string]string // sessionID -> projectID reserved by admitLaunch
+	lineageMu    sync.Mutex        // serializes lineage check + child insert
 	// LineageLimits caps plain session lineage; zero means unlimited.
 	LineageLimits LineageLimits
 	// Interrupt bounds are configured before use; zero selects 2s cancel/gate

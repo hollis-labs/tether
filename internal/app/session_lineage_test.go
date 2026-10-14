@@ -3,6 +3,8 @@ package app
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/launch"
@@ -55,5 +57,36 @@ func TestStopSessionCascadeSkipsNotRunning(t *testing.T) {
 	lineageSession(t, svc, "kid", "root")
 	if err := svc.StopSessionCascade("root"); err != nil {
 		t.Fatalf("cascade over idle tree: %v", err)
+	}
+}
+
+func TestAdmitChildIsAtomicUnderConcurrency(t *testing.T) {
+	svc := bindingHarness(t)
+	lineageSession(t, svc, "root", "")
+	svc.LineageLimits = LineageLimits{MaxChildren: 2}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- svc.AdmitChild("root", func() error {
+				row := store.SessionRow{ID: fmt.Sprintf("kid-%d", i), LaunchID: "l", ProjectID: "p", ProviderID: "pv", Workspace: t.TempDir(), State: "created", ParentSessionID: sql.NullString{String: "root", Valid: true}}
+				return svc.Store.CreateSession(row, &launch.Plan{LaunchID: "l"})
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	ok := 0
+	for err := range errs {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, ErrLineageLimit) {
+			t.Fatal(err)
+		}
+	}
+	if ok != 2 {
+		t.Fatalf("admitted %d children, want exactly 2", ok)
 	}
 }
