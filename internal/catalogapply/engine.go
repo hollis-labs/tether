@@ -74,6 +74,7 @@ type Plan struct {
 	Digest           string        `json:"digest"`
 	CreatedAt        time.Time     `json:"created_at"`
 	ExpiresAt        time.Time     `json:"expires_at"`
+	TTLSeconds       int           `json:"ttl_seconds"`
 	Files            []PlannedFile `json:"files"`
 	Diff             string        `json:"diff"`
 	ValidationOK     bool          `json:"validation_ok"`
@@ -132,6 +133,10 @@ type Engine struct {
 }
 
 const maxPlans = 64
+
+// rearmGrace keeps an expired plan around so planning the same bundle again
+// can re-arm it. Approve and Apply still refuse it once it has expired.
+const rearmGrace = time.Hour
 
 func (e *Engine) now() time.Time {
 	if e.Now != nil {
@@ -216,6 +221,7 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 		CreatedAt: e.now().UTC(), PlannedBy: opt.Caller,
 	}
 	p.ExpiresAt = p.CreatedAt.Add(e.ttl())
+	p.TTLSeconds = int(e.ttl() / time.Second)
 
 	var diff strings.Builder
 	touches := map[string]bool{}
@@ -323,7 +329,16 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.gcLocked()
-	if len(e.plans) >= maxPlans {
+	// Planning the same unapproved bundle again re-arms the existing plan (same
+	// id, fresh expiry) so an operator who was shown the id can still approve it.
+	// The digest covers the live base hashes, so a catalog that moved on does not match.
+	for id, old := range e.plans {
+		if old.State == StatePlanned && old.ApprovedAt == nil && old.Digest == p.Digest && old.Name == p.Name {
+			p.ID = id
+			break
+		}
+	}
+	if _, rearm := e.plans[p.ID]; !rearm && len(e.plans) >= maxPlans {
 		return nil, fmt.Errorf("too many open plans (%d); apply or let them expire", maxPlans)
 	}
 	if e.plans == nil {
@@ -336,7 +351,7 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 func (e *Engine) gcLocked() {
 	now := e.now()
 	for id, p := range e.plans {
-		if now.After(p.ExpiresAt) && p.State != StateApplied {
+		if now.After(p.ExpiresAt.Add(rearmGrace)) && p.State != StateApplied {
 			delete(e.plans, id)
 		}
 	}
@@ -516,8 +531,7 @@ func (e *Engine) Approve(req ApprovalRequest) (*Plan, error) {
 		return nil, fmt.Errorf("plan %q not found or expired", req.PlanID)
 	}
 	if e.now().After(p.ExpiresAt) {
-		delete(e.plans, p.ID)
-		return nil, fmt.Errorf("plan %q expired; plan again", req.PlanID)
+		return nil, fmt.Errorf("plan %q expired; plan the same bundle again to re-arm it", req.PlanID)
 	}
 	if p.State == StateInvalid {
 		return nil, fmt.Errorf("plan %q is not valid and cannot be approved: %s", p.ID, p.ValidationError)

@@ -214,7 +214,7 @@ var catalogApproverSetCmd = &cobra.Command{
 }
 
 func printPlan(w interface{ Write([]byte) (int, error) }, p *catalogapply.Plan, withDiff bool) {
-	fmt.Fprintf(w, "plan %s  %q  state=%s  expires %s\n", p.ID, p.Name, p.State, p.ExpiresAt.Local().Format("15:04:05"))
+	fmt.Fprintf(w, "plan %s  %q  state=%s  expires %s (ttl %ds)\n", p.ID, p.Name, p.State, p.ExpiresAt.Local().Format("15:04:05"), p.TTLSeconds)
 	fmt.Fprintf(w, "digest %s\n", p.Digest)
 	for _, f := range p.Files {
 		mark := ""

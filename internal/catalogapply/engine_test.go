@@ -390,6 +390,28 @@ func TestPlanExpires(t *testing.T) {
 	}
 }
 
+func TestExpiredUnapprovedPlanRearms(t *testing.T) {
+	e := newEngine(t)
+	now := time.Now()
+	e.Now = func() time.Time { return now }
+	b := Bundle{Name: "x", Files: []File{{Path: "agents/x.yaml", Content: "id: x\n"}}}
+	p, _ := e.PlanBundle(context.Background(), b, Options{})
+	if p.TTLSeconds != 900 {
+		t.Fatalf("ttl_seconds = %d", p.TTLSeconds)
+	}
+	now = now.Add(20 * time.Minute)
+	if _, err := e.Approve(ApprovalRequest{PlanID: p.ID, Digest: p.Digest, Passphrase: passphrase}); err == nil {
+		t.Fatal("approved an expired plan")
+	}
+	p2, err := e.PlanBundle(context.Background(), b, Options{})
+	if err != nil || p2.ID != p.ID || p2.Digest != p.Digest {
+		t.Fatalf("not re-armed: %+v %v", p2, err)
+	}
+	if _, err := e.Approve(ApprovalRequest{PlanID: p.ID, Digest: p.Digest, Passphrase: passphrase}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPassphraseRules(t *testing.T) {
 	a := NewApprover(filepath.Join(t.TempDir(), "a.json"))
 	if err := a.Set("", "short"); err == nil {
