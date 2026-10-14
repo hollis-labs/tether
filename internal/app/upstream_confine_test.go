@@ -107,3 +107,35 @@ func TestConfineMCPPlant_FailsClosed(t *testing.T) {
 		t.Fatalf("unconfined fallback: %q %v %v", command, args, err)
 	}
 }
+
+func TestAllowUnenforcedUserServiceManager(t *testing.T) {
+	on := func(string) string { return "1" }
+	off := func(string) string { return "" }
+	for _, c := range []struct {
+		goos   string
+		getenv func(string) string
+		want   bool
+	}{
+		{"darwin", on, true}, {"darwin", off, false}, {"darwin", func(string) string { return "0" }, false},
+		{"linux", on, false}, {"linux", off, false},
+	} {
+		if got := allowUnenforcedUserServiceManager(c.goos, c.getenv); got != c.want {
+			t.Errorf("%s: got %v want %v", c.goos, got, c.want)
+		}
+	}
+}
+
+func TestConfineMCPPlant_DarwinRefusesByDefaultAndDowngradesOnOptIn(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin backend")
+	}
+	plan := &launch.Plan{ProviderBrand: "codex", RepoRoot: t.TempDir()}
+	protected := []string{t.TempDir()}
+	if _, _, err := ConfineMCPPlant(plan, "/bin/true", nil, protected); err == nil || !strings.Contains(err.Error(), "DenyUserServiceManager") {
+		t.Fatalf("default must stay fail-closed, got %v", err)
+	}
+	command, _, downgraded, err := confineMCPPlant(plan, "/bin/true", nil, protected, true)
+	if err != nil || !downgraded || command == "" {
+		t.Fatalf("opt-in: %q downgraded=%v err=%v", command, downgraded, err)
+	}
+}

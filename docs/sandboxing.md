@@ -538,6 +538,21 @@ to protect is now `plan_error` in `/health` and a `sandbox-protect` failure in
 skipped such projects instead of anchoring them, which left the plantable root open;
 see CW-20261003-0092.)
 
+**Codex on macOS (reduced guarantee, opt-in).** The Codex MCP proxy is confined
+with the `tether-mcp-control-plane` profile, which on Linux denies the user
+service manager (`DenyUserServiceManager`). The darwin sandbox cannot enforce
+that rule (launchd user agents), so by default a darwin Codex launch is refused
+(`DenyUserServiceManager is not enforced on darwin`). An operator can set
+`TETHER_SANDBOX_ALLOW_UNENFORCED_USER_SERVICE_MANAGER=1` (or `true`) in
+tetherd's environment to launch Codex anyway. The proxy is then still
+write-protected from the catalog, run/ and state/, but its process tree can
+reach launchd user agents (`launchctl submit`/`bootstrap`), which run outside
+the sandbox. Every such launch logs a `WARN: sandbox: ... DenyUserServiceManager
+is NOT enforced on darwin` line and records a `sandbox_rule_unenforced` session
+event. The variable is off by default and ignored on other platforms, so Linux
+stays fail-closed. Closing the gap properly needs a seatbelt `mach-lookup`
+deny in the substrate sandbox module.
+
 **Turning it off:** set `TETHER_SANDBOX_PROTECT=0` (or `false`) in tetherd's
 environment and restart the daemon. The daemon logs `WARN: control-plane
 protection DISABLED by TETHER_SANDBOX_PROTECT=0, so agents can write the

@@ -30,7 +30,7 @@ func codexCountingAgent(counter string) string {
 // reported, and the launch runs. Claude, on the same catalog, is still refused, and
 // with its own code: the fix is the catalog entry, not bubblewrap.
 func TestACodexLaunchIsNotRefusedForAnotherProjectsBrokenCatalogEntry(t *testing.T) {
-	skipWithoutMCPProxyConfinement(t)
+	optInDarwinMCPProxyConfinement(t)
 	if codexProtectionMode != CodexNotProtected {
 		t.Fatalf("the build ships codexProtectionMode = %q; want %q while CW-20261001-0230 is open", codexProtectionMode, CodexNotProtected)
 	}
