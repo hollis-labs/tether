@@ -219,11 +219,11 @@ func (h *Host) Provision(ctx context.Context, req teams.ProvisionRequest) (teams
 		return teams.Member{}, teams.ErrProvisionFailed
 	}
 	if err := h.requestTeam(ctx, req); err != nil {
-		return teams.Member{}, err
+		return teams.Member{}, fmt.Errorf("member %s (slot %s): resolve parent: %w", req.MemberID, req.Slot.Name, err)
 	}
 	state, err := h.reserve(ctx, req)
 	if err != nil {
-		return teams.Member{}, err
+		return teams.Member{}, fmt.Errorf("member %s (slot %s): reserve identity binding: %w", req.MemberID, req.Slot.Name, err)
 	}
 	if state.member != nil {
 		return *state.member, nil
@@ -235,7 +235,7 @@ func (h *Host) Provision(ctx context.Context, req teams.ProvisionRequest) (teams
 	} else {
 		enrollment, err = h.ports.Enroller.Ensure(ctx, EnrollmentRequest{IntentKey: req.IdempotencyKey, Actor: actor, Provision: req})
 		if err != nil {
-			return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, err)
+			return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, fmt.Errorf("member %s (slot %s): enroll: %w", req.MemberID, req.Slot.Name, err))
 		}
 	}
 	fresh := req.Slot.Resolution == teams.Fresh
@@ -299,7 +299,7 @@ func (h *Host) Provision(ctx context.Context, req teams.ProvisionRequest) (teams
 		return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, err)
 	}
 	if err = h.ports.Enroller.AcquireBinding(ctx, req.IdempotencyKey, actor); err != nil {
-		return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, err)
+		return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, fmt.Errorf("member %s (slot %s): acquire binding: %w", req.MemberID, req.Slot.Name, err))
 	}
 	// A keyed Stop must fence a Launch that races this observation.
 	if err = h.live(ctx, req.IdempotencyKey); err != nil {
@@ -307,7 +307,7 @@ func (h *Host) Provision(ctx context.Context, req teams.ProvisionRequest) (teams
 	}
 	session, err := h.ports.Sessions.Launch(ctx, SessionRequest{IntentKey: req.IdempotencyKey, Actor: actor, ParentSession: state.parentSession, Provision: req})
 	if err != nil {
-		return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, err)
+		return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, fmt.Errorf("member %s (slot %s): launch session: %w", req.MemberID, req.Slot.Name, err))
 	}
 	if session == "" {
 		return teams.Member{}, teams.ErrProvisionFailed

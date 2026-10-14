@@ -587,7 +587,7 @@ func TestDaemonTeamsFormExampleClaudeTeam(t *testing.T) {
 	// The fixture has no provider runtime, so launching fails after policy,
 	// definition indexing and pin resolution succeed. The response must carry
 	// that underlying cause, not a bare internal_error.
-	if status != 500 || !strings.Contains(string(body), "internal_error: no runtime for provider") {
+	if status != 500 || !strings.Contains(string(body), "launch session: no runtime for provider") {
 		t.Fatalf("form status %d without underlying cause: %s", status, body)
 	}
 }

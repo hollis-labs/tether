@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -629,5 +630,28 @@ func TestEndRunPreservesExternalOwnerResources(t *testing.T) {
 	}
 	if len(f.sessions) != 1 || len(f.bindings) != 1 || len(f.enrolled) != 1 {
 		t.Fatal("host resources leaked")
+	}
+}
+
+func TestLaunchFailureOnFirstAttemptRollsBackAndNamesStage(t *testing.T) {
+	f := fake()
+	_, s, h := open(t, t.TempDir()+"/state.db", f)
+	must(t, s.PutDefinition(ctx, definition()))
+	f.before = func(op, _ string) error {
+		if op == "launch" {
+			return teams.ErrUnavailable
+		}
+		return nil
+	}
+	l := launcher(s, h)
+	l.MaxAttempts = 1
+	_, err := l.Launch(ctx, teams.LaunchRequest{Key: "launch", TeamID: "team-one", Version: 1})
+	if !errors.Is(err, teams.ErrLaunchFailed) || !strings.Contains(err.Error(), "launch session") {
+		t.Fatalf("err = %v, want launch failure naming the stage", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.enrollments) != 0 && len(f.enrollmentEnded) == 0 || len(f.bindingEnded) == 0 {
+		t.Fatalf("enrollment/binding not released: ended=%v/%v", f.enrollmentEnded, f.bindingEnded)
 	}
 }
