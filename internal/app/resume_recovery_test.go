@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
 	"github.com/hollis-labs/tether/internal/session"
 )
@@ -124,5 +125,32 @@ func TestResumeRefusesDetachedSiblingWithBinding(t *testing.T) {
 	}
 	if b, err := currentWorkerBinding(svc); err != nil || b.SessionID != "alive-sibling" {
 		t.Fatalf("lost sibling lease: %+v %v", b, err)
+	}
+}
+
+func TestResumeRefusesWorkerPlacedSource(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	svc := bindingHarness(t)
+	svc.CatalogRoot = t.TempDir()
+	svc.Catalog = &config.Catalog{
+		Global:    config.Global{Version: "test"},
+		Projects:  map[string]config.Project{"p": {ID: "p", RepoRoot: t.TempDir(), Workspace: config.WorkspaceSpec{SessionRoot: t.TempDir(), DefaultMode: "shared"}}},
+		Agents:    map[string]config.Agent{"worker": {ID: "worker"}},
+		Providers: map[string]config.Provider{"stub": {ID: "stub", Provider: "claude", RuntimeKind: config.RuntimeKindPTY, Command: "test-fake"}},
+		Launches:  map[string]config.Launch{"l1": {ID: "l1", Project: "p", Agent: "worker", Provider: "stub"}},
+	}
+	svc.factories = map[string]RuntimeFactory{"stub": stub.New}
+	row := store.SessionRow{ID: "wparent", WorkerID: "w1", LaunchID: "l1", ProjectID: "p", LogicalAgentID: "worker", ProviderID: "stub", Workspace: t.TempDir(), State: string(session.StateCreated)}
+	if err := svc.Store.CreateSession(row, &launch.Plan{LaunchID: "l1", Command: "test-fake"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.UpdateSessionState("wparent", string(session.StateFailed), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.SetLogicalAgentLaunchID("worker", "l1"); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := svc.ResumeLogicalAgent("worker", api.ResumeOptions{}); !errors.Is(err, session.ErrRecoveryConflict) {
+		t.Fatalf("resume = %+v %v; want ErrRecoveryConflict", res, err)
 	}
 }

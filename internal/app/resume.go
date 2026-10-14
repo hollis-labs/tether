@@ -140,6 +140,12 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		if parent != nil && session.State(parent.State) == session.StateDetached {
 			return api.LaunchResult{}, fmt.Errorf("%w (session=%s)", session.ErrDetached, parent.ID)
 		}
+		// A worker-placed source has its workspace and native state on the
+		// outpost. The new row below carries no WorkerID, so resuming here
+		// would silently run the agent on the hub without that state.
+		if parent != nil && parent.WorkerID != "" {
+			return api.LaunchResult{}, fmt.Errorf("%w: resume source %s is placed on worker %s; resume on a worker is not supported yet", session.ErrRecoveryConflict, parent.ID, parent.WorkerID)
+		}
 		// Terminal state alone does not retire a shim's process or protocol
 		// custody. Its owning reattachment/retirement path must settle that
 		// receipt before logical resume may allocate another session.
