@@ -52,6 +52,13 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Reads("GET /sessions/{id} and GET /sessions/{id}/log, rendered through sessionpeek.Digest"))
 
 	a.addTool(s, gomcp.Tool{
+		Name:        "tether_execution_status",
+		Description: "Read the execution policy (global go/pause, environment session cap, per-project caps) and live session counts. Same as `tether execution status`. Read-only; needs the daemon. Launches over a cap or while paused are refused with execution_paused, environment_cap_reached or project_cap_reached.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleExecutionStatus,
+	}, Reads("GET /execution/policy"))
+
+	a.addTool(s, gomcp.Tool{
 		Name:        "tether_session_create",
 		Description: "Create a session from a launch profile (state=created, not yet running). Follow with tether_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile.",
 		InputSchema: gomcp.InputSchema(
@@ -239,6 +246,17 @@ func (a *Adapter) handleSessionPeek(ctx context.Context, args map[string]any) (a
 		"updated_at": sess.UpdatedAt,
 		"lines":      sessionpeek.Digest(res.Data, n),
 	}), nil
+}
+
+func (a *Adapter) handleExecutionStatus(ctx context.Context, _ map[string]any) (any, error) {
+	if a.client == nil {
+		return nil, toolError("daemon_unavailable", "tether_execution_status needs the daemon")
+	}
+	st, err := a.client.ExecutionStatus(ctx)
+	if err != nil {
+		return nil, daemonReadError(err, "")
+	}
+	return toolJSON(map[string]any{"ok": true, "policy": st.Policy, "usage": st.Usage}), nil
 }
 
 func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) (any, error) {

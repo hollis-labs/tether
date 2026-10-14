@@ -37,6 +37,7 @@ import (
 	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/execpolicy"
 	"github.com/hollis-labs/tether/internal/federation"
 	forumhost "github.com/hollis-labs/tether/internal/forums"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -975,6 +976,11 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		LogicalAgentID: l.Plan.LogicalAgentID,
 		Replayed:       l.Replayed,
 	}, nil
+}
+
+func (a *serviceAdapter) ExecutionStatus() (execpolicy.Status, error) { return a.svc.ExecutionStatus() }
+func (a *serviceAdapter) SetExecutionPolicy(p execpolicy.Policy) (execpolicy.Status, error) {
+	return a.svc.SetExecutionPolicy(p)
 }
 
 func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, error) {

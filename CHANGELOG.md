@@ -8,6 +8,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add the execution policy (CW-20261011-0015): a global go/pause switch, an
+  environment-wide live-session cap and per-project caps, enforced when a created
+  session launches (409 `execution_paused`, `environment_cap_reached`,
+  `project_cap_reached`; the session stays `created`). Default is running with no
+  caps. `GET`/`PUT /execution/policy` (PUT is local operator scope), migration
+  0077, `tether execution status|pause|resume|cap` and the read-only
+  `tether_execution_status` MCP tool.
 - Add the `tether_session_peek` MCP tool (CW-20261014-0041): the `tether sessions peek`
   digest (state, init, tool calls, results, FINAL; secrets redacted) as a read-only
   tool. The digest moved to `internal/sessionpeek`.

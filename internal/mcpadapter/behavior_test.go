@@ -37,6 +37,7 @@ import (
 var clientMethodWrites = map[string]bool{
 	// Reads.
 	"EventsHistory":              false,
+	"ExecutionStatus":            false,
 	"StreamEvents":               false,
 	"GetWorkstream":              false,
 	"ListWorkstreams":            false,

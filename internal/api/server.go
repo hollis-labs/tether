@@ -266,6 +266,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerProxyEventRoutes(router)
 	s.registerRegistryRoutes(router)
 	s.registerSettingsRoutes(router)
+	s.registerExecutionRoutes(router)
 	s.registerGroupRoutes(router)
 	s.registerWhoamiRoutes(router)
 	s.registerCallerContextRoutes(router)
