@@ -294,15 +294,19 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
-		Workers:     workerhub.New(db.DB()),
-		Manager:     mgr,
-		stops:       stops,
-		Bus:         bus,
-		Broker:      brk,
-		Federation:  fedRouter,
-		Registry:    regSvc,
-		Settings:    setSvc,
-		factories:   factories,
+		LineageLimits: LineageLimits{
+			MaxDepth:    cat.Global.Catalog.Defaults.LineageMaxDepth,
+			MaxChildren: cat.Global.Catalog.Defaults.LineageMaxChildren,
+		},
+		Workers:    workerhub.New(db.DB()),
+		Manager:    mgr,
+		stops:      stops,
+		Bus:        bus,
+		Broker:     brk,
+		Federation: fedRouter,
+		Registry:   regSvc,
+		Settings:   setSvc,
+		factories:  factories,
 	}
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame

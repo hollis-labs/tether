@@ -631,7 +631,16 @@ func (c *Client) GetSession(ctx context.Context, id string) (api.SessionDTO, err
 // StopSession signals the daemon to terminate a running session. Returns
 // nil on 204. A 404 (session not running) is surfaced as an error.
 func (c *Client) StopSession(ctx context.Context, id string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sessions/"+url.PathEscape(id)+"/stop", nil)
+	return c.stopSession(ctx, id, "")
+}
+
+// StopSessionCascade stops id and all of its descendants, deepest first.
+func (c *Client) StopSessionCascade(ctx context.Context, id string) error {
+	return c.stopSession(ctx, id, "?cascade=true")
+}
+
+func (c *Client) stopSession(ctx context.Context, id, query string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sessions/"+url.PathEscape(id)+"/stop"+query, nil)
 	if err != nil {
 		return err
 	}

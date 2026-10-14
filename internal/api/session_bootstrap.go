@@ -127,6 +127,17 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			RefAttribution: sql.NullString{String: store.RefAttributionUnlaunched, Valid: true},
 		}
 		if req.ParentSessionID != "" {
+			if lc, ok := s.Service.(interface{ CheckLineage(string) error }); ok {
+				if err := lc.CheckLineage(req.ParentSessionID); err != nil {
+					var coded interface{ ErrorCode() string }
+					if errors.As(err, &coded) {
+						writeError(w, http.StatusConflict, coded.ErrorCode(), err.Error())
+						return
+					}
+					writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+					return
+				}
+			}
 			row.ParentSessionID = sql.NullString{String: req.ParentSessionID, Valid: true}
 		}
 		if err := s.SessionBootstrap.CreateSession(row, nil); err != nil {

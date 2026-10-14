@@ -65,6 +65,7 @@ var sessionsGetCmd = &cobra.Command{
 
 var (
 	sessionsStopForce     bool
+	sessionsStopCascade   bool
 	sessionsStopReason    string
 	sessionsStopAllowLive bool
 )
@@ -89,7 +90,11 @@ var sessionsStopCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "force-closed: %s (%s -> %s, reason: %s)\n", res.SessionID, res.From, res.To, res.Reason)
 			return nil
 		}
-		if err := c.StopSession(cmd.Context(), args[0]); err != nil {
+		stop := c.StopSession
+		if sessionsStopCascade {
+			stop = c.StopSessionCascade
+		}
+		if err := stop(cmd.Context(), args[0]); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
 				return fmt.Errorf("tether daemon is not running; run `tether daemon start` first")
 			}
@@ -431,6 +436,7 @@ func getSessionFromStore(catalogRoot, id string) (api.SessionDTO, error) {
 }
 
 func init() {
+	sessionsStopCmd.Flags().BoolVar(&sessionsStopCascade, "cascade", false, "also stop every descendant session, deepest first")
 	sessionsStopCmd.Flags().BoolVar(&sessionsStopForce, "force", false,
 		"force-close a session row that has no live worker or agent (refused when it is live)")
 	sessionsStopCmd.Flags().StringVar(&sessionsStopReason, "reason", "", "reason recorded with a --force close")

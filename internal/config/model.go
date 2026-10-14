@@ -333,6 +333,11 @@ type Defaults struct {
 	// to false (off by default). Can be overridden per-project or per-launch via
 	// mcp.extract_refs.
 	ExtractRefs bool `yaml:"extract_refs,omitempty"`
+
+	// LineageMaxDepth and LineageMaxChildren cap plain session lineage
+	// (CW-20261014-0052). Zero means unlimited.
+	LineageMaxDepth    int `yaml:"lineage_max_depth,omitempty"`
+	LineageMaxChildren int `yaml:"lineage_max_children,omitempty"`
 }
 
 // Launch-configuration types relocated to internal/launchprofile.
