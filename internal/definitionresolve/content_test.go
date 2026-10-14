@@ -106,6 +106,11 @@ func TestContentIgnoredMetadataAndSensitiveContent(t *testing.T) {
 		t.Fatal("removal did not restore pin", removed, err)
 	}
 }
+
+// errFoldingFS reports a fixture the host filesystem cannot represent because
+// it folds case or Unicode (APFS by default).
+var errFoldingFS = errors.New("filesystem folds the fixture names")
+
 func TestContentRefusesUnsafeNamesAndMembers(t *testing.T) {
 	root := t.TempDir()
 	writeContent(t, root, "safe/file", "hello", 0o644)
@@ -137,11 +142,20 @@ func TestContentRefusesUnsafeNamesAndMembers(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(root, "target", "A"), 0o700); err != nil {
 				return err
 			}
-			return os.Mkdir(filepath.Join(root, "target", "a"), 0o700)
+			err := os.Mkdir(filepath.Join(root, "target", "a"), 0o700)
+			if errors.Is(err, os.ErrExist) {
+				return errFoldingFS
+			}
+			return err
 		}},
 		{"unicode-fold", func(root string) error {
 			writeContent(t, root, "target/Σ", "one", 0o644)
 			writeContent(t, root, "target/ς", "two", 0o644)
+			if entries, err := os.ReadDir(filepath.Join(root, "target")); err != nil {
+				return err
+			} else if len(entries) != 2 {
+				return errFoldingFS
+			}
 			return nil
 		}},
 		{"empty-tree", func(root string) error { return os.Mkdir(filepath.Join(root, "target"), 0o700) }},
@@ -150,7 +164,9 @@ func TestContentRefusesUnsafeNamesAndMembers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeContent(t, root, "safe/file", "hello", 0o644)
-			if err := tc.setup(root); err != nil {
+			if err := tc.setup(root); errors.Is(err, errFoldingFS) {
+				t.Skip("the filesystem folds these names into one entry, so the fixture cannot exist here")
+			} else if err != nil {
 				t.Fatal(err)
 			}
 			p := localProvider(t, root)

@@ -177,7 +177,7 @@ func TestPeerCredentialRejectsUnverifiableTransportAndWrongDialEndpoint(t *testi
 	_ = foreign.Listener.Close()
 	listener, err := net.Listen("tcp", "127.0.0.2:0")
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("second loopback address unavailable (macOS has no 127.0.0.2 alias by default): %v", err)
 	}
 	foreign.Listener = listener
 	foreign.Start()
