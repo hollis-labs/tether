@@ -382,6 +382,25 @@ structured input with `--torque-task <id>` (repeatable) rather than prose; the
 agent's `agent_prompt` carries the protocol, including the closing step
 (`torque_task_transition` plus `torque_comment_add` per task).
 
+## Manager agents
+
+An agent with `roles: [manager]` is a chat/manager agent: it delegates hands-on
+work to workers instead of doing it. The catalog refuses to load a manager whose
+effective `permission_mode` (the agent's own, else `defaults.permission_mode`)
+is `bypass`. Because a headless `default` launch denies every tool call, a
+manager pairs `permission_mode: default` with a
+`provider_overrides.claude-code.extra_args` allowlist (`--allowedTools` for the
+`mcp__torque`, `mcp__tesseract` and `mcp__tether` servers, `--disallowedTools`
+for `Bash,Write,Edit`). The allowlist semantics are unverified against a live
+headless run; spike before relying on them.
+
+`examples/catalog/agents/manager-agent.yaml` is the template and
+`examples/catalog/launches/manager.yaml` the matching launch (temp workspace,
+`chat: true`, durable `recovery: auto`, a chat route). Delegation: the manager
+creates a manual Torque task with a brief and asks the operator to approve
+dispatch in chat; the worker's result returns as a Torque comment/review status
+and a message on the manager's channel.
+
 `tether launch --torque-task <id>` plants task bundles by fetching the tasks
 from Torque. Export `TORQUE_API_TOKEN` in the launching CLI's environment when
 Torque requires auth; it is sent as a bearer token and a 401/403 names it.

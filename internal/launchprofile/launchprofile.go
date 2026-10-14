@@ -161,6 +161,20 @@ func ValidRecovery(v string) bool {
 	return v == "" || v == RecoveryNever || v == RecoveryAuto
 }
 
+// RoleManager marks an agent as a manager: a chat-facing agent that delegates
+// hands-on work to workers and never runs with blanket permission bypass.
+const RoleManager = "manager"
+
+// IsManager reports whether the agent carries the manager role.
+func (p LaunchProfile) IsManager() bool {
+	for _, r := range p.Roles {
+		if r == RoleManager {
+			return true
+		}
+	}
+	return false
+}
+
 // Agent is a backward-compatible alias for LaunchProfile.
 type Agent = LaunchProfile
 

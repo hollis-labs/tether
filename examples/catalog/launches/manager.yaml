@@ -1,0 +1,12 @@
+# Manager launch template: chat/manager agent with no repo checkout and no
+# blanket bypass. See agents/manager-agent.yaml and docs/catalog-launch-profiles.md.
+id: manager
+project: tether
+agent: manager-agent
+provider: claude-code
+chat: true
+workspace:
+  mode: temp
+prompt:
+  include_project_boot: true
+  include_agent_boot: true

@@ -96,6 +96,9 @@ func (c *Catalog) Validate() error {
 		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
 			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
 		}
+		if a.IsManager() && EffectivePermissionMode(c.Global, a) == PermissionModeBypass {
+			return fmt.Errorf("agent %q has role %q and resolves to permission_mode %q; managers must not run with blanket bypass (set permissions.permission_mode: default and an MCP-only provider_overrides allowlist)", id, launchprofile.RoleManager, PermissionModeBypass)
+		}
 	}
 	return nil
 }
