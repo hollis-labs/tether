@@ -126,6 +126,9 @@ func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 			}
 		}
 		return nil
+	case "reap":
+		reaped := e.ReapOrphans(0)
+		return e.Send(workerwire.Frame{T: "reap_ack", CmdID: f.CmdID, Reaped: reaped, Hosts: e.ScanHosts()})
 	case "replay":
 		return e.replay(f.Session, f.FromSeq)
 	case "ack":

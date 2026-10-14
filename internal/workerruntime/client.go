@@ -111,6 +111,7 @@ type Worker struct {
 	write     sync.Mutex
 	Caps      func(context.Context) json.RawMessage
 	Inventory func() []workerwire.Session
+	Hosts     func() []workerwire.Host
 	Command   func(context.Context, workerwire.Frame) error
 	OnConnect func()
 	Bindings  func() []workerwire.Binding
@@ -237,11 +238,15 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 	if w.Inventory != nil {
 		inventory = w.Inventory()
 	}
+	var hosts []workerwire.Host
+	if w.Hosts != nil {
+		hosts = w.Hosts()
+	}
 	var bindings []workerwire.Binding
 	if w.Bindings != nil {
 		bindings = w.Bindings()
 	}
-	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureSessionCred}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory}); err != nil {
+	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureSessionCred}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts}); err != nil {
 		return err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))

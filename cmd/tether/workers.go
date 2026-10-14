@@ -24,7 +24,10 @@ func init() {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 		}
 		for _, w := range result.Workers {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tconnected=%t\tsessions=%d\t%s\n", w.Label, w.Platform, w.Connected, w.Sessions, w.LastSeen)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tconnected=%t\tsessions=%d\torphaned_hosts=%d\t%s\n", w.Label, w.Platform, w.Connected, w.Sessions, w.Orphaned, w.LastSeen)
+			for _, h := range w.Hosts {
+				fmt.Fprintf(cmd.OutOrStdout(), "  host %s\tsession=%s\tstate=%s\tage=%ds\thost_alive=%t\tchild_alive=%t\torphaned=%t\n", h.Dir, h.Session, h.State, h.AgeSec, h.HostAlive, h.ChildAlive, h.Orphaned)
+			}
 		}
 		return nil
 	}})
@@ -46,6 +49,17 @@ func init() {
 			}}
 			grant.Flags().BoolVar(&remove, "remove", false, "remove grant and stop its live binding")
 			c.AddCommand(grant)
+			c.AddCommand(&cobra.Command{Use: "reap <worker>", Short: "Terminate a worker's orphaned shim-hosts (live host, no agent child) now", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+				client, err := localDeviceAdminClient()
+				if err != nil {
+					return err
+				}
+				var result any
+				if err = client.call(cmd.Context(), http.MethodPost, "/workers/reap", map[string]any{"worker": args[0]}, &result); err != nil {
+					return err
+				}
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}})
 		}
 	}
 }

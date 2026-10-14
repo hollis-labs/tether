@@ -19,6 +19,19 @@ type Session struct {
 	LastSeq  int64  `json:"last_seq"`
 	ExitCode *int   `json:"exit_code,omitempty"`
 }
+
+// Host is one shim-host directory on the worker. Orphaned means a live host with no live agent child and no
+// running session: a leak the worker reaps after a grace period.
+type Host struct {
+	Dir        string `json:"dir"`
+	Session    string `json:"session,omitempty"`
+	State      string `json:"state,omitempty"`
+	AgeSec     int64  `json:"age_sec"`
+	HostPID    int    `json:"host_pid,omitempty"`
+	HostAlive  bool   `json:"host_alive"`
+	ChildAlive bool   `json:"child_alive"`
+	Orphaned   bool   `json:"orphaned"`
+}
 type Cursor struct {
 	Session string `json:"session"`
 	FromSeq int64  `json:"from_seq"`
@@ -35,6 +48,8 @@ type Frame struct {
 	Worker    *Worker         `json:"worker,omitempty"`
 	Caps      json.RawMessage `json:"caps,omitempty"`
 	Sessions  []Session       `json:"sessions,omitempty"`
+	Hosts     []Host          `json:"hosts,omitempty"`
+	Reaped    []string        `json:"reaped,omitempty"`
 	WorkerID  string          `json:"worker_id,omitempty"`
 	Resume    []Cursor        `json:"resume,omitempty"`
 	Kill      []string        `json:"kill,omitempty"`
