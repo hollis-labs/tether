@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/app"
@@ -20,6 +21,10 @@ type bootContextEffects struct {
 func (f *bootContextEffects) CreateTeamSessionWithContext(ctx context.Context, key, launch string, boot app.TeamBootContext) (*app.Launched, error) {
 	f.accepted = append(f.accepted, boot)
 	return f.CreateTeamSession(ctx, key, launch)
+}
+
+func (f *bootContextEffects) CreateTeamSessionWithLimits(ctx context.Context, key, launch string, boot app.TeamBootContext, _ time.Duration) (*app.Launched, error) {
+	return f.CreateTeamSessionWithContext(ctx, key, launch, boot)
 }
 
 func TestTeamBootContextPortKeepsAcceptedIntentAndRefusesUnsupportedPort(t *testing.T) {
@@ -67,5 +72,23 @@ func TestTeamBootContextPortKeepsAcceptedIntentAndRefusesUnsupportedPort(t *test
 				t.Fatal("changed intent accepted", err)
 			}
 		})
+	}
+}
+
+func TestLaunchEnforcesSpawnTimeoutAtCreate(t *testing.T) {
+	db, storage, reg := dbFixture(t, filepath.Join(t.TempDir(), "state.db"))
+	enrollment := enroller(t, db, storage, reg)
+	intent := fresh("timeout")
+	intent.Provision.Limits.Timeout = 90 * time.Second
+	actor, err := enrollment.Ensure(ctx, intent)
+	check(t, err)
+	check(t, enrollment.AcquireBinding(ctx, "timeout", actor.Actor))
+	effects := &sessionEffects{db: db}
+	port, err := NewSessions(db, storage, effects, enrollment)
+	check(t, err)
+	_, err = port.Launch(ctx, teamhost.SessionRequest{IntentKey: "timeout", Actor: actor.Actor, Provision: intent.Provision})
+	check(t, err)
+	if len(effects.timeouts) != 1 || effects.timeouts[0] != 90*time.Second {
+		t.Fatal(effects.timeouts)
 	}
 }

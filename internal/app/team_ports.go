@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/teamhost"
@@ -167,6 +168,17 @@ func (s *Service) CreateTeamSession(ctx context.Context, key, launchID string) (
 // CreateTeamSessionWithContext seals accepted non-secret slot context in the
 // same immutable keyed create as its launch plan.
 func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchID string, boot TeamBootContext) (*Launched, error) {
+	return s.CreateTeamSessionWithLimits(ctx, key, launchID, boot, 0)
+}
+
+// CreateTeamSessionWithLimits additionally enforces the member's spawn timeout
+// at launch: it becomes the plan's lifecycle max_duration (the tighter of it and
+// any catalog max_duration), which the session reaper stops the session at.
+// maxDuration 0 leaves the plan and the idempotency digest unchanged.
+func (s *Service) CreateTeamSessionWithLimits(ctx context.Context, key, launchID string, boot TeamBootContext, maxDuration time.Duration) (*Launched, error) {
+	if maxDuration < 0 {
+		return nil, teamhost.ErrInvalidRequest
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -174,6 +186,9 @@ func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchI
 		return nil, err
 	}
 	digest := teamCreateDigest(launchID, boot)
+	if maxDuration > 0 {
+		digest = requestDigest(struct{ Base, MaxDuration string }{digest, maxDuration.String()})
+	}
 	mutate := func(plan *launch.Plan) error {
 		plan.TeamMember = true
 		// Each keyed team create gets its own logical id; sandbox and launch
@@ -184,6 +199,7 @@ func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchI
 		if err := s.Store.UpsertLogicalAgent(agent.LogicalAgent{ID: plan.LogicalAgentID, Name: plan.LogicalAgentID, Role: "team member of " + plan.CatalogAgentID}, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
+		capTeamMaxDuration(plan, maxDuration)
 		return applyTeamBootContext(plan, boot)
 	}
 	// A launch that names a worker places its team members there; it never
@@ -291,4 +307,22 @@ func (s *Service) stopWorkerTeamSession(row *store.SessionRow) error {
 		}
 	}
 	return nil
+}
+
+// capTeamMaxDuration lowers the plan's lifecycle max_duration to d; a catalog
+// value that is already tighter wins, and d == 0 changes nothing.
+func capTeamMaxDuration(plan *launch.Plan, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	var base launchprofile.LifecycleDurations
+	if plan.Lifecycle != nil {
+		base, _ = plan.Lifecycle.Durations()
+	}
+	if base.MaxDuration > 0 && base.MaxDuration <= d {
+		return
+	}
+	v := d.String()
+	merged := launchprofile.MergeLifecycle(plan.Lifecycle, &launchprofile.LifecyclePolicy{MaxDuration: &v})
+	plan.Lifecycle = merged
 }

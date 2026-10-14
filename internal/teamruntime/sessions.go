@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/substrate/mesh/teams"
@@ -27,6 +28,11 @@ type SessionService interface {
 
 type contextualSessionService interface {
 	CreateTeamSessionWithContext(context.Context, string, string, app.TeamBootContext) (*app.Launched, error)
+}
+
+// limitedSessionService enforces the member's spawn timeout at launch.
+type limitedSessionService interface {
+	CreateTeamSessionWithLimits(context.Context, string, string, app.TeamBootContext, time.Duration) (*app.Launched, error)
 }
 
 // SessionEnrollment is the enrollment adapter seam needed before Start.
@@ -76,7 +82,13 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 		return "", err
 	}
 	var launched *app.Launched
-	if boot != (app.TeamBootContext{}) {
+	if timeout := in.Provision.Limits.Timeout; timeout > 0 {
+		limited, ok := s.service.(limitedSessionService)
+		if !ok {
+			return "", teamhost.ErrSessionUnavailable
+		}
+		launched, err = limited.CreateTeamSessionWithLimits(ctx, sessionKey(saved.nonce), launchID, boot, timeout)
+	} else if boot != (app.TeamBootContext{}) {
 		contextual, ok := s.service.(contextualSessionService)
 		if !ok {
 			return "", teamhost.ErrSessionUnavailable
