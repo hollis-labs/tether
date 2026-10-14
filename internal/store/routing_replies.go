@@ -271,6 +271,18 @@ func (s *Store) QueuedRoutingReplies(ctx context.Context, sessionID string, limi
 	return drainRoutingReplies(rows)
 }
 
+// SessionHasOpenRoutingReplies reports whether a reply is queued for, or being
+// delivered to, sessionID. Such a reply is input the session has yet to run.
+func (s *Store) SessionHasOpenRoutingReplies(ctx context.Context, sessionID string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM routing_replies
+ WHERE target_session_id=? AND state IN ('queued','delivering') LIMIT 1`, sessionID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // SessionsWithQueuedRoutingReplies names every session that has a reply waiting.
 // The repair sweep runs it every few seconds, so it reads only the open-reply
 // index, never the settled history.

@@ -545,3 +545,32 @@ func TestRoutingReplyIdempotencyKeyConflictsWhenOnlyTheInterruptFlagDiffers(t *t
 		t.Fatalf("same key, same text, interrupt flipped: %v, want a conflict", err)
 	}
 }
+
+func TestSessionHasOpenRoutingReplies(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	has := func(session string) bool {
+		t.Helper()
+		ok, err := db.SessionHasOpenRoutingReplies(ctx, session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if has("sess-a") {
+		t.Fatal("empty session reports open replies")
+	}
+	r, _, err := db.CreateRoutingReply(ctx, newReply("go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has("sess-a") || has("sess-b") {
+		t.Fatal("queued reply must count for its target session only")
+	}
+	if ok, err := db.ClaimRoutingReply(ctx, r.ReplyID); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if !has("sess-a") {
+		t.Fatal("a reply being delivered is still open")
+	}
+}
