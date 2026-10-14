@@ -167,6 +167,15 @@ workers)**.
 
 ## 3. Live-check checklist
 
+`scripts/post-deploy-check.sh` runs the read-only part of this checklist
+against a deployed hub through the `tether` CLI, `GET /capacity` and the
+read-only MCP tools, printing PASS/FAIL/SKIP per row id and MANUAL (with the
+exact command, not run) for rows that need a state change. It exits non-zero on
+any FAIL. Rows `G1`-`G9` are general checks (version, doctor, workers and
+`orphaned_hosts`, sessions, MCP tool list, catalog validate/files/launches).
+There is no `tether team ls`; row 15 only checks that `tether_team_form` is
+exposed.
+
 Source: tasks left in `review` in epics EP-20261013-0001 and EP-20261013-0002
 and their comments. Each check was **not run** by the author. "Pass" is what
 the task comment says to look for, or what follows from the PR description.
