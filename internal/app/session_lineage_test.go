@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
@@ -120,5 +121,35 @@ func TestStopSessionCascadeWorkerPlacedDescendants(t *testing.T) {
 	err := svc.StopSessionCascade("root")
 	if err == nil || !strings.Contains(err.Error(), "stop live") {
 		t.Fatalf("live worker descendant with unreachable worker: err = %v", err)
+	}
+}
+
+func TestCheckLineageLaunchRate(t *testing.T) {
+	svc := bindingHarness(t)
+	lineageSession(t, svc, "root", "")
+	lineageSession(t, svc, "kid", "root")
+	if err := svc.checkLineage("root"); err != nil {
+		t.Fatalf("rate cap off by default: %v", err)
+	}
+	svc.LineageLimits = LineageLimits{MaxLaunchesPerWindow: 1, LaunchWindow: time.Hour}
+	if err := svc.checkLineage("root"); !errors.Is(err, ErrLineageLimit) {
+		t.Fatalf("rate cap: %v", err)
+	}
+	// Ended children still count: the cap bounds rate, not concurrency.
+	if err := svc.Store.UpdateSessionState("kid", "completed", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.checkLineage("root"); !errors.Is(err, ErrLineageLimit) {
+		t.Fatalf("ended child must count toward the rate: %v", err)
+	}
+	if err := svc.checkLineage("kid"); err != nil {
+		t.Fatalf("other parent unaffected: %v", err)
+	}
+	old := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	if _, err := svc.Store.DB().Exec(`UPDATE sessions SET created_at=? WHERE id='kid'`, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.checkLineage("root"); err != nil {
+		t.Fatalf("child outside the window must not count: %v", err)
 	}
 }

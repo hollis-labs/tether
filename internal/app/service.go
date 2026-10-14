@@ -299,8 +299,10 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Catalog:     cat,
 		Store:       db,
 		LineageLimits: LineageLimits{
-			MaxDepth:    cat.Global.Catalog.Defaults.LineageMaxDepth,
-			MaxChildren: cat.Global.Catalog.Defaults.LineageMaxChildren,
+			MaxDepth:             cat.Global.Catalog.Defaults.LineageMaxDepth,
+			MaxChildren:          cat.Global.Catalog.Defaults.LineageMaxChildren,
+			MaxLaunchesPerWindow: cat.Global.Catalog.Defaults.LineageMaxLaunchesPerWindow,
+			LaunchWindow:         lineageLaunchWindow(cat.Global.Catalog.Defaults.LineageLaunchWindow),
 		},
 		Workers:    workerhub.New(db.DB()),
 		Manager:    mgr,

@@ -338,6 +338,11 @@ type Defaults struct {
 	// (CW-20261014-0052). Zero means unlimited.
 	LineageMaxDepth    int `yaml:"lineage_max_depth,omitempty"`
 	LineageMaxChildren int `yaml:"lineage_max_children,omitempty"`
+	// LineageMaxLaunchesPerWindow caps child launches under one parent within
+	// LineageLaunchWindow (a Go duration, default 1m), counting ended children.
+	// Zero means unlimited.
+	LineageMaxLaunchesPerWindow int    `yaml:"lineage_max_launches_per_window,omitempty"`
+	LineageLaunchWindow         string `yaml:"lineage_launch_window,omitempty"`
 }
 
 // Launch-configuration types relocated to internal/launchprofile.

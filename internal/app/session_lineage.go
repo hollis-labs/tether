@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/session"
@@ -17,6 +18,20 @@ type LineageLimits struct {
 	MaxDepth int
 	// MaxChildren is the most live (not ended) direct children one parent may have.
 	MaxChildren int
+	// MaxLaunchesPerWindow is the most children (live or ended) one parent may
+	// launch within LaunchWindow; it bounds fan-out rate, not concurrency.
+	MaxLaunchesPerWindow int
+	// LaunchWindow defaults to a minute when MaxLaunchesPerWindow is set.
+	LaunchWindow time.Duration
+}
+
+// lineageLaunchWindow parses the configured window; empty or invalid means the
+// one-minute default.
+func lineageLaunchWindow(s string) time.Duration {
+	if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		return d
+	}
+	return time.Minute
 }
 
 // ErrLineageLimit is returned when a new child would exceed LineageLimits.
@@ -42,6 +57,19 @@ func (s *Service) checkLineage(parentID string) error {
 		}
 		if live >= lim.MaxChildren {
 			return fmt.Errorf("%w: parent %s already has %d live children (max %d)", ErrLineageLimit, parentID, live, lim.MaxChildren)
+		}
+	}
+	if lim.MaxLaunchesPerWindow > 0 {
+		w := lim.LaunchWindow
+		if w <= 0 {
+			w = time.Minute
+		}
+		n, err := s.Store.ChildCountSince(parentID, time.Now().Add(-w).UTC().Format(time.RFC3339))
+		if err != nil {
+			return err
+		}
+		if n >= lim.MaxLaunchesPerWindow {
+			return fmt.Errorf("%w: parent %s already launched %d children in the last %s (max %d)", ErrLineageLimit, parentID, n, w, lim.MaxLaunchesPerWindow)
 		}
 	}
 	if lim.MaxDepth > 0 {
