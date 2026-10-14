@@ -50,9 +50,13 @@ func TestAFailureTheRuntimeSaysDidNotRunTheTurnIsRetriedWhateverTheMarkerSays(t 
 // the provisional marker, so the error arrives wrapped as "the turn ran". It is
 // still a rejection: the reply waits for the turn to end and is then delivered.
 func TestARejectedSubmissionIsAWaitEvenWhenItsMarkerLooksLikeTheTurnRan(t *testing.T) {
-	for name, cause := range map[string]error{
-		"a turn already in flight": fmt.Errorf("%w: busy", agentsessions.ErrTurnInFlight),
-		"a session that went away": fmt.Errorf("%w: gone", agentsessions.ErrSessionNotRunning),
+	// An in-flight rejection refunds its attempt; a vanished session counts each.
+	for name, tc := range map[string]struct {
+		cause    error
+		attempts int
+	}{
+		"a turn already in flight": {fmt.Errorf("%w: busy", agentsessions.ErrTurnInFlight), 1},
+		"a session that went away": {fmt.Errorf("%w: gone", agentsessions.ErrSessionNotRunning), 3},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newReplyHarness(t)
@@ -61,13 +65,13 @@ func TestARejectedSubmissionIsAWaitEvenWhenItsMarkerLooksLikeTheTurnRan(t *testi
 			h.onSend = func(string, string) error {
 				if rejections > 0 {
 					rejections--
-					return &turnRanError{cause}
+					return &turnRanError{tc.cause}
 				}
 				return nil
 			}
 			receipt, _ := h.reply(h.routed("s1").ID, "wait for me", false)
 			got := h.waitState(receipt.ReplyID, store.RoutingReplyDelivered)
-			if got.Reason == ReplyReasonTurnFailed || got.Attempts != 1 || h.rt.sendCallCount("s1") != 3 {
+			if got.Reason == ReplyReasonTurnFailed || got.Attempts != tc.attempts || h.rt.sendCallCount("s1") != 3 {
 				t.Fatalf("a rejection was taken for a turn that ran: %+v after %d sends", got, h.rt.sendCallCount("s1"))
 			}
 		})
