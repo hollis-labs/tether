@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -178,8 +179,16 @@ func DecodeTeamRequest(verb, key string, r io.Reader) (TeamRequest, error) {
 	return req, nil
 }
 
+// teamVerbTimeout bounds one verb's work once it is detached from the caller.
+const teamVerbTimeout = 15 * time.Minute
+
 // CallTeam converts transport arguments and invokes exactly one service verb.
+// The work is detached from the caller's cancellation: a client that hangs up
+// mid-formation must not cancel provisioning half way (the keyed retry resumes
+// or reports the recorded outcome). Caller identity values are preserved.
 func CallTeam(ctx context.Context, ops TeamOps, verb, key string, r TeamRequest) (teamsvc.Result, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), teamVerbTimeout)
+	defer cancel()
 	if !HasTeamOps(ops) {
 		return teamsvc.Result{}, teamsvc.ErrUnavailable
 	}

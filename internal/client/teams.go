@@ -60,7 +60,12 @@ func (c *Client) Team(ctx context.Context, verb, key string, req api.TeamRequest
 	}
 	request.Header.Set("Idempotency-Key", key)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := c.http.Do(request)
+	// A formation launches members sequentially (a worker-placed one takes
+	// ~15s), so the short default client timeout would hang up mid-launch.
+	// The caller's context bounds the call instead.
+	longClient := *c.http
+	longClient.Timeout = 0
+	response, err := longClient.Do(request)
 	if err != nil {
 		return result, &TeamError{Code: "unavailable", Status: 503, Detail: "unavailable: request to daemon failed: " + boundedLine(err.Error())}
 	}

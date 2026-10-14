@@ -44,3 +44,26 @@ func TestTeamErrorForCarriesCauseOnlyToLocalOperator(t *testing.T) {
 		t.Fatalf("anonymous saw cause: %q", d.Message)
 	}
 }
+
+type ctxProbeOps struct {
+	TeamOps
+	err error
+}
+
+func (p *ctxProbeOps) Dissolve(ctx context.Context, _ teamsvc.RunRequest) (teamsvc.Result, error) {
+	p.err = ctx.Err()
+	return teamsvc.Result{}, nil
+}
+
+// A client hanging up must not cancel a verb's work half way through.
+func TestCallTeamDetachesFromCallerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	probe := &ctxProbeOps{}
+	if _, err := CallTeam(ctx, probe, "dissolve", "key", TeamRequest{RunID: "run"}); err != nil {
+		t.Fatal(err)
+	}
+	if probe.err != nil {
+		t.Fatalf("verb saw caller cancellation: %v", probe.err)
+	}
+}
