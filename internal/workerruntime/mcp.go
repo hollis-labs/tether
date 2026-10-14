@@ -16,7 +16,8 @@ type mcpEntry struct {
 	Type    string            `json:"type,omitempty"`
 	URL     string            `json:"url,omitempty"`
 	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args"`
+	Args    []string          `json:"args,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 }
 type mcpConfig struct {
@@ -62,6 +63,9 @@ func validateHubMCP(config mcpConfig) error {
 		return fmt.Errorf("tether MCP must run on the hub over SSH")
 	}
 	for name, other := range config.Servers {
+		if err := validateHeaders(name, other); err != nil {
+			return err
+		}
 		for _, arg := range other.Args {
 			if arg == "--proxy" {
 				return fmt.Errorf("MCP entry %s: local/legacy Tether MCP proxy is not an outpost", name)
@@ -76,6 +80,20 @@ func validateHubMCP(config mcpConfig) error {
 	}
 	if !daemonOnly {
 		return fmt.Errorf("hub Tether MCP requires --daemon-only")
+	}
+	return nil
+}
+
+// validateHeaders keeps credentials out of the planted .mcp.json: http/sse headers may only carry an
+// environment reference (${VAR}), never an inline value, and stdio entries take no headers.
+func validateHeaders(name string, e mcpEntry) error {
+	if len(e.Headers) > 0 && e.URL == "" {
+		return fmt.Errorf("MCP entry %s: headers apply only to http/sse entries with a url", name)
+	}
+	for h, v := range e.Headers {
+		if !strings.Contains(v, "${") {
+			return fmt.Errorf("MCP entry %s: header %s must reference an environment variable (${VAR}), not an inline value", name, h)
+		}
 	}
 	return nil
 }
