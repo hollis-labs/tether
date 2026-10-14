@@ -51,6 +51,7 @@ const (
 	ReplyReasonPullOnly        = "pull_only_binding"
 	ReplyReasonResolveFailed   = "resolve_failed"
 	ReplyReasonSubmitFailed    = "submit_failed"
+	ReplyReasonSessionEnded    = "session_ended"
 	ReplyReasonRestart         = "daemon_restarted_during_delivery"
 	ReplyReasonBodyPurged      = "body_purged"
 	ReplyReasonHandedOff       = "handed_off"
@@ -445,9 +446,18 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 		// wait for the turn's completion. The attempt does not count.
 		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonWaitingForIdle, RefundAttempt: true, NotBefore: time.Now().Add(replyIdleBackoff)})
 	case errors.Is(err, agentsessions.ErrSessionNotRunning):
-		// The Manager may not have noticed the exit yet: look again shortly.
-		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: replyErrorDetail(err), RefundAttempt: true,
-			NotBefore: time.Now().Add(replyIdleBackoff)})
+		// The Manager may not have noticed the exit yet: look again shortly. The
+		// attempt counts and the delay grows, so a session that never comes back
+		// settles instead of being retried every second forever.
+		if cur, getErr := d.st.RoutingReply(d.ctx, r.ReplyID); getErr == nil {
+			r.Attempts = cur.Attempts
+		}
+		if r.Attempts >= replyMaxAttempts {
+			d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonSessionEnded, Detail: replyErrorDetail(err)})
+			return
+		}
+		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: replyErrorDetail(err),
+			NotBefore: time.Now().Add(time.Duration(r.Attempts) * replyIdleBackoff)})
 	case replyTurnRan(err):
 		// A subprocess runtime blocks for the whole turn and returns the process's
 		// failure afterwards: the reply was delivered and acted on, and the turn

@@ -1347,3 +1347,17 @@ func TestReplyFromADeviceIsAttributedToItsSenderAddress(t *testing.T) {
 		t.Fatalf("actor = %q, want the authenticated device", got)
 	}
 }
+
+func TestSendRefusedNotRunningSettlesAfterBoundedAttempts(t *testing.T) {
+	h := newReplyHarness(t)
+	h.rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+	h.rt.setSendErr("s1", agentsessions.ErrSessionNotRunning)
+	receipt, _ := h.reply(h.routed("s1").ID, "to the dead", false)
+	got := h.waitState(receipt.ReplyID, store.RoutingReplyUndeliverable)
+	if got.Reason != ReplyReasonSessionEnded || got.Attempts != replyMaxAttempts {
+		t.Fatalf("reply = %+v, want undeliverable/%s after %d attempts", got, ReplyReasonSessionEnded, replyMaxAttempts)
+	}
+	if n := h.rt.sendCallCount("s1"); n != replyMaxAttempts {
+		t.Fatalf("send calls = %d, want %d", n, replyMaxAttempts)
+	}
+}
