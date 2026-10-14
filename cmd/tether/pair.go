@@ -19,6 +19,7 @@ import (
 type deviceAdminClient struct {
 	client         *http.Client
 	baseURL, token string
+	addr           string
 }
 type deviceAdminFactory func() (*deviceAdminClient, error)
 
@@ -41,7 +42,7 @@ func localDeviceAdminClient() (*deviceAdminClient, error) {
 	}
 	client := daemon.DialHTTPClient(cfg.ListenAddr)
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	return &deviceAdminClient{client: client, baseURL: daemon.BaseURL(cfg.ListenAddr), token: token}, nil
+	return &deviceAdminClient{client: client, baseURL: daemon.BaseURL(cfg.ListenAddr), token: token, addr: cfg.ListenAddr}, nil
 }
 
 func (c *deviceAdminClient) call(ctx context.Context, method, path string, body, out any) error {
@@ -61,7 +62,7 @@ func (c *deviceAdminClient) call(ctx context.Context, method, path string, body,
 	req.Header.Set("Content-Type", "application/json")
 	res, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("local device administration unavailable")
+		return fmt.Errorf("local device administration unavailable (daemon %s; a stale local daemon or wrong --catalog?)", c.addr)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {

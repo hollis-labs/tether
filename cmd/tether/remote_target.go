@@ -16,8 +16,21 @@ import (
 var remoteTarget string
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&remoteTarget, "target", "", "remote worker via SSH forward (tcp:localhost:port); requires a device credential")
+	rootCmd.PersistentFlags().StringVar(&remoteTarget, "target", strings.TrimSpace(os.Getenv("TETHER_TARGET")), "remote worker via SSH forward (tcp:localhost:port); requires a device credential (env: TETHER_TARGET)")
 	rootCmd.PersistentPreRunE = guardRemoteCommand
+}
+
+// daemonTargetDescription names the daemon a command talks to, so a stale or
+// unintended local daemon is visible in errors.
+func daemonTargetDescription(catalogRoot string) string {
+	if remoteTargetSelected() {
+		return "remote target " + remoteTarget
+	}
+	cfg, err := loadDaemonConfig(catalogRoot)
+	if err != nil {
+		return "the local daemon (catalog " + catalogRoot + ")"
+	}
+	return "local daemon " + cfg.ListenAddr + " (catalog " + catalogRoot + ")"
 }
 
 func remoteTargetSelected() bool {
