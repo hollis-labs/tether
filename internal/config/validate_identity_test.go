@@ -19,6 +19,9 @@ func TestValidateAgentURNAndMCPScopes(t *testing.T) {
 		{"garbage", map[string]Agent{"pm": {ID: "pm", URN: "agt_454f2timi7"}}, "invalid urn"},
 		{"duplicate", map[string]Agent{"a": {ID: "a", URN: good}, "b": {ID: "b", URN: good}}, "same urn"},
 		{"unknown scope", map[string]Agent{"pm": {ID: "pm", MCPScopes: []string{"root"}}}, "unknown mcp_scopes"},
+		{"editable agents", map[string]Agent{"aom": {ID: "aom", EditableAgents: []string{"chat"}}, "chat": {ID: "chat"}}, ""},
+		{"editable agent not in catalog", map[string]Agent{"aom": {ID: "aom", EditableAgents: []string{"ghost"}}}, "not a catalog agent"},
+		{"editable agent twice", map[string]Agent{"aom": {ID: "aom", EditableAgents: []string{"chat", "chat"}}, "chat": {ID: "chat"}}, "twice"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

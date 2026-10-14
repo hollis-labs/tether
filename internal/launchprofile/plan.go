@@ -61,6 +61,9 @@ type Plan struct {
 	// runtime is bound to, and the scopes of its session credential.
 	IdentityURN string   `json:"identity_urn,omitempty"`
 	MCPScopes   []string `json:"mcp_scopes,omitempty"`
+	// EditableAgents is the catalog agent's editable_agents allowlist, planted
+	// as --editable-agent on the session's tether MCP server. Empty plants none.
+	EditableAgents []string `json:"editable_agents,omitempty"`
 	// ExtractRefs records whether proxy-side identifier extraction (--extract-refs)
 	// was enabled for this launch plan.
 	ExtractRefs bool   `json:"extract_refs,omitempty"`

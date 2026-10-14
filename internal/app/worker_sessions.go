@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -142,6 +143,14 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	spec, err := s.workerSpec(ctx, row.ID, p)
 	if err != nil {
 		return nil, err
+	}
+	if len(p.EditableAgents) > 0 {
+		if s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureEditableAgents) {
+			exit := 1
+			_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
+			return nil, fmt.Errorf("agent declares editable_agents but worker does not support them; upgrade tether-worker")
+		}
+		spec.EditableAgents = slices.Clone(p.EditableAgents)
 	}
 	undoIdentity, err := s.prepareWorkerIdentity(ctx, row, p, &spec)
 	if err != nil {

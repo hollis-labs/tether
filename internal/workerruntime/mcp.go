@@ -137,6 +137,9 @@ func grantedOnly(config mcpConfig, granted []string) mcpConfig {
 // therefore never in any process argument or environment.
 func (e *Executor) plantHubMCP(cwd, credDir string, spec workerwire.LaunchSpec) error {
 	if spec.Credential == "" {
+		if len(spec.EditableAgents) > 0 {
+			return fmt.Errorf("editable_agents needs a session credential: the static MCP entry cannot carry the allowlist")
+		}
 		return e.plantMCP(cwd, spec.MCPServers)
 	}
 	b, err := os.ReadFile(filepath.Join(e.Root, "hub-mcp.json"))
@@ -160,6 +163,9 @@ func (e *Executor) plantHubMCP(cwd, credDir string, spec workerwire.LaunchSpec) 
 	config = grantedOnly(config, spec.MCPServers)
 	entry := config.Servers["tether"]
 	args := withScopes(entry.Args, spec.MCPScopes)
+	for _, id := range spec.EditableAgents {
+		args = append(args, "--editable-agent", id)
+	}
 	entry.Args = append([]string{"mcp-relay", "--token-file", tokenFile, "--", entry.Command}, append(args, "--token-stdin")...)
 	entry.Command = e.Binary
 	config.Servers["tether"] = entry

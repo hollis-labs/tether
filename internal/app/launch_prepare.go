@@ -117,6 +117,17 @@ func TetherMCPPlant(catalogRoot, sessionID string, extractRefs bool, protected .
 	return TetherMCPPlan{Args: args, Attribution: store.RefAttributionProxy}
 }
 
+// withEditableAgents appends one --editable-agent flag per id to the planted
+// `tether mcp` argv, so tether_agent_create / tether_agent_edit refuse any other
+// agent id (agent_not_editable). Empty ids return args unchanged: an agent that
+// declares no editable_agents keeps the unrestricted behavior it always had.
+func withEditableAgents(args, ids []string) []string {
+	for _, id := range ids {
+		args = append(args, "--editable-agent", id)
+	}
+	return args
+}
+
 func mergeEnv(base []string, overlay map[string]string) []string {
 	if len(overlay) == 0 {
 		return base

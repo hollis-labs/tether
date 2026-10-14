@@ -118,6 +118,14 @@ type LaunchProfile struct {
 	// inherited through extends.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 
+	// EditableAgents lists the agent ids this agent's launched sessions may
+	// create or edit through tether_agent_create / tether_agent_edit: each id
+	// is planted as --editable-agent on the session's `tether mcp` entry, and
+	// any other id is refused with agent_not_editable. Absent or empty plants
+	// nothing, so an agent that does not declare it behaves exactly as before
+	// (no per-agent restriction). Per agent, not inherited through extends.
+	EditableAgents []string `yaml:"editable_agents,omitempty" json:"editable_agents,omitempty"`
+
 	// MachineAuthority marks the agent (Fleet Operations and its team/workers)
 	// as allowed to change machines: it may be granted the MCP upstreams in
 	// launch.MachineChangingMCPServers (Cerberus ssh/resource tools). Every
