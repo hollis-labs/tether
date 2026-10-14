@@ -216,11 +216,7 @@ func updateFileGuarded(path string, p Params, protected []string) (launchprofile
 	if err != nil {
 		return launchprofile.LaunchProfile{}, err
 	}
-	a, err := patchAgent(path, data, p)
-	if err != nil {
-		return launchprofile.LaunchProfile{}, err
-	}
-	body, err := marshalAgent(a)
+	a, body, err := patchAgent(path, data, p)
 	if err != nil {
 		return launchprofile.LaunchProfile{}, err
 	}

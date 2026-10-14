@@ -74,6 +74,7 @@ var (
 	mcpConfine       bool
 	mcpDaemonOnly    bool
 	mcpProtect       []string
+	mcpEditableAgent []string
 	mcpTokenStdin    bool
 )
 
@@ -94,6 +95,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpConfine, "confine", false, "confine the proxy to the --servers / TETHER_MCP_SERVERS list (requires --proxy): only those upstreams are loaded, started and reachable, tether_tool_call included; every --servers list now restricts loading and reachability; an omitted list with --confine selects none. Set automatically in a launched worker's .mcp.json")
 	mcpCmd.Flags().BoolVar(&mcpDaemonOnly, "daemon-only", false, "never open the state database: read and write Tether state only through the running daemon, and refuse to start without one (set in a launched worker's .mcp.json)")
 	mcpCmd.Flags().StringArrayVar(&mcpProtect, "protect-path", nil, "a directory this server must not write (repeatable): tether_agent_create and tether_agent_edit refuse a target under it with catalog_read_only, whether or not a sandbox also makes it read-only. Set automatically in a launched worker's .mcp.json, from the same decision that protects the agent's catalog, run and state directories")
+	mcpCmd.Flags().StringArrayVar(&mcpEditableAgent, "editable-agent", nil, "an agent id this server may create or edit (repeatable): tether_agent_create and tether_agent_edit refuse any other id with agent_not_editable. Unset means no per-agent restriction")
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
@@ -256,6 +258,7 @@ func configureMCPAdapter(adapter *mcpadapter.Adapter, listenAddr string) error {
 	// Wired here, where both the in-process and the daemon-only server pass,
 	// so the refusal cannot be a control that quietly does nothing on one.
 	adapter.SetProtectedPaths(mcpProtect)
+	adapter.SetEditableAgents(mcpEditableAgent)
 	adapter.SetBuildMetadata(version, commit, buildDate)
 	if mcpExtractRefs {
 		if listenAddr == "" {

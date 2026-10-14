@@ -312,3 +312,22 @@ func TestAgentOps_ProtectedPathResolvesSymlinks(t *testing.T) {
 		t.Fatalf("ProtectedPaths = %q, want the resolved %q", got, want)
 	}
 }
+
+func TestAgentOps_EditableAgentAllowlist(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeCatalogWrite)
+	a.SetEditableAgents([]string{"allowed"})
+
+	res := callAgentTool(t, a, "tether_agent_create", map[string]any{"id": "other", "scope": "system"})
+	if !res.IsError || !strings.Contains(textOf(res), codeAgentNotEditable) {
+		t.Fatalf("create of non-listed id = %s, want %s", textOf(res), codeAgentNotEditable)
+	}
+	res = callAgentTool(t, a, "tether_agent_edit", map[string]any{"id": "other", "name": "x"})
+	if !res.IsError || !strings.Contains(textOf(res), codeAgentNotEditable) {
+		t.Fatalf("edit of non-listed id = %s, want %s", textOf(res), codeAgentNotEditable)
+	}
+	res = callAgentTool(t, a, "tether_agent_create", map[string]any{"id": "allowed", "scope": "system"})
+	if res.IsError {
+		t.Fatalf("create of listed id failed: %s", textOf(res))
+	}
+}

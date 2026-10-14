@@ -6,6 +6,7 @@
 package agentops
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -97,20 +98,18 @@ func Create(layerRoot, id string, p Params) (string, error) {
 //   - A non-nil slice (even empty) replaces Roles/Skills; a nil slice leaves
 //     the existing list untouched. This is how a caller clears a list.
 //
-// The file is rewritten in canonical YAML form: comments and any keys not
-// modeled by launchprofile.LaunchProfile are NOT preserved. Agent files that carry
-// hand-authored comments or forward-compatible unknown fields should be
-// edited by hand rather than through Update.
+// Comments, key order and keys not modeled by launchprofile.LaunchProfile are
+// preserved; only the patched keys change.
 func Update(path string, p Params) (launchprofile.LaunchProfile, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: catalog-sourced path
 	if err != nil {
 		return launchprofile.LaunchProfile{}, err
 	}
-	a, err := patchAgent(path, data, p)
+	a, body, err := patchAgent(path, data, p)
 	if err != nil {
 		return launchprofile.LaunchProfile{}, err
 	}
-	if err := writeAgent(path, a); err != nil {
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return launchprofile.LaunchProfile{}, err
 	}
 	return a, nil
@@ -136,29 +135,76 @@ func newAgent(id string, p Params) launchprofile.LaunchProfile {
 	}
 }
 
-// patchAgent parses the agent file in data (read from path) and applies the
-// populated fields of p, as Update documents.
-func patchAgent(path string, data []byte, p Params) (launchprofile.LaunchProfile, error) {
-	var a launchprofile.LaunchProfile
-	if err := yaml.Unmarshal(data, &a); err != nil {
-		return launchprofile.LaunchProfile{}, fmt.Errorf("parse %s: %w", path, err)
+// patchAgent applies the populated fields of p to the agent file in data (read
+// from path) and returns the resulting agent and the file body to write. It
+// edits the YAML node tree, so comments, key order and keys that
+// launchprofile.LaunchProfile does not model survive the edit; only the
+// patched keys change.
+func patchAgent(path string, data []byte, p Params) (launchprofile.LaunchProfile, []byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return launchprofile.LaunchProfile{}, nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if doc.Kind == 0 { // empty file
+		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return launchprofile.LaunchProfile{}, nil, fmt.Errorf("parse %s: agent file is not a YAML mapping", path)
 	}
 	if p.Name != "" {
-		a.Name = p.Name
+		setScalar(root, "name", p.Name)
 	}
 	if p.Roles != nil {
-		a.Roles = p.Roles
+		setList(root, "roles", p.Roles)
 	}
 	if p.Skills != nil {
-		a.Skills = p.Skills
+		setList(root, "skills", p.Skills)
 	}
 	if p.SystemPrompt != "" {
-		a.SystemPrompt = p.SystemPrompt
+		setScalar(root, "system_prompt", p.SystemPrompt)
 	}
 	if p.AgentPrompt != "" {
-		a.AgentPrompt = p.AgentPrompt
+		setScalar(root, "agent_prompt", p.AgentPrompt)
 	}
-	return a, nil
+	var a launchprofile.LaunchProfile
+	if err := root.Decode(&a); err != nil {
+		return launchprofile.LaunchProfile{}, nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return launchprofile.LaunchProfile{}, nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return launchprofile.LaunchProfile{}, nil, err
+	}
+	return a, buf.Bytes(), nil
+}
+
+// setValue replaces the value node of key in mapping m, or appends the pair.
+func setValue(m *yaml.Node, key string, v *yaml.Node) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			v.HeadComment, v.LineComment, v.FootComment = m.Content[i+1].HeadComment, m.Content[i+1].LineComment, m.Content[i+1].FootComment
+			m.Content[i+1] = v
+			return
+		}
+	}
+	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, v)
+}
+
+func setScalar(m *yaml.Node, key, val string) {
+	setValue(m, key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: val})
+}
+
+func setList(m *yaml.Node, key string, vals []string) {
+	n := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, v := range vals {
+		n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v})
+	}
+	setValue(m, key, n)
 }
 
 func marshalAgent(a launchprofile.LaunchProfile) ([]byte, error) { return yaml.Marshal(a) }
