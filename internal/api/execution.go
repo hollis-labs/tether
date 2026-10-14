@@ -20,6 +20,22 @@ func (s *Server) registerExecutionRoutes(router *http.ServeMux) {
 	if !ok {
 		return
 	}
+	if cap, ok := s.Service.(interface {
+		Capacity() (execpolicy.CapacityView, error)
+	}); ok {
+		router.HandleFunc("/capacity", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+				return
+			}
+			v, err := cap.Capacity()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, CodeInternalError, "read capacity: "+err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, v)
+		})
+	}
 	router.HandleFunc("/execution/policy", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:

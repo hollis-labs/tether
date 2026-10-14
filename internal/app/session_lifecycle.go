@@ -249,9 +249,11 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 
 	// Refused here the session stays in state=created, so the same launch can
 	// be retried once the policy allows it.
-	if err := s.admitLaunch(row.ProjectID); err != nil {
+	releaseAdmit, err := s.admitLaunch(sessionID, row.ProjectID)
+	if err != nil {
 		return nil, err
 	}
+	defer releaseAdmit()
 
 	plan, err := s.Store.GetLaunchPlan(sessionID)
 	if err != nil {
