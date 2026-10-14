@@ -83,7 +83,7 @@ type Policy struct {
 	paused      atomic.Bool
 	sessionForm bool
 	pairingMu   sync.Mutex
-	pairing     ReviewerPairing
+	pairings    map[string]ReviewerPairing
 }
 
 // SessionFormation reports whether verified sessions may form teams.
@@ -341,12 +341,12 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 		}
 		log.Printf("teams: reviewer pairing fallback for run %q: only runtime %q is allowlisted, reviewer shares runtime/model with workers", req.Key, pairing.WorkerRuntime)
 	}
-	c.Policy.recordPairing(pairing)
+	c.Policy.recordPairing(req.Key, pairing)
 	return nil
 }
 
 // ReviewerPairing records the author (worker) and reviewer runtime/model chosen
-// by the most recent admitted formation; Different is false for the recorded
+// by an admitted formation, keyed by its request key; Different is false for the recorded
 // single-runtime fallback.
 type ReviewerPairing struct {
 	WorkerRuntime, WorkerModel     string
@@ -354,15 +354,24 @@ type ReviewerPairing struct {
 	Different                      bool
 }
 
-func (p *Policy) recordPairing(r ReviewerPairing) {
-	p.pairingMu.Lock()
-	p.pairing = r
-	p.pairingMu.Unlock()
-}
+// maxPairings bounds the per-formation pairing map; it is cleared when full
+// since a pairing is only read shortly after its formation is admitted.
+const maxPairings = 1024
 
-// LastReviewerPairing returns the pairing of the most recent admitted formation.
-func (p *Policy) LastReviewerPairing() ReviewerPairing {
+func (p *Policy) recordPairing(key string, r ReviewerPairing) {
 	p.pairingMu.Lock()
 	defer p.pairingMu.Unlock()
-	return p.pairing
+	if p.pairings == nil || len(p.pairings) >= maxPairings {
+		p.pairings = map[string]ReviewerPairing{}
+	}
+	p.pairings[key] = r
+}
+
+// PairingFor returns the pairing recorded when the formation with request key
+// was admitted, and false if none was (denied, unknown or evicted).
+func (p *Policy) PairingFor(key string) (ReviewerPairing, bool) {
+	p.pairingMu.Lock()
+	defer p.pairingMu.Unlock()
+	r, ok := p.pairings[key]
+	return r, ok
 }
