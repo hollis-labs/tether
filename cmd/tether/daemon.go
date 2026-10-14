@@ -961,6 +961,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		Injection:            in.Injection,
 		IdempotencyKey:       in.IdempotencyKey,
 		IdempotencyPrincipal: in.IdempotencyPrincipal,
+		ReplaceIdempotency:   in.ReplaceIdempotency,
 	})
 	if err != nil {
 		return api.LaunchResult{}, err

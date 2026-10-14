@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/session"
 	"sync"
 
 	"github.com/hollis-labs/tether/internal/launch"
@@ -86,9 +87,20 @@ func requestDigest(v any) string {
 // session or build a plan and create one bound to the key in the same
 // transaction as its row.
 func (s *Service) createKeyed(principal, key, digest string, build func() (*launch.Plan, error)) (*Launched, error) {
+	return s.createKeyedReplace(principal, key, digest, false, build)
+}
+
+// createKeyedReplace is createKeyed that, when replace is set, first unbinds
+// the key from an ended session.
+func (s *Service) createKeyedReplace(principal, key, digest string, replace bool, build func() (*launch.Plan, error)) (*Launched, error) {
 	principal = idempotencyPrincipal(principal)
 	unlock := s.lockIdempotencyKey(principal, key)
 	defer unlock()
+	if replace {
+		if err := s.releaseKeyForReplace(principal, key); err != nil {
+			return nil, err
+		}
+	}
 	if launched, err := s.replayIfKeyed(principal, key, store.IdempotencyOpCreate, digest); launched != nil || err != nil {
 		return launched, err
 	}
@@ -99,6 +111,27 @@ func (s *Service) createKeyed(principal, key, digest string, build func() (*laun
 	return s.createSessionFromPlan(plan, &store.SessionIdempotency{
 		PrincipalID: principal, Key: key, Operation: store.IdempotencyOpCreate, RequestDigest: digest,
 	})
+}
+
+// releaseKeyForReplace unbinds a key whose session has ended so the current
+// request claims it afresh (launch --replace). A key bound to a live session
+// is refused: stop it first. The caller must hold the key's lock.
+func (s *Service) releaseKeyForReplace(principal, key string) error {
+	rec, err := s.Store.GetSessionIdempotency(principal, key)
+	if err != nil {
+		return fmt.Errorf("look up idempotency key: %w", err)
+	}
+	if rec == nil {
+		return nil
+	}
+	row, err := s.Store.GetSession(rec.SessionID)
+	if err != nil {
+		return err
+	}
+	if !session.State(row.State).Terminal() {
+		return fmt.Errorf("%w (key is bound to session %s which is still %s; stop it before --replace)", store.ErrIdempotencyConflict, rec.SessionID, row.State)
+	}
+	return s.Store.ReleaseSessionIdempotency(principal, key)
 }
 
 // replayIfKeyed returns the session principal's key is bound to when the stored request

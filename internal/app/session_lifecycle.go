@@ -111,7 +111,7 @@ func (s *Service) CreateSessionWithInput(in CreateSessionInput) (*Launched, erro
 		}
 		return s.createSessionFromPlan(plan, nil)
 	}
-	return s.createKeyed(in.IdempotencyPrincipal, in.IdempotencyKey, createRequestDigest(in), func() (*launch.Plan, error) {
+	return s.createKeyedReplace(in.IdempotencyPrincipal, in.IdempotencyKey, createRequestDigest(in), in.ReplaceIdempotency, func() (*launch.Plan, error) {
 		return s.BuildLaunchPlan(in)
 	})
 }
