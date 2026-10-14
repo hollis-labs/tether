@@ -34,7 +34,7 @@ func (s *Server) registerTeamRosterRoute(mux *http.ServeMux) {
 		}
 		result, err := ops.ListRoster(r.Context(), query)
 		if err != nil {
-			status, detail := TeamError(err)
+			status, detail := TeamErrorFor(r.Context(), err)
 			writeError(w, status, detail.Code, detail.Message)
 			return
 		}

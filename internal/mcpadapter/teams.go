@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 
 	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/api"
@@ -105,7 +106,10 @@ func (a *Adapter) handleTeam(ctx context.Context, verb string, args map[string]a
 		}
 	}
 	if err != nil {
-		_, detail := api.TeamError(err)
+		status, detail := api.TeamErrorFor(ctx, err)
+		if status >= 500 {
+			slog.WarnContext(ctx, "team verb failed", "verb", verb, "code", detail.Code, "cause", api.InternalCause(err))
+		}
 		return nil, toolError(detail.Code, detail.Message)
 	}
 	return result, nil

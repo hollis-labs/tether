@@ -15,6 +15,7 @@ import (
 
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/teamsvc"
 )
 
@@ -221,6 +222,9 @@ func teamMessage(key string, r TeamRequest) teamsvc.MessageRequest {
 	return teamsvc.MessageRequest{Key: key, RunID: r.RunID, Address: r.Address, Body: r.Body, Kind: r.Kind, History: r.History}
 }
 
+// maxInternalCause bounds the cause text echoed to the local operator.
+const maxInternalCause = 300
+
 // TeamError hides causes and gives all surfaces identical stable classifications.
 func TeamError(err error) (int, ErrorDetail) {
 	status, code := http.StatusInternalServerError, CodeInternalError
@@ -241,6 +245,34 @@ func TeamError(err error) (int, ErrorDetail) {
 	return status, ErrorDetail{Code: code, Message: code}
 }
 
+// TeamErrorFor is TeamError plus diagnostics for the verified local operator:
+// an unclassified (500) failure carries its bounded single-line cause, so the
+// person running the daemon is not left with a bare internal_error. Every
+// other caller keeps the cause-free envelope.
+func TeamErrorFor(ctx context.Context, err error) (int, ErrorDetail) {
+	status, detail := TeamError(err)
+	if detail.Code != CodeInternalError || err == nil {
+		return status, detail
+	}
+	if caller, ok := identity.FromContext(ctx); ok && caller.Verified && caller.Kind == "operator" && caller.ID == identity.OperatorID && identity.LocalConnection(ctx) {
+		detail.Message = detail.Code + ": " + InternalCause(err)
+	}
+	return status, detail
+}
+
+// InternalCause renders the innermost cause of a team failure on one bounded line.
+func InternalCause(err error) string {
+	var te *teamsvc.Error
+	if errors.As(err, &te) && te.Cause != nil {
+		err = te.Cause
+	}
+	text := strings.Join(strings.Fields(err.Error()), " ")
+	if len(text) > maxInternalCause {
+		text = text[:maxInternalCause] + "..."
+	}
+	return text
+}
+
 func (s *Server) registerTeamRoutes(mux *http.ServeMux) {
 	if !HasTeamOps(s.Teams) {
 		return
@@ -259,9 +291,9 @@ func (s *Server) registerTeamRoutes(mux *http.ServeMux) {
 				result, err = CallTeam(r.Context(), s.Teams, verb, r.Header.Get("Idempotency-Key"), req)
 			}
 			if err != nil {
-				status, detail := TeamError(err)
+				status, detail := TeamErrorFor(r.Context(), err)
 				if status >= 500 || status == 409 {
-					slog.WarnContext(r.Context(), "team verb failed", "verb", verb, "code", detail.Code, "err", err, "cause", errors.Unwrap(err))
+					slog.WarnContext(r.Context(), "team verb failed", "verb", verb, "code", detail.Code, "err", err, "cause", InternalCause(err))
 				}
 				writeError(w, status, detail.Code, detail.Message)
 				return
