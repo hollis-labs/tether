@@ -7,6 +7,9 @@ const (
 	// KindSessionTurnRouted is the atomic durable audit of channel attachment.
 	KindSessionTurnRouted = "session.turn_routed"
 
+	// KindSessionShimRetired audits an operator retirement of a detached shim session.
+	KindSessionShimRetired = "session.shim_retired"
+
 	// KindSessionTurnOutput carries a reduced turn and an optional staged message id.
 	KindSessionTurnOutput = "session.turn_output"
 

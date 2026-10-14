@@ -898,6 +898,19 @@ Response (200):
 `output_text` is the full staged text when still retained, otherwise the event
 excerpt with `output_truncated: true` if it was cut.
 
+### `POST /sessions/{id}/retire-shim`
+
+Operator retirement (scope `maintain`) of a `detached` session whose shim
+outcome is unknown, so the `shim-detached` doctor warning can be cleared. The
+daemon takes the session launch gate and requires the canonical placement
+receipt to load and the host to report the placement gone; it then stops the
+provider, marks the session `orphaned` (`shim_retired_by_operator`) and emits
+`session.shim_retired` `{actor, session_id, placement_key, backend, brand,
+acknowledged_obligations}`. Body (optional): `{"acknowledge_obligations": true}`,
+required for Codex sessions. Team members are refused. 204 on success; 409
+`conflict` when refused (not detached, no shim, host still present or
+unverifiable); 404 for an unknown session. CLI: `tether sessions retire-shim <id>`.
+
 ### `POST /sessions/{id}/input`
 
 Write raw bytes to the session's PTY input. Request body is

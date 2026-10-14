@@ -42,7 +42,7 @@ func checkShimHosting(cat *config.Catalog) []checkResult {
 				reason = status.Reason
 			}
 		}
-		results = append(results, warn("shim-detached", fmt.Sprintf("session=%s reason=%s key=%s backend=%s unit=%s socket=%s", row.SessionID, reason, row.ShimKey, row.HostBackend, row.UnitName, row.SocketPath), "restore the private receipt or host connectivity and retry reconciliation; unknown outcomes retain the child and authority; no explicit retirement API exists"))
+		results = append(results, warn("shim-detached", fmt.Sprintf("session=%s reason=%s key=%s backend=%s unit=%s socket=%s", row.SessionID, reason, row.ShimKey, row.HostBackend, row.UnitName, row.SocketPath), "restore the private receipt or host connectivity and retry reconciliation; unknown outcomes retain the child and authority until an operator runs `tether sessions retire-shim <id>`, which retires only after the host is verified gone"))
 	}
 	return results
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/session"
@@ -80,6 +82,12 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleStopSession(w, r, id)
+	case "retire-shim":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleRetireShim(w, r, id)
 	case "wait":
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -537,6 +545,39 @@ func (s *Server) handleResizeSession(w http.ResponseWriter, r *http.Request, id 
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRetireShim services POST /sessions/{id}/retire-shim: the explicit,
+// audited operator retirement of a detached unknown-outcome shim session.
+func (s *Server) handleRetireShim(w http.ResponseWriter, r *http.Request, id string) {
+	rs, ok := s.Service.(ShimRetirer)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, CodeNotImplemented, "shim retirement is not available")
+		return
+	}
+	var in RetireShimRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
+			return
+		}
+	}
+	actor := r.URL.Query().Get("as")
+	if p, ok := identity.FromContext(r.Context()); ok {
+		actor = p.ID
+	}
+	if err := rs.RetireShimSession(r.Context(), id, actor, in.AcknowledgeObligations); err != nil {
+		switch {
+		case errors.Is(err, store.ErrSessionNotFound):
+			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
+		case errors.Is(err, ErrShimRetireRefused):
+			writeError(w, http.StatusConflict, CodeConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
