@@ -18,7 +18,9 @@ import (
 
 func TestDaemonEnvironmentReportSelectedInputsAndJoinedSampler(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	stateRoot, workRoot := t.TempDir(), t.TempDir()
+	// SQLite reports the resolved database path, and macOS temp dirs sit
+	// behind a /var -> /private/var symlink, so compare resolved roots.
+	stateRoot, workRoot := resolvedTempDir(t), resolvedTempDir(t)
 	db, err := store.Open(filepath.Join(stateRoot, "selected.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -172,4 +174,13 @@ func TestDaemonEnvironmentReportCloseBeforeServiceOnRunFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
