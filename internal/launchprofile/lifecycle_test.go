@@ -39,3 +39,18 @@ func TestLifecycleNoImplicitCeilingAndInvalidLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestLifecycleStopAfterFinalTurnIsOptInAndCascades(t *testing.T) {
+	var none *LifecyclePolicy
+	if d, _ := none.Durations(); d.StopAfterFinalTurn != 0 {
+		t.Fatalf("default must be disabled: %v", d.StopAfterFinalTurn)
+	}
+	p := MergeLifecycle(&LifecyclePolicy{StopAfterFinalTurn: durationText("45s")}, &LifecyclePolicy{IdleTimeout: durationText("10m")})
+	d, err := p.Durations()
+	if err != nil || d.StopAfterFinalTurn != 45*time.Second {
+		t.Fatalf("got %+v err=%v", d, err)
+	}
+	if _, err := (&LifecyclePolicy{StopAfterFinalTurn: durationText("-1s")}).Durations(); err == nil {
+		t.Fatal("negative grace accepted")
+	}
+}

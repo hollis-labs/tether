@@ -372,7 +372,9 @@ template. Release-time posture stays strict.
 The same template sets `lifecycle.idle_timeout`, which ends a worker session
 that has gone quiet after its final turn (see *Session lifecycle policy* in
 `docs/api/README.md`); without it a finished worker keeps running until stopped.
-There is no explicit "done" signal yet: end-on-idle is the only auto-end.
+For a faster end, set `lifecycle.stop_after_final_turn` (e.g. `30s`): the session
+stops with reason `final_turn` once a turn completes and nothing follows within
+that grace. It is opt-in; leave it unset for sessions that wait for further input.
 
 `tether launch --torque-task <id>` plants task bundles by fetching the tasks
 from Torque. Export `TORQUE_API_TOKEN` in the launching CLI's environment when

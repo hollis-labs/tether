@@ -15,6 +15,7 @@ permissions:
 # activity. max_duration is the backstop for a worker that never goes quiet.
 lifecycle:
   idle_timeout: 10m
+  stop_after_final_turn: 60s
   max_duration: 4h
 # Task template default: the closing step is part of the job. Whoever merges the
 # work transitions the Torque task (done if merged, review if not), cites the PR

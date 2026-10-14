@@ -54,6 +54,8 @@ type sessionTurnOutput struct {
 	reducerTurnID            string
 	turnDone                 chan struct{}
 	finishedTurns            []string
+	// finalTurnGrace is lifecycle.stop_after_final_turn; zero means opt out.
+	finalTurnGrace time.Duration
 }
 
 func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) *sessionTurnOutput {
@@ -74,6 +76,11 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 		log.Printf("ERROR session %q: read output route; full-text routing unavailable: %v", row.ID, err)
 	}
 	out := &sessionTurnOutput{service: s, row: row, route: route, routeUnread: err != nil, runtimeID: config.CanonicalRuntimeID(plan.ProviderBrand)}
+	if plan.Lifecycle != nil {
+		if d, derr := plan.Lifecycle.Durations(); derr == nil {
+			out.finalTurnGrace = d.StopAfterFinalTurn
+		}
+	}
 	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), QuestionTools: s.questionTools(config.CanonicalRuntimeID(plan.ProviderBrand)), NewTurnID: func() string {
 		out.ensureTurn()
 		out.noteTurnActivity()
