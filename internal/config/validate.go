@@ -106,9 +106,9 @@ func (c *Catalog) Validate() error {
 		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
 			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
 		}
-		if a.IsManager() && EffectivePermissionMode(c.Global, a) == PermissionModeBypass {
-			return fmt.Errorf("agent %q has role %q and resolves to permission_mode %q; managers must not run with blanket bypass (set permissions.permission_mode: default and an MCP-only provider_overrides allowlist)", id, launchprofile.RoleManager, PermissionModeBypass)
-		}
+		// Manager + bypass is not an error while dev posture is in force: it is a
+		// warning from catalogcheck.ManagerBypass instead.
+		// dev posture 2026-10-14: restore as error before release; see Torque Security project PRJ-20261014-0001 and CW-20261013-0053
 	}
 	return nil
 }

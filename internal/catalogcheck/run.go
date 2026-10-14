@@ -38,6 +38,7 @@ func Run(root string) Report {
 		results = append(results, MCPNamingConfig(root)...)
 		results = append(results, MCPCredentialFiles(root)...)
 		results = append(results, TeamsPolicy(cat, root)...)
+		results = append(results, ManagerBypass(cat)...)
 	}
 	return newReport(results)
 }

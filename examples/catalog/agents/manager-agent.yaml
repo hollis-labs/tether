@@ -5,8 +5,8 @@ skills: []
 description: >
   Template for a manager/chat agent. A manager does not do hands-on work: it
   reads the catalog and Torque, writes drafts, and delegates execution to
-  workers. The catalog refuses a manager that resolves to permission_mode
-  bypass (config.Catalog.Validate).
+  workers. Catalog validation warns about a manager that resolves to
+  permission_mode bypass (catalogcheck.ManagerBypass; dev posture 2026-10-14).
 # Never bypass. A headless launch cannot answer permission prompts, so
 # "default" only works together with an explicit tool allowlist: the Claude
 # --allowedTools below pre-approves the MCP servers and --disallowedTools

@@ -385,9 +385,10 @@ agent's `agent_prompt` carries the protocol, including the closing step
 ## Manager agents
 
 An agent with `roles: [manager]` is a chat/manager agent: it delegates hands-on
-work to workers instead of doing it. The catalog refuses to load a manager whose
-effective `permission_mode` (the agent's own, else `defaults.permission_mode`)
-is `bypass`. Because a headless `default` launch denies every tool call, a
+work to workers instead of doing it. A manager whose effective `permission_mode`
+(the agent's own, else `defaults.permission_mode`) is `bypass` currently only
+draws a catalog validation warning, not a refusal (dev posture 2026-10-14; it
+is meant to be an error again before release). Because a headless `default` launch denies every tool call, a
 manager pairs `permission_mode: default` with a
 `provider_overrides.claude-code.extra_args` allowlist (`--allowedTools` for the
 `mcp__torque`, `mcp__tesseract` and `mcp__tether` servers, `--disallowedTools`
