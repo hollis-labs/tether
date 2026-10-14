@@ -188,6 +188,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/registry/", "/registry/{kind}/{id}/sync", map[string]string{"POST": maintainScope}, "registry-kind"),
 	routeScope("/registry/", "/registry/{kind}/{id}/merge", map[string]string{"POST": maintainScope}, "registry-kind"),
 	routeScope("/whoami", "/whoami", map[string]string{"GET": readScope}),
+	routeScope("/execution/policy", "/execution/policy", map[string]string{"GET": readScope, "PUT": localScope}),
 	routeScope("/settings/mcp", "/settings/mcp", map[string]string{"GET": readScope, "PUT": maintainScope}),
 	routeScope("/settings/onboarding", "/settings/onboarding", map[string]string{"GET": readScope}),
 	routeScope("/settings/onboarding/", "/settings/onboarding/{scope}", map[string]string{"GET": readScope, "POST": maintainScope, "PUT": maintainScope}),

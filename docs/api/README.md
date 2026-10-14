@@ -1668,6 +1668,23 @@ MCP: `tether_tool_metrics`. CLI: `tether events tool-metrics --json`. See
 process-lifetime OTel semantics. `/proxy/events` query responses also include
 v2 call metadata from migration 0042's compatibility projection.
 
+### `GET /execution/policy`, `PUT /execution/policy`
+
+Execution policy (CW-20261011-0015): a global go/pause switch, an
+environment-wide cap on live sessions (`max_sessions`) and per-project caps
+(`project_caps`), enforced when a created session launches. The default is
+running with no caps (`0` = no cap). `GET` returns `{policy, usage}` where usage
+counts launching, running, detached and orphaned sessions (`total`,
+`by_project`). `PUT` replaces the policy (`{paused, reason, max_sessions,
+project_caps}`; local operator scope only) and does not touch running
+sessions. A launch refused by policy returns 409 with code `execution_paused`,
+`environment_cap_reached` or `project_cap_reached`; the session stays
+`created` and the same launch succeeds once the policy allows it. The
+count check and the launch are not one transaction, so concurrent launches at
+the cap can briefly exceed it.
+
+MCP: `tether_execution_status` (read-only). CLI: `tether execution status|pause|resume|cap`.
+
 ### `GET /events/stream`
 
 SSE stream of bus events. Replays history (via `since_seq`) then switches
