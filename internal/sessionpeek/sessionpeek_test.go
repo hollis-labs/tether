@@ -50,3 +50,21 @@ func TestTruncRedactsMoreSecretsAndKeepsRunesWhole(t *testing.T) {
 		t.Errorf("truncation split a rune: %q", out)
 	}
 }
+
+func TestRedactsJSONQuotedSecretKeys(t *testing.T) {
+	for _, in := range []string{
+		`{"api_key":"abc123xyz"}`,
+		`{"password": "hunter2 x"}`,
+		`{"client_secret" : "s3cr3t"}`,
+		`{"cmd":"{\"api_key\":\"abc123xyz\",\"n\":1}"}`,
+		`{'token': 'abc123xyz'}`,
+		`GH_TOKEN=abc123xyz`,
+	} {
+		out := trunc(in, 500)
+		for _, leak := range []string{"abc123xyz", "hunter2", "s3cr3t"} {
+			if strings.Contains(out, leak) {
+				t.Errorf("secret %q survived: %q -> %q", leak, in, out)
+			}
+		}
+	}
+}

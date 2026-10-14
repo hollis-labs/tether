@@ -20,7 +20,7 @@ const (
 // secretRE masks token-looking values and KEY=value pairs for secret-ish
 // names before anything is printed.
 var secretRE = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_\-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|xox[abp]-[A-Za-z0-9\-]{10,}|bearer\s+[A-Za-z0-9._\-]{12,}|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]*|(?:AKIA|ASIA)[A-Z0-9]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)|(?:set-)?cookie:\s*[^\n]{8,}|(?:AIza[0-9A-Za-z_\-]{30,})|glpat-[A-Za-z0-9_\-]{16,}|npm_[A-Za-z0-9]{30,})`)
-var envRE = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL)[A-Z0-9_]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|\S+)`)
+var envRE = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL)[A-Z0-9_]*)(\\?["']?\s*[=:]\s*)(\\"[^"]*?\\"|"(?:[^"\\]|\\.)*"|'[^']*'|\S+)`)
 
 func redact(s string) string {
 	s = envRE.ReplaceAllString(s, "${1}${2}[redacted]")
