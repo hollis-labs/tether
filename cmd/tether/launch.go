@@ -114,6 +114,10 @@ var launchCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, "replayed:  this idempotency key already launched the session above")
 		}
 
+		if len(launchTorqueTasks) > 0 {
+			recordLaunchTaskRefs(ctx, c, res.ID, launchTorqueTasks)
+		}
+
 		if launchWait {
 			code, err := c.WaitSession(ctx, res.ID)
 			if err != nil {
