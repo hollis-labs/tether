@@ -398,6 +398,7 @@ func launchFakeCodex(t *testing.T, svc *Service, script string, mod func(*launch
 // stand-in is a codex launched with codex's own sandbox switched off, which
 // is when Tether's protection applies to codex.
 func TestProtectedLaunch_AgentCannotWriteCatalogOrRunDir(t *testing.T) {
+	skipWithoutMCPProxyConfinement(t)
 	svc, catalog, run := tetherLayout(t)
 	state := filepath.Join(filepath.Dir(catalog), "state")
 	clearWritableRoots(t)
@@ -431,6 +432,7 @@ func TestProtectedLaunch_AgentCannotWriteCatalogOrRunDir(t *testing.T) {
 // where every other provider is refused. The stand-in is not wrapped by
 // Tether: it can see it is not in a private PID namespace.
 func TestLaunchSession_CodexRunsWhereBwrapCannotNest(t *testing.T) {
+	skipWithoutMCPProxyConfinement(t)
 	svc, _, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	bwrapAvailable = func(string) error { return errors.New("bwrap: No permissions to create a new namespace") }

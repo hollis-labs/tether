@@ -156,6 +156,7 @@ func TestRefuseWidenedCodex(t *testing.T) {
 // HTTP and MCP routes all come through these two), and it runs again once the
 // file is gone. The entry is dropped when the session ends.
 func TestCodexExemptSession_TurnRefusedWhenProjectConfigAppears(t *testing.T) {
+	skipWithoutMCPProxyConfinement(t)
 	svc, _, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	counter := filepath.Join(t.TempDir(), "runs")
@@ -236,6 +237,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 // Negative control for the above: with nothing planted a second turn runs, so
 // the refusal is the check and not some other effect of the setup.
 func TestCodexExemptSession_SecondTurnRunsWhenNothingIsPlanted(t *testing.T) {
+	skipWithoutMCPProxyConfinement(t)
 	svc, _, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	counter := filepath.Join(t.TempDir(), "runs")
