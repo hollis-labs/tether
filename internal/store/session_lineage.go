@@ -48,3 +48,11 @@ func (s *Store) LiveChildCount(id string) (int, error) {
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE parent_session_id=? AND state IN ('created','ready','launching','running','detached','orphaned')`, id).Scan(&n)
 	return n, err
 }
+
+// ChildCountSince counts every direct child of id (any state) created at or
+// after cutoff, an RFC3339 UTC timestamp.
+func (s *Store) ChildCountSince(id, cutoff string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE parent_session_id=? AND created_at>=?`, id, cutoff).Scan(&n)
+	return n, err
+}
