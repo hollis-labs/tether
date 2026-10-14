@@ -60,3 +60,13 @@ func TestApplyReloadRefusedRestoresFiles(t *testing.T) {
 		t.Fatalf("refused file was not restored: %v", serr)
 	}
 }
+
+func TestTeamsRestartNote(t *testing.T) {
+	plan := func(path, action string) *Plan { return &Plan{Files: []PlannedFile{{Path: path, Action: action}}} }
+	if teamsRestartNote(plan("teams-policy.yaml", "modify")) == "" || teamsRestartNote(plan("team-definitions/a.md", "create")) == "" {
+		t.Fatal("teams policy and definition edits must report restart_required")
+	}
+	if teamsRestartNote(plan("teams-policy.yaml", "unchanged")) != "" || teamsRestartNote(plan("agents/a.yaml", "modify")) != "" {
+		t.Fatal("unrelated or unchanged files must not")
+	}
+}
