@@ -1103,7 +1103,7 @@ func rejectLegacyMCPPlan(plan *launch.Plan) error {
 func (s *Service) closeCreatedSession(id string) (bool, error) {
 	row, err := s.Store.GetSession(id)
 	if err != nil || row.State != string(session.StateCreated) {
-		return false, nil
+		return false, nil //nolint:nilerr // a missing row or one past created has nothing to close: reported as not closed, not as a failure
 	}
 	if s.sessionHeldLive(row.ID, row.WorkerID) {
 		return false, nil
