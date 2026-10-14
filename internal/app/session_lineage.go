@@ -17,7 +17,13 @@ type LineageLimits struct {
 }
 
 // ErrLineageLimit is returned when a new child would exceed LineageLimits.
-var ErrLineageLimit = errors.New("session lineage limit exceeded")
+var ErrLineageLimit error = lineageLimitError{}
+
+// lineageLimitError carries a typed code so the API answers 409 (ADR 0010).
+type lineageLimitError struct{}
+
+func (lineageLimitError) Error() string     { return "session lineage limit exceeded" }
+func (lineageLimitError) ErrorCode() string { return "lineage_limit_exceeded" }
 
 // checkLineage refuses a child of parentID that would breach the configured
 // limits. An empty parentID (a root session) is always allowed.
@@ -47,6 +53,10 @@ func (s *Service) checkLineage(parentID string) error {
 	}
 	return nil
 }
+
+// CheckLineage is the exported admission check for a new child of parentID,
+// used by the session bootstrap route.
+func (s *Service) CheckLineage(parentID string) error { return s.checkLineage(parentID) }
 
 // StopSessionCascade stops id's descendants (deepest first) and then id. A
 // descendant that is not running is skipped; the first real stop error is

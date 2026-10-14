@@ -507,8 +507,17 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id str
 	writeJSON(w, http.StatusOK, sessionResponseFor(r, dto))
 }
 
-func (s *Server) handleStopSession(w http.ResponseWriter, _ *http.Request, id string) {
-	if err := s.Service.StopSession(id); err != nil {
+func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request, id string) {
+	stop := s.Service.StopSession
+	if queryFlag(r, "cascade") {
+		cs, ok := s.Service.(interface{ StopSessionCascade(string) error })
+		if !ok {
+			writeError(w, http.StatusNotImplemented, CodeInvalidRequest, "cascade stop is not supported by this service")
+			return
+		}
+		stop = cs.StopSessionCascade
+	}
+	if err := stop(id); err != nil {
 		var coded interface{ ErrorCode() string }
 		if errors.As(err, &coded) {
 			writeError(w, http.StatusConflict, coded.ErrorCode(), err.Error())

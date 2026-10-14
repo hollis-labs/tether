@@ -66,3 +66,19 @@ func TestLaunchRefusedByExecutionPolicyIs409(t *testing.T) {
 		t.Fatalf("launch = %d %s", rec.Code, rec.Body)
 	}
 }
+
+type cascadeLaunchService struct {
+	*fakeLaunchService
+	cascaded string
+}
+
+func (c *cascadeLaunchService) StopSessionCascade(id string) error { c.cascaded = id; return nil }
+
+func TestStopCascadeRoute(t *testing.T) {
+	svc := &cascadeLaunchService{fakeLaunchService: &fakeLaunchService{}}
+	rec := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sessions/s1/stop?cascade=true", nil))
+	if rec.Code != 204 || svc.cascaded != "s1" {
+		t.Fatalf("cascade stop = %d cascaded=%q", rec.Code, svc.cascaded)
+	}
+}
