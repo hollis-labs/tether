@@ -3,8 +3,11 @@ package app
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 // LineageLimits caps plain (non-team) session lineage. A zero field means
@@ -100,10 +103,30 @@ func (s *Service) StopSessionCascade(id string) error {
 	order = append(order, id)
 	var first error
 	for _, sid := range order {
-		err := s.StopSession(sid)
+		err := s.stopCascadeMember(sid)
 		if err != nil && !errors.Is(err, agentsessions.ErrSessionNotRunning) && first == nil {
 			first = fmt.Errorf("stop %s: %w", sid, err)
 		}
 	}
 	return first
+}
+
+// stopCascadeMember stops one session of a cascade. A worker-placed session is
+// stopped through its worker; if that fails for a session the hub already
+// records as ended, or the worker no longer knows it, there is nothing left to
+// stop and the cascade is not failed by it. A live worker session whose worker
+// is unreachable still reports the error.
+func (s *Service) stopCascadeMember(id string) error {
+	row, worker := s.workerSession(id)
+	if !worker {
+		return s.StopSession(id)
+	}
+	if s.Workers == nil {
+		return fmt.Errorf("worker session %s: %w", id, workerhub.ErrChannelUnavailable)
+	}
+	err := s.StopSession(id)
+	if err != nil && (session.State(row.State).Terminal() || strings.Contains(err.Error(), "unknown execution")) {
+		return nil
+	}
+	return err
 }
