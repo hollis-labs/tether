@@ -15,6 +15,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/sessionpeek"
 	"github.com/hollis-labs/tether/internal/store"
@@ -218,6 +219,11 @@ func (a *Adapter) handleSessionGet(ctx context.Context, args map[string]any) (an
 }
 
 func (a *Adapter) handleSessionPeek(ctx context.Context, args map[string]any) (any, error) {
+	// The digest carries tool-call arguments and results from the session log,
+	// so it needs the scope GET /sessions/{id}/log requires, not metadata read.
+	if err := a.checkScope(identity.ScopeTerminal); err != nil {
+		return nil, err
+	}
 	id := str(args, "session_id")
 	if id == "" {
 		return nil, toolError("invalid_request", "session_id required")
