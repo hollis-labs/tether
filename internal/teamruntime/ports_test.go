@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/substrate/mesh/agentdef"
@@ -181,6 +182,19 @@ type sessionEffects struct {
 	createFault, stopFault error
 	launched               int
 	beforeCreate           func()
+	timeouts               []time.Duration
+}
+
+// CreateTeamSessionWithLimits records the enforced spawn timeout. Like a service
+// without context support, it refuses a sealed boot context.
+func (f *sessionEffects) CreateTeamSessionWithLimits(ctx context.Context, key, launchID string, boot app.TeamBootContext, d time.Duration) (*app.Launched, error) {
+	if boot != (app.TeamBootContext{}) {
+		return nil, teamhost.ErrSessionUnavailable
+	}
+	f.mu.Lock()
+	f.timeouts = append(f.timeouts, d)
+	f.mu.Unlock()
+	return f.CreateTeamSession(ctx, key, launchID)
 }
 
 func (f *sessionEffects) CreateSessionWithInput(in app.CreateSessionInput) (*app.Launched, error) {
