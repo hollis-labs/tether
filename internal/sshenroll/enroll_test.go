@@ -28,6 +28,16 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
+// requireLinuxHost skips tests that enroll against an in-process daemon or a
+// managed systemd unit: their fixtures describe a linux worker, and the
+// verified-release check compares that with the host's real platform.
+func requireLinuxHost(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skipf("fixture models a linux worker; host is %s", runtime.GOOS)
+	}
+}
+
 func testRelease(t *testing.T, arch string) (string, string, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -159,6 +169,7 @@ func enrollmentFixture(t *testing.T) (*Manager, Options, *fixtureRemote) {
 }
 
 func TestEnrollmentActualDaemonPairingAndIdempotentRetry(t *testing.T) {
+	requireLinuxHost(t)
 	m, o, f := enrollmentFixture(t)
 	r, err := m.Add(context.Background(), o)
 	if err != nil {
@@ -190,6 +201,7 @@ func TestEnrollmentActualDaemonPairingAndIdempotentRetry(t *testing.T) {
 	}
 }
 func TestEnrollmentUncertainExchangeIsRetainedAndNeverReplayed(t *testing.T) {
+	requireLinuxHost(t)
 	m, o, f := enrollmentFixture(t)
 	f.discardExchange.Store(true)
 	r, err := m.Add(context.Background(), o)
@@ -220,6 +232,7 @@ func TestEnrollmentPreflightStopsBeforeWorkerOrHubChanges(t *testing.T) {
 	}
 }
 func TestEnrollmentPartialInstallRetryPreservesOperation(t *testing.T) {
+	requireLinuxHost(t)
 	m, o, f := enrollmentFixture(t)
 	f.failInstall = true
 	r, err := m.Add(context.Background(), o)

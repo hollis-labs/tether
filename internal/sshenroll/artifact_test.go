@@ -39,6 +39,7 @@ func TestHubArtifactSnapshotAndChecksums(t *testing.T) {
 	}
 }
 func TestHubChecksumFailurePreventsWorkerChanges(t *testing.T) {
+	requireLinuxHost(t)
 	m, o, f := enrollmentFixture(t)
 	if err := os.WriteFile(o.Checksums, []byte(strings.Repeat("0", 64)+"  "+filepath.Base(o.Archive)+"\n"), 0600); err != nil {
 		t.Fatal(err)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestWorkerStagesExistingInitAndManagedServiceWithRetainedState(t *testing.T) {
+	requireLinuxHost(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	archive, checksums, _ := testRelease(t, nativeArch())
