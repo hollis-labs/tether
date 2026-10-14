@@ -194,6 +194,10 @@ type ProxyOptions struct {
 	// ServerFilter is a strict upstream restriction in both discovery modes.
 	// Nil selects enabled catalog entries; an explicitly empty slice selects none.
 	ServerFilter []string
+	// MachineAccess is the caller's machine access (launch.MachineAccessReadOnly
+	// or ReadWrite) for daemon-owned gateway views, which cannot read the
+	// per-agent env. Empty means read-only.
+	MachineAccess string
 	// Confine also treats a nil filter as an explicit grant of no upstreams.
 	Confine bool
 

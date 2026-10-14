@@ -20,13 +20,25 @@ import (
 // these (after the server prefix) is a write.
 var readToolVerbs = []string{"list", "get", "show", "describe", "status", "read", "search", "health", "whoami", "inspect", "info", "check", "history", "audit", "ls", "find", "query"}
 
+// writeToolVerbs veto a read classification when they appear anywhere in the
+// name, so compound names such as get_and_apply or find_and_delete are writes.
+var writeToolVerbs = []string{"exec", "run", "delete", "remove", "apply", "fix", "install", "enroll", "restart", "write", "set", "create", "update", "and", "then"}
+
 // IsReadOnlyMachineTool reports whether tool, called on server, only reads.
 func IsReadOnlyMachineTool(server, tool string) bool {
 	name := strings.ToLower(tool)
 	name = strings.TrimPrefix(name, strings.ToLower(server)+"_")
 	name = strings.TrimPrefix(name, strings.ToLower(server)+".")
 	verb, _, _ := strings.Cut(name, "_")
-	return slices.Contains(readToolVerbs, verb)
+	if !slices.Contains(readToolVerbs, verb) {
+		return false
+	}
+	for _, seg := range strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' }) {
+		if slices.Contains(writeToolVerbs, seg) {
+			return false
+		}
+	}
+	return true
 }
 
 // MachineAuthorityMiddleware enforces the agent's machine access on every call
