@@ -255,7 +255,9 @@ func checkDaemon(cat *config.Catalog) checkResult {
 	return ok("daemon-reachable", cfg.ListenAddr)
 }
 
-// checkMigrations opens the SQLite store (which applies pending migrations) and closes it.
+// checkMigrations inspects the state DB read-only: doctor never migrates, so it
+// cannot contend with a running daemon for the write lock. Schema ownership
+// stays with the daemon (or tether init).
 func checkMigrations(cat *config.Catalog) checkResult {
 	if cat == nil {
 		return warn("migrations-current", "skipped — catalog unavailable", "fix catalog first")
@@ -265,13 +267,40 @@ func checkMigrations(cat *config.Catalog) checkResult {
 		return fail("migrations-current", "state_db path not configured",
 			"add catalog.defaults.state_db to global.yaml")
 	}
-	db, err := store.Open(dbPath)
-	if err != nil {
-		return fail("migrations-current", fmt.Sprintf("open/migrate failed: %v", err),
-			"run: tether init  or check DB permissions at "+dbPath)
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return warn("migrations-current", "state DB not created yet: "+dbPath,
+				"run: tether init  or start the daemon")
+		}
+		return fail("migrations-current", fmt.Sprintf("cannot stat state DB: %v", err),
+			"check DB permissions at "+dbPath)
 	}
-	_ = db.Close()
+	s, err := store.OpenReadOnly(dbPath)
+	if err != nil {
+		return migrationsInspectError(err, dbPath)
+	}
+	defer func() { _ = s.Close() }()
+	pending, err := store.PendingMigrations(s.DB())
+	if err != nil {
+		return migrationsInspectError(err, dbPath)
+	}
+	if len(pending) > 0 {
+		return warn("migrations-current", fmt.Sprintf("%d pending migration(s), first %04d: %s", len(pending), pending[0], dbPath),
+			"start the daemon (or run: tether init) to apply them")
+	}
 	return ok("migrations-current", dbPath)
+}
+
+// migrationsInspectError classifies a read-only inspection failure. A busy or
+// locked DB means a writer holds it, not that the schema is broken.
+func migrationsInspectError(err error, dbPath string) checkResult {
+	msg := err.Error()
+	if strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "SQLITE_LOCKED") || strings.Contains(msg, "database is locked") {
+		return warn("migrations-current", "state DB is locked by another process (likely the running daemon); schema check skipped: "+dbPath,
+			"retry, or check `tether daemon status`")
+	}
+	return fail("migrations-current", fmt.Sprintf("cannot read state DB: %v", err),
+		"check DB permissions at "+dbPath)
 }
 
 // checkProviderAuth reports on providers whose CLI would otherwise fall into

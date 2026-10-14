@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
+	"io/fs"
 	"net/url"
 	"path/filepath"
 )
@@ -27,4 +29,35 @@ func OpenReadOnly(path string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+// PendingMigrations reports embedded migration versions that schema_migrations
+// does not record, without writing. A database with no schema_migrations table
+// reports every embedded version as pending.
+func PendingMigrations(db *sql.DB) ([]int, error) {
+	sub, err := fs.Sub(embeddedMigrations, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("sub-fs: %w", err)
+	}
+	migs, err := loadMigrations(sub)
+	if err != nil {
+		return nil, err
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'`).Scan(&n); err != nil {
+		return nil, err
+	}
+	applied := map[int]struct{}{}
+	if n > 0 {
+		if applied, err = loadAppliedVersions(db); err != nil {
+			return nil, err
+		}
+	}
+	var pending []int
+	for _, m := range migs {
+		if _, ok := applied[m.version]; !ok {
+			pending = append(pending, m.version)
+		}
+	}
+	return pending, nil
 }
