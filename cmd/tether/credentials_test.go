@@ -115,10 +115,19 @@ func TestSessionProxyNeverFallsBackToOperator(t *testing.T) {
 }
 
 func TestBootProxyEnvironmentIsExplicitlyAnonymous(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	// Resolve symlinks (darwin's /var -> /private/var): artifact control
+	// parents must already be canonical.
+	canonical := func(dir string) string {
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resolved
+	}
+	t.Setenv("HOME", canonical(t.TempDir()))
 	env := tetherEnvFromPlan(map[string]string{"TETHER_MCP_SERVERS": "clockwork", "TETHER_TOKEN": "operator-canary"})
-	prepared, err := bootexec.PrepareClaudeTUI(&launch.Plan{ProviderBrand: "claude", RepoRoot: t.TempDir(), Command: "fake-claude"}, bootexec.Options{
-		BootDirRoot: t.TempDir(), TetherCommand: "fake-tether", TetherArgs: []string{"mcp", "--proxy"}, TetherEnv: env, ParentEnv: []string{"PATH=/bin", "TETHER_TOKEN=operator-canary"},
+	prepared, err := bootexec.PrepareClaudeTUI(&launch.Plan{ProviderBrand: "claude", RepoRoot: canonical(t.TempDir()), Command: "fake-claude"}, bootexec.Options{
+		BootDirRoot: canonical(t.TempDir()), TetherCommand: "fake-tether", TetherArgs: []string{"mcp", "--proxy"}, TetherEnv: env, ParentEnv: []string{"PATH=/bin", "TETHER_TOKEN=operator-canary"},
 	})
 	if err != nil {
 		t.Fatal(err)
