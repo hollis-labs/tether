@@ -16,3 +16,11 @@ permissions:
 lifecycle:
   idle_timeout: 10m
   max_duration: 4h
+# Task template default: the closing step is part of the job. Whoever merges the
+# work transitions the Torque task (done if merged, review if not), cites the PR
+# or commit and what was verified, and records deploy state (CW-20261013-0048).
+agent_prompt: |
+  Before you stop, close the loop on each Torque task you worked: call
+  torque_task_transition (done if merged, review if not) and torque_comment_add
+  with the PR or commit, what you verified and the deploy state. File new gaps
+  as Torque tasks.
