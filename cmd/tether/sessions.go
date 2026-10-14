@@ -420,6 +420,6 @@ func init() {
 		"follow live output (default); use --follow=false for a one-shot snapshot")
 	sessionsCmd.AddCommand(
 		sessionsListCmd, sessionsGetCmd, sessionsStopCmd,
-		sessionsTailCmd, sessionsAttachCmd, sessionsInputCmd, sessionsTurnCmd,
+		sessionsTailCmd, sessionsAttachCmd, sessionsInputCmd, sessionsTurnCmd, sessionsPeekCmd,
 	)
 }
