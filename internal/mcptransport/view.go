@@ -30,5 +30,5 @@ func ViewOptions(caller Caller, cfg mcpgateway.Config, profiles, modes []mcpgate
 	if _, err := mcpgateway.ResolveMode(inputs); err != nil {
 		return mcpadapter.ProxyOptions{}, err
 	}
-	return mcpadapter.ProxyOptions{ServerFilter: append([]string{}, caller.Policy.Servers...), Confine: true, Profile: profile, AuthorityProfiles: floors, ModeInputs: inputs}, nil
+	return mcpadapter.ProxyOptions{ServerFilter: append([]string{}, caller.Policy.Servers...), Confine: true, Profile: profile, AuthorityProfiles: floors, ModeInputs: inputs, MachineAccess: caller.MachineAccess}, nil
 }

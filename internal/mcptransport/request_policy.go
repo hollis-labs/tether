@@ -59,11 +59,11 @@ func viewFingerprint(caller Caller, token string, opts mcpadapter.ProxyOptions) 
 	slices.Sort(scopes)
 	// Selector source labels are presentation; resolved content is authority.
 	payload := struct {
-		PrincipalID, Kind, SessionID, TokenHash, PolicyDigest string
-		Scopes                                                []string
-		Profile                                               *mcpgateway.Profile
-		Mode                                                  mcpgateway.Mode
-	}{caller.Principal.ID, caller.Principal.Kind, caller.Principal.SessionID, identity.HashToken(token), caller.Policy.Digest, scopes, opts.Profile.Profile, mode.Mode}
+		PrincipalID, Kind, SessionID, TokenHash, PolicyDigest, MachineAccess string
+		Scopes                                                               []string
+		Profile                                                              *mcpgateway.Profile
+		Mode                                                                 mcpgateway.Mode
+	}{caller.Principal.ID, caller.Principal.Kind, caller.Principal.SessionID, identity.HashToken(token), caller.Policy.Digest, caller.MachineAccess, scopes, opts.Profile.Profile, mode.Mode}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		return "", err

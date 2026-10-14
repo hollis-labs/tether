@@ -89,11 +89,13 @@ func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout t
 			t.Skipf("bubblewrap unavailable: %v %s", err, output)
 		}
 		f.cat.MCPServerEnabled["app"] = true
+		f.cat.MCPServerEnabled["cerberus"] = true
 		executable, err := os.Executable()
 		if err != nil {
 			t.Fatal(err)
 		}
 		entries = append(entries, config.MCPServerEntry{ID: "app", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestTransportUpstreamProcess$"}, Env: map[string]string{"TETHER_TRANSPORT_FIXTURE": f.childStarts}})
+		entries = append(entries, config.MCPServerEntry{ID: "cerberus", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestTransportUpstreamProcess$"}, Env: map[string]string{"TETHER_TRANSPORT_FIXTURE": f.childStarts + ".cerberus", "TETHER_TRANSPORT_CERBERUS": "1"}})
 	}
 	f.verifier = &switchableVerifier{inner: f.ids}
 	var listener net.Listener
@@ -528,6 +530,11 @@ func TestTransportUpstreamProcess(t *testing.T) {
 			return next(ctx, method, req)
 		}
 	})
+	if os.Getenv("TETHER_TRANSPORT_CERBERUS") == "1" {
+		for _, name := range []string{"cerberus_list_hosts", "cerberus_restart_host"} {
+			s.RegisterTool(gomcp.Tool{Name: name, Description: "Machine fixture", InputSchema: gomcp.InputSchema(), Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil }})
+		}
+	}
 	s.RegisterTool(gomcp.Tool{Name: "app_echo", Description: "Read-only echo", InputSchema: gomcp.InputSchema(gomcp.StringProp("message", "message", false)), ReadOnlyHint: true, Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		return map[string]any{"pid": os.Getpid(), "message": args["message"], "context": ctx.Value(forwardedContextKey{})}, nil
 	}})
@@ -998,5 +1005,48 @@ func TestThinForwardersShareDaemonPoolOverUnix(t *testing.T) {
 	raw, err := os.ReadFile(f.childStarts)
 	if err != nil || string(raw) != "started\n" {
 		t.Fatalf("thin proxies spawned multiple upstreams: %q %v", raw, err)
+	}
+}
+
+// Machine authority flows from the caller's agent through the real handler
+// wiring: only a machine_authority read-write agent may call a write tool.
+func TestTransportMachineAccessFromCallerAgent(t *testing.T) {
+	f := newTransportFixture(t, true, true)
+	f.cat.Agents = map[string]config.LaunchProfile{
+		"rw":        {MachineAuthority: true, MachineAccess: launch.MachineAccessReadWrite},
+		"ro":        {MachineAuthority: true, MachineAccess: launch.MachineAccessReadOnly},
+		"unflagged": {MachineAccess: launch.MachineAccessReadWrite},
+	}
+	for _, tc := range []struct {
+		agent     string
+		wantWrite bool
+	}{{"rw", true}, {"ro", false}, {"unflagged", false}, {"unknown", false}} {
+		t.Run(tc.agent, func(t *testing.T) {
+			id := "sess-" + tc.agent
+			if err := f.db.CreateSession(store.SessionRow{ID: id, LogicalAgentID: tc.agent, State: "created"}, &launch.Plan{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.db.SaveSessionMCPPolicy(context.Background(), mcpgateway.SessionPolicy{SessionID: id, AgentID: tc.agent, Servers: []string{"cerberus"}}.Seal()); err != nil {
+				t.Fatal(err)
+			}
+			token, err := f.ids.Mint(context.Background(), identity.Principal{ID: "session:" + id, Kind: "session", SessionID: id})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cs, err := client.New(f.addr, client.WithToken(token)).ConnectMCP(context.Background(), client.MCPOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = cs.Close() }()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			for tool, write := range map[string]bool{"cerberus_list_hosts": false, "cerberus_restart_host": true} {
+				res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: tool, Arguments: map[string]any{}})
+				refused := err != nil || res.IsError
+				if refused != (write && !tc.wantWrite) {
+					t.Fatalf("%s %s: refused=%v err=%v res=%+v", tc.agent, tool, refused, err, res)
+				}
+			}
+		})
 	}
 }

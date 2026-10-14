@@ -12,6 +12,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
@@ -20,6 +21,11 @@ import (
 type Caller struct {
 	Principal identity.Principal
 	Policy    mcpgateway.SessionPolicy
+	// MachineAccess is the calling agent's catalog machine_access, resolved
+	// from the stored session snapshot's agent. Empty means read-only: only
+	// session credentials of a machine_authority agent can carry read-write,
+	// and daemon views never honor the dev-mode escape hatch.
+	MachineAccess string
 }
 
 var errSessionUnavailable = errors.New("session policy temporarily unavailable")
@@ -98,5 +104,11 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 		value := *policy.DiscoveryMode
 		policy.DiscoveryMode = &value
 	}
-	return Caller{Principal: p, Policy: policy.Seal()}, nil
+	access := ""
+	if p.Kind == "session" {
+		if agent, ok := cat.Agents[policy.AgentID]; ok && agent.MachineAuthority && agent.MachineAccess == launch.MachineAccessReadWrite {
+			access = launch.MachineAccessReadWrite
+		}
+	}
+	return Caller{Principal: p, Policy: policy.Seal(), MachineAccess: access}, nil
 }
