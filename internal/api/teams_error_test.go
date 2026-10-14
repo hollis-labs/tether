@@ -35,9 +35,12 @@ func TestTeamErrorForCarriesCauseOnlyToLocalOperator(t *testing.T) {
 			t.Fatalf("%s saw cause: %q", name, d.Message)
 		}
 	}
-	// Classified failures stay cause-free even for the operator.
-	_, denied := TeamErrorFor(identity.WithPrincipal(local, op), fmt.Errorf("%w: secret detail", teamsvc.ErrDenied))
-	if denied.Message != "denied" {
-		t.Fatalf("denied message leaked cause: %q", denied.Message)
+	// Classified failures carry their cause for the operator only.
+	classified := fmt.Errorf("%w: binding held", teamsvc.ErrUnavailable)
+	if _, d := TeamErrorFor(identity.WithPrincipal(local, op), classified); d.Code != "unavailable" || !strings.HasPrefix(d.Message, "unavailable: ") || !strings.Contains(d.Message, "binding held") {
+		t.Fatalf("operator unavailable message = %q", d.Message)
+	}
+	if _, d := TeamErrorFor(local, classified); d.Message != "unavailable" {
+		t.Fatalf("anonymous saw cause: %q", d.Message)
 	}
 }

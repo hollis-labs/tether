@@ -246,16 +246,18 @@ func TeamError(err error) (int, ErrorDetail) {
 }
 
 // TeamErrorFor is TeamError plus diagnostics for the verified local operator:
-// an unclassified (500) failure carries its bounded single-line cause, so the
-// person running the daemon is not left with a bare internal_error. Every
-// other caller keeps the cause-free envelope.
+// any failure (classified or not) carries its bounded single-line cause, so the
+// person running the daemon is not left with a bare code. Every other caller
+// keeps the cause-free envelope.
 func TeamErrorFor(ctx context.Context, err error) (int, ErrorDetail) {
 	status, detail := TeamError(err)
-	if detail.Code != CodeInternalError || err == nil {
+	if err == nil {
 		return status, detail
 	}
 	if caller, ok := identity.FromContext(ctx); ok && caller.Verified && caller.Kind == "operator" && caller.ID == identity.OperatorID && identity.LocalConnection(ctx) {
-		detail.Message = detail.Code + ": " + InternalCause(err)
+		if cause := InternalCause(err); cause != "" {
+			detail.Message = detail.Code + ": " + cause
+		}
 	}
 	return status, detail
 }

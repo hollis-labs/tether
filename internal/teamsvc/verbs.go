@@ -49,6 +49,10 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 		launch.TeamID, launch.Version, launch.Key, launch.Limits = req.Team.ID, req.Team.Version, serviceKey(scope)+"-launch", limits
 		launcher := *s.launcher
 		launcher.Defaults = limits
+		// A failed member launch aborts the whole formation on the first
+		// attempt, which stops and releases every member already started,
+		// instead of leaving them running with no team run owning them.
+		launcher.MaxAttempts = 1
 		run, err := launcher.Launch(ctx, launch)
 		if err != nil {
 			return Result{}, err
