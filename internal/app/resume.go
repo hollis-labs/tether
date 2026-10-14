@@ -239,6 +239,9 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, err
 	}
 
+	if err := s.checkLineage(sourceID); err != nil {
+		return api.LaunchResult{}, err
+	}
 	sessID := uuid.NewString()
 	wsRoot := plan.WriteHome
 	if wsRoot == "" {
