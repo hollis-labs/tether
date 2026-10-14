@@ -9,11 +9,13 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/catalogapply"
+	"github.com/hollis-labs/tether/internal/teamspolicy"
 )
 
 func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
@@ -68,7 +70,7 @@ func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name: "tether_catalog_files",
-		Description: "List the catalog files you can read raw, or read one with path. Use it to fetch the current content of an agent, launch, project, skill, boot profile or team definition before editing it, then send the whole edited file to tether_catalog_plan. " +
+		Description: "List the catalog files you can read raw, or read one with path. Use it to fetch the current content of an agent, launch, project, skill, boot profile or team definition before editing it, then send the whole edited file to tether_catalog_plan. Reading a team-definitions/ file also returns its pin (id, revision, digest) for the definition pins in teams-policy.yaml. " +
 			"Providers, MCP servers, sandbox profiles and global.yaml are not readable (they hold credentials or daemon policy), and a file that contains an obvious secret is refused. Read-only; no scope required.",
 		InputSchema: gomcp.InputSchema(gomcp.StringProp("path", "Catalog-relative path, e.g. agents/helper.yaml. Omit to list the readable files.", false)),
 		Handler:     a.handleCatalogFiles,
@@ -188,7 +190,17 @@ func (a *Adapter) handleCatalogFiles(ctx context.Context, args map[string]any) (
 		if err != nil {
 			return nil, a.catalogApplyErr(err)
 		}
-		return toolJSON(map[string]any{"path": path, "content": content}), nil
+		out := map[string]any{"path": path, "content": content}
+		// A team definition also reports its exact pin so an agent can fill a
+		// teams-policy.yaml definition pin without a hub shell.
+		if strings.HasPrefix(path, "team-definitions/") {
+			if id, rev, digest, perr := teamspolicy.PinOfBytes([]byte(content)); perr == nil {
+				out["pin"] = map[string]string{"id": id, "revision": rev, "digest": digest}
+			} else {
+				out["pin_error"] = perr.Error()
+			}
+		}
+		return toolJSON(out), nil
 	}
 	files, err := a.client.CatalogApply().Files(ctx)
 	if err != nil {

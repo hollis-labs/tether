@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hollis-labs/substrate/mesh/agentdef"
 	"github.com/hollis-labs/tether/internal/teamspolicy"
 	"github.com/spf13/cobra"
 )
@@ -18,15 +17,11 @@ func PinOf(path string) (id, revision, digest string, err error) {
 	if err != nil {
 		return "", "", "", err
 	}
-	def, err := agentdef.Parse(raw, agentdef.WithCapabilities(teamspolicy.KnownCapability))
+	id, revision, digest, err = teamspolicy.PinOfBytes(raw)
 	if err != nil {
 		return "", "", "", fmt.Errorf("%s: %w", path, err)
 	}
-	digest, err = agentdef.Digest(def)
-	if err != nil {
-		return "", "", "", fmt.Errorf("%s: %w", path, err)
-	}
-	return def.DefinitionID, def.Revision, digest, nil
+	return id, revision, digest, nil
 }
 
 func addPinCommand(parent *cobra.Command) {
