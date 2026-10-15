@@ -50,7 +50,7 @@ func issuerFixture(t *testing.T, mode identity.Mode) (*authissuer.Issuer, http.H
 		mux.Handle(p, NewTokenIssuerHandler(is))
 	}
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	for _, p := range []string{"/sessions", "/sessions/", "/auth/pair", "/mcp", "/nothing-mapped"} {
+	for _, p := range []string{"/sessions", "/sessions/", "/auth/pair", "/mcp", "/nothing-mapped", "/messages", "/groups"} {
 		mux.Handle(p, ok)
 	}
 	return is, identity.Middleware(mode, v, nil, AgentScopeMiddleware(mode, mux))
@@ -166,9 +166,10 @@ func TestSelfScopeIsForDevicesOnly(t *testing.T) {
 	}
 }
 
-// A default agent (launchprofile.DefaultMCPScopes) is issued tether.operate and
-// tether.registry, never tether.maintain, and so cannot reach maintain-only
-// routes.
+// A default agent (launchprofile.DefaultMCPScopes) holds only the narrow scopes
+// it holds today (message, registry, groups): no operate, maintain or admin, so
+// it cannot launch sessions, call the AI gateway, use the broker or teams, or
+// reach maintain-only routes.
 func TestDefaultAgentScopesAreNarrow(t *testing.T) {
 	is, h := issuerFixture(t, identity.Enforce)
 	op := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
@@ -176,7 +177,7 @@ func TestDefaultAgentScopesAreNarrow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(scopes, " ") != "tether.operate tether.registry" {
+	if strings.Join(scopes, " ") != "tether.groups tether.messages tether.registry" {
 		t.Fatalf("default scopes canonicalize to %v", scopes)
 	}
 	tok, err := is.Exchange(op, authissuer.Request{Audience: "tether", Scopes: launchprofile.DefaultMCPScopes, SessionID: "default-agent"})
@@ -184,7 +185,8 @@ func TestDefaultAgentScopesAreNarrow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range tok.Scopes {
-		if s == "tether.maintain" || s == "tether.admin" {
+		switch s {
+		case "tether.operate", "tether.maintain", "tether.admin", "tether.terminal":
 			t.Fatalf("default agent carries %s", s)
 		}
 	}
@@ -192,31 +194,84 @@ func TestDefaultAgentScopesAreNarrow(t *testing.T) {
 		method, path string
 		want         int
 	}{
-		{"POST", "/sessions", 204},               // operate
-		{"POST", "/registry/bootstrap", 404},     // registry scope, but route not mounted in this fixture
-		{"POST", "/catalog/reload", 403},         // local custody
-		{"POST", "/catalog/plans/p1/apply", 403}, // local custody
-		{"GET", "/auth/denylist", 403},           // needs maintain
-		{"GET", "/logs/daemon", 404},             // maintain-only route: unmapped here, never reachable
-		{"POST", "/settings/onboarding/x", 404},  // maintain-only
+		{"POST", "/messages", 204},         // message.write
+		{"POST", "/groups", 204},           // groups.write
+		{"POST", "/sessions", 403},         // session launch needs tether.sessions
+		{"POST", "/ai/chat", 404},          // gated by ai (unmounted here: never a handler)
+		{"POST", "/teams/form", 404},       // teams (unmounted here)
+		{"POST", "/broker/envelopes", 404}, // broker stays operate
+		{"POST", "/catalog/reload", 403},
+		{"POST", "/catalog/plans/p1/apply", 403},
+		{"GET", "/auth/denylist", 403},
 	} {
 		got := call(h, c.method, c.path, tok.Token, "{}").Code
-		if c.path == "/registry/bootstrap" || c.path == "/logs/daemon" || c.path == "/settings/onboarding/x" {
-			if got == 204 {
-				t.Errorf("%s %s reached a handler", c.method, c.path)
+		if got == 204 && c.want != 204 {
+			t.Errorf("%s %s reached a handler", c.method, c.path)
+		}
+		if c.want == 204 || c.want == 403 {
+			if got != c.want {
+				t.Errorf("%s %s: got %d want %d", c.method, c.path, got, c.want)
 			}
-			continue
-		}
-		if got != c.want {
-			t.Errorf("%s %s: got %d want %d", c.method, c.path, got, c.want)
 		}
 	}
-	// the scope gate itself, independent of mounting: registry yes, maintain no
-	if !identity.ScopeGranted(tok.Scopes, "registry.write") || identity.ScopeGranted(tok.Scopes, identity.ScopeMaintain) {
-		t.Fatalf("scopes %v", tok.Scopes)
+	// the gate itself, independent of what the fixture mounts
+	for _, route := range [][2]string{{"POST", "/ai/chat"}, {"POST", "/ai/embeddings"}, {"POST", "/ai/chat/stream"}, {"POST", "/teams/form"}, {"POST", "/broker/envelopes"}, {"POST", "/sessions"}, {"POST", "/registry/bootstrap"}, {"GET", "/logs/daemon"}} {
+		scope, _, known := RequiredRemoteScope(httptest.NewRequest(route[0], route[1], nil))
+		if !known {
+			t.Fatalf("%v unmapped", route)
+		}
+		want := route[1] == "/registry/bootstrap"
+		if got := identity.ScopeGranted(tok.Scopes, scope); got != want {
+			t.Errorf("%v requires %q: granted=%v want %v", route, scope, got, want)
+		}
 	}
-	// a maintain device still satisfies the registry route
+	// a maintain device still satisfies the registry route, and operate the narrow ones
 	if !identity.HasDeviceScope(identity.Principal{ID: "d", Kind: "device", Scopes: []string{"maintain"}}, registryScope) {
 		t.Fatal("maintain device must satisfy registry")
+	}
+	for _, sc := range []string{sessionsScope, messagesScope, groupsScope, teamsScope, aiScope} {
+		if !identity.HasDeviceScope(identity.Principal{ID: "d", Kind: "device", Scopes: []string{"operate"}}, sc) {
+			t.Fatalf("operate device must satisfy %s", sc)
+		}
+	}
+}
+
+// Each narrow scope reaches exactly the routes its legacy scope covered and no
+// other narrow scope's routes.
+func TestNarrowScopesReachOnlyTheirOwnRoutes(t *testing.T) {
+	routes := map[string][][2]string{
+		sessionsScope: {{"POST", "/sessions"}, {"POST", "/sessions/s1/launch"}, {"POST", "/sessions/s1/stop"}, {"POST", "/sessions/s1/turn"}, {"POST", "/sessions/s1/input"}, {"POST", "/sessions/s1/resize"}, {"POST", "/sessions/s1/workstream"}, {"POST", "/sessions/s1/refs"}, {"POST", "/logical-agents/a1/resume"}, {"POST", "/workstreams"}, {"POST", "/workstreams/w1/sessions"}},
+		messagesScope: {{"POST", "/messages"}, {"POST", "/messages/notify"}, {"POST", "/messages/m1/consume"}, {"POST", "/messages/m1/cancel"}, {"POST", "/messages/m1/read"}, {"POST", "/messages/m1/archive"}, {"POST", "/messages/m1/reply"}},
+		groupsScope:   {{"POST", "/groups"}, {"POST", "/groups/g1/members"}, {"POST", "/groups/g1/messages"}, {"POST", "/groups/g1/leave"}, {"POST", "/groups/g1/read"}, {"DELETE", "/groups/g1"}},
+		teamsScope:    {{"POST", "/teams/form"}, {"POST", "/teams/assign"}, {"POST", "/teams/report_result"}},
+		aiScope:       {{"POST", "/ai/chat"}, {"POST", "/ai/chat/stream"}, {"POST", "/ai/embeddings"}, {"POST", "/ai/decide"}},
+		registryScope: {{"POST", "/registry/bootstrap"}, {"POST", "/registry/scoped-bindings"}, {"PATCH", "/registry/agents/a1"}},
+	}
+	for scope, mine := range routes {
+		granted := []string{"tether." + scope}
+		for owner, rs := range routes {
+			for _, r := range rs {
+				need, _, known := RequiredRemoteScope(httptest.NewRequest(r[0], r[1], nil))
+				if !known {
+					t.Fatalf("%v unmapped", r)
+				}
+				got := identity.ScopeGranted(granted, need)
+				// session input/resize are also reachable by tether.sessions only
+				want := owner == scope
+				if got != want {
+					t.Errorf("tether.%s on %s %s (%s's route, needs %q): got %v want %v", scope, r[0], r[1], owner, need, got, want)
+				}
+			}
+		}
+		_ = mine
+	}
+	// none of them reaches an operate-level route outside its set
+	for _, r := range [][2]string{{"POST", "/broker/envelopes"}, {"POST", "/session-groups"}, {"POST", "/sessions/s1/checkpoint"}, {"POST", "/chat/agents/l1/send"}, {"GET", "/sessions/s1/log"}, {"POST", "/catalog/validate"}} {
+		need, _, _ := RequiredRemoteScope(httptest.NewRequest(r[0], r[1], nil))
+		for scope := range routes {
+			if identity.ScopeGranted([]string{"tether." + scope}, need) && need != readScope {
+				t.Errorf("tether.%s reached %s %s (needs %q)", scope, r[0], r[1], need)
+			}
+		}
 	}
 }

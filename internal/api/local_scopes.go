@@ -41,10 +41,7 @@ func WouldAllowLocal(p identity.Principal, scope string) bool {
 	if p.TokenID != "" { // issued token: namespaced scopes, no local-custody authority
 		return scope != localScope && identity.ScopeGranted(p.Scopes, scope)
 	}
-	if scope == registryScope || scope == identity.ScopeCatalog { // contained in maintain/admin
-		return slices.Contains(p.Scopes, "*") || slices.Contains(p.Scopes, scope) || slices.Contains(p.Scopes, maintainScope) || slices.Contains(p.Scopes, adminScope)
-	}
-	return slices.Contains(p.Scopes, "*") || scope != localScope && slices.Contains(p.Scopes, scope)
+	return slices.Contains(p.Scopes, "*") || scope != localScope && identity.ScopeGranted(p.Scopes, scope)
 }
 
 // ObserveLocalScope evaluates a verified principal's request against

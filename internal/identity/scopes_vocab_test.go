@@ -26,6 +26,20 @@ func TestScopeGrantedUnifiesDeviceAndChildScopes(t *testing.T) {
 		{[]string{"tether.registry"}, "catalog.write", false},
 		{[]string{"tether.catalog"}, "catalog.write", true},
 		{[]string{"operate"}, "registry.write", false},
+		// narrow scopes: operate contains all five; none contains operate or each other
+		{[]string{"operate"}, "tether.sessions", true},
+		{[]string{"operate"}, "tether.ai", true},
+		{[]string{"tether.sessions"}, "tether.operate", false},
+		{[]string{"tether.messages"}, "message.write", true},
+		{[]string{"tether.messages"}, "session.write", false},
+		{[]string{"tether.ai"}, "team.write", false},
+		{[]string{"admin"}, "session.write", false}, // ADR 0062: admin does not contain operate-level scopes
+		{[]string{"maintain"}, "message.write", false},
+		// session input: terminal or sessions, nothing broader by accident
+		{[]string{"tether.sessions"}, "input", true},
+		{[]string{"terminal"}, "input", true},
+		{[]string{"operate"}, "input", false},
+		{[]string{"tether.messages"}, "input", false},
 		{[]string{"read"}, "session.write", false},
 		{[]string{"session.write"}, "session.write", true},   // legacy credential keeps its meaning
 		{[]string{"session.write"}, "tether.operate", false}, // ...and gains no canonical authority
@@ -42,7 +56,7 @@ func TestScopeGrantedUnifiesDeviceAndChildScopes(t *testing.T) {
 		}
 	}
 	got, err := identity.CanonicalScopes([]string{"message.write", "registry.write", "groups.write", "read"})
-	if err != nil || len(got) != 3 || got[0] != "tether.operate" || got[1] != "tether.read" || got[2] != "tether.registry" {
+	if err != nil || len(got) != 4 || got[0] != "tether.groups" || got[1] != "tether.messages" || got[2] != "tether.read" || got[3] != "tether.registry" {
 		t.Fatalf("CanonicalScopes: %v %v", got, err)
 	}
 	if _, err := identity.CanonicalScopes([]string{"bogus"}); err == nil {
