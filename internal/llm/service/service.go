@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/go-secrets/redact"
+	"github.com/hollis-labs/libs/security/secrets/redact"
 	hotel "github.com/hollis-labs/libs/util/otel"
 	"github.com/hollis-labs/libs/util/otel/genai"
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"

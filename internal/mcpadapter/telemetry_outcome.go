@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/hollis-labs/go-secrets/redact"
+	"github.com/hollis-labs/libs/security/secrets/redact"
 	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/budget"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"

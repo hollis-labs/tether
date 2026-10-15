@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/hollis-labs/go-secrets/credfile"
+	"github.com/hollis-labs/libs/security/secrets/credfile"
 )
 
 func TestCheckMCPServerCredentialFiles(t *testing.T) {

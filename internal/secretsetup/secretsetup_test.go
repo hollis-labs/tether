@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	secrets "github.com/hollis-labs/go-secrets"
-	"github.com/hollis-labs/go-secrets/secretstest"
+	secrets "github.com/hollis-labs/libs/security/secrets"
+	"github.com/hollis-labs/libs/security/secrets/secretstest"
 )
 
 func TestLegacyAccountAndEnvNames(t *testing.T) {

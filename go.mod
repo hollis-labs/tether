@@ -10,6 +10,7 @@ require (
 	github.com/hollis-labs/go-forums v0.2.0
 	github.com/hollis-labs/go-ssekit v0.2.0
 	github.com/hollis-labs/libs/plugin-mcp v0.1.1
+	github.com/hollis-labs/libs/security/secrets v0.1.0
 	github.com/hollis-labs/libs/util v0.2.0
 	github.com/hollis-labs/substrate/harness v0.5.0
 	github.com/hollis-labs/substrate/llm-core v0.1.0
@@ -17,7 +18,6 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
-	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/sdk/metric v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
@@ -75,7 +75,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
-	github.com/hollis-labs/go-secrets v0.0.0-00010101000000-000000000000
 	github.com/hollis-labs/substrate/agent v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -86,6 +85,7 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+	github.com/zalando/go-keyring v0.2.8 // indirect
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.71.0 // indirect
@@ -100,5 +100,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-replace github.com/hollis-labs/go-secrets => /home/chrispian/dev/hollis-labs/libs/go-secrets-worktrees/mvp
