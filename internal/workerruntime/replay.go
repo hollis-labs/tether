@@ -120,6 +120,14 @@ func (e *Executor) restoreOne(path string) error {
 	s.client = client
 	s.pending = make(map[string]chan shim.Frame)
 	e.sessions[s.ID] = &s
+	if s.State != "exited" && len(s.AgentTokens) > 0 {
+		// Resume refreshing: the files persist across an outpost restart.
+		if _, stop, err := e.startAgentTokens(s.ID, s.AuthDir, s.AgentTokens); err == nil {
+			s.stopTokens = stop
+		} else {
+			fmt.Fprintf(os.Stderr, "tether-worker: session %s agent tokens not resumed: %v\n", s.ID, err)
+		}
+	}
 	go e.follow(&s)
 	return client.Replay(s.ID, s.Cursor)
 }

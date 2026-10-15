@@ -105,6 +105,7 @@ func main() {
 			return err
 		}
 		executor := workerruntime.NewExecutor(root, binary, w.Send)
+		executor.Tokens = &workerruntime.TokenMinter{Hub: cfg.Hub, DeviceTokenFile: filepath.Join(root, "device.token")}
 		if err := executor.Restore(); err != nil {
 			return err
 		}
