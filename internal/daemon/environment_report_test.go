@@ -90,12 +90,20 @@ func TestEnvironmentReportMountedVerifiedReadAuthority(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal("report registration changed public health")
 	}
+	// Off mode (go-auth semantics B) still verifies and attributes a presented
+	// token, so the report's read authority holds for a valid bearer and an
+	// anonymous caller is never verified.
 	s.Config.IdentityMode = identity.Off
 	w = httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/environment/report", nil)
 	r.Header.Set("Authorization", "Bearer "+operator)
 	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("identity-off must attribute a valid bearer: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/environment/report", nil))
 	if w.Code != 401 {
-		t.Fatal("identity-off accepted an unverified bearer for report")
+		t.Fatal("identity-off treated an anonymous caller as verified for report")
 	}
 }

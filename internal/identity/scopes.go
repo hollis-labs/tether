@@ -3,6 +3,7 @@ package identity
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 const (
@@ -71,4 +72,104 @@ func NarrowDeviceScopes(granted, requested []string) ([]string, error) {
 		}
 	}
 	return scopes, nil
+}
+
+// AppScopePrefix namespaces Tether's scopes in the cross-app vocabulary
+// (<app>.<verb>). The five device scopes plus worker map 1:1: read is
+// tether.read, and so on. tth_ device credentials keep storing the bare names;
+// issued JWTs carry the namespaced ones; the two are interchangeable wherever
+// scope is checked (ScopeGranted).
+const AppScopePrefix = "tether."
+
+// CanonicalScope returns the namespaced form of a bare device scope; any other
+// string is returned unchanged.
+func CanonicalScope(s string) string {
+	switch s {
+	case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker:
+		return AppScopePrefix + s
+	}
+	return s
+}
+
+// IsCanonicalScope reports whether s is one of the six tether.* scopes.
+func IsCanonicalScope(s string) bool {
+	rest, ok := strings.CutPrefix(s, AppScopePrefix)
+	return ok && CanonicalScope(rest) == s
+}
+
+// legacyScopeNeeds lists, for each scope the worker/MCP child credentials used
+// before the unified vocabulary (CW-20261014-0035), the canonical scopes that
+// satisfy a check for it. The mapping is deliberately one-directional: a
+// canonical/device credential satisfies a legacy check, but a legacy
+// credential does not gain canonical authority.
+var legacyScopeNeeds = map[string]string{
+	"session.write":  AppScopePrefix + ScopeOperate,
+	"message.write":  AppScopePrefix + ScopeOperate,
+	"groups.write":   AppScopePrefix + ScopeOperate,
+	"team.write":     AppScopePrefix + ScopeOperate,
+	"ai.invoke":      AppScopePrefix + ScopeOperate,
+	"registry.write": AppScopePrefix + ScopeMaintain,
+	"catalog.write":  AppScopePrefix + ScopeMaintain,
+}
+
+// IsLegacyChildScope reports whether s is one of the pre-unification MCP child scopes.
+func IsLegacyChildScope(s string) bool { _, ok := legacyScopeNeeds[s]; return ok }
+
+// ScopeGranted reports whether granted satisfies required. required may be a
+// bare device scope, a tether.* scope or a legacy child scope. "*" and an
+// "<app>.*" wildcard grant everything in that scope space.
+func ScopeGranted(granted []string, required string) bool {
+	want := CanonicalScope(required)
+	if need, ok := legacyScopeNeeds[required]; ok {
+		for _, g := range granted {
+			if g == required {
+				return true
+			}
+		}
+		want = need
+	}
+	for _, g := range granted {
+		if g == "*" || CanonicalScope(g) == want {
+			return true
+		}
+		if pre, ok := strings.CutSuffix(g, ".*"); ok && strings.HasPrefix(want, pre+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// CanonicalScopes maps any mix of bare device scopes, tether.* scopes and
+// legacy child scopes to a sorted, de-duplicated tether.* set. Unknown scopes
+// are an error: nothing outside the vocabulary is ever minted.
+func CanonicalScopes(in []string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, s := range in {
+		switch {
+		case IsLegacyChildScope(s):
+			seen[legacyScopeNeeds[s]] = true
+		case IsCanonicalScope(s):
+			seen[s] = true
+		case CanonicalScope(s) != s:
+			seen[CanonicalScope(s)] = true
+		default:
+			return nil, fmt.Errorf("unknown scope")
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// ScopesCover reports whether granted satisfies every scope in requested.
+func ScopesCover(granted, requested []string) bool {
+	for _, r := range requested {
+		if !ScopeGranted(granted, r) {
+			return false
+		}
+	}
+	return true
 }

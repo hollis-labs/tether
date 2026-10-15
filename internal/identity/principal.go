@@ -29,12 +29,19 @@ const OperatorID = "msg://user/local/operator"
 // is separate, and trusting the flag against same-uid agents additionally
 // needs read protection of the credential (CW-20261001-0263).
 type Principal struct {
-	Verified  bool       `json:"verified"`
-	ID        string     `json:"id"`
-	Kind      string     `json:"kind"`
-	Display   string     `json:"display"`
-	Scopes    []string   `json:"scopes"`
-	SessionID string     `json:"session_id,omitempty"`
+	Verified  bool     `json:"verified"`
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"`
+	Display   string   `json:"display"`
+	Scopes    []string `json:"scopes"`
+	SessionID string   `json:"session_id,omitempty"`
+	// Audience, TokenID and Parent are set only for principals resolved from
+	// an issued JWT (authissuer): the aud and jti claims and the minting
+	// parent. A non-empty TokenID is how the daemon tells an issued token
+	// from a stored tth_ credential.
+	Audience  string     `json:"audience,omitempty"`
+	TokenID   string     `json:"token_id,omitempty"`
+	Parent    string     `json:"parent,omitempty"`
 	Addresses []string   `json:"addresses"`
 	CreatedBy string     `json:"created_by,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`

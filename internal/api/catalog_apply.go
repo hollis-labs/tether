@@ -18,7 +18,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -83,7 +82,7 @@ func catalogWriter(r *http.Request) bool {
 		return true // no verified principal: local trust, as for the rest of the local API
 	}
 	if p.Kind == "session" {
-		return slices.Contains(p.Scopes, catalogWriteScope) || slices.Contains(p.Scopes, "*")
+		return identity.ScopeGranted(p.Scopes, catalogWriteScope)
 	}
 	return true
 }

@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"slices"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -49,5 +48,5 @@ func reloadCaller(r *http.Request) bool {
 	if !ok || p.Kind != "session" {
 		return true
 	}
-	return slices.Contains(p.Scopes, "catalog.write") || slices.Contains(p.Scopes, "*")
+	return identity.ScopeGranted(p.Scopes, "catalog.write")
 }

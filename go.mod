@@ -72,9 +72,14 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
+<<<<<<< HEAD
 	github.com/hollis-labs/libs/core/util v0.4.0
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0
 	github.com/hollis-labs/libs/security/secrets v0.1.0
+=======
+	github.com/hollis-labs/go-secrets v0.0.0
+	github.com/hollis-labs/libs/security/auth v0.0.0
+>>>>>>> 9d1801d (feat(identity): local middleware on go-auth with off semantics B; unified scope vocabulary)
 	github.com/hollis-labs/substrate/agent v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -100,3 +105,7 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+replace github.com/hollis-labs/go-secrets => /home/chrispian/dev/hollis-labs/libs/go-secrets-worktrees/mvp
+
+replace github.com/hollis-labs/libs/security/auth => /home/chrispian/dev/hollis-labs/libs/go-auth
