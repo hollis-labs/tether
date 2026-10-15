@@ -2,13 +2,13 @@
 //
 // Tether has no resolver of its own: this package only supplies the
 // Tether-specific configuration (the legacy "tether" keychain location and the
-// conventional environment fallbacks) to github.com/hollis-labs/go-secrets.
+// conventional environment fallbacks) to github.com/hollis-labs/libs/security/secrets.
 package secretsetup
 
 import (
 	"strings"
 
-	secrets "github.com/hollis-labs/go-secrets"
+	secrets "github.com/hollis-labs/libs/security/secrets"
 )
 
 // LegacyService is the keychain service tether-apikey-helper used before the

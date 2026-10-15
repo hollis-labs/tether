@@ -68,6 +68,8 @@ github.com/hollis-labs/libs/core/util v0.4.0 h1:UUEeCV0Zi5zynlgPh/Jw/bqgfmqD3NTp
 github.com/hollis-labs/libs/core/util v0.4.0/go.mod h1:CpS3EUj+MHivKVnGWJj8Vtq1+J3TN1uPyPCbLzhQLh0=
 github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0 h1:m9rCjLop6UCALCTF9Ssh/bZe/Y/0Xl/qvAPim4ZK67U=
 github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0/go.mod h1:IdRr5l0H14XcxrduOCsPWXsCPmd/sgD5zlP/gEa+1NM=
+github.com/hollis-labs/libs/security/secrets v0.1.0 h1:/wrYAM5viUnYMpDhvbQmPlTMesqMIVfvfz+GiZ7jMAs=
+github.com/hollis-labs/libs/security/secrets v0.1.0/go.mod h1:Krd1kgmisOVmeN1G/ltaLMva58tIBki9xShsySqd86Y=
 github.com/hollis-labs/substrate/agent v0.1.0 h1:KAf3hQOe1EO88KU08V29UmyViHnVfY98m5dqXRV7G3c=
 github.com/hollis-labs/substrate/agent v0.1.0/go.mod h1:NGtnJ+6am7s5SpR7mnoYnb3bOLhysCphSiXh/aNlelk=
 github.com/hollis-labs/substrate/harness v0.5.0 h1:igx3XCPA7EmMpnuUYfULkFc9mkgJuLt5QawEH97VLkU=

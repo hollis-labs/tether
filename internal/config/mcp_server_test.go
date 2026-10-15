@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	secrets "github.com/hollis-labs/go-secrets"
+	secrets "github.com/hollis-labs/libs/security/secrets"
 	"os"
 	"path/filepath"
 	"slices"

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	secrets "github.com/hollis-labs/go-secrets"
-	"github.com/hollis-labs/go-secrets/credfile"
+	secrets "github.com/hollis-labs/libs/security/secrets"
+	"github.com/hollis-labs/libs/security/secrets/credfile"
 	"github.com/hollis-labs/tether/internal/secretsetup"
 	"gopkg.in/yaml.v3"
 )

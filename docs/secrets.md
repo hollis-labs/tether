@@ -15,7 +15,7 @@ reference fails the load rather than spawning an upstream with a blank credentia
 
 - `internal/config/mcp_server.go` — expansion and resolution
 - `internal/secretsetup` — Tether's configuration of the one go-secrets resolver
-  (github.com/hollis-labs/go-secrets); there is no resolver of Tether's own
+  (github.com/hollis-labs/libs/security/secrets); there is no resolver of Tether's own
 - `cmd/tether-apikey-helper` — thin front for go-secrets: `resolve`, `set`, `delete`
 
 Entries live in the shared keychain service `hollis-labs`, account

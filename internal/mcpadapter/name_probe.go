@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/go-secrets/redact"
+	"github.com/hollis-labs/libs/security/secrets/redact"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"

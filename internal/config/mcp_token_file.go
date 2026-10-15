@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hollis-labs/go-secrets/credfile"
+	"github.com/hollis-labs/libs/security/secrets/credfile"
 )
 
 // StdioCredentialArgs validates an opt-in token_file at the spawn boundary.
