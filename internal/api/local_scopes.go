@@ -36,7 +36,10 @@ func WouldAllowLocal(p identity.Principal, scope string) bool {
 	case publicScope:
 		return true
 	case selfScope:
-		return p.Kind == "device"
+		return p.Kind == "device" || slices.Contains(p.Scopes, "*")
+	}
+	if p.TokenID != "" { // issued token: namespaced scopes, no local-custody authority
+		return scope != localScope && identity.ScopeGranted(p.Scopes, scope)
 	}
 	return slices.Contains(p.Scopes, "*") || scope != localScope && slices.Contains(p.Scopes, scope)
 }

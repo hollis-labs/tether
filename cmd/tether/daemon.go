@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"io"
 	"io/fs"
 	"log"
@@ -271,8 +272,13 @@ var daemonRunCmd = &cobra.Command{
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		var identities *identity.Store
 		operatorDegraded := false
-		if cfg.StrictestIdentityMode() != identity.Off || cfg.RemoteListener.Enabled {
-			identities = identity.NewStore(svc.Store.DB())
+		// The store is always built: even in off mode a presented token is
+		// verified and attributed (go-auth semantics B).
+		identities = identity.NewStore(svc.Store.DB())
+		issuer, err := buildTokenIssuer(ctx, svc, filepath.Join(stateRoot, "auth"))
+		if err != nil {
+			_ = closeService()
+			return err
 		}
 		if strictest := cfg.StrictestIdentityMode(); strictest != identity.Off {
 			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), strictest)
@@ -311,6 +317,7 @@ var daemonRunCmd = &cobra.Command{
 			EnvironmentStream:        environmentStream,
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
+			Issuer:                   issuer,
 			Workers:                  svc.Workers,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
@@ -1500,4 +1507,26 @@ func identityPointModes(c config.IdentityConfig) map[string]identity.Mode {
 		}
 	}
 	return out
+}
+
+// buildTokenIssuer opens the signing keys and issuer state under dir, hands
+// the issuer to the service (session grants and revocation on session end) and
+// starts key rotation housekeeping for the life of ctx.
+func buildTokenIssuer(ctx context.Context, svc *app.Service, dir string) (*authissuer.Issuer, error) {
+	keys, err := authissuer.OpenKeyStore(dir, 0)
+	if err != nil {
+		return nil, fmt.Errorf("token issuer keys: %w", err)
+	}
+	state, err := authissuer.OpenState(filepath.Join(dir, "state.json"))
+	if err != nil {
+		return nil, fmt.Errorf("token issuer state: %w", err)
+	}
+	name := "tether"
+	if svc.Catalog != nil && svc.Catalog.Global.Identity.Issuer != "" {
+		name = svc.Catalog.Global.Identity.Issuer
+	}
+	issuer := authissuer.New(name, keys, state)
+	svc.AgentTokens = issuer
+	go issuer.Maintain(ctx, authissuer.DefaultRotateEvery)
+	return issuer, nil
 }

@@ -83,6 +83,9 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/auth/devices", "/auth/devices", map[string]string{"GET": adminScope}),
 	routeScope("/auth/revoke", "/auth/revoke", map[string]string{"POST": adminScope}),
 	routeScope("/auth/renew", "/auth/renew", map[string]string{"POST": selfScope}),
+	routeScope("/auth/token", "/auth/token", map[string]string{"POST": selfScope}),
+	routeScope("/auth/denylist", "/auth/denylist", map[string]string{"GET": maintainScope, "POST": adminScope}),
+	routeScope("/.well-known/jwks.json", "/.well-known/jwks.json", map[string]string{"GET": publicScope, "HEAD": publicScope}),
 	routeScope("/auth/context", "/auth/context", map[string]string{"GET": readScope}),
 	routeScope("/sessions", "/sessions", map[string]string{"GET": readScope, "POST": operateScope}, "launch"),
 	routeScope("/sessions/", "/sessions/{id}", map[string]string{"GET": readScope}),
@@ -300,6 +303,33 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		p, ok := identity.FromContext(r.Context())
+		applyRouteScopes(w, r, next, ok && p.Kind == "device" && p.ID != identity.OperatorID, true, func(scope string) bool { return identity.HasDeviceScope(p, scope) })
+	})
+}
+
+// AgentScopeMiddleware applies the remote route-to-scope policy, unchanged, to
+// issued tokens (JWTs) on the local listener: an unlisted route or method is
+// unavailable, local-custody routes are refused, payload policies hold, and the
+// token's tether.* scopes must cover the route. Stored tth_ credentials are not
+// touched (their local behavior is unchanged), and only enforce mode rejects;
+// observe/off keep the would-deny attribution in identity_audit.
+func AgentScopeMiddleware(mode identity.Mode, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := identity.FromContext(r.Context())
+		if mode.Canonical() != identity.Enforce || identity.IsRemote(r.Context()) || !ok || p.TokenID == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		applyRouteScopes(w, r, next, true, false, func(scope string) bool { return identity.ScopeGranted(p.Scopes, scope) })
+	})
+}
+
+// applyRouteScopes is the one scope gate. authenticated says the caller is of
+// an admissible kind; allowSelf lets the current-device marker pass (devices
+// only). has reports whether the caller holds a scope.
+func applyRouteScopes(w http.ResponseWriter, r *http.Request, next http.Handler, authenticated, allowSelf bool, has func(string) bool) {
+	{
 		scope, payload, known := RequiredRemoteScope(r)
 		if !known {
 			writeError(w, 404, CodeNotFound, "remote route or method unavailable")
@@ -317,8 +347,7 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 			}
 			return
 		}
-		p, ok := identity.FromContext(r.Context())
-		if !ok || p.Kind != "device" || p.ID == identity.OperatorID {
+		if !authenticated {
 			writeError(w, 401, "unauthorized", "verified device required")
 			return
 		}
@@ -343,7 +372,11 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if scope != selfScope && !identity.HasDeviceScope(p, scope) {
+		if scope == selfScope && !allowSelf {
+			writeError(w, 403, "scope_required", "route requires a paired device credential")
+			return
+		}
+		if scope != selfScope && !has(scope) {
 			writeError(w, 403, "scope_required", "required scope: "+scope)
 			return
 		}
@@ -378,11 +411,11 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 				writeError(w, 400, CodeInvalidRequest, "invalid launch payload")
 				return
 			}
-			if (req.AgentFile != "" || req.AgentInline != "" || req.Override != "" || req.BootProfileFile != "" || req.Injection != "") && !identity.HasDeviceScope(p, maintainScope) {
+			if (req.AgentFile != "" || req.AgentInline != "" || req.Override != "" || req.BootProfileFile != "" || req.Injection != "") && !has(maintainScope) {
 				writeError(w, 403, "scope_required", "custom launch policy requires maintain scope")
 				return
 			}
 		}
 		next.ServeHTTP(w, r)
-	})
+	}
 }

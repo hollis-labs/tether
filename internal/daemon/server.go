@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
@@ -54,9 +55,12 @@ type Server struct {
 	Environment       *environment.DescriptorHandler
 	// EnvironmentReport is the detailed authenticated read-scope report.
 	// Its handler enforces read authority even when local identity observes.
-	EnvironmentReport        http.Handler
-	Docs                     api.DocsService
-	Identity                 *identity.Store
+	EnvironmentReport http.Handler
+	Docs              api.DocsService
+	Identity          *identity.Store
+	// Issuer, when set, makes this daemon a token issuer: it serves the JWKS,
+	// POST /auth/token and the deny-list, and the local API accepts its JWTs.
+	Issuer                   *authissuer.Issuer
 	OperatorIdentityDegraded bool
 	identityAuditMu          sync.Mutex
 	identityAudit            *identity.AuditQueue
@@ -557,6 +561,12 @@ func (s *Server) handler(remote bool) http.Handler {
 			router.Handle(path, devices)
 		}
 	}
+	if s.Issuer != nil {
+		issuerHandler := api.NewTokenIssuerHandler(s.Issuer)
+		for _, path := range []string{api.TokenPath, api.DenyListPath, api.JWKSPath} {
+			router.Handle(path, issuerHandler)
+		}
+	}
 	if s.MCP != nil && !remote {
 		router.Handle("/mcp", s.MCP)
 		router.Handle("/p/", s.MCP)
@@ -618,8 +628,11 @@ func (s *Server) handler(remote bool) http.Handler {
 			}
 		}
 	}
-	versioned := environment.ProtocolGate(true, api.RemoteScopeMiddleware(router))
-	local := environment.ProtocolGate(false, router)
+	// Issued tokens on the local listener get the remote route-to-scope policy
+	// (enforce mode only); stored tth_ credentials are unaffected.
+	scoped := api.AgentScopeMiddleware(s.Config.IdentityModeFor("local_api"), router)
+	versioned := environment.ProtocolGate(true, api.RemoteScopeMiddleware(scoped))
+	local := environment.ProtocolGate(false, scoped)
 	protocolHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
@@ -632,7 +645,16 @@ func (s *Server) handler(remote bool) http.Handler {
 	})
 	// Scope attribution is observe-only on the local listener (Enforce stays
 	// false); CW-20261010-0261.
-	protected := identity.MiddlewareWithScopes(s.Config.IdentityModeFor("local_api"), s.Identity, s.recordIdentityObservation, identity.ScopePolicy{Observe: api.ObserveLocalScope}, s.Config.Modules.ModuleGate(protocolHandler))
+	var verifier identity.Verifier = s.Identity
+	if s.Issuer != nil {
+		composite, err := authissuer.NewVerifier(s.Identity, s.Issuer)
+		if err != nil {
+			log.Printf("daemon: issued-token verifier unavailable: %v", err)
+		} else {
+			verifier = composite
+		}
+	}
+	protected := identity.MiddlewareWithScopes(s.Config.IdentityModeFor("local_api"), verifier, s.recordIdentityObservation, identity.ScopePolicy{Observe: api.ObserveLocalScope}, s.Config.Modules.ModuleGate(protocolHandler))
 	if remote {
 		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
 	}
