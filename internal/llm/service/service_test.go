@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/go-secrets/redact"
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/llm"
 	"github.com/hollis-labs/tether/internal/llm/observability"
 	"github.com/hollis-labs/tether/internal/llm/router"
-	"github.com/hollis-labs/tether/internal/redact"
 )
 
 func TestServiceChatRoutesAndAppliesMiddleware(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	secrets "github.com/hollis-labs/go-secrets"
 	"os"
 	"path/filepath"
 	"slices"
@@ -221,11 +222,36 @@ func (s *stubResolver) Resolve(_ context.Context, ref string) (string, error) {
 	return v, nil
 }
 
-// withResolver swaps the package resolver for the duration of a subtest.
-func withResolver(t *testing.T, r secretRefResolver) {
+// refResolver is the test-side shape of a stub: it answers a reference string.
+type refResolver interface {
+	Resolve(ctx context.Context, ref string) (string, error)
+}
+
+// stubBackend serves one scheme of a real go-secrets Resolver from a stub.
+type stubBackend struct {
+	scheme string
+	stub   refResolver
+}
+
+func (b stubBackend) Scheme() string { return b.scheme }
+
+func (b stubBackend) Resolve(ctx context.Context, ref secrets.Ref) (secrets.Resolved, error) {
+	v, err := b.stub.Resolve(ctx, ref.Raw)
+	if err != nil {
+		return secrets.Resolved{}, err
+	}
+	return secrets.Resolved{Secret: secrets.FromString(v), Source: b.scheme}, nil
+}
+
+// withResolver swaps the package resolver for a go-secrets Resolver backed by
+// the stub for the duration of a subtest.
+func withResolver(t *testing.T, r refResolver) {
 	t.Helper()
 	prev := secretResolver
-	secretResolver = r
+	secretResolver = secrets.New(
+		secrets.WithBackend(stubBackend{scheme: "keychain", stub: r}),
+		secrets.WithBackend(stubBackend{scheme: "helper", stub: r}),
+	)
 	t.Cleanup(func() { secretResolver = prev })
 }
 

@@ -34,6 +34,7 @@ This file was backfilled from the git history and is a good-faith summary, not a
   `enabled`. A daemon build that predates this field ignores it, so deploy the
   build before disabling anything.
 
+- Adopt go-secrets (CW-20261015-0014): one `*secrets.Resolver` replaces `internal/llm/secrets`, `internal/credfile` and `internal/redact` (go.mod `replace` to the local checkout until the monorepo import). `keychain://` now resolves in-process (service `hollis-labs`; old `tether` entries read through), an env var is a fallback after the keychain instead of before it, and resolution errors are typed. `tether-apikey-helper` is a thin front: `set` reads stdin only and refuses a secret argument (the macOS `security add-generic-password -w <secret>` argv exposure is gone), `delete` also clears the legacy entry, and exit codes follow helper protocol v0 (2 not found, 3 denied). `helper://<name>/<rest>` runs `<name> resolve keychain://<rest>`, and the name is a bare executable name.
 - Add `tether_catalog_files` and `tether_catalog_history` (CW-20261013-0004):
   `GET /catalog/files[?path=]` reads agent, launch, project, skill, boot-profile
   and team-definition files raw so an agent can edit and re-plan them (providers,

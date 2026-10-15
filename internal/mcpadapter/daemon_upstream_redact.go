@@ -3,8 +3,8 @@ package mcpadapter
 import (
 	"net/url"
 
+	"github.com/hollis-labs/go-secrets/redact"
 	"github.com/hollis-labs/tether/internal/config"
-	"github.com/hollis-labs/tether/internal/redact"
 )
 
 func (p *ClientPool) redactError(err error, entry config.MCPServerEntry) error {

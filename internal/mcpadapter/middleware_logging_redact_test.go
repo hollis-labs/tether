@@ -12,9 +12,9 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/hollis-labs/go-secrets/redact"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/redact"
 )
 
 // endEventOf runs one call through m and returns the tool_call_end event it

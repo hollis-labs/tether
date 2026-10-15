@@ -1,8 +1,8 @@
 package mcpadapter
 
 import (
+	"github.com/hollis-labs/go-secrets/redact"
 	"github.com/hollis-labs/tether/internal/config"
-	"github.com/hollis-labs/tether/internal/redact"
 )
 
 // redactedError is an upstream error whose text has had the upstream's
