@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/hollis-labs/go-secrets/redact"
 	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/budget"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
-	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/telemetry"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )

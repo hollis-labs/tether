@@ -1,39 +1,54 @@
+// Command tether-apikey-helper is a thin front for go-secrets, kept so existing
+// helper:// and keychain:// workflows keep working. It owns no keychain or
+// resolution logic of its own.
+//
+//	tether-apikey-helper resolve <ref>   print the value (helper protocol v0)
+//	tether-apikey-helper set <ref>       store the value read from stdin
+//	tether-apikey-helper delete <ref>    remove the entry
+//
+// The value is read from stdin only, on every platform. It is never an
+// argument: argv is visible to every process of the user.
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"runtime"
-	"strings"
 
-	"github.com/hollis-labs/tether/internal/llm/secrets"
-	"github.com/zalando/go-keyring"
+	secrets "github.com/hollis-labs/go-secrets"
+	"github.com/hollis-labs/tether/internal/secretsetup"
 )
 
-const serviceName = "tether"
-
 var (
-	version      = "dev"
-	commit       = "unknown"
-	buildDate    = "unknown"
-	readSecret   = defaultReadSecret
-	writeSecret  = defaultWriteSecret
-	deleteSecret = defaultDeleteSecret
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+
+	// store is the credential store. Tests replace it with an in-memory one.
+	store secrets.Store = secrets.NewKeyringStore()
+)
+
+// Helper protocol v0 exit codes (see go-secrets README).
+const (
+	exitFailure  = 1
+	exitNotFound = 2
+	exitDenied   = 3
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "tether-apikey-helper: %v\n", err)
-		os.Exit(1)
+	err := run(context.Background(), os.Args[1:], os.Stdin, os.Stdout)
+	if err == nil {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "tether-apikey-helper: %s\n", describe(err))
+	os.Exit(exitCode(err))
 }
 
-func run(args []string, stdin io.Reader, stdout io.Writer) error {
+func resolver() *secrets.Resolver { return secretsetup.New(secrets.WithStore(store)) }
+
+func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 {
 		return usageError()
 	}
@@ -43,231 +58,103 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		return err
 	case "resolve":
 		if len(args) != 2 {
-			return fmt.Errorf("resolve expects exactly 1 argument")
+			return errors.New("resolve expects exactly 1 argument")
 		}
-		secret, err := resolveRef(args[1])
+		if err := managedRef(args[1]); err != nil {
+			return err
+		}
+		res, err := resolver().Resolve(ctx, args[1])
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(stdout, secret)
+		_, err = fmt.Fprintln(stdout, res.Secret.Reveal())
 		return err
 	case "set":
-		if len(args) < 2 || len(args) > 3 {
-			return fmt.Errorf("set expects <ref> [secret]")
+		if len(args) != 2 {
+			return errors.New("set expects exactly 1 argument, <ref>; the secret is read from stdin and is never accepted as an argument")
 		}
-		secret := ""
-		if len(args) == 3 {
-			secret = args[2]
-		} else {
-			raw, err := io.ReadAll(stdin)
-			if err != nil {
-				return fmt.Errorf("read secret from stdin: %w", err)
-			}
-			secret = strings.TrimSpace(string(raw))
+		if err := managedRef(args[1]); err != nil {
+			return err
 		}
-		return storeRef(args[1], secret)
+		if isTerminal(stdin) {
+			return errors.New("set: stdin is a terminal; pipe or redirect the value (it is never taken from arguments)")
+		}
+		return resolver().Set(ctx, args[1], stdin)
 	case "delete":
 		if len(args) != 2 {
-			return fmt.Errorf("delete expects exactly 1 argument")
+			return errors.New("delete expects exactly 1 argument")
 		}
-		return deleteRef(args[1])
+		if err := managedRef(args[1]); err != nil {
+			return err
+		}
+		return deleteRef(ctx, args[1])
 	default:
 		return usageError()
 	}
 }
 
 func usageError() error {
-	return errors.New("usage: tether-apikey-helper <resolve|set|delete> <ref> [secret]")
+	return errors.New("usage: tether-apikey-helper <resolve|set|delete> <ref>   (set reads the secret from stdin)")
 }
 
-func resolveRef(raw string) (string, error) {
-	ref, err := parseKeychainRef(raw)
-	if err != nil {
-		return "", err
-	}
-	for _, key := range envKeysForRef(ref) {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return value, nil
-		}
-	}
-	secret, err := readSecret(accountName(ref))
-	if err != nil {
-		return "", fmt.Errorf("resolve %s from keychain service %q: %w", ref.Raw, serviceName, err)
-	}
-	secret = strings.TrimSpace(secret)
-	if secret == "" {
-		return "", fmt.Errorf("resolve %s from keychain service %q: empty secret", ref.Raw, serviceName)
-	}
-	return secret, nil
-}
-
-func storeRef(raw, secret string) error {
-	ref, err := parseKeychainRef(raw)
-	if err != nil {
-		return err
-	}
-	secret = strings.TrimSpace(secret)
-	if secret == "" {
-		return fmt.Errorf("secret is empty")
-	}
-	if err := writeSecret(accountName(ref), secret); err != nil {
-		return fmt.Errorf("store %s in keychain service %q: %w", ref.Raw, serviceName, err)
-	}
-	return nil
-}
-
-func deleteRef(raw string) error {
-	ref, err := parseKeychainRef(raw)
-	if err != nil {
-		return err
-	}
-	if err := deleteSecret(accountName(ref)); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		return fmt.Errorf("delete %s from keychain service %q: %w", ref.Raw, serviceName, err)
-	}
-	return nil
-}
-
-func parseKeychainRef(raw string) (secrets.Ref, error) {
+// managedRef accepts only keychain:// references: this binary manages the
+// local keychain, it does not forward to other helpers or backends.
+func managedRef(raw string) error {
 	ref, err := secrets.ParseRef(raw)
 	if err != nil {
-		return secrets.Ref{}, err
+		return err
 	}
-	if ref.Scheme != "keychain" {
-		return secrets.Ref{}, fmt.Errorf("unsupported secret scheme %q: only keychain:// refs can be managed locally", ref.Scheme)
+	switch ref.Scheme {
+	case "keychain", "keyring":
+		return nil
 	}
-	return ref, nil
+	return fmt.Errorf("unsupported secret scheme %q: only keychain:// refs can be managed locally", ref.Scheme)
 }
 
-func accountName(ref secrets.Ref) string {
-	return "provider-api-key:" + ref.Authority + "/" + strings.Join(ref.Path, "/")
-}
-
-func envKeysForRef(ref secrets.Ref) []string {
-	parts := append([]string{ref.Authority}, ref.Path...)
-	keys := []string{"TETHER_APIKEY_" + normalizeEnvSuffix(strings.Join(parts, "_"))}
-	switch ref.Authority {
-	case "openai":
-		keys = append(keys, "OPENAI_API_KEY")
-	case "anthropic":
-		keys = append(keys, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+// deleteRef removes the entry from the shared service and from the legacy
+// "tether" service, so a deleted reference does not keep resolving through the
+// legacy read-through.
+func deleteRef(ctx context.Context, raw string) error {
+	if err := resolver().Delete(ctx, raw); err != nil {
+		return err
 	}
-	return keys
-}
-
-func normalizeEnvSuffix(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r - ('a' - 'A'))
-		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
-}
-
-func defaultReadSecret(account string) (string, error) {
-	if runtime.GOOS == "darwin" {
-		return readSecretDarwin(account)
-	}
-	return keyring.Get(serviceName, account)
-}
-
-func defaultWriteSecret(account, secret string) error {
-	if runtime.GOOS == "darwin" {
-		return writeSecretDarwin(account, secret)
-	}
-	return keyring.Set(serviceName, account, secret)
-}
-
-func defaultDeleteSecret(account string) error {
-	if runtime.GOOS == "darwin" {
-		return deleteSecretDarwin(account)
-	}
-	return keyring.Delete(serviceName, account)
-}
-
-func readSecretDarwin(account string) (string, error) {
-	cmd := exec.Command("security", "find-generic-password", "-s", serviceName, "-a", account, "-w") //nolint:gosec // fixed binary + helper-owned args
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if strings.Contains(text, "could not be found in the keychain") {
-			return "", keyring.ErrNotFound
-		}
-		if text != "" {
-			return "", fmt.Errorf("%w (stderr: %s)", err, text)
-		}
-		return "", err
-	}
-	return decodeKeyringValue(strings.TrimSpace(stdout.String()))
-}
-
-// keyringBase64Prefix is the marker zalando/go-keyring writes ahead of a
-// base64-encoded secret on macOS (keyring_darwin.go, base64EncodingPrefix).
-const keyringBase64Prefix = "go-keyring-base64:"
-
-// decodeKeyringValue reverses go-keyring's macOS storage encoding.
-//
-// This helper reads the keychain through the `security` CLI rather than
-// go-keyring, and the two halves of the portfolio do not agree: Cerberus and
-// Nanite write entries with go-keyring, which stores
-// "go-keyring-base64:<base64>", while go-keyring's own reader decodes that
-// prefix transparently. A raw `security -w` read does not — it returns the
-// marker string verbatim, which is the length and shape of a real credential
-// and fails only later, at the API call, as a 401.
-//
-// Implementing the same read contract here makes the two interoperate in both
-// directions: go-keyring already reads plain values written by `security`, and
-// after this `security`-based reads understand values written by go-keyring.
-//
-// A value carrying the marker but not decoding as base64 is corrupt, and is
-// reported rather than passed through as if it were a secret.
-func decodeKeyringValue(value string) (string, error) {
-	if !strings.HasPrefix(value, keyringBase64Prefix) {
-		return value, nil
-	}
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(value, keyringBase64Prefix))
+	ref, err := secrets.ParseRef(raw)
 	if err != nil {
-		return "", fmt.Errorf("decode go-keyring-encoded secret: %w", err)
-	}
-	return string(decoded), nil
-}
-
-func writeSecretDarwin(account, secret string) error {
-	cmd := exec.Command("security", "add-generic-password", "-U", "-s", serviceName, "-a", account, "-w", secret) //nolint:gosec // fixed binary + helper-owned args
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if text != "" {
-			return fmt.Errorf("%w (stderr: %s)", err, text)
-		}
 		return err
+	}
+	if account := secretsetup.LegacyAccount(ref); account != "" {
+		if err := store.Delete(ctx, secretsetup.LegacyService, account); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			return err
+		}
 	}
 	return nil
 }
 
-func deleteSecretDarwin(account string) error {
-	cmd := exec.Command("security", "delete-generic-password", "-s", serviceName, "-a", account) //nolint:gosec // fixed binary + helper-owned args
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if strings.Contains(text, "could not be found in the keychain") {
-			return keyring.ErrNotFound
+func describe(err error) string {
+	var se *secrets.Error
+	if errors.As(err, &se) {
+		if g := se.Guidance(); g != "" {
+			return se.Error() + " (" + g + ")"
 		}
-		if text != "" {
-			return fmt.Errorf("%w (stderr: %s)", err, text)
-		}
-		return err
 	}
-	return nil
+	return err.Error()
+}
+
+func exitCode(err error) int {
+	switch {
+	case errors.Is(err, secrets.ErrNotFound):
+		return exitNotFound
+	case errors.Is(err, secrets.ErrDenied):
+		return exitDenied
+	}
+	return exitFailure
+}
+
+func isTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

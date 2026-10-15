@@ -2,166 +2,123 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
-	"github.com/zalando/go-keyring"
+	secrets "github.com/hollis-labs/go-secrets"
+	"github.com/hollis-labs/go-secrets/secretstest"
+	"github.com/hollis-labs/tether/internal/secretsetup"
 )
 
-func TestAccountName(t *testing.T) {
-	ref, err := parseKeychainRef("keychain://openai/work")
-	if err != nil {
-		t.Fatalf("parse ref: %v", err)
+func useStore(t *testing.T) *secretstest.FakeStore {
+	t.Helper()
+	fs := &secretstest.FakeStore{}
+	prev := store
+	store = fs
+	t.Cleanup(func() { store = prev })
+	// No ambient provider keys leak into the env fallback.
+	for _, k := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "TETHER_APIKEY_OPENAI_TEST"} {
+		t.Setenv(k, "")
 	}
-	if got, want := accountName(ref), "provider-api-key:openai/work"; got != want {
-		t.Fatalf("accountName = %q, want %q", got, want)
-	}
+	return fs
 }
 
-func TestEnvKeysForRef(t *testing.T) {
-	ref, err := parseKeychainRef("keychain://openai/work")
-	if err != nil {
-		t.Fatalf("parse ref: %v", err)
-	}
-	got := envKeysForRef(ref)
-	want := []string{"TETHER_APIKEY_OPENAI_WORK", "OPENAI_API_KEY"}
-	if len(got) != len(want) {
-		t.Fatalf("len(envKeysForRef) = %d, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("envKeysForRef[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestResolvePrefersEnv(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "sk-openai-test")
-	secret, err := resolveRef("keychain://openai/work")
-	if err != nil {
-		t.Fatalf("resolveRef: %v", err)
-	}
-	if secret != "sk-openai-test" {
-		t.Fatalf("secret = %q, want %q", secret, "sk-openai-test")
-	}
-}
-
-func TestRunSetDeleteLifecycle(t *testing.T) {
-	store := map[string]string{}
-	readSecret = func(account string) (string, error) {
-		value, ok := store[account]
-		if !ok {
-			return "", keyring.ErrNotFound
-		}
-		return value, nil
-	}
-	writeSecret = func(account, password string) error {
-		store[account] = password
-		return nil
-	}
-	deleteSecret = func(account string) error {
-		delete(store, account)
-		return nil
-	}
-	t.Cleanup(func() {
-		readSecret = defaultReadSecret
-		writeSecret = defaultWriteSecret
-		deleteSecret = defaultDeleteSecret
-	})
-
-	if err := run([]string{"set", "keychain://openai/test"}, bytes.NewBufferString("sk-openai-store\n"), &bytes.Buffer{}); err != nil {
-		t.Fatalf("run set: %v", err)
-	}
-	got, err := readSecret("provider-api-key:openai/test")
-	if err != nil {
-		t.Fatalf("keyring get: %v", err)
-	}
-	if got != "sk-openai-store" {
-		t.Fatalf("stored secret = %q, want %q", got, "sk-openai-store")
-	}
-
+func do(args []string, stdin string) (string, error) {
 	var out bytes.Buffer
-	if err := run([]string{"resolve", "keychain://openai/test"}, bytes.NewBuffer(nil), &out); err != nil {
-		t.Fatalf("run resolve: %v", err)
-	}
-	if out.String() != "sk-openai-store\n" {
-		t.Fatalf("resolve output = %q", out.String())
-	}
+	err := run(context.Background(), args, strings.NewReader(stdin), &out)
+	return out.String(), err
+}
 
-	if err := run([]string{"delete", "keychain://openai/test"}, bytes.NewBuffer(nil), &bytes.Buffer{}); err != nil {
-		t.Fatalf("run delete: %v", err)
+func TestSetResolveDeleteLifecycle(t *testing.T) {
+	fs := useStore(t)
+	if _, err := do([]string{"set", "keychain://openai/test"}, "sk-openai-store\n"); err != nil {
+		t.Fatalf("set: %v", err)
 	}
-	if _, err := readSecret("provider-api-key:openai/test"); !errors.Is(err, keyring.ErrNotFound) {
-		t.Fatalf("expected deleted key to be missing")
+	if !fs.Has(secrets.DefaultService, "openai/test") {
+		t.Fatal("secret not written to the shared service")
+	}
+	out, err := do([]string{"resolve", "keychain://openai/test"}, "")
+	if err != nil || out != "sk-openai-store\n" {
+		t.Fatalf("resolve = %q, %v", out, err)
+	}
+	if _, err := do([]string{"delete", "keychain://openai/test"}, ""); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	_, err = do([]string{"resolve", "keychain://openai/test"}, "")
+	if !errors.Is(err, secrets.ErrNotFound) || exitCode(err) != exitNotFound {
+		t.Fatalf("after delete: %v (exit %d)", err, exitCode(err))
 	}
 }
 
-func TestParseRejectsHelperRefs(t *testing.T) {
-	if _, err := parseKeychainRef("helper://tether-apikey-helper/openai/work"); err == nil {
-		t.Fatal("expected helper:// ref to fail")
-	}
-}
-
-func TestMainRunUsage(t *testing.T) {
-	err := run(nil, bytes.NewBuffer(nil), &bytes.Buffer{})
+// The secret is never accepted as an argument, so it cannot reach argv.
+func TestSetRefusesSecretArgument(t *testing.T) {
+	fs := useStore(t)
+	const canary = "CANARY-argv-secret"
+	_, err := do([]string{"set", "keychain://openai/test", canary}, "")
 	if err == nil {
+		t.Fatal("set with a secret argument must fail")
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatal("error echoes the argument secret")
+	}
+	if len(fs.Calls()) != 0 {
+		t.Fatalf("store touched: %v", fs.Calls())
+	}
+}
+
+func TestSetRejectsEmptyStdin(t *testing.T) {
+	useStore(t)
+	_, err := do([]string{"set", "keychain://openai/test"}, "  \n")
+	if !errors.Is(err, secrets.ErrEmpty) {
+		t.Fatalf("err = %v, want empty", err)
+	}
+}
+
+func TestResolveReadsLegacyTetherEntry(t *testing.T) {
+	fs := useStore(t)
+	fs.Put(secretsetup.LegacyService, "provider-api-key:openai/test", "sk-legacy")
+	out, err := do([]string{"resolve", "keychain://openai/test"}, "")
+	if err != nil || out != "sk-legacy\n" {
+		t.Fatalf("resolve = %q, %v", out, err)
+	}
+}
+
+func TestDeleteAlsoRemovesLegacyEntry(t *testing.T) {
+	fs := useStore(t)
+	fs.Put(secretsetup.LegacyService, "provider-api-key:openai/test", "sk-legacy")
+	if _, err := do([]string{"delete", "keychain://openai/test"}, ""); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if fs.Has(secretsetup.LegacyService, "provider-api-key:openai/test") {
+		t.Fatal("legacy entry survived delete")
+	}
+}
+
+func TestResolveFallsBackToEnvAfterKeychain(t *testing.T) {
+	useStore(t)
+	t.Setenv("OPENAI_API_KEY", "sk-env")
+	out, err := do([]string{"resolve", "keychain://openai/test"}, "")
+	if err != nil || out != "sk-env\n" {
+		t.Fatalf("resolve = %q, %v", out, err)
+	}
+}
+
+func TestRejectsNonKeychainRefs(t *testing.T) {
+	useStore(t)
+	for _, ref := range []string{"helper://tether-apikey-helper/openai/work", "file://openai/work", "env://X"} {
+		if _, err := do([]string{"set", ref}, "v"); err == nil {
+			t.Errorf("set %s should fail", ref)
+		}
+	}
+}
+
+func TestUsageAndVersion(t *testing.T) {
+	if _, err := do(nil, ""); err == nil {
 		t.Fatal("expected usage error")
 	}
-}
-
-// TestDecodeKeyringValue covers the go-keyring interop hazard: entries written
-// by zalando/go-keyring on macOS carry a "go-keyring-base64:" marker that
-// go-keyring's own reader strips, but a raw `security -w` read does not. Left
-// undecoded, the marker string is handed to a service as if it were a
-// credential — the right length and shape, failing only later as a 401.
-func TestDecodeKeyringValue(t *testing.T) {
-	t.Run("decodes a go-keyring-written value", func(t *testing.T) {
-		const secret = "resolved-value-for-test"
-		stored := keyringBase64Prefix + base64.StdEncoding.EncodeToString([]byte(secret))
-		got, err := decodeKeyringValue(stored)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != secret {
-			t.Errorf("decodeKeyringValue = %q, want the decoded secret", got)
-		}
-	})
-
-	t.Run("passes a plain security-written value through", func(t *testing.T) {
-		const secret = "plain-value-written-by-security-cli"
-		got, err := decodeKeyringValue(secret)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != secret {
-			t.Errorf("decodeKeyringValue = %q, want it unchanged", got)
-		}
-	})
-
-	t.Run("never returns the marker string as a secret", func(t *testing.T) {
-		stored := keyringBase64Prefix + base64.StdEncoding.EncodeToString([]byte("real"))
-		got, _ := decodeKeyringValue(stored)
-		if strings.Contains(got, keyringBase64Prefix) {
-			t.Errorf("marker survived into the resolved value: %q", got)
-		}
-	})
-
-	t.Run("corrupt payload is an error, not a passthrough", func(t *testing.T) {
-		got, err := decodeKeyringValue(keyringBase64Prefix + "!!!not-base64!!!")
-		if err == nil {
-			t.Fatalf("expected an error for a corrupt payload, got %q", got)
-		}
-		if got != "" {
-			t.Errorf("returned %q alongside an error; must return empty", got)
-		}
-	})
-
-	t.Run("empty value is untouched", func(t *testing.T) {
-		got, err := decodeKeyringValue("")
-		if err != nil || got != "" {
-			t.Errorf("decodeKeyringValue(\"\") = %q, %v", got, err)
-		}
-	})
+	if out, err := do([]string{"--version"}, ""); err != nil || !strings.HasPrefix(out, "tether-apikey-helper ") {
+		t.Fatalf("version = %q, %v", out, err)
+	}
 }

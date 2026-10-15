@@ -14,9 +14,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hollis-labs/go-secrets/redact"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/redact"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )

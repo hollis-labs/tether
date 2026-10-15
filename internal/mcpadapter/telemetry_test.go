@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/go-secrets/redact"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
-	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/store"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )

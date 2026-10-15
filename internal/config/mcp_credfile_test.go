@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/tether/internal/credfile"
+	"github.com/hollis-labs/go-secrets/credfile"
 )
 
 const fileCredSecret = "file-sourced-credential-0123456789"

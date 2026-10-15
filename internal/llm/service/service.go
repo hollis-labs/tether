@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hollis-labs/go-secrets/redact"
 	hotel "github.com/hollis-labs/libs/util/otel"
 	"github.com/hollis-labs/libs/util/otel/genai"
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"
@@ -17,7 +18,6 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/observability"
 	"github.com/hollis-labs/tether/internal/llm/router"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
-	"github.com/hollis-labs/tether/internal/redact"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
