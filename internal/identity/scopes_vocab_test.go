@@ -19,6 +19,13 @@ func TestScopeGrantedUnifiesDeviceAndChildScopes(t *testing.T) {
 		{[]string{"tether.operate"}, "message.write", true},
 		{[]string{"operate"}, "catalog.write", false},
 		{[]string{"maintain"}, "catalog.write", true},
+		{[]string{"admin"}, "registry.write", true},
+		{[]string{"tether.maintain"}, "tether.registry", true},
+		{[]string{"tether.registry"}, "registry.write", true},
+		{[]string{"tether.registry"}, "tether.maintain", false}, // one direction only
+		{[]string{"tether.registry"}, "catalog.write", false},
+		{[]string{"tether.catalog"}, "catalog.write", true},
+		{[]string{"operate"}, "registry.write", false},
 		{[]string{"read"}, "session.write", false},
 		{[]string{"session.write"}, "session.write", true},   // legacy credential keeps its meaning
 		{[]string{"session.write"}, "tether.operate", false}, // ...and gains no canonical authority
@@ -35,7 +42,7 @@ func TestScopeGrantedUnifiesDeviceAndChildScopes(t *testing.T) {
 		}
 	}
 	got, err := identity.CanonicalScopes([]string{"message.write", "registry.write", "groups.write", "read"})
-	if err != nil || len(got) != 3 || got[0] != "tether.maintain" || got[1] != "tether.operate" || got[2] != "tether.read" {
+	if err != nil || len(got) != 3 || got[0] != "tether.operate" || got[1] != "tether.read" || got[2] != "tether.registry" {
 		t.Fatalf("CanonicalScopes: %v %v", got, err)
 	}
 	if _, err := identity.CanonicalScopes([]string{"bogus"}); err == nil {

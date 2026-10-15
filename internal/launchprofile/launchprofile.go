@@ -154,7 +154,8 @@ func ValidMCPScope(scope string) bool {
 	case "session.write", "message.write", "registry.write", "groups.write", "catalog.write", "ai.invoke", "team.write",
 		// The unified vocabulary (identity.CanonicalScopes): the same set of
 		// capabilities as the device scopes, under the tether.* namespace.
-		"tether.read", "tether.operate", "tether.terminal", "tether.maintain", "tether.admin", "tether.worker":
+		"tether.read", "tether.operate", "tether.terminal", "tether.maintain", "tether.admin", "tether.worker",
+		"tether.registry", "tether.catalog":
 		return true
 	}
 	return false

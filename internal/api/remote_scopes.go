@@ -17,6 +17,7 @@ const (
 	operateScope  = identity.ScopeOperate
 	terminalScope = identity.ScopeTerminal
 	maintainScope = identity.ScopeMaintain
+	registryScope = identity.ScopeRegistry
 	adminScope    = identity.ScopeAdmin
 	localScope    = "local-only"
 	publicScope   = "public"
@@ -180,18 +181,18 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/docs/mcp", "/docs/mcp", map[string]string{"GET": readScope}),
 	routeScope("/docs/mcp/{id}", "/docs/mcp/{id}", map[string]string{"GET": readScope}),
 	routeScope("/docs/mcp/{id}/file", "/docs/mcp/{id}/file", map[string]string{"GET": readScope}),
-	routeScope("/registry/bootstrap", "/registry/bootstrap", map[string]string{"POST": maintainScope}),
-	routeScope("/registry/reonboard", "/registry/reonboard", map[string]string{"POST": maintainScope}),
+	routeScope("/registry/bootstrap", "/registry/bootstrap", map[string]string{"POST": registryScope}),
+	routeScope("/registry/reonboard", "/registry/reonboard", map[string]string{"POST": registryScope}),
 	routeScope("/registry/bindings", "/registry/bindings", map[string]string{"GET": readScope, "POST": localScope}),
 	routeScope("/registry/bindings/", "/registry/bindings/{id}/renew", map[string]string{"POST": localScope}),
 	routeScope("/registry/bindings/", "/registry/bindings/{id}/revoke", map[string]string{"POST": localScope}),
-	routeScope("/registry/scoped-bindings", "/registry/scoped-bindings", map[string]string{"POST": maintainScope}),
+	routeScope("/registry/scoped-bindings", "/registry/scoped-bindings", map[string]string{"POST": registryScope}),
 	routeScope("/registry/scoped-bindings/resolve", "/registry/scoped-bindings/resolve", map[string]string{"GET": readScope}),
 	routeScope("/registry/scoped-bindings/revisions", "/registry/scoped-bindings/revisions", map[string]string{"GET": readScope}),
-	routeScope("/registry/", "/registry/{kind}", map[string]string{"GET": readScope, "POST": maintainScope}, "registry-kind"),
-	routeScope("/registry/", "/registry/{kind}/{id}", map[string]string{"GET": readScope, "PATCH": maintainScope, "DELETE": maintainScope}, "registry-kind"),
-	routeScope("/registry/", "/registry/{kind}/{id}/sync", map[string]string{"POST": maintainScope}, "registry-kind"),
-	routeScope("/registry/", "/registry/{kind}/{id}/merge", map[string]string{"POST": maintainScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}", map[string]string{"GET": readScope, "POST": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}", map[string]string{"GET": readScope, "PATCH": registryScope, "DELETE": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}/sync", map[string]string{"POST": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}/merge", map[string]string{"POST": registryScope}, "registry-kind"),
 	routeScope("/whoami", "/whoami", map[string]string{"GET": readScope}),
 	routeScope("/execution/policy", "/execution/policy", map[string]string{"GET": readScope, "PUT": localScope}),
 	routeScope("/capacity", "/capacity", map[string]string{"GET": readScope}),

@@ -12,6 +12,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
 type tokenFake map[string]identity.Principal
@@ -162,5 +163,60 @@ func TestSelfScopeIsForDevicesOnly(t *testing.T) {
 	}
 	if WouldAllowLocal(identity.Principal{Kind: "session", Scopes: []string{"message.write"}}, selfScope) {
 		t.Fatal("session credential must not")
+	}
+}
+
+// A default agent (launchprofile.DefaultMCPScopes) is issued tether.operate and
+// tether.registry, never tether.maintain, and so cannot reach maintain-only
+// routes.
+func TestDefaultAgentScopesAreNarrow(t *testing.T) {
+	is, h := issuerFixture(t, identity.Enforce)
+	op := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	scopes, err := identity.CanonicalScopes(launchprofile.DefaultMCPScopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(scopes, " ") != "tether.operate tether.registry" {
+		t.Fatalf("default scopes canonicalize to %v", scopes)
+	}
+	tok, err := is.Exchange(op, authissuer.Request{Audience: "tether", Scopes: launchprofile.DefaultMCPScopes, SessionID: "default-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range tok.Scopes {
+		if s == "tether.maintain" || s == "tether.admin" {
+			t.Fatalf("default agent carries %s", s)
+		}
+	}
+	for _, c := range []struct {
+		method, path string
+		want         int
+	}{
+		{"POST", "/sessions", 204},               // operate
+		{"POST", "/registry/bootstrap", 404},     // registry scope, but route not mounted in this fixture
+		{"POST", "/catalog/reload", 403},         // local custody
+		{"POST", "/catalog/plans/p1/apply", 403}, // local custody
+		{"GET", "/auth/denylist", 403},           // needs maintain
+		{"GET", "/logs/daemon", 404},             // maintain-only route: unmapped here, never reachable
+		{"POST", "/settings/onboarding/x", 404},  // maintain-only
+	} {
+		got := call(h, c.method, c.path, tok.Token, "{}").Code
+		if c.path == "/registry/bootstrap" || c.path == "/logs/daemon" || c.path == "/settings/onboarding/x" {
+			if got == 204 {
+				t.Errorf("%s %s reached a handler", c.method, c.path)
+			}
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s %s: got %d want %d", c.method, c.path, got, c.want)
+		}
+	}
+	// the scope gate itself, independent of mounting: registry yes, maintain no
+	if !identity.ScopeGranted(tok.Scopes, "registry.write") || identity.ScopeGranted(tok.Scopes, identity.ScopeMaintain) {
+		t.Fatalf("scopes %v", tok.Scopes)
+	}
+	// a maintain device still satisfies the registry route
+	if !identity.HasDeviceScope(identity.Principal{ID: "d", Kind: "device", Scopes: []string{"maintain"}}, registryScope) {
+		t.Fatal("maintain device must satisfy registry")
 	}
 }

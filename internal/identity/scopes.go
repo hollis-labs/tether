@@ -13,6 +13,13 @@ const (
 	ScopeMaintain = "maintain"
 	ScopeAdmin    = "admin"
 	ScopeWorker   = "worker"
+	// ScopeRegistry and ScopeCatalog are narrow capabilities carved out of
+	// maintain for the registry-write and catalog-write child scopes. They are
+	// canonical (tether.registry, tether.catalog) but are not device scopes: a
+	// device is never paired with them, and holds them implicitly through
+	// maintain or admin.
+	ScopeRegistry = "registry"
+	ScopeCatalog  = "catalog"
 )
 
 // NormalizeDeviceScopes validates independent capabilities, not a privilege hierarchy.
@@ -45,6 +52,9 @@ func HasDeviceScope(p Principal, scope string) bool {
 	}
 	for _, granted := range p.Scopes {
 		if granted == scope {
+			return true
+		}
+		if (scope == ScopeRegistry || scope == ScopeCatalog) && (granted == ScopeMaintain || granted == ScopeAdmin) {
 			return true
 		}
 	}
@@ -85,13 +95,13 @@ const AppScopePrefix = "tether."
 // string is returned unchanged.
 func CanonicalScope(s string) string {
 	switch s {
-	case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker:
+	case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker, ScopeRegistry, ScopeCatalog:
 		return AppScopePrefix + s
 	}
 	return s
 }
 
-// IsCanonicalScope reports whether s is one of the six tether.* scopes.
+// IsCanonicalScope reports whether s is one of the eight tether.* scopes.
 func IsCanonicalScope(s string) bool {
 	rest, ok := strings.CutPrefix(s, AppScopePrefix)
 	return ok && CanonicalScope(rest) == s
@@ -108,8 +118,8 @@ var legacyScopeNeeds = map[string]string{
 	"groups.write":   AppScopePrefix + ScopeOperate,
 	"team.write":     AppScopePrefix + ScopeOperate,
 	"ai.invoke":      AppScopePrefix + ScopeOperate,
-	"registry.write": AppScopePrefix + ScopeMaintain,
-	"catalog.write":  AppScopePrefix + ScopeMaintain,
+	"registry.write": AppScopePrefix + ScopeRegistry,
+	"catalog.write":  AppScopePrefix + ScopeCatalog,
 }
 
 // IsLegacyChildScope reports whether s is one of the pre-unification MCP child scopes.
@@ -128,8 +138,14 @@ func ScopeGranted(granted []string, required string) bool {
 		}
 		want = need
 	}
+	narrow := want == AppScopePrefix+ScopeRegistry || want == AppScopePrefix+ScopeCatalog
 	for _, g := range granted {
 		if g == "*" || CanonicalScope(g) == want {
+			return true
+		}
+		// maintain and admin contain the narrow registry/catalog capabilities
+		// (one direction only: the narrow scopes grant nothing of maintain).
+		if cg := CanonicalScope(g); narrow && (cg == AppScopePrefix+ScopeMaintain || cg == AppScopePrefix+ScopeAdmin) {
 			return true
 		}
 		if pre, ok := strings.CutSuffix(g, ".*"); ok && strings.HasPrefix(want, pre+".") {
