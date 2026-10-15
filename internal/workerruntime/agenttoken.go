@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/go-secrets/tokenfile"
+	"github.com/hollis-labs/libs/security/secrets/tokenfile"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
