@@ -1,0 +1,83 @@
+{
+ "cwd": "/work",
+ "duration_ms": 5375,
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PostToolUse",
+ "permission_mode": "default",
+ "prompt_id": "prompt-1",
+ "session_id": "sess-1",
+ "tool_input": {
+  "description": "List files in working directory",
+  "prompt": "List the files in the directory /work (non-recursive is fine unless there are obvious subdirectories worth listing). Report the file names, one per line, with a short note on whether each is a file or directory. Do not modify anything.",
+  "run_in_background": false,
+  "subagent_type": "Explore"
+ },
+ "tool_name": "Agent",
+ "tool_response": {
+  "agentId": "ac924b89e08de9211",
+  "agentType": "Explore",
+  "canContinueAgent": true,
+  "content": [
+   {
+    "text": "The directory has one entry, and it is a regular file:\n\n- `hello.txt` (file, 23 bytes)\n\nThere are no subdirectories. I did not modify anything.",
+    "type": "text"
+   }
+  ],
+  "harnessNoteCount": 0,
+  "harnessSectionHash": "6077b0bc9838532f",
+  "harnessTailCount": 0,
+  "prompt": "List the files in the directory /work (non-recursive is fine unless there are obvious subdirectories worth listing). Report the file names, one per line, with a short note on whether each is a file or directory. Do not modify anything.",
+  "resolvedModel": "claude-haiku-5-5",
+  "status": "completed",
+  "toolStats": {
+   "bashCount": 1,
+   "editFileCount": 0,
+   "linesAdded": 0,
+   "linesRemoved": 0,
+   "otherToolCount": 0,
+   "readCount": 0,
+   "searchCount": 0
+  },
+  "totalDurationMs": 5373,
+  "totalTokens": 9274,
+  "totalToolUseCount": 1,
+  "usage": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 1272
+   },
+   "cache_creation_input_tokens": 1272,
+   "cache_read_input_tokens": 7873,
+   "fallback_credit": null,
+   "inference_geo": "global",
+   "input_tokens": 2,
+   "iterations": [
+    {
+     "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 1272
+     },
+     "cache_creation_input_tokens": 1272,
+     "cache_read_input_tokens": 7873,
+     "input_tokens": 2,
+     "output_tokens": 127,
+     "type": "message"
+    }
+   ],
+   "output_tokens": 127,
+   "output_tokens_details": {
+    "thinking_tokens": 72
+   },
+   "server_tool_use": {
+    "web_fetch_requests": 0,
+    "web_search_requests": 0
+   },
+   "service_tier": "standard",
+   "speed": "standard"
+  }
+ },
+ "tool_use_id": "toolu_3",
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}

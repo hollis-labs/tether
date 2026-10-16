@@ -53,8 +53,10 @@ type Observation struct {
 	ParentID string
 	// CausationID names the event, from any producer, that caused this one (a subagent spawn to the tool use behind it).
 	CausationID string
-	// Actor is who did it, when the adapter can tell. Both fields are required together.
+	// Actor is who did it, when the adapter can tell. Kind and URN are required together.
 	ActorURN, ActorKind, ActorRole string
+	// Labels are free classification tags ("subagent") carried in class.labels.
+	Labels []string
 }
 
 // Recorder stamps and stores the events of one session. It is safe for concurrent use.
@@ -125,6 +127,9 @@ func (r *Recorder) Record(ctx context.Context, o Observation) (runtimeevents.Eve
 	}
 	if o.ActorURN != "" || o.ActorKind != "" {
 		ev.Actor = &runtimeevents.Actor{URN: o.ActorURN, Kind: o.ActorKind, Role: o.ActorRole}
+	}
+	if len(o.Labels) > 0 {
+		ev.Class = &runtimeevents.Class{Labels: append([]string(nil), o.Labels...)}
 	}
 	// The sink assigns the sequence; validate with a stand-in so a missing sequence is not mistaken for a bad event.
 	check := ev

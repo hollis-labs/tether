@@ -1,0 +1,27 @@
+{
+ "agent_id": "agent-1",
+ "agent_type": "Explore",
+ "cwd": "/work",
+ "duration_ms": 61,
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PostToolUse",
+ "permission_mode": "default",
+ "prompt_id": "prompt-1",
+ "session_id": "sess-1",
+ "tool_input": {
+  "command": "ls -la /work",
+  "description": "List contents of work directory with details"
+ },
+ "tool_name": "Bash",
+ "tool_response": {
+  "interrupted": false,
+  "isImage": false,
+  "noOutputExpected": false,
+  "stderr": "",
+  "stdout": "total 12\ndrwxrwxr-x 2 user user 4096 Oct 16 13:16 .\ndrwxrwxr-x 4 user user 4096 Oct 16 13:16 ..\n-rw-rw-r-- 1 user user   23 Oct 16 13:16 hello.txt"
+ },
+ "tool_use_id": "toolu_4",
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}

@@ -1,0 +1,18 @@
+{
+ "agent_id": "agent-1",
+ "agent_transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000/subagents/agent-ac924b89e08de9211.jsonl",
+ "agent_type": "Explore",
+ "background_tasks": [],
+ "cwd": "/work",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "SubagentStop",
+ "last_assistant_message": "The directory has one entry, and it is a regular file:\n\n- `hello.txt` (file, 23 bytes)\n\nThere are no subdirectories. I did not modify anything.",
+ "permission_mode": "default",
+ "prompt_id": "prompt-1",
+ "session_crons": [],
+ "session_id": "sess-1",
+ "stop_hook_active": false,
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}

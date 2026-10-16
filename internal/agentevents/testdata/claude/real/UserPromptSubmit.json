@@ -1,0 +1,9 @@
+{
+ "cwd": "/work",
+ "hook_event_name": "UserPromptSubmit",
+ "permission_mode": "default",
+ "prompt": "Read the file hello.txt, then run the shell command: echo captured, then use the Explore subagent to list the files in this directory. Then say done.",
+ "prompt_id": "prompt-1",
+ "session_id": "sess-1",
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}
