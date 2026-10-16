@@ -1,0 +1,1 @@
+{"hook_event_name":"PermissionRequest","session_id":"c1","tool_name":"Bash","tool_use_id":"toolu_3","tool_input":{"command":"rm -rf /tmp/x"}}
