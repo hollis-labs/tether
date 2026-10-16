@@ -61,6 +61,10 @@ type internalLauncher interface {
 	LaunchInternal(context.Context, string, app.InternalLaunch) (*app.Launched, error)
 }
 
+// A refactor must not be able to drop the parent bound unnoticed: the real
+// service has to keep implementing it.
+var _ internalLauncher = (*app.Service)(nil)
+
 // launch starts the created session. A spawned member is bounded by its parent
 // session's grant; a root member (no parent) is internal and unattributed.
 func (s *Sessions) launch(ctx context.Context, sessionID, parent string) (*app.Launched, error) {

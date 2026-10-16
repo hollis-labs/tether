@@ -439,7 +439,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 	token, err := s.mintSessionCredential(ctx, sessionID)
 	if err != nil {
-		if plan.NativeResumeOnly || errors.Is(err, store.ErrSessionReplacementUnavailable) || s.cat() != nil && s.cat().Global.Identity.EffectiveMode() == string(identity.Enforce) {
+		if plan.NativeResumeOnly || errors.Is(err, ErrLaunchRefused) || errors.Is(err, store.ErrSessionReplacementUnavailable) || s.cat() != nil && s.cat().Global.Identity.EffectiveMode() == string(identity.Enforce) {
 			return nil, err
 		}
 		log.Print("WARNING: session credential unavailable; observe launch continuing anonymously")

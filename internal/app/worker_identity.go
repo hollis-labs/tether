@@ -129,7 +129,11 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		scopes = slices.Clone(launchprofile.DefaultMCPScopes)
 	}
 	// A worker session may not hold more than the principal that launched it.
-	scopes, _ = s.launchCeiling(ctx, scopes)
+	scopes, _, err := s.launchCeiling(ctx, scopes)
+	if err != nil {
+		revokeBinding()
+		return undo, err
+	}
 	expires := time.Now().UTC().Add(sessionTokenTTL)
 	self := "msg://session/local/" + row.ID
 	// CreatedBy records who launched the session, as the hub-local path does
