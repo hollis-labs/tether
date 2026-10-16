@@ -66,6 +66,7 @@ func (b *memBus) PublishTx(ctx context.Context, tx Tx, e Event) (Event, error) {
 	if e.Scope == "" {
 		return Event{}, ErrScopeEmpty
 	}
+	e = b.stamp(ctx, e, true)
 	// Deliberately not under the bus lock: the caller holds the only database
 	// connection inside its transaction, and a publisher holding the lock waits
 	// for that connection.
