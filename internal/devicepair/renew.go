@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,6 +33,13 @@ func RenewWithHost(ctx context.Context, client *http.Client, hub, token, host st
 	u, err := url.Parse(hub)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return out, fmt.Errorf("renewal requires an HTTP(S) hub URL without credentials, query or fragment")
+	}
+	if u.Scheme == "http" {
+		endpointHost := strings.ToLower(u.Hostname())
+		ip := net.ParseIP(endpointHost)
+		if endpointHost != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return out, fmt.Errorf("device renewal requires HTTPS for non-loopback hubs")
+		}
 	}
 	if token == "" || strings.ContainsAny(token, " \t\r\n") {
 		return out, fmt.Errorf("invalid device credential")

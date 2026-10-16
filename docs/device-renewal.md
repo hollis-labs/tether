@@ -27,7 +27,8 @@ header; `--hub` still chooses the connection target.
 
 The flags carry a path/reference, never the credential. File references honor
 `XDG_STATE_HOME`; the hub uses `/var/lib/fabric/xdg/state`. The command prints
-only the new expiry. It refuses redirects and never prints response bodies.
+only the new expiry. Plain HTTP is accepted only for a loopback IP or `localhost`;
+all other hub URLs require HTTPS, even when an allowed Host override is supplied. It refuses redirects and never prints response bodies.
 No `secrets set` or Tesseract restart is needed: renewal keeps the same bearer.
 
 `/health` reports non-revoked device counts under `identity.device_expiry`:

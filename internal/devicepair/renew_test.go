@@ -3,6 +3,7 @@ package devicepair
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +56,36 @@ func TestRenewCancellationAndBadURL(t *testing.T) {
 		_, err := Renew(ctx, nil, hub, "tth_synthetic")
 		if err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("unsafe result: %v", err)
+		}
+	}
+}
+
+// A fake transport proves refusal happens before a request can carry a bearer,
+// independently of DNS/network availability. The Host override cannot bypass it.
+type renewalTransport func(*http.Request) (*http.Response, error)
+
+func (f renewalTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func TestRenewRejectsRemoteHTTPBeforeSending(t *testing.T) {
+	for _, hub := range []string{"http://hub.example", "http://192.0.2.10", "http://[2001:db8::1]", "http://127.0.0.1.example", "http://localhost.example"} {
+		client := &http.Client{Transport: renewalTransport(func(*http.Request) (*http.Response, error) {
+			t.Error("sent remote cleartext credential")
+			return nil, fmt.Errorf("unexpected request")
+		})}
+		_, err := RenewWithHost(context.Background(), client, hub, "tth_synthetic", "localhost")
+		if err == nil || !strings.Contains(err.Error(), "requires HTTPS") {
+			t.Fatalf("hub %s: %v", hub, err)
+		}
+	}
+}
+func TestRenewAcceptsHTTPSAndLoopbackHTTP(t *testing.T) {
+	for _, hub := range []string{"https://hub.example", "http://localhost", "http://127.0.0.2", "http://[::1]"} {
+		calls := 0
+		client := &http.Client{Transport: renewalTransport(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{"expires_at":%q}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))))}, nil
+		})}
+		if _, err := Renew(context.Background(), client, hub, "tth_synthetic"); err != nil || calls != 1 {
+			t.Fatalf("hub %s calls%d error%v", hub, calls, err)
 		}
 	}
 }
