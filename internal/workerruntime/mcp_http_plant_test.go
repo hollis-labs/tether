@@ -53,7 +53,7 @@ func plantedTether(t *testing.T, cwd string) (mcpEntry, mcpConfig) {
 func TestPlantHubMCPUsesTheHubHTTPPathWithAnAgentToken(t *testing.T) {
 	e, cred := httpPlantExecutor(t)
 	cwd := t.TempDir()
-	spec := workerwire.LaunchSpec{Session: "s1", Credential: "session-credential-SECRET", MCPServers: []string{"torque"},
+	spec := workerwire.LaunchSpec{Session: "s1", Credential: "session-credential-SECRET", MCPServers: []string{"torque"}, MCPPolicy: true,
 		AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: []string{"tether.read"}}}}
 	if err := e.plantHubMCP(cwd, cred, spec); err != nil {
 		t.Fatal(err)
@@ -95,12 +95,15 @@ func TestPlantHubMCPFallsBackToSSHOnlyWhenEnabledAndLogsIt(t *testing.T) {
 		"token for another aud": func(_ *Executor, s *workerwire.LaunchSpec) {
 			s.AgentTokens = []workerwire.AgentTokenSpec{{Aud: "tesseract", Scopes: []string{"tesseract.read"}}}
 		},
-		"editable agents":          func(_ *Executor, s *workerwire.LaunchSpec) { s.EditableAgents = []string{"worker"} },
+		"older hub, no saved policy": func(_ *Executor, s *workerwire.LaunchSpec) { s.MCPPolicy = false },
+		"older hub with editable agents": func(_ *Executor, s *workerwire.LaunchSpec) {
+			s.MCPPolicy, s.EditableAgents = false, []string{"worker"}
+		},
 		"plain http, not loopback": func(e *Executor, _ *workerwire.LaunchSpec) { e.HubMCPURL = "http://hub.example.com/mcp" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			e, cred := httpPlantExecutor(t)
-			spec := workerwire.LaunchSpec{Session: "s1", Credential: "cred", AgentTokens: agentToken}
+			spec := workerwire.LaunchSpec{Session: "s1", Credential: "cred", AgentTokens: agentToken, MCPPolicy: true}
 			mutate(e, &spec)
 
 			cwd := t.TempDir()
@@ -176,7 +179,7 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 			_ = h.Close()
 		}
 	})
-	spec := workerwire.LaunchSpec{Session: "s-http", Actor: "msg://agent/agent-mux/agt_http_probe", Provider: "claude", RuntimeKind: "streaming-stdio",
+	spec := workerwire.LaunchSpec{Session: "s-http", MCPPolicy: true, Actor: "msg://agent/agent-mux/agt_http_probe", Provider: "claude", RuntimeKind: "streaming-stdio",
 		Credential: "cred", MCPServers: []string{}, AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: []string{"tether.read"}}}}
 	raw, _ := json.Marshal(spec)
 	if err := e.Command(context.Background(), workerwire.Frame{T: "launch", CmdID: "c1", Session: "s-http", Spec: raw}); err != nil {
@@ -202,5 +205,26 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(tokenPath); strings.TrimSpace(string(b)) != "aaa.bbb.ccc" {
 		t.Fatalf("token file holds %q", b)
+	}
+}
+
+// An agent with editable_agents uses /mcp when the hub saved the policy (which carries the allowlist and which the
+// hub enforces); the worker no longer needs to refuse it. The allowlist is not planted: the hub applies it.
+func TestPlantHubMCPAllowsEditableAgentsWhenTheHubSavedThePolicy(t *testing.T) {
+	e, cred := httpPlantExecutor(t)
+	cwd := t.TempDir()
+	spec := workerwire.LaunchSpec{Session: "s1", Credential: "cred", EditableAgents: []string{"chat"}, MCPPolicy: true,
+		AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: []string{"tether.read"}}}}
+	if err := e.plantHubMCP(cwd, cred, spec); err != nil {
+		t.Fatalf("editable_agents with a saved policy: %v", err)
+	}
+	tether, _ := plantedTether(t, cwd)
+	if len(tether.Args) == 0 || tether.Args[0] != "mcp-http-relay" || strings.Contains(strings.Join(tether.Args, " "), "editable") {
+		t.Fatalf("planted %+v", tether)
+	}
+	// Without the saved policy (an older hub) it is refused, and only the explicit fallback runs.
+	spec.MCPPolicy = false
+	if err := e.plantHubMCP(t.TempDir(), cred, spec); err == nil || !strings.Contains(err.Error(), "older hub") {
+		t.Fatalf("older hub: err = %v", err)
 	}
 }
