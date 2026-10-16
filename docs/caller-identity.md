@@ -103,9 +103,17 @@ Recovery: keep and restore the **matching DB and token-file backups together**.
 A DB-only restore, lost run directory or interrupted first bootstrap can leave
 credentials degraded. Continue in observe while recovering the matching pair;
 do not enable enforce until doctor reports credentials available. Atomic
-operator rotation/recovery is tracked separately in CW-20261002-0003; this PR
-adds no live recovery command. Never remove principal records or substitute an
-unrelated token as an implicit repair.
+operator rotation and recovery is `tether identity rotate-operator --evidence
+TEXT` (CW-20261002-0003): it revokes every active operator credential, mints a
+new one and replaces `run/operator.token` atomically (temp file + rename, old
+file kept until the database commit succeeds). A running daemon verifies each
+request against the database, so it accepts the new credential and rejects the
+old at once; no restart is needed. A failure leaves the old row and file valid.
+It also repairs a missing, loose or mismatched token file. The rotation is
+appended to `run/identity-flips.jsonl` with short hash prefixes only; nothing
+secret is printed. Afterwards restart long-lived readers (MCP proxies, scripts)
+and replace other copies of the old credential. Never remove principal records
+or substitute an unrelated token as an implicit repair.
 
 ## Attribution and retention
 

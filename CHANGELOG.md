@@ -8,6 +8,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add `tether identity rotate-operator --evidence TEXT` (CW-20261002-0003): atomically
+  revokes the operator credential, mints a new one and swaps `run/operator.token`
+  (temp + rename; the old pair stays valid if anything fails). Works against a
+  running daemon, repairs a missing or mismatched token file, and appends a
+  hash-chained record (hash prefixes only) to `run/identity-flips.jsonl`.
 - Add the execution policy (CW-20261011-0015): a global go/pause switch, an
   environment-wide live-session cap and per-project caps, enforced when a created
   session launches (409 `execution_paused`, `environment_cap_reached`,
