@@ -186,6 +186,10 @@ type Service struct {
 	// warned about, so a launch does not repeat the warning every time.
 	protectionWarned sync.Map
 
+	// outboxStop stops the events outbox drainer started by StartEventsOutbox.
+	outboxMu   sync.Mutex
+	outboxStop func()
+
 	// replies is the reply-to-sender dispatcher (CW-20261002-0065), set by
 	// StartRoutingReplies. Nil means the reply path is not installed.
 	replies atomic.Pointer[replyDispatcher]
@@ -263,6 +267,12 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		log.Printf("store: seeded %d logical_agent row(s) from catalog", n)
 	}
 	bus := events.NewBus(events.BusOptions{Persister: db})
+	// A transaction that wrote outbox event rows calls Store.EventsCommitted after
+	// its commit; that wakes the bus so the rows are published now, not at the
+	// next sweep. Only StartEventsOutbox (the daemon) runs the drainer.
+	if ob, ok := bus.(events.OutboxBus); ok {
+		db.SetEventsCommittedHook(ob.KickOutbox)
+	}
 
 	mgr, stops := newSessionManager(db, bus)
 
@@ -546,6 +556,7 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 // to call multiple times only via the underlying components' contracts;
 // callers should treat Close as one-shot.
 func (s *Service) Close() error {
+	s.stopEventsOutbox()
 	if s.Workers != nil {
 		s.Workers.Close()
 	}

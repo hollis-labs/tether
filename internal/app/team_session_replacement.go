@@ -59,6 +59,8 @@ func (s *Service) replaceRetainedTeamExecution(ctx context.Context, key string, 
 	if err != nil {
 		return err
 	}
+	// the replacement event was written as an outbox row on that transaction
+	s.Store.EventsCommitted()
 	// Retry after any crash must read the same persisted destination. Failed
 	// admission is truthful lineage, never a rollback or a second allocation.
 	return s.launchRetainedTeamReplacement(ctx, key, id)

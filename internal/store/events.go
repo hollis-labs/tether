@@ -46,7 +46,7 @@ func (s *Store) InsertEventIDContext(ctx context.Context, scope events.Scope, se
 		return s.insertEnvironmentRequest(ctx, scope, sessionID, payloadJSON)
 	}
 	at := time.Now().UTC()
-	seq, eventID, err := insertEventRow(ctx, s.db, scope, sessionID, kind, payloadJSON, at, "", false)
+	seq, eventID, err := insertEventRow(ctx, s.db, scope, sessionID, kind, payloadJSON, at.Format(time.RFC3339Nano), "", false)
 	if err != nil {
 		return 0, time.Time{}, "", err
 	}
