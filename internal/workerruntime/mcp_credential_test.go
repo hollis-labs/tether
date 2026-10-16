@@ -150,6 +150,11 @@ func TestPlantHubMCPKeepsCredentialOutOfConfigArgsAndEnv(t *testing.T) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
 	}
+	// This legacy SSH route does not enter the hub-owned /mcp handler.
+	// Its API capture is session provenance, not trusted proxy evidence.
+	if strings.Contains(joined, "--forward-daemon") {
+		t.Fatal("legacy worker unexpectedly entered hub forwarding")
+	}
 	if strings.Contains(joined, "message.write,registry.write") {
 		t.Fatal("static scopes survived")
 	}

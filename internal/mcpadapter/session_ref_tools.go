@@ -44,7 +44,7 @@ func (a *Adapter) registerSessionRefTools(s *gomcp.Server) {
 			"every session in a workstream touched. The workstream form is the one that " +
 			"survives a compaction, since a compaction creates a new session row.\n\n" +
 			"Reading `source`: session/operator identifies the verified credential that wrote the ref. " +
-			"proxy is reserved for a verified proxy credential; historical proxy_claimed is untrusted. " +
+			"proxy means hub-observed traffic, not truth; arguments remain agent-authored. Historical proxy_claimed is untrusted. " +
 			"api is unattributed capture and agent is a legacy assertion. None validates the identifier. " +
 			"Absence is not evidence: direct MCP children, HTTP callers and the CLI can bypass capture.",
 		InputSchema: gomcp.InputSchema(

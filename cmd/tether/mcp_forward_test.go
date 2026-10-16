@@ -2,8 +2,10 @@ package main
 
 import (
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,5 +52,17 @@ func TestForwardDaemonCredentialNeverUsesOperatorFallback(t *testing.T) {
 	}
 	if _, err := forwardDaemonCredential(); err == nil {
 		t.Fatal("unsafe explicit file fell through to env")
+	}
+}
+
+// The worker's SSH --daemon-only route owns its upstream connections. Merely
+// appending --forward-daemon cannot turn those calls into hub observations.
+func TestForwardDaemonRejectsLegacyWorkerRoute(t *testing.T) {
+	savedOnly, savedScopes := mcpDaemonOnly, mcpScopes
+	t.Cleanup(func() { mcpDaemonOnly, mcpScopes = savedOnly, savedScopes })
+	mcpDaemonOnly = true
+	mcpScopes = "session.write"
+	if err := runMCPForwardDaemon(&cobra.Command{}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("legacy worker route accepted: %v", err)
 	}
 }

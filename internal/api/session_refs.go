@@ -61,13 +61,13 @@ func (s *Server) handleAttachSessionRef(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	// CW-20261016-0157: no request field can confer observed provenance.
-	// Until the issuer-minted proxy credential lands, no transport principal
-	// derives SourceProxy, including the operator and a service named proxy.
+	// Only the hub-owned MCP capture path writes SourceProxy internally.
+	// No HTTP principal derives it, including an operator or service named proxy.
 	if req.Source == store.SourceProxy {
 		if s.refSourceAssertions != nil {
 			s.refSourceAssertions.Add(r.Context(), 1)
 		}
-		writeError(w, http.StatusForbidden, "source_asserted", "proxy source must come from a verified proxy credential")
+		writeError(w, http.StatusForbidden, "source_asserted", "proxy source is reserved for hub-observed traffic")
 		return
 	}
 	req.Source = store.SourceAPI // legacy anonymous/device/service HTTP capture

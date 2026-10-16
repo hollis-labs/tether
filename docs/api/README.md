@@ -2903,15 +2903,20 @@ Three things to know before reading a response:
   Anonymous and other legacy HTTP callers remain unattributed `api`.
   Request source fields are ignored, except an asserted `proxy` is rejected
   with HTTP 403 / `source_asserted` and increments the label-free OTel counter
-  `tether.refs.source_asserted`. No caller derives `proxy` until the separately
-  scoped issuer proxy-token path lands (CW-20261016-0157 step 3).
+  `tether.refs.source_asserted`. Only the hub-owned MCP handler records `proxy`
+  internally from successful traffic it forwards, bound to the verified session
+  credential and saved extraction policy. No HTTP caller derives it; no proxy
+  token or scope exists. Proxy is provenance, not truth: arguments are still
+  agent-authored.
   Migration 0080 changes all historical `proxy` rows to untrusted
   `proxy_claimed`, preserving their identity, timestamp and other data.
   `agent` remains a legacy assertion. No source validates an identifier.
 - **An absent ref is never evidence.** `coverage.proxy_attributable` and each
   session's `ref_attribution` describe planting capability, not authenticated
   observations or proof that nothing happened. Extraction is opt-in and remains
-  off pending the issuer proxy-token path; direct MCP calls can bypass capture.
+  off pending rollout and the worker forwarding prerequisite. Current worker
+  SSH `--daemon-only` calls bypass the hub handler and cannot produce proxy refs;
+  legacy capture through HTTP produces `session`. Direct MCP calls also bypass it.
 - **Truncation is reported, not silent.** `coverage.limit` and
   `coverage.truncated` always appear.
 
