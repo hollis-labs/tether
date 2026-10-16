@@ -10,11 +10,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/definitionresolve"
 	"github.com/hollis-labs/tether/internal/fabricstore"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -116,7 +118,7 @@ func TestPortErrorClassificationPreservesTransientAndPinsPermanentSentinels(t *t
 		classify  func(error) error
 		permanent []error
 	}{
-		{"session", classifySession, []error{store.ErrIdempotencyConflict, store.ErrSessionNotFound, session.ErrNotCreated}},
+		{"session", classifySession, []error{launch.ErrLaunchProjectRootMissing, store.ErrIdempotencyConflict, store.ErrSessionNotFound, session.ErrNotCreated}},
 		{"enrollment", classifyEnrollment, []error{registry.ErrNotFound, registry.ErrInvalidRequest, definitionresolve.ErrPinMismatch, definitionresolve.ErrContent, fabricstore.ErrNotFound}},
 	}
 	for _, tc := range classifiers {
@@ -202,7 +204,7 @@ func TestReconcileCursorAdvancesPersistsAndWrapsPastTransientFailures(t *testing
 	if err = r.Reconcile(ctx, 2); !errors.Is(err, teams.ErrUnavailable) {
 		t.Fatal("second transient failure lost", err)
 	}
-	check(t, r.Reconcile(ctx, 2))
+	check(t, r.reconcile(ctx, 2, time.Now().Add(time.Minute)))
 	if !reflect.DeepEqual(tracked.calls, []string{"first", "second", "third", "fourth", "first", "third"}) {
 		t.Fatal("cursor stalled, skipped or failed to wrap", tracked.calls)
 	}

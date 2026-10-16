@@ -85,3 +85,18 @@ Sequence columns use INTEGER PRIMARY KEY without AUTOINCREMENT because rows are
 currently retained. A future retention implementation must preserve a durable
 sequence high-water mark (or introduce AUTOINCREMENT) before deleting highest
 rows; reusing sequence numbers would invalidate ordering/cursor assumptions.
+
+Expired formations with no committed workflow/run are now checked before port
+recovery. Recovery takes the launch lease, rechecks the deadline and independent
+workflow/run rows, and uses the library's abort path. The launch journal retains
+aborting, each cleaned intent, and failed; host tombstones fence late effects.
+Already committed runs are excluded, including a workflow whose acknowledgement
+never reached the launch record. No operator cleanup API is added.
+
+Port retries and orphan cleanup persist exponential delays (one second up to one
+minute) and error fingerprints in `team_recovery_attempts`. Repeated failures log
+only when their detail changes, including across restarts; success clears retry
+state. Cleanup supersedes acquisition backoff. Project-root protection refusals
+are terminal port failures; they do not disable the protection marker. A bounded,
+rotating formation cursor still finds expired launches with failed or no port
+receipts. Tombstones, receipts and launch journals are retained for inspection.
