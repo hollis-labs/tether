@@ -35,7 +35,10 @@ func TestAgentHooksSettingsShape(t *testing.T) {
 	var doc struct {
 		Hooks map[string][]struct {
 			Matcher string `json:"matcher"`
-			Hooks   []struct{ Type, Command string }
+			Hooks   []struct {
+				Type, Command string
+				Timeout       int
+			}
 		}
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -47,7 +50,7 @@ func TestAgentHooksSettingsShape(t *testing.T) {
 	}
 	for _, event := range claudeHookEvents {
 		groups := doc.Hooks[event]
-		if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Matcher != "" || groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != want {
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Matcher != "" || groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != want || groups[0].Hooks[0].Timeout != hookTimeoutSeconds {
 			t.Fatalf("%s hook = %+v", event, groups)
 		}
 	}
@@ -167,4 +170,85 @@ func TestAgentHookArgsFailsOpen(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(ws, "agent-hooks.json")); !os.IsNotExist(err) {
 		t.Fatal("a settings file was written for a refused launch")
 	}
+}
+
+// The agent can write its workspace: a symlink or a loose directory left where the hooks go must never be followed or reused.
+func TestPlantingNeverFollowsOrReusesWhatTheAgentLeft(t *testing.T) {
+	e := &Executor{Binary: hookBinary(t, 0o755)}
+	spec := workerwire.LaunchSpec{Session: "s1", AgentEvents: true}
+
+	t.Run("events symlink is refused and the refusal is visible", func(t *testing.T) {
+		ws, elsewhere := t.TempDir(), t.TempDir()
+		if err := os.Symlink(elsewhere, filepath.Join(ws, "events")); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.agentHookArgs(ws, spec); got != nil {
+			t.Fatalf("planted through a symlink: %v", got)
+		}
+		marker, err := os.ReadFile(filepath.Join(ws, "agent-events.disabled"))
+		if err != nil || !strings.HasPrefix(string(marker), "agent_events=disabled:") {
+			t.Fatalf("no visible reason: %q %v", marker, err)
+		}
+		if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+			t.Fatalf("something was written through the symlink: %v", entries)
+		}
+	})
+	t.Run("existing events dir must be 0700", func(t *testing.T) {
+		ws := t.TempDir()
+		dir := filepath.Join(ws, "events")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.agentHookArgs(ws, spec); got != nil {
+			t.Fatalf("planted over a loose events dir: %v", got)
+		}
+	})
+	t.Run("a resume with a proper events dir plants again and clears the marker", func(t *testing.T) {
+		ws := t.TempDir()
+		if err := os.Mkdir(filepath.Join(ws, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, "agent-events.disabled"), []byte("agent_events=disabled:old\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.agentHookArgs(ws, spec); len(got) != 2 {
+			t.Fatalf("resume did not plant: %v", got)
+		}
+		if _, err := os.Stat(filepath.Join(ws, "agent-events.disabled")); !os.IsNotExist(err) {
+			t.Fatal("the earlier refusal marker survived a successful plant")
+		}
+	})
+	t.Run("settings are rewritten, never reused or written through a link", func(t *testing.T) {
+		ws, elsewhere := t.TempDir(), filepath.Join(t.TempDir(), "victim")
+		if err := os.WriteFile(elsewhere, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		settings := filepath.Join(ws, "agent-hooks.json")
+		if err := os.Symlink(elsewhere, settings); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.agentHookArgs(ws, spec); len(got) != 2 {
+			t.Fatalf("not planted: %v", got)
+		}
+		if b, _ := os.ReadFile(elsewhere); string(b) != "keep" {
+			t.Fatalf("the settings write went through the symlink: %q", b)
+		}
+		fi, err := os.Lstat(settings)
+		if err != nil || fi.Mode()&os.ModeSymlink != 0 || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("settings = %v %v, want a fresh 0600 file", fi, err)
+		}
+		// Content the agent planted is replaced at the next launch.
+		if err := os.WriteFile(settings, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"evil"}]}]}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.agentHookArgs(ws, spec); len(got) != 2 {
+			t.Fatalf("not planted again: %v", got)
+		}
+		if b, _ := os.ReadFile(settings); strings.Contains(string(b), "evil") {
+			t.Fatal("a settings file found on disk was reused")
+		}
+	})
 }

@@ -28,6 +28,10 @@ var claudeHookEvents = []string{
 	"PermissionDenied", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd",
 }
 
+// hookTimeoutSeconds bounds one hook run on Claude's side, on top of the recorder's own 200 ms budget, so a hung disk can never
+// stall the agent for more than this.
+const hookTimeoutSeconds = 5
+
 var hookSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // safeShellWord reports whether s can sit inside single quotes in a shell command line unchanged.
@@ -73,40 +77,84 @@ func agentHooksSettings(binary, session, spool string) ([]byte, error) {
 	command := fmt.Sprintf("'%s' hook claude --session '%s' --spool '%s'", binary, session, spool)
 	hooks := map[string]any{}
 	for _, event := range claudeHookEvents {
-		hooks[event] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}}}
+		hooks[event] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": hookTimeoutSeconds}}}}
 	}
 	return json.MarshalIndent(map[string]any{"hooks": hooks}, "", " ")
 }
 
-// plantAgentHooks creates the session's private spool directory and the hooks settings file under the session workspace root
-// (outside the git workroot) and returns the settings path to pass to claude. Any error means: launch without hooks.
+// plantAgentHooks prepares the session's private spool directory and writes the hooks settings file under the session workspace
+// root (outside the git workroot), and returns the settings path to pass to claude. Any error means: launch without hooks.
+//
+// The agent can write its workspace, so nothing here follows a link or trusts what it finds: the events directory is created
+// with Mkdir (not MkdirAll) and, if it already exists (a resume), must be a real directory, not a symlink, owned by this user,
+// mode 0700; and the settings file is written fresh at every launch (temp file, then rename over any previous one) and never
+// reused from disk.
 func (e *Executor) plantAgentHooks(wsRoot, session string) (settings string, err error) {
 	if err := checkHookBinary(e.Binary); err != nil {
 		return "", err
 	}
 	spool := filepath.Join(wsRoot, "events")
-	if err := os.MkdirAll(spool, 0o700); err != nil {
+	if err := ensurePrivateDir(spool); err != nil {
 		return "", err
-	}
-	fi, err := os.Stat(spool)
-	if err != nil {
-		return "", err
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return "", errors.New("events directory is not private")
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() { //nolint:gosec // G115: uid fits int
-		return "", errors.New("events directory is not owned by this user")
 	}
 	raw, err := agentHooksSettings(e.Binary, session, spool)
 	if err != nil {
 		return "", err
 	}
 	settings = filepath.Join(wsRoot, "agent-hooks.json")
-	if err := os.WriteFile(settings, raw, 0o600); err != nil {
+	if err := writeFresh(settings, raw); err != nil {
 		return "", err
 	}
 	return settings, nil
+}
+
+// ensurePrivateDir creates dir (0700) or accepts an existing one only if it is a real directory owned by this user with mode
+// exactly 0700. Lstat, so a symlink in its place is refused rather than followed.
+func ensurePrivateDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: a directory needs the search bit; Mkdir honors the umask
+			return err
+		}
+		fi, err = os.Lstat(dir)
+	}
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		return errors.New("events path is not a real directory")
+	}
+	if fi.Mode().Perm() != 0o700 {
+		return errors.New("events directory is not mode 0700")
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() { //nolint:gosec // G115: uid fits int
+		return errors.New("events directory is not owned by this user")
+	}
+	return nil
+}
+
+// writeFresh writes path with content 0600 through a new temp file in the same directory and a rename, so a symlink or file the
+// agent left at path is replaced, never written through or reused.
+func writeFresh(path string, content []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".agent-hooks-*") // O_EXCL, 0600
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, werr := tmp.Write(content)
+	cerr := tmp.Close()
+	if err := errors.Join(werr, cerr); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // agentHookArgs are the extra claude arguments for a launch with AgentEvents set, or none. Observability only: a refusal
@@ -117,8 +165,13 @@ func (e *Executor) agentHookArgs(wsRoot string, spec workerwire.LaunchSpec) []st
 	}
 	settings, err := e.plantAgentHooks(wsRoot, spec.Session)
 	if err != nil {
-		log.Printf("worker: agent event hooks not planted for session %s: %v", spec.Session, err)
+		// Visible, not silent: a log line and a marker file in the session workspace (agent_events=disabled:<reason>).
+		reason := err.Error()
+		log.Printf("worker: agent events disabled for session %s: %s", spec.Session, reason)
+		marker := "agent_events=disabled:" + strings.ReplaceAll(reason, "\n", " ") + "\n"
+		_ = writeFresh(filepath.Join(wsRoot, "agent-events.disabled"), []byte(marker))
 		return nil
 	}
+	_ = os.Remove(filepath.Join(wsRoot, "agent-events.disabled")) // a resume that works clears an earlier refusal
 	return []string{"--settings", settings}
 }
