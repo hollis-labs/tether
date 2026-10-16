@@ -7,6 +7,7 @@ import (
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
@@ -99,7 +100,7 @@ func workerSmoke(t *testing.T, stage int) {
 	if err := db.CreateSession(store.SessionRow{ID: "smoke-s3", WorkerID: workerID, LogicalAgentID: plan.LogicalAgentID, ProviderID: plan.ProviderID, ProviderKind: "cli", Workspace: workspace, State: "created"}, plan); err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{Store: db, Workers: hub, Catalog: &config.Catalog{}}
+	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db}), Workers: hub, Catalog: &config.Catalog{}}
 	hub.Event = svc.ingestWorkerFrame
 	if _, err := svc.LaunchSessionWithContext(ctx, "smoke-s3"); err != nil {
 		t.Fatal(err)

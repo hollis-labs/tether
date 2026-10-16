@@ -12,6 +12,9 @@ import (
 )
 
 func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
+	if err := s.requireEventBus(); err != nil {
+		return err
+	}
 	s.workerIngestMu.Lock()
 	defer s.workerIngestMu.Unlock()
 	row, err := s.Store.GetSession(f.Session)
@@ -90,9 +93,8 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 	return nil
 }
 func (s *Service) publishWorkerEvent(id, kind string, raw []byte) error {
-	if s.Bus != nil {
-		return s.Bus.Publish(context.Background(), events.Event{Scope: events.ScopeSession, SessionID: id, Kind: kind, At: time.Now().UTC(), PayloadJSON: string(raw)})
+	if err := s.requireEventBus(); err != nil {
+		return err
 	}
-	_, _, err := s.Store.InsertEvent(events.ScopeSession, id, kind, string(raw))
-	return err
+	return s.Bus.Publish(context.Background(), events.Event{Scope: events.ScopeSession, SessionID: id, Kind: kind, At: time.Now().UTC(), PayloadJSON: string(raw)})
 }

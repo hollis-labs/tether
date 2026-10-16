@@ -498,7 +498,11 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			return nil, err
 		}
 		if usmDowngraded {
-			s.recordUnenforcedUserServiceManager(ctx, sessionID)
+			if err := s.recordUnenforcedUserServiceManager(ctx, sessionID); err != nil {
+				exit := 1
+				_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+				return nil, err
+			}
 		}
 		mcpEnv := confinedMCPEnv(plan, mcpProtected)
 		if ownership == config.MCPUpstreamsDaemon {

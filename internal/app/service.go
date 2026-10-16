@@ -343,6 +343,12 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Settings:   setSvc,
 		factories:  factories,
 	}
+	// Runtime constructors must fail before installing callbacks if the shared
+	// event bus is missing. Catalog-only services intentionally omit it.
+	if err := service.requireEventBus(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame
 	service.installOutpostMail()

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
@@ -24,7 +25,7 @@ func TestWorkerExitAfterStopRequestIsKilled(t *testing.T) {
 	if _, err = db.DB().Exec(`INSERT INTO workers(id,label,device_id,platform,caps_json,last_seen,created_at) VALUES('w1','agent-os','d1','linux','{}','','')`); err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{Store: db, Workers: workerhub.New(db.DB()), stops: &stopRequests{}}
+	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db}), Workers: workerhub.New(db.DB()), stops: &stopRequests{}}
 	for id, tc := range map[string]struct {
 		stop bool
 		code int
@@ -68,7 +69,7 @@ func TestStopTeamSessionReachesWorkerRegardlessOfState(t *testing.T) {
 	if _, err = db.DB().Exec(`INSERT INTO workers(id,label,device_id,platform,caps_json,last_seen,created_at) VALUES('w1','agent-os','d1','linux','{}','','')`); err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{Store: db, Workers: workerhub.New(db.DB()), stops: &stopRequests{}}
+	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db}), Workers: workerhub.New(db.DB()), stops: &stopRequests{}}
 	for id, state := range map[string]string{"failed-row": "failed", "launching-row": "launching"} {
 		if err := db.CreateSession(store.SessionRow{ID: id, WorkerID: "w1", LogicalAgentID: "a", ProviderID: "p", ProviderKind: "cli", Workspace: t.TempDir(), State: state}, &launch.Plan{ProviderID: "p", LogicalAgentID: "a"}); err != nil {
 			t.Fatal(err)

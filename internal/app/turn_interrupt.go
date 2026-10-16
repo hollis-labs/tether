@@ -15,7 +15,7 @@ import (
 // RoutingInterruptWired reports host wiring for a catalog provider. Capability
 // queries must also require the runtime descriptor's cancel_turn advertisement.
 func (s *Service) RoutingInterruptWired(providerID string) bool {
-	return s.Manager != nil && s.Store != nil && s.factories[providerID] != nil
+	return s.Manager != nil && s.Store != nil && s.Bus != nil && s.factories[providerID] != nil
 }
 
 // CancelTurnAndWait interrupts the submission open at entry, then waits for its
@@ -199,15 +199,11 @@ func (s *Service) auditTurnInterrupt(kind string, payload events.TurnInterruptEv
 	}
 	ctx, cancel := s.outputPersistenceContext()
 	defer cancel()
-	if s.Bus != nil {
-		return s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession,
-			SessionID: payload.SessionID, Kind: kind, PayloadJSON: string(data)})
-	}
-	if s.Store != nil {
-		_, _, err := s.Store.InsertEventContext(ctx, events.ScopeSession, payload.SessionID, kind, string(data))
+	if err := s.requireEventBus(); err != nil {
 		return err
 	}
-	return errors.New("turn interruption audit storage is unavailable")
+	return s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession,
+		SessionID: payload.SessionID, Kind: kind, PayloadJSON: string(data)})
 }
 
 func (s *Service) interruptCancelTimeout() time.Duration {
