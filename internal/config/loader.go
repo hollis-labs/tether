@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hollis-labs/libs/util/apppaths"
+	"github.com/hollis-labs/libs/core/util/apppaths"
 	"github.com/hollis-labs/substrate/harness/sandbox"
 )
 

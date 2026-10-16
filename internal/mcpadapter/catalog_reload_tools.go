@@ -5,7 +5,7 @@ package mcpadapter
 import (
 	"context"
 
-	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 )
 
 func (a *Adapter) registerCatalogReloadTools(s *gomcp.Server) {

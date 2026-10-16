@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/libs/util/apppaths"
+	"github.com/hollis-labs/libs/core/util/apppaths"
 	"github.com/hollis-labs/substrate/harness/sandbox"
 
 	"github.com/hollis-labs/tether/internal/federation"

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	localdaemon "github.com/hollis-labs/libs/util/localdaemon"
+	localdaemon "github.com/hollis-labs/libs/core/util/localdaemon"
 )
 
 // shortTempDir returns a short path under /tmp so we stay under the

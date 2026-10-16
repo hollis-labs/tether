@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
+	otelprop "github.com/hollis-labs/libs/core/util/otel/propagation"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/trace"
 )
