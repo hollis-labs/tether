@@ -70,8 +70,8 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	}
 	if parent, ok := identity.FromContext(ctx); ok {
 		p.CreatedBy = parent.ID
-		p.Scopes = narrowToLauncher(ctx, granted)
 	}
+	p.Scopes, _ = s.launchCeiling(ctx, granted)
 	if replacement {
 		if !slices.Contains(floor.Scopes, "*") {
 			p.Scopes = slices.DeleteFunc(p.Scopes, func(scope string) bool { return !slices.Contains(floor.Scopes, scope) })

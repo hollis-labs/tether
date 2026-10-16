@@ -1,0 +1,136 @@
+package app
+
+import (
+	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launchprofile"
+	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerwire"
+)
+
+func ceilingService(t *testing.T) (*Service, *identity.Store) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return &Service{Store: db}, identity.NewStore(db.DB())
+}
+
+// mintSessionWithScopes gives a session a credential with exactly these scopes,
+// then optionally ends it, as a parent or a resumed source would be.
+func mintSessionWithScopes(t *testing.T, svc *Service, ids *identity.Store, id string, ended bool, scopes ...string) {
+	t.Helper()
+	if err := svc.Store.CreateSession(store.SessionRow{ID: id, LaunchID: "l", ProjectID: "p", ProviderID: "claude", State: "created"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ids.MintSessionForLaunch(context.Background(), identity.Principal{ID: "msg://session/local/" + id, Kind: "session", SessionID: id, Scopes: scopes}); err != nil {
+		t.Fatal(err)
+	}
+	if ended {
+		if err := ids.RevokeSession(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestLaunchCeilingBoundsByLauncherAndByOriginAndSaysWhatVouched(t *testing.T) {
+	svc, ids := ceilingService(t)
+	mintSessionWithScopes(t, svc, ids, "parent", false, "a", "b")
+	mintSessionWithScopes(t, svc, ids, "ended-source", true, "b", "c") // credential revoked: its grant still bounds a resume
+	mintSessionWithScopes(t, svc, ids, "wild-parent", false, "*")
+	granted := []string{"a", "b", "c", "d"}
+	launcher := func(scopes ...string) context.Context {
+		return identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://agent/test/l", Kind: "agent", Scopes: scopes})
+	}
+	for name, tc := range map[string]struct {
+		ctx   context.Context
+		want  []string
+		attrb Attribution
+	}{
+		"verified launcher, subset":         {launcher("a", "d"), []string{"a", "d"}, AttributionPrincipal},
+		"verified launcher, wildcard":       {launcher("*"), granted, AttributionPrincipal},
+		"team child of a scoped parent":     {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: "parent"}), []string{"a", "b"}, AttributionOrigin},
+		"team child of a wildcard parent":   {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: "wild-parent"}), granted, AttributionOrigin},
+		"resume of an ended session":        {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginResume, OriginSessionID: "ended-source"}), []string{"b", "c"}, AttributionOrigin},
+		"origin session with no credential": {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginResume, OriginSessionID: "never-had-one"}), granted, AttributionInternalUnattributed},
+		"internal launch with no origin":    {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam}), granted, AttributionInternalUnattributed},
+		"launcher AND origin both bound it": {withLaunchOrigin(launcher("a", "b", "c"), InternalLaunch{Kind: OriginResume, OriginSessionID: "ended-source"}), []string{"b", "c"}, AttributionPrincipal},
+		"anonymous external":                {context.Background(), granted, AttributionAnonymous},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, attribution := svc.launchCeiling(tc.ctx, granted)
+			if !slices.Equal(got, tc.want) || attribution != tc.attrb {
+				t.Fatalf("got %v / %s, want %v / %s", got, attribution, tc.want, tc.attrb)
+			}
+		})
+	}
+}
+
+// On a worker, a team child is bounded by its parent session's grant, through
+// the same helper the hub path uses.
+func TestWorkerTeamChildIsBoundedByItsParent(t *testing.T) {
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	one := launchprofile.DefaultMCPScopes[0]
+	mintSessionWithScopes(t, r.svc, r.ids, "team-parent", false, one)
+	spec, err := r.launchAs(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: "team-parent"}), "team-child", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(spec.MCPScopes, []string{one}) || !slices.Equal(r.storedScopes("team-child"), []string{one}) {
+		t.Fatalf("child scopes: spec %v stored %v, want only %v", spec.MCPScopes, r.storedScopes("team-child"), one)
+	}
+	// A child of a parent with no recorded credential keeps the profile ceiling.
+	spec, err = r.launchAs(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: "no-such-parent"}), "orphan-child", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(spec.MCPScopes, launchprofile.DefaultMCPScopes) {
+		t.Fatalf("unattributed internal child scopes %v", spec.MCPScopes)
+	}
+}
+
+// The internal-origin marker must be unreachable from anything that serves a
+// request. The key and the setter are unexported, so other packages cannot
+// touch them; this test also keeps LaunchInternal, the one exported way to set
+// it, out of the request-serving packages.
+func TestOnlyDaemonCompositionCanSetALaunchOrigin(t *testing.T) {
+	banned := map[string]bool{"LaunchInternal": true, "InternalLaunch": true, "withLaunchOrigin": true, "launchOriginKey": true}
+	for _, dir := range []string{"../api", "../mcpadapter", "../daemon", "../acpadapter", "../acpsvc", "../client", "../a2a", "../mcpgateway"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, e.Name()), nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok && banned[id.Name] {
+					t.Errorf("%s/%s references %s: a request-serving package must not start internal launches", dir, e.Name(), id.Name)
+				}
+				return true
+			})
+		}
+	}
+	if _, err := os.ReadDir("../api"); err != nil {
+		t.Fatalf("boundary test is not looking at the api package: %v", err)
+	}
+}
