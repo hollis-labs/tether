@@ -32,6 +32,8 @@ type BusOptions struct {
 	// Stages stamp every event before it is written, in order (see Stage). Nil
 	// means the bus writes the event exactly as the producer built it.
 	Stages []Stage
+	// Observers see each Publish'd event after it is persisted and fanned out.
+	Observers []Observer
 	// OnStageError receives a stage failure; the event is still published.
 	// Default: log it.
 	OnStageError func(*StageError)
@@ -113,6 +115,7 @@ type memBus struct {
 	replayPage     int
 	stallTimeout   time.Duration
 	stages         []Stage
+	observers      []Observer
 	onStageError   func(*StageError)
 
 	published atomic.Int64 // newest sequence this bus persisted (high_water for non-paged persisters)
@@ -148,6 +151,7 @@ func NewBus(opts BusOptions) Bus {
 	}
 	b := &memBus{
 		stages:         append([]Stage(nil), opts.Stages...),
+		observers:      append([]Observer(nil), opts.Observers...),
 		onStageError:   opts.OnStageError,
 		paged:          paged,
 		txp:            txp,
@@ -179,18 +183,27 @@ func NewBus(opts BusOptions) Bus {
 // concurrent Publish can slip a new event between a subscriber's
 // history snapshot and its live-stream registration.
 func (b *memBus) Publish(ctx context.Context, e Event) error {
+	stored, err := b.publish(ctx, e)
+	if err == nil && len(b.observers) > 0 {
+		b.observe(ctx, stored)
+	}
+	return err
+}
+
+// publish persists and fans out e, returning the stored event.
+func (b *memBus) publish(ctx context.Context, e Event) (Event, error) {
 	if b.persister == nil {
-		return ErrNoPersister
+		return Event{}, ErrNoPersister
 	}
 	if e.Scope == "" {
-		return ErrScopeEmpty
+		return Event{}, ErrScopeEmpty
 	}
 	// Stamp before the lock: a stage may read context or a cache, and must not
 	// delay other publishers.
 	e = b.stamp(ctx, e, false)
 
 	if err := b.lock(ctx); err != nil {
-		return err
+		return Event{}, err
 	}
 	defer b.unlock()
 
@@ -200,7 +213,7 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	// outbox is dirty, so a failure stops here with nothing persisted...
 	if b.dirty.Load() {
 		if err := b.drainLocked(ctx, 0); err != nil {
-			return err
+			return Event{}, err
 		}
 	}
 
@@ -226,7 +239,7 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 		}
 	}
 	if err != nil {
-		return err
+		return Event{}, err
 	}
 	e.Seq = seq
 	e.At = at
@@ -237,10 +250,10 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	// reads a partial index that is empty unless something is pending. If it fails
 	// the event is persisted but is not fanned out above a pending row.
 	if err := b.drainLocked(ctx, seq); err != nil {
-		return err
+		return Event{}, err
 	}
 	b.fanout(e)
-	return nil
+	return e, nil
 }
 
 // fanout delivers one persisted event to every matching subscriber. The bus

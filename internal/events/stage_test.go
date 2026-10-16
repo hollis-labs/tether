@@ -197,3 +197,62 @@ func TestFailedStageCannotMutateDelegationOrRawOffset(t *testing.T) {
 		t.Fatalf("failed stage mutated producer references: %v %d", delegation[:2], offset)
 	}
 }
+
+type recObserver struct {
+	seen  []Event
+	after func(Event)
+	boom  bool
+}
+
+func (o *recObserver) Observe(_ context.Context, e Event) {
+	o.seen = append(o.seen, e)
+	if o.boom {
+		panic("observer bug")
+	}
+	if o.after != nil {
+		o.after(e)
+	}
+}
+
+func TestObserversSeeTheStoredEventAndMayPublishFollowUps(t *testing.T) {
+	p := &envPersister{}
+	obs := &recObserver{}
+	var bus Bus
+	obs.after = func(e Event) {
+		if e.Kind == "first" {
+			// Runs outside the bus lock, so this cannot deadlock.
+			if err := bus.Publish(context.Background(), Event{Scope: ScopeSession, Kind: "follow-up"}); err != nil {
+				t.Errorf("follow-up: %v", err)
+			}
+		}
+	}
+	bus = NewBus(BusOptions{Persister: p, Observers: []Observer{obs}})
+	if err := bus.Publish(context.Background(), Event{Scope: ScopeSession, Kind: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(obs.seen) != 2 || obs.seen[0].Kind != "first" || obs.seen[0].Seq != 1 || obs.seen[0].EventID != "evt_fake" || obs.seen[1].Kind != "follow-up" || obs.seen[1].Seq != 2 {
+		t.Fatalf("observed %+v", obs.seen)
+	}
+}
+
+func TestAPanickingObserverNeverLosesTheEventOrFailsThePublish(t *testing.T) {
+	p := &envPersister{}
+	bus := NewBus(BusOptions{Persister: p, Observers: []Observer{&recObserver{boom: true}}})
+	if err := bus.Publish(context.Background(), Event{Scope: ScopeSession, Kind: "k"}); err != nil {
+		t.Fatalf("publish failed because an observer did: %v", err)
+	}
+	if p.last().Kind != "k" {
+		t.Fatal("event lost")
+	}
+}
+
+func TestObserversAreNotCalledForARejectedPublish(t *testing.T) {
+	obs := &recObserver{}
+	bus := NewBus(BusOptions{Persister: &envPersister{}, Observers: []Observer{obs}})
+	if err := bus.Publish(context.Background(), Event{Kind: "no scope"}); err == nil {
+		t.Fatal("expected ErrScopeEmpty")
+	}
+	if len(obs.seen) != 0 {
+		t.Fatalf("observed a rejected event: %+v", obs.seen)
+	}
+}

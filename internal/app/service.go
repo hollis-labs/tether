@@ -33,6 +33,7 @@ import (
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/sessionhealth"
 	"github.com/hollis-labs/tether/internal/settings"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/specresolve"
@@ -276,7 +277,11 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	// The row stage fills worker and the session-bound dimensions for events
 	// published outside the session's own call context.
 	rows := eventstamp.NewRows(stampSessions{db}, 0)
-	bus := events.NewBus(events.BusOptions{Persister: db, Stages: []events.Stage{stamp, rows}})
+	// Session health transitions are derived from the events other code
+	// publishes (internal/sessionhealth); the tracker emits on the same bus.
+	health := sessionhealth.New()
+	bus := events.NewBus(events.BusOptions{Persister: db, Stages: []events.Stage{stamp, rows}, Observers: []events.Observer{health}})
+	health.SetPublisher(bus)
 	// A transaction that wrote outbox event rows calls Store.EventsCommitted after
 	// its commit; that wakes the bus so the rows are published now, not at the
 	// next sweep. Only StartEventsOutbox (the daemon) runs the drainer.

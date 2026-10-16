@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
@@ -66,5 +68,33 @@ func TestSessionStateChangedWithoutARowStillPublishes(t *testing.T) {
 	var got sessionStateChangedPayload
 	if err = json.Unmarshal([]byte(payload), &got); err != nil || got.Session != nil || worker.Valid {
 		t.Fatalf("payload %s worker %v err %v", payload, worker, err)
+	}
+}
+
+// The daemon's own service wires the health tracker, the stamp stage and the
+// row stage onto its bus: a running session produces a health transition whose
+// row carries the session's scope.
+func TestNewServiceWiresTheStampStagesAndTheHealthTracker(t *testing.T) {
+	svc, err := New(filepath.Join(t.TempDir(), "catalog"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	if svc.EventStamp == nil {
+		t.Fatal("no stamp stage on the service")
+	}
+	row := store.SessionRow{ID: "s-wired", LaunchID: "l", ProjectID: "PRJ-W", LogicalAgentID: "la-w", ProviderID: "claude", WorkerID: "w-9", State: "running"}
+	if err = svc.Store.CreateSession(row, nil); err != nil {
+		t.Fatal(err)
+	}
+	publishSessionEvent(svc.Bus, "s-wired", "la-w", events.KindSessionStateChanged, sessionStateChangedPayload{From: "launching", To: "running"})
+	var payload, worker, project, schema sql.NullString
+	err = svc.Store.DB().QueryRow(`SELECT payload_json, scope_worker_id, scope_project_id, payload_schema FROM events WHERE kind=? AND session_id='s-wired'`, events.KindSessionHealthChanged).
+		Scan(&payload, &worker, &project, &schema)
+	if err != nil {
+		t.Fatalf("no health transition for a running session: %v", err)
+	}
+	if worker.String != "w-9" || project.String != "PRJ-W" || schema.String != "session_health_changed@1" || !strings.Contains(payload.String, `"to":"healthy"`) || !strings.Contains(payload.String, "session_running") {
+		t.Fatalf("health event %s worker=%q project=%q schema=%q", payload.String, worker.String, project.String, schema.String)
 	}
 }
