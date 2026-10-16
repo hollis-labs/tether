@@ -145,7 +145,7 @@ func (s *Store) RotateOperator(ctx context.Context, path string) (RotateResult, 
 
 func rotationErr(err error) error {
 	if err != nil && (strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "SQLITE_BUSY")) {
-		return fmt.Errorf("%w: %v", ErrOperatorRotationBusy, err)
+		return fmt.Errorf("%w: %w", ErrOperatorRotationBusy, err)
 	}
 	return err
 }
