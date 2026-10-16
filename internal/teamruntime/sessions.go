@@ -55,6 +55,26 @@ func NewSessions(db *store.Store, s *teamstore.Store, service SessionService, en
 	}
 	return &Sessions{receipts: receipts{db.DB(), s}, service: service, sessions: db, enrollment: enrollment}, nil
 }
+
+// internalLauncher is how the daemon's own team host starts a session bounded by
+// its parent; app.Service implements it.
+type internalLauncher interface {
+	LaunchInternal(context.Context, string, app.InternalLaunch) (*app.Launched, error)
+}
+
+// A refactor must not be able to drop the parent bound unnoticed: the real
+// service has to keep implementing it.
+var _ internalLauncher = (*app.Service)(nil)
+
+// launch starts the created session. A spawned member is bounded by its parent
+// session's grant; a root member (no parent) is internal and unattributed.
+func (s *Sessions) launch(ctx context.Context, sessionID, parent string) (*app.Launched, error) {
+	if il, ok := s.service.(internalLauncher); ok {
+		return il.LaunchInternal(ctx, sessionID, app.InternalLaunch{Kind: app.OriginTeam, OriginSessionID: parent})
+	}
+	return s.service.LaunchSessionWithContext(ctx, sessionID)
+}
+
 func sessionKey(key string) string { return "team-port:" + key }
 func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (string, error) {
 	unlock := s.lock("session", in.IntentKey)
@@ -121,7 +141,7 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 	if err = s.enrollment.BindSession(ctx, in.IntentKey, in.Actor, launched.SessionID); err != nil {
 		return "", err
 	}
-	_, err = s.service.LaunchSessionWithContext(ctx, launched.SessionID)
+	_, err = s.launch(ctx, launched.SessionID, in.ParentSession)
 	if err != nil {
 		return "", classifySession(err)
 	}

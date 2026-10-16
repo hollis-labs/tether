@@ -276,3 +276,27 @@ func (s *Store) SessionOwner(ctx context.Context, sessionID string) (string, err
 	}
 	return "", nil
 }
+
+// SessionGrantedScopes returns the scopes most recently granted to a session's
+// credential, whether or not that credential is still live: it answers "what
+// authority did this session hold", which bounds anything it spawns or that is
+// resumed from it. The second result is false when the session never had a
+// credential.
+func (s *Store) SessionGrantedScopes(ctx context.Context, sessionID string) ([]string, bool, error) {
+	if s == nil || s.db == nil || sessionID == "" {
+		return nil, false, fmt.Errorf("identity store unavailable")
+	}
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT scopes_json FROM principals WHERE kind = 'session' AND session_id = ? ORDER BY created_at DESC LIMIT 1`, sessionID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("lookup session scopes: %w", err)
+	}
+	var scopes []string
+	if err := json.Unmarshal([]byte(raw), &scopes); err != nil {
+		return nil, false, fmt.Errorf("decode session scopes: %w", err)
+	}
+	return scopes, true, nil
+}
