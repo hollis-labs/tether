@@ -562,7 +562,11 @@ func (s *Server) handler(remote bool) http.Handler {
 		}
 	}
 	if s.Issuer != nil {
-		issuerHandler := api.NewTokenIssuerHandler(s.Issuer)
+		var issuerOpts []api.IssuerOption
+		if s.Identity != nil {
+			issuerOpts = append(issuerOpts, api.WithMintAudit(s.recordIdentityObservation))
+		}
+		issuerHandler := api.NewTokenIssuerHandler(s.Issuer, issuerOpts...)
 		for _, path := range []string{api.TokenPath, api.DenyListPath, api.JWKSPath} {
 			router.Handle(path, issuerHandler)
 		}

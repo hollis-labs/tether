@@ -8,6 +8,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Record an identity audit row for every session-bound token mint (CW-20261016-0089):
+  `POST /auth/token` with `session_id` writes `identity_audit` with the minting
+  parent (`principal_id`), `session_id`, scopes (`required_scope`) and
+  `event = token_mint aud=<aud> jti=<jti> exp=<unix>`. Never the token. The token
+  response now carries the `jti`. Retention follows `identity_audit`.
 - Fix the issuer on the remote listener (CW-20261016-0017): the protocol gate no longer
   demands `Tether-Protocol` on `GET /.well-known/jwks.json` and `GET /auth/denylist`
   (non-Tether verifiers fetch and poll these with a bearer only), and the outpost
