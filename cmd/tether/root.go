@@ -38,6 +38,7 @@ func init() {
 	rootCmd.AddCommand(generateBootCmd, listBootProfilesCmd, bootLaunchCmd, bootExecCmd)
 	rootCmd.AddCommand(pathCmd())
 	rootCmd.AddCommand(settingsCmd())
+	rootCmd.AddCommand(newHookCommand())
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(detectCmd, doctorCmd)
 	rootCmd.AddCommand(newWorkerServiceCommand())
