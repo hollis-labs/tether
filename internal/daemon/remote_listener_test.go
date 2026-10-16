@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/libs/core/util/localdaemon"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
@@ -412,5 +414,74 @@ func TestRemoteListenerRefusesLegacyKinds(t *testing.T) {
 		if w.Code != 401 {
 			t.Fatal("remote legacy kind accepted", kind, w.Code)
 		}
+	}
+}
+
+// Non-Tether verifiers fetch the issuer's JWKS and poll its deny-list with a
+// plain HTTP client, so the remote listener must not demand the Tether-Protocol
+// header for those reads (but still for everything else, including minting).
+func TestRemoteListenerIssuerReadsNeedNoProtocolHeader(t *testing.T) {
+	s, read, _ := remoteTestServer(t)
+	dir := filepath.Join(t.TempDir(), "auth")
+	keys, err := authissuer.OpenKeyStore(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := authissuer.OpenState(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Issuer = authissuer.New("tether", keys, state)
+	do := func(method, path, version, token, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://localhost:9000"+path, strings.NewReader(body))
+		if version != "" {
+			r.Header.Set(environment.ProtocolHeader, version)
+		}
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		s.RemoteHandler("127.0.0.1:7331").ServeHTTP(w, r)
+		return w
+	}
+	if w := do("GET", "/.well-known/jwks.json", "", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"OKP"`) || strings.Contains(w.Body.String(), `"d"`) {
+		t.Fatalf("public JWKS without header/bearer: %d %s", w.Code, w.Body.String())
+	}
+	// The deny-list read passes the protocol gate and is then judged on scope,
+	// not on the missing header: a read-only device is refused (403, not 409).
+	if w := do("GET", "/auth/denylist", "", read, ""); w.Code != 403 {
+		t.Fatalf("deny-list read without header returned %d, want 403 from the scope check", w.Code)
+	}
+	// Minting is Tether-client traffic and still needs the header.
+	body := `{"audience":"tether","scopes":["tether.read"]}`
+	if w := do("POST", "/auth/token", "", read, body); w.Code != 409 {
+		t.Fatalf("token mint without header returned %d, want 409", w.Code)
+	}
+	if w := do("POST", "/auth/token", "1", read, body); w.Code != 200 {
+		t.Fatalf("token mint with header returned %d: %s", w.Code, w.Body.String())
+	}
+	// The production shape: the public Host the hub allows, no Tether-Protocol
+	// header (a go-auth verifier), the deny-list read with a maintain device.
+	s.Config.RemoteListener.AllowedHosts = []string{"localhost:9000", "tether.hub.nanite.cloud"}
+	expires := time.Now().Add(time.Hour)
+	maintain, err := s.Identity.Mint(context.Background(), identity.Principal{ID: "remote-denylist-poller", Kind: "device", Scopes: []string{"maintain"}, ExpiresAt: &expires})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/.well-known/jwks.json", "/auth/denylist"} {
+		r := httptest.NewRequest("GET", "https://tether.hub.nanite.cloud"+path, nil)
+		r.Header.Set("Authorization", "Bearer "+maintain)
+		w := httptest.NewRecorder()
+		s.RemoteHandler("127.0.0.1:8948").ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("GET %s with Host tether.hub.nanite.cloud and no protocol header returned %d: %s", path, w.Code, w.Body.String())
+		}
+	}
+	// A different Host is still refused, JWKS included.
+	r := httptest.NewRequest("GET", "http://attacker.invalid/.well-known/jwks.json", nil)
+	w := httptest.NewRecorder()
+	s.RemoteHandler("127.0.0.1:7331").ServeHTTP(w, r)
+	if w.Code != 403 {
+		t.Fatalf("unlisted Host reached the JWKS: %d", w.Code)
 	}
 }

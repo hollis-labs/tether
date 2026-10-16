@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hollis-labs/libs/security/secrets/tokenfile"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
@@ -53,6 +55,9 @@ func (m *TokenMinter) Mint(ctx context.Context, aud string, scopes []string, sid
 	}
 	req.Header.Set("Authorization", "Bearer "+device)
 	req.Header.Set("Content-Type", "application/json")
+	// The hub's remote listener requires the protocol header on every route
+	// except its bootstrap reads; /auth/token is not one of them.
+	req.Header.Set(environment.ProtocolHeader, strconv.Itoa(environment.Protocol))
 	c := m.Client
 	if c == nil {
 		c = &http.Client{Timeout: 15 * time.Second}
