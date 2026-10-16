@@ -200,7 +200,20 @@ func flipMode(ctx context.Context, w io.Writer, catalogRoot, point string, mode 
 			evidence = fmt.Sprintf("%s (revoked %d unbounded session credentials)", evidence, n)
 		}
 	}
-	return applyModeChange(catalogRoot, "flip", point, string(mode), by, evidence)
+	if afterGuardForTest != nil {
+		afterGuardForTest()
+	}
+	rec, err := applyModeChange(catalogRoot, "flip", point, string(mode), by, evidence)
+	if err != nil {
+		return nil, err
+	}
+	if mode == identity.Enforce {
+		// A launch can land between the guard's scan and the flip: sweep once more.
+		if err := sweepStragglers(ctx, w, catalogRoot, point, by); err != nil {
+			return rec, err
+		}
+	}
+	return rec, nil
 }
 
 func identityRollbackCmd() *cobra.Command {
@@ -247,6 +260,9 @@ func identityRollbackCmd() *cobra.Command {
 						}
 					}
 					rec, err = applyModeChange(root, "rollback", t, prior, by, evidence)
+					if err == nil && prior == string(identity.Enforce) {
+						err = sweepStragglers(cmd.Context(), cmd.OutOrStdout(), root, t, by)
+					}
 				}
 				if err != nil {
 					return err

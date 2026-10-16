@@ -219,6 +219,13 @@ new traffic.
 - The guard fails closed: if the state database exists but cannot be read, the
   flip is refused. A catalog with no state database yet is not blocked.
 - Flips to `observe` or `off` never consult it.
+- A launch can land between the guard's scan and the flip. After applying an
+  enforce flip the command scans once more and revokes any such straggler, and
+  when there are any it appends a `stragglers` record (with the count) to the
+  flip log. The daemon keeps its old mode until it restarts, so launches in the
+  gap before the restart can still create unbounded credentials: after the
+  restart run `tether identity unbounded --check`, which exits non-zero while any
+  stand, and re-run the flip with `--revoke-anonymous` if it lists some.
 
 ## 5. Declared fail mode per enforcement point
 

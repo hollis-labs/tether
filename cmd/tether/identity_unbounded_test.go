@@ -230,3 +230,72 @@ func TestRollbackThatRestoresEnforceIsGuardedToo(t *testing.T) {
 		t.Fatalf("mode %q after rollback with --revoke-anonymous", got)
 	}
 }
+
+// A launch that lands between the guard's scan and the flip must not survive
+// into enforce: the sweep after the flip revokes it and logs the count.
+func TestALaunchInTheWindowBetweenScanAndFlipIsSweptAndLogged(t *testing.T) {
+	root, db := guardFixture(t, false) // clean at the guard's scan
+	t.Cleanup(func() { _ = db.Close() })
+	ids := identity.NewStore(db.DB())
+	afterGuardForTest = func() {
+		future := time.Now().Add(time.Hour)
+		if err := db.CreateSession(store.SessionRow{ID: "straggler", State: "created"}, nil); err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := ids.MintSessionForLaunch(context.Background(), identity.Principal{ID: "msg://session/local/straggler", Kind: "session", SessionID: "straggler", LaunchAttribution: "anonymous_external", ExpiresAt: &future}); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { afterGuardForTest = nil })
+	var out bytes.Buffer
+	rec, err := flipMode(context.Background(), &out, root, "global", identity.Enforce, "t", "CW-1 GO", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil || fileMode(t, root) != "enforce" {
+		t.Fatalf("flip not applied: %v / %q", rec, fileMode(t, root))
+	}
+	if left, _ := ids.UnboundedSessions(context.Background()); len(left) != 0 {
+		t.Fatalf("the straggler survived into enforce: %v", left)
+	}
+	if !strings.Contains(out.String(), "revoked 1 unbounded") {
+		t.Errorf("no straggler line in the output: %q", out.String())
+	}
+	recs, _, verr := verifyFlipLog(flipLogPath(root))
+	if verr != nil {
+		t.Fatal(verr)
+	}
+	last := recs[len(recs)-1]
+	if last.Action != "stragglers" || !strings.Contains(last.Evidence, "revoked 1 unbounded") {
+		t.Fatalf("last flip-log record: %+v", last)
+	}
+	// The straggler record is not a flip: rollback must not try to undo it.
+	if p := pendingFlips(recs); len(p["global"]) != 1 {
+		t.Fatalf("pending flips %v", p)
+	}
+}
+
+func TestUnboundedCheckExitsNonZeroOnlyWhenSomethingStands(t *testing.T) {
+	root, db := guardFixture(t, true)
+	old := catalogPath
+	catalogPath = root
+	t.Cleanup(func() { catalogPath = old })
+	run := func() error {
+		cmd := identityUnboundedCmd()
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"--check"})
+		return cmd.Execute()
+	}
+	if err := run(); err == nil {
+		t.Fatal("--check passed with unbounded credentials standing")
+	}
+	if _, err := identity.NewStore(db.DB()).RevokeUnbounded(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if err := run(); err != nil {
+		t.Fatalf("--check failed on a clean state: %v", err)
+	}
+}

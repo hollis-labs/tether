@@ -19,7 +19,8 @@ import (
 // at launch (CW-20261016-0218). It is read-only; the enforce flip uses the same
 // list to decide whether it may proceed.
 func identityUnboundedCmd() *cobra.Command {
-	return &cobra.Command{
+	var check bool
+	cmd := &cobra.Command{
 		Use:   "unbounded",
 		Short: "List and count live session credentials that were launched with no bounding authority (anonymous, internal-unattributed, or legacy with an unknown launcher)",
 		Long: "Reads the state database directly; changes nothing.\n" +
@@ -42,10 +43,18 @@ func identityUnboundedCmd() *cobra.Command {
 				return fmt.Errorf("open state db: %w", err)
 			}
 			defer func() { _ = db.Close() }()
-			_, err = reportUnbounded(cmd.Context(), cmd.OutOrStdout(), identity.NewStore(db.DB()))
-			return err
+			list, err := reportUnbounded(cmd.Context(), cmd.OutOrStdout(), identity.NewStore(db.DB()))
+			if err != nil {
+				return err
+			}
+			if check && len(list) > 0 {
+				return fmt.Errorf("%d live unbounded session credential(s)", len(list))
+			}
+			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&check, "check", false, "exit non-zero when any exist (for use after a restart to confirm none stand)")
+	return cmd
 }
 
 // reportUnbounded prints the per-attribution counts and one line per credential,
@@ -125,4 +134,49 @@ func enforceGuard(ctx context.Context, w io.Writer, catalogRoot string, revoke b
 	}
 	fmt.Fprintf(w, "revoked %d unbounded session credential(s)\n", n)
 	return n, nil
+}
+
+// afterGuardForTest, when set, runs between the guard's scan and the flip, to
+// inject a launch into the window the straggler sweep exists to close.
+var afterGuardForTest func()
+
+// sweepStragglers runs after a switch to enforce has been applied. A launch can
+// land between the guard's scan and the flip (the CLI and the daemon are
+// separate processes, so there is no lock to hold across them); any unbounded
+// credential that exists now is such a straggler and must not survive into
+// enforce. It revokes them and, when there are any, appends a "stragglers"
+// record to the hash-chained flip log with the count.
+func sweepStragglers(ctx context.Context, w io.Writer, catalogRoot, point string, by string) error {
+	cat, err := config.Load(catalogRoot)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	dbPath := config.ResolveStateDB(cat.Global.Catalog.Defaults, cat.Paths)
+	if _, statErr := os.Stat(dbPath); dbPath == "" || errors.Is(statErr, os.ErrNotExist) {
+		return nil
+	}
+	db, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("straggler sweep after the flip: open state db: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	n, err := identity.NewStore(db.DB()).RevokeUnbounded(ctx)
+	if err != nil {
+		return fmt.Errorf("the flip was applied, but the straggler sweep failed (run `tether identity unbounded --check`): %w", err)
+	}
+	if n == 0 {
+		return nil
+	}
+	fmt.Fprintf(w, "revoked %d unbounded session credential(s) created between the guard's scan and the flip\n", n)
+	if by == "" {
+		by = "unknown"
+	}
+	rec := &flipRecord{
+		At: time.Now().UTC().Format(time.RFC3339), Action: "stragglers", By: by, Point: point, From: "enforce", To: "enforce",
+		Evidence: fmt.Sprintf("revoked %d unbounded session credentials created after the guard's scan", n), Catalog: catalogRoot,
+	}
+	if err := appendFlip(flipLogPath(catalogRoot), rec); err != nil {
+		return fmt.Errorf("revoked %d stragglers, but the audit record could not be written: %w", n, err)
+	}
+	return nil
 }
