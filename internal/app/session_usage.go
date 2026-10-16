@@ -54,7 +54,11 @@ func (o *sessionTurnOutput) meterTurn(ev runtimeevents.Event) {
 	}
 	if err := o.service.Store.AddSessionTurnUsage(o.row.ID, u); err != nil {
 		log.Printf("session usage %s: %v", o.row.ID, err)
+		return
 	}
+	// One report per finished turn, completed or failed (a failed turn can have
+	// spent tokens), with the totals the meter now holds.
+	publishSessionUsage(o.service.Bus, o.service.Store, o.row.ID, o.row.LogicalAgentID, ev.TurnID, false)
 }
 
 func usageNumber(m map[string]json.RawMessage, keys ...string) (float64, bool) {

@@ -98,4 +98,15 @@ const (
 	// is silently making no progress is visible to operators. Payload schema:
 	//   {"reason":"repeated_tool_denials","denied":<int>}
 	KindSessionStalled = "session.stalled"
+
+	// KindSessionUsage reports a session's cumulative token usage (schema
+	// session_usage@1, retention R-activity). Once per finished turn and once at
+	// session end with final=true; never periodic. Observability only: cost
+	// belongs to the usage ledger. Payload schema:
+	//   {"input_tokens":<int>,"output_tokens":<int>,"turns":<int>,"final":<bool>,"source":"provider","turn_id":"<id>"}
+	KindSessionUsage = "session.usage"
+
+	// KindSessionHealthChanged reports a session health transition (schema
+	// session_health_changed@1, retention R-state): on change only, from != to.
+	KindSessionHealthChanged = "session.health_changed"
 )

@@ -31,4 +31,5 @@ func (s *Service) publishSessionStateChange(change store.SessionStateChange) {
 	}
 	publishSessionEvent(s.Bus, change.SessionID, change.LogicalAgentID, events.KindSessionStateChanged,
 		sessionStateChangedPayload{From: change.From, To: change.To, Reason: change.Reason, Session: sessionFieldsFor(s.Store, change.SessionID)})
+	publishFinalUsageIfTerminal(s.Bus, s.Store, change.SessionID, change.LogicalAgentID, change.To)
 }
