@@ -203,3 +203,36 @@ func (f *fakeEventPersister) InsertEvent(scope events.Scope, sessionID, kind, pa
 func (f *fakeEventPersister) EventsSince(sinceSeq int64) ([]events.Event, error) {
 	return nil, nil
 }
+
+// The ring only needs recent calls: history already in the log is not replayed
+// into it on subscribe (the old Filter{} subscribe replayed from seq 0).
+func TestToolCallEventStore_SubscribeStartsAtTheLiveHead(t *testing.T) {
+	store := NewToolCallEventStore(100)
+	bus := events.NewBus(events.BusOptions{Persister: &fakeEventPersister{}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	publish := func(tool string) {
+		raw, _ := json.Marshal(events.ToolCallEvent{ToolName: tool, Server: "s", OK: true, Timestamp: time.Now()})
+		if err := bus.Publish(ctx, events.Event{Scope: events.ScopeDaemon, Kind: events.EventTypeToolCallEnd, PayloadJSON: string(raw)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("before_subscribe")
+	store.Subscribe(ctx, bus)
+	publish("after_subscribe")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if got := store.Query(ToolCallEventFilter{}); len(got) == 1 {
+			if got[0].ToolName != "after_subscribe" {
+				t.Fatalf("stored %q", got[0].ToolName)
+			}
+			time.Sleep(30 * time.Millisecond)
+			if n := len(store.Query(ToolCallEventFilter{})); n != 1 {
+				t.Fatalf("history was replayed into the ring: %d events", n)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("live event not stored")
+}

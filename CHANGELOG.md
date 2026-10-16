@@ -8,6 +8,12 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- The two in-tree `Bus.Subscribe` followers no longer replay from sequence 0 or silently
+  stop (CW-20261016-0146, P3a follow-up): `events.Follow`/`FollowAsync` own the subscription,
+  track a cursor and re-subscribe from it with backoff when the bus closes the channel, and
+  log `stream.gap` frames instead of passing them on. `proxyevents.Forward` resumes from its
+  cursor; the MCP proxy's `ToolCallEventStore` now starts at the live head (it is a ring of
+  recent calls) instead of replaying the whole log into it.
 - `events.Bus.Subscribe` replay is now bounded and a slow consumer is told instead of
   silently lost (CW-20261016-0146, P3a): with the SQL store the replay is read in
   pages (default 512, filters pushed into SQL) by the subscriber's own goroutine, so a
