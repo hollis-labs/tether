@@ -176,10 +176,16 @@ func (s *Store) RecordReaperOrphan(ctx context.Context, id, reason string, obser
 		}
 	}
 	payload, _ := json.Marshal(map[string]string{"reason": reason, "stage": "outcome", "outcome": "orphaned"})
-	if _, err = tx.ExecContext(ctx, `INSERT INTO events(scope,session_id,at,kind,payload_json) VALUES(?,?,?,?,?)`, events.ScopeSession, id, stamp, "session.reaper", string(payload)); err != nil {
+	// The outcome event is an outbox row on this transaction: it commits with the
+	// orphaning, and is published only if that commit happens.
+	if _, _, err = insertEventRow(ctx, tx, events.ScopeSession, id, "session.reaper", string(payload), stamp, "", true); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	s.EventsCommitted()
+	return true, nil
 }
 
 // SessionLeaseExpired ignores superseded/revoked generations and treats a live
@@ -197,6 +203,10 @@ func (s *Store) RecordSessionActivity(ctx context.Context, id string, at time.Ti
 	if err != nil {
 		return err
 	}
-	_, _, err = s.InsertEventContext(ctx, events.ScopeSession, id, "session.activity", string(payload))
+	// Outbox row (published by the bus drainer), not a write around the bus.
+	_, _, err = insertEventRow(ctx, s.db, events.ScopeSession, id, "session.activity", string(payload), time.Now().UTC().Format(time.RFC3339Nano), "", true)
+	if err == nil {
+		s.EventsCommitted()
+	}
 	return err
 }

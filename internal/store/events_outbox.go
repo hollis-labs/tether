@@ -49,7 +49,7 @@ type eventWriter interface {
 // id (minted unless eventID is given). pending marks it for the outbox drainer.
 // A repeat of an event id already stored writes nothing and returns the stored
 // row's sequence: retries are idempotent on the id.
-func insertEventRow(ctx context.Context, w eventWriter, scope events.Scope, sessionID, kind, payloadJSON string, at time.Time, eventID string, pending bool) (int64, string, error) {
+func insertEventRow(ctx context.Context, w eventWriter, scope events.Scope, sessionID, kind, payloadJSON string, at string, eventID string, pending bool) (int64, string, error) {
 	if eventID == "" {
 		eventID = runtimeevents.NewEventID()
 	}
@@ -60,7 +60,7 @@ func insertEventRow(ctx context.Context, w eventWriter, scope events.Scope, sess
 	res, err := w.ExecContext(ctx,
 		`INSERT INTO events (scope, session_id, at, kind, payload_json, event_id, pending) VALUES (?, ?, ?, ?, ?, ?, ?)
  ON CONFLICT(event_id) WHERE event_id IS NOT NULL DO NOTHING`,
-		scope, nullIfEmpty(sessionID), at.Format(time.RFC3339Nano), kind, nullIfEmpty(payloadJSON), eventID, pendingFlag)
+		scope, nullIfEmpty(sessionID), at, kind, nullIfEmpty(payloadJSON), eventID, pendingFlag)
 	if err != nil {
 		return 0, "", err
 	}
@@ -93,7 +93,7 @@ func (s *Store) InsertEventTx(ctx context.Context, tx events.Tx, e events.Event)
 		at = time.Now()
 	}
 	at = at.UTC()
-	seq, id, err := insertEventRow(ctx, tx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON, at, e.EventID, true)
+	seq, id, err := insertEventRow(ctx, tx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON, at.Format(time.RFC3339Nano), e.EventID, true)
 	if err != nil {
 		return events.Event{}, err
 	}

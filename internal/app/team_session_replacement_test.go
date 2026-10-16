@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,6 +140,14 @@ func TestTeamReplacementAtomicallyRemapsOriginalAuthorityAndFreezesOldExecution(
 	if json.Unmarshal([]byte(payload), &lineage) != nil || lineage["replaced_by"] != in.DestinationID || lineage["replaces"] != in.Source.ID {
 		t.Fatal("durable lineage missing")
 	}
+	// The lineage event is an outbox row written on the replacement's own
+	// transaction: it has its D6 id and waits for the drainer (this helper runs
+	// the store call directly, so nothing has published it yet).
+	var lineageID string
+	var lineagePending int
+	if err := r.svc.Store.DB().QueryRow(`SELECT event_id, pending FROM events WHERE session_id=? AND kind='session.replaced_by'`, in.Source.ID).Scan(&lineageID, &lineagePending); err != nil || !strings.HasPrefix(lineageID, "evt_") || lineagePending != 1 {
+		t.Fatalf("lineage event is not a pending outbox row with an id: %q pending=%d err=%v", lineageID, lineagePending, err)
+	}
 	// A retry cannot choose another execution or create duplicate membership.
 	if again, err := prepareReplacement(t, r, in); err != nil || again != result {
 		t.Fatalf("idempotent retry=%+v %v", again, err)
@@ -209,6 +218,10 @@ func TestTeamReplacementRollsBackAllReferencesOnLateFailure(t *testing.T) {
 	}
 	if _, err := r.svc.Store.GetSession(in.DestinationID); !errors.Is(err, store.ErrSessionNotFound) {
 		t.Fatal("failed transaction persisted a destination", err)
+	}
+	var events int
+	if err := r.svc.Store.DB().QueryRow(`SELECT COUNT(*) FROM events WHERE kind='session.replaced_by'`).Scan(&events); err != nil || events != 0 {
+		t.Fatalf("a rolled-back replacement left %d lineage event(s) to publish (%v)", events, err)
 	}
 	if _, err := r.svc.Store.DB().Exec(`UPDATE sessions SET state='orphaned' WHERE id=?`, in.Source.ID); err != nil {
 		t.Fatal("rolled-back freeze blocked original source", err)
