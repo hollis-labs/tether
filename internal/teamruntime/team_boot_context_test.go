@@ -11,11 +11,48 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/teamhost"
+	"github.com/hollis-labs/tether/internal/teamsvc"
 )
 
 type bootContextEffects struct {
 	*sessionEffects
 	accepted []app.TeamBootContext
+}
+
+func TestInitialFormationWithMissionAndBriefUsesActualRunID(t *testing.T) {
+	f, _ := newPolicyFixture(t, stageAPolicy)
+	effects := &bootContextEffects{sessionEffects: f.effects}
+	f.sessions.service = effects
+	team := stageATeam()
+	for i := range team.Slots {
+		if team.Slots[i].Min > 0 {
+			team.Slots[i].Workspace = map[string]string{"mission": "Report ready", "brief": "End your turn"}
+		}
+	}
+	op := operatorContext(t)
+	request := teamsvc.FormRequest{Key: "boot-with-context", Team: team}
+	result, err := f.svc.Form(op, request)
+	check(t, err)
+	if result.Run == nil || result.Run.ID == "" || len(effects.accepted) != 2 {
+		t.Fatalf("formation did not provision both members: %+v %+v", result, effects.accepted)
+	}
+	for _, boot := range effects.accepted {
+		if boot.RunID != result.Run.ID || boot.Mission != "Report ready" || boot.Brief != "End your turn" || boot.Slot == "" {
+			t.Fatalf("boot context differs from committed run: %+v", boot)
+		}
+	}
+	// Retrying the accepted request reuses the exact run and member sessions.
+	replay, err := f.svc.Form(op, request)
+	check(t, err)
+	if replay.Run == nil || replay.Run.ID != result.Run.ID || f.effects.launched != 2 {
+		t.Fatalf("formation replay changed sessions: %+v launches=%d", replay, f.effects.launched)
+	}
+	// The workaround enriches only the boot view, not the retained v0.6 intent.
+	var changed int
+	check(t, f.effects.db.DB().QueryRow(`SELECT count(*) FROM team_host_intents WHERE json_extract(request,'$.RunID')<>''`).Scan(&changed))
+	if changed != 0 {
+		t.Fatal("initial provision requests were rewritten")
+	}
 }
 
 func (f *bootContextEffects) CreateTeamSessionWithContext(ctx context.Context, key, launch string, boot app.TeamBootContext) (*app.Launched, error) {

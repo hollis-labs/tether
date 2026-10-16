@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launchartifacts"
 	"github.com/hollis-labs/tether/internal/launchartifacts/testfixture"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
@@ -110,6 +111,10 @@ func TestTeamBootContextCreateReplayKeepsOriginalPlan(t *testing.T) {
 }
 
 func TestTeamBootContextRejectsCollisionsAndInvalidContext(t *testing.T) {
+	_, err := TeamBootContextFor(teams.ProvisionRequest{Slot: teams.Slot{Name: "workers", Workspace: map[string]string{"mission": "ready"}}})
+	if !errors.Is(err, teamhost.ErrInvalidRequest) || !strings.Contains(err.Error(), "boot context: run id missing") {
+		t.Fatalf("missing run id diagnostic: %v", err)
+	}
 	ctx := TeamBootContext{RunID: "run", Slot: "worker", Mission: "Mission"}
 	for _, plan := range []*launch.Plan{
 		{BootDirOverlay: map[string]string{"MISSION.md": "catalog-owned"}},

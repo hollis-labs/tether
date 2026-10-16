@@ -78,7 +78,16 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 	if err != nil {
 		return "", err
 	}
-	boot, err := app.TeamBootContextFor(in.Provision)
+	// Keep the retained port/provision request byte-for-byte stable. Only the
+	// detached boot-context view gains the initial formation's future run ID.
+	provision := in.Provision
+	if provision.RunID == "" && (provision.Slot.Workspace["mission"] != "" || provision.Slot.Workspace["brief"] != "") {
+		provision.RunID, err = teamhost.InitialRunID(ctx, s.db, provision)
+		if err != nil {
+			return "", err
+		}
+	}
+	boot, err := app.TeamBootContextFor(provision)
 	if err != nil {
 		return "", err
 	}

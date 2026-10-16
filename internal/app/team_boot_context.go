@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -39,7 +40,10 @@ func (c TeamBootContext) validate() error {
 	if c == (TeamBootContext{}) {
 		return nil
 	}
-	if c.RunID == "" || c.Slot == "" || len(c.RunID) > 256 || len(c.Slot) > 256 || strings.ContainsAny(c.RunID+c.Slot, "\r\n\x00") {
+	if c.RunID == "" {
+		return fmt.Errorf("boot context: run id missing: %w", teamhost.ErrInvalidRequest)
+	}
+	if c.Slot == "" || len(c.RunID) > 256 || len(c.Slot) > 256 || strings.ContainsAny(c.RunID+c.Slot, "\r\n\x00") {
 		return teamhost.ErrInvalidRequest
 	}
 	for _, value := range []string{c.RunID, c.Slot, c.Mission, c.Brief} {
