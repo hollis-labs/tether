@@ -119,7 +119,7 @@ cmd_check_pr() {
     release/*) echo "changelog: release/* branch, CHANGELOG.md edits allowed"; return 0 ;;
   esac
   local base="${CHANGELOG_BASE:-HEAD^1}" changed
-  changed="$(git diff --name-only "$base" HEAD -- "$CHANGELOG" 2>/dev/null)" || die "cannot diff against $base (checkout needs fetch-depth: 2)"
+  changed="$(git diff --name-only "$base"...HEAD -- "$CHANGELOG" 2>/dev/null)" || die "cannot diff against $base (checkout needs fetch-depth: 2)"
   [[ -z "$changed" ]] && return 0
   local msg="this PR edits $CHANGELOG. Add $CHANGES_DIR/<TASK-ID>-<slug>.md instead of editing $CHANGELOG (see $CHANGES_DIR/README.md); the release owner assembles fragments."
   if [[ "$ENFORCE" == "1" ]]; then

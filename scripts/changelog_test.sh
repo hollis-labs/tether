@@ -101,6 +101,12 @@ expect_ok "release/* branches may edit CHANGELOG" env CHANGELOG_BASE=main CHANGE
 (cd "$r" && git checkout -q main && git checkout -q -b bad && printf 'nope\n' >changes/CW-20261016-0202-bad.md && git add -A && git commit -q -m bad)
 expect_fail "malformed fragment fails even when advisory" "malformed" env CHANGELOG_BASE=main CHANGELOG_FRAGMENTS_ENFORCE=0 bash -c "cd '$r' && '$SCRIPT' check-pr"
 
+# main moving on (a CHANGELOG edit landed after the branch point) is not the PR's doing
+r="$(new_repo)"
+(cd "$r" && git checkout -q -b feature && printf -- '- ok (CW-20261016-0210)\n' >changes/CW-20261016-0210-x.md && git add -A && git commit -q -m frag \
+  && git checkout -q main && printf -- '- landed on main (CW-20261016-0211)\n' >>CHANGELOG.md && git commit -q -am "main edits changelog" && git checkout -q feature)
+expect_ok "a base that moved on is not blamed on the PR" env CHANGELOG_BASE=main CHANGELOG_BRANCH=feature CHANGELOG_FRAGMENTS_ENFORCE=1 bash -c "cd '$r' && '$SCRIPT' check-pr"
+
 # --- two parallel PRs merge without a conflict (the acceptance test) ------------
 r="$(new_repo)"
 (
