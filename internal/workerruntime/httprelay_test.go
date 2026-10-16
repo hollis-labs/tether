@@ -37,6 +37,8 @@ type fakeHub struct {
 	// refuse, when set, answers every tools/list with this status and code.
 	refuseStatus int
 	refuseCode   string
+	// initDelay holds the initialize response, as a busy hub would.
+	initDelay time.Duration
 }
 
 func (h *fakeHub) accepts(token string) bool {
@@ -80,8 +82,14 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		h.methods = append(h.methods, m.Method)
 		h.mu.Unlock()
+		if m.Method != "initialize" && r.Header.Get("Mcp-Session-Id") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"mcp_initialize_required"}}`)
+			return
+		}
 		switch m.Method {
 		case "initialize":
+			time.Sleep(h.initDelay)
 			w.Header().Set("Mcp-Session-Id", "sess-1")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"hub","version":"1"}}}`, m.ID)
@@ -427,5 +435,34 @@ func TestHTTPRelayDefaultClientRefusesRedirects(t *testing.T) {
 	injected := (&HTTPRelay{Client: &http.Client{}}).client()
 	if injected.CheckRedirect == nil || !errors.Is(injected.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Fatal("an injected client would follow redirects")
+	}
+}
+
+// An agent that does not wait for the initialize reply (it sends notifications/initialized and a first request right
+// behind it) must not have them overtake the initialize at the hub: a POST without a session id that is not an initialize
+// is refused with 400 mcp_initialize_required (seen once in canary 3).
+func TestHTTPRelayDoesNotLetLaterMessagesOvertakeInitialize(t *testing.T) {
+	hub := &fakeHub{initDelay: 200 * time.Millisecond}
+	g := newRelayRig(t, hub, nil)
+	g.send(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+	g.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	seen := map[float64]map[string]any{}
+	for len(seen) < 2 {
+		m := g.recv()
+		if id, ok := m["id"].(float64); ok {
+			seen[id] = m
+		}
+	}
+	if seen[1]["result"] == nil || seen[2]["result"] == nil || seen[2]["error"] != nil {
+		t.Fatalf("replies = %v", seen)
+	}
+	go func() { // the standalone stream's notification may still be on its way; do not let it block the relay's exit
+		for g.out.Scan() {
+		}
+	}()
+	g.finish()
+	if strings.Contains(g.stderr.String(), "refused") {
+		t.Fatalf("a message was refused: %s", g.stderr.String())
 	}
 }
