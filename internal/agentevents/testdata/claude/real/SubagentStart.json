@@ -1,0 +1,9 @@
+{
+ "agent_id": "agent-1",
+ "agent_type": "Explore",
+ "cwd": "/work",
+ "hook_event_name": "SubagentStart",
+ "prompt_id": "prompt-1",
+ "session_id": "sess-1",
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}

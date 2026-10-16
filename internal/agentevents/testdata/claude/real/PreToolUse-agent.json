@@ -1,0 +1,19 @@
+{
+ "cwd": "/work",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PreToolUse",
+ "permission_mode": "default",
+ "prompt_id": "prompt-1",
+ "session_id": "sess-1",
+ "tool_input": {
+  "description": "List files in working directory",
+  "prompt": "List the files in the directory /work (non-recursive is fine unless there are obvious subdirectories worth listing). Report the file names, one per line, with a short note on whether each is a file or directory. Do not modify anything.",
+  "run_in_background": false,
+  "subagent_type": "Explore"
+ },
+ "tool_name": "Agent",
+ "tool_use_id": "toolu_3",
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}

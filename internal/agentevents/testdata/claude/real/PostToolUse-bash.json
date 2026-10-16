@@ -1,0 +1,25 @@
+{
+ "cwd": "/work",
+ "duration_ms": 560,
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PostToolUse",
+ "permission_mode": "default",
+ "prompt_id": "prompt-1",
+ "session_id": "sess-1",
+ "tool_input": {
+  "command": "echo captured",
+  "description": "Echo the word captured"
+ },
+ "tool_name": "Bash",
+ "tool_response": {
+  "interrupted": false,
+  "isImage": false,
+  "noOutputExpected": false,
+  "stderr": "",
+  "stdout": "captured"
+ },
+ "tool_use_id": "toolu_2",
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}

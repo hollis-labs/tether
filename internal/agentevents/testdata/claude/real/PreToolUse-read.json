@@ -1,0 +1,16 @@
+{
+ "cwd": "/work",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PreToolUse",
+ "permission_mode": "default",
+ "prompt_id": "prompt-1",
+ "session_id": "sess-1",
+ "tool_input": {
+  "file_path": "/work/hello.txt"
+ },
+ "tool_name": "Read",
+ "tool_use_id": "toolu_1",
+ "transcript_path": "/home/user/.claude/projects/-work/00000000-0000-0000-0000-000000000000.jsonl"
+}

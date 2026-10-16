@@ -30,23 +30,35 @@ func ClaudeHook(payload []byte) ([]Observation, error) {
 	if p.Event == "" {
 		return nil, errors.New("agentevents: claude hook payload has no hook_event_name")
 	}
+	// prompt_id is the vendor's id for one user prompt and everything it triggers, so it is the turn id.
 	hook := func(kind runtimeevents.EventKind, payload any) Observation {
-		return Observation{Kind: kind, Channel: runtimeevents.ChannelHook, Tier: Exact, Payload: payload}
+		return Observation{Kind: kind, Channel: runtimeevents.ChannelHook, Tier: Exact, Payload: payload, TurnID: p.PromptID}
+	}
+	// tool events fired inside a subagent carry its id; the session's own do not.
+	tool := func(m map[string]any) map[string]any {
+		if p.AgentID != "" {
+			m["subagent_id"] = p.AgentID
+		}
+		return m
 	}
 	switch p.Event {
 	case "SessionStart":
-		return []Observation{hook(runtimeevents.KindSessionReady, map[string]any{"source": p.Source, "model": p.Model})}, nil
+		return []Observation{hook(runtimeevents.KindSessionReady, omitEmpty(map[string]any{"source": p.Source, "model": p.Model}))}, nil
 	case "UserPromptSubmit":
 		return []Observation{
 			hook(runtimeevents.KindTurnStarted, map[string]any{"prompt_bytes": len(p.Prompt)}),
 			hook(runtimeevents.KindSessionProcessing, nil),
 		}, nil
 	case "PreToolUse":
-		return []Observation{hook(runtimeevents.KindAgentToolUse, map[string]any{"tool": p.ToolName, "tool_use_id": p.ToolUseID, "input_bytes": len(p.ToolInput)})}, nil
+		return []Observation{hook(runtimeevents.KindAgentToolUse, tool(map[string]any{"tool": p.ToolName, "tool_use_id": p.ToolUseID, "input_bytes": len(p.ToolInput)}))}, nil
 	case "PostToolUse":
-		return []Observation{hook(runtimeevents.KindAgentToolResult, map[string]any{"tool": p.ToolName, "tool_use_id": p.ToolUseID, "ok": true, "result_bytes": len(p.ToolResponse)})}, nil
+		m := tool(map[string]any{"tool": p.ToolName, "tool_use_id": p.ToolUseID, "ok": true, "result_bytes": len(p.ToolResponse)})
+		if p.DurationMS != nil {
+			m["duration_ms"] = *p.DurationMS
+		}
+		return []Observation{hook(runtimeevents.KindAgentToolResult, m)}, nil
 	case "PostToolUseFailure":
-		return []Observation{hook(runtimeevents.KindAgentToolResult, map[string]any{"tool": p.ToolName, "tool_use_id": p.ToolUseID, "ok": false})}, nil
+		return []Observation{hook(runtimeevents.KindAgentToolResult, tool(map[string]any{"tool": p.ToolName, "tool_use_id": p.ToolUseID, "ok": false}))}, nil
 	case "PermissionRequest":
 		return []Observation{hook(runtimeevents.KindAgentPermissionRequested, map[string]any{"tool": p.ToolName, "tool_use_id": p.ToolUseID, "ask": "permission"})}, nil
 	case "PermissionDenied":
@@ -81,6 +93,15 @@ func ClaudeHook(payload []byte) ([]Observation, error) {
 // matching agent.subagent_spawn event. It is registered in harness/core v0.12.0; until Tether depends on that, it is declared here.
 const KindAgentSubagentStop runtimeevents.EventKind = "agent.subagent_stop"
 
+func omitEmpty(m map[string]any) map[string]any {
+	for k, v := range m {
+		if v == "" {
+			delete(m, k)
+		}
+	}
+	return m
+}
+
 // ClaudeSessionID is the vendor session id a hook payload carries, for the adapter that maps it to a Tether session.
 func ClaudeSessionID(payload []byte) string {
 	var p struct {
@@ -104,4 +125,6 @@ type claudeHookPayload struct {
 	AgentID          string          `json:"agent_id"`
 	AgentType        string          `json:"agent_type"`
 	Reason           string          `json:"reason"`
+	PromptID         string          `json:"prompt_id"`
+	DurationMS       *int64          `json:"duration_ms"`
 }
