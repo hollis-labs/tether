@@ -119,7 +119,19 @@ func TestChannelAttachmentAuditEventIsAnOutboxRow(t *testing.T) {
 	stop := bus.StartOutbox(ctx)
 	defer stop()
 	collect(t, live, n, 5*time.Second)
+	settleOutbox(t, bus)
 	if _, pending, _ := outboxRow(t, f.store, events.KindSessionTurnRouted); pending != 0 {
 		t.Fatal("still pending after the drain")
+	}
+}
+
+// settleOutbox returns once the drain that is in flight has finished. The drain fans a row out to live subscribers and only
+// then marks it published, all under the bus lock; a subscriber that has just received the event has therefore not
+// necessarily seen the mark. Publishing needs the same lock, so when it returns the earlier drain is complete. (Waiting a
+// while instead would only make the race rarer.)
+func settleOutbox(t *testing.T, bus events.Bus) {
+	t.Helper()
+	if err := bus.Publish(context.Background(), events.Event{Scope: events.ScopeSession, SessionID: "settle", Kind: "test.settle"}); err != nil {
+		t.Fatal(err)
 	}
 }
