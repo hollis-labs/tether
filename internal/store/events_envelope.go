@@ -95,12 +95,7 @@ func (s *Store) InsertEventEnvelope(ctx context.Context, e events.Event) (events
 		return events.Event{}, fmt.Errorf("event scope required")
 	}
 	if e.Kind == EnvironmentRequestKind {
-		seq, at, id, err := s.insertEnvironmentRequest(ctx, e.Scope, e.SessionID, e.PayloadJSON)
-		if err != nil {
-			return events.Event{}, err
-		}
-		e.Seq, e.At, e.EventID = seq, at, id
-		return e, nil
+		return s.insertEnvironmentRequestEnvelope(ctx, e)
 	}
 	at := time.Now().UTC()
 	stored, _, err := insertEventEnvelopeRow(ctx, s.db, e, at, "", false)
@@ -111,6 +106,9 @@ func (s *Store) InsertEventEnvelope(ctx context.Context, e events.Event) (events
 // an outbox row. A repeat of an event id already stored writes nothing and
 // reports existing=true with the stored sequence.
 func insertEventEnvelopeRow(ctx context.Context, w eventWriter, e events.Event, at time.Time, eventID string, pending bool) (events.Event, bool, error) {
+	if err := applyEventRetentionAdmission(ctx, w, &e); err != nil {
+		return events.Event{}, false, err
+	}
 	if eventID == "" {
 		eventID = e.EventID
 	}
