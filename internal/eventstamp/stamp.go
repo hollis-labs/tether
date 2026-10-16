@@ -8,8 +8,10 @@ package eventstamp
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -84,13 +86,21 @@ func stampSession(ctx context.Context, e *events.Event) {
 	set(&d.LogicalAgentID, snap.LogicalAgentID)
 }
 
-// stampActor says who caused the event, from the verified principal in ctx.
-// Only two callers map to a mesh actor today: the real local operator, and a
-// session (credential or issued session-bound token) whose agent address the
-// registry binding confirmed. An operator-minted narrow token carries the
-// operator's id but is not the operator, so it gets no actor. A claimed
-// session or any unverified caller gets none either: "claimed" cannot name an
-// actor URN without guessing one.
+// stampActor says who caused the event, from the verified principal in ctx
+// (architect ruling actor_device_kind_and_narrow_tokens_2026_10_16).
+//
+//   - A session credential, or an issued session-bound token, is the agent the
+//     registry binding confirmed (snapshot AgentURN); without that confirmation
+//     there is no actor.
+//   - Any other verified principal whose subject is a principal URN is itself
+//     the actor, with the kind its URN authority names (user, agent, service),
+//     verified=token. That includes the real local operator and an
+//     operator-minted narrow token, whose subject is the operator. The token's
+//     jti or name never goes into the envelope.
+//   - A device (msg://device/...) has no mesh actor kind yet, so it gets no
+//     actor; the kind lands with libs#47 and then is stamped here. An actor is
+//     never faked.
+//   - A claimed session or an unverified caller gets none.
 func stampActor(ctx context.Context, e *events.Event) {
 	if actorSet(e.Envelope.Actor) {
 		return
@@ -99,15 +109,41 @@ func stampActor(ctx context.Context, e *events.Event) {
 	if !ok || !p.Verified {
 		return
 	}
-	switch {
-	case identity.IsOperatorCredential(p):
-		e.Envelope.Actor = events.Actor{Kind: "user", URN: identity.OperatorID, Verified: "token"}
-	case p.SessionID != "" && (p.Kind == "session" || identity.IsBoundAgentToken(p)):
+	if p.SessionID != "" && (p.Kind == "session" || identity.IsBoundAgentToken(p)) {
 		snap, ok := callcontext.FromContext(ctx)
 		if ok && snap.SessionResolved && snap.SessionID == p.SessionID && snap.AgentURN != "" {
-			e.Envelope.Actor = events.Actor{Kind: "agent", URN: snap.AgentURN, Verified: "token"}
+			e.Envelope.Actor = events.Actor{Kind: string(mesh.ActorAgent), URN: snap.AgentURN, Verified: "token"}
 		}
+		return
 	}
+	if kind, ok := principalKind(p.ID); ok {
+		e.Envelope.Actor = events.Actor{Kind: string(kind), URN: p.ID, Verified: "token"}
+	}
+}
+
+// principalKind maps a principal URN to the mesh actor kind its authority names.
+// Authorities mesh does not know (device until libs#47, session, ...) are false.
+func principalKind(urn string) (mesh.ActorKind, bool) {
+	rest, ok := strings.CutPrefix(urn, "msg://")
+	if !ok {
+		return "", false
+	}
+	authority, _, _ := strings.Cut(rest, "/")
+	var kind mesh.ActorKind
+	switch authority {
+	case "user":
+		kind = mesh.ActorUser
+	case "agent":
+		kind = mesh.ActorAgent
+	case "service":
+		kind = mesh.ActorService
+	default:
+		return "", false
+	}
+	if (mesh.Actor{URN: mesh.URN(urn), Kind: kind}).Validate() != nil {
+		return "", false
+	}
+	return kind, true
 }
 
 // stampCorr copies the W3C trace identity of the current span. These are
