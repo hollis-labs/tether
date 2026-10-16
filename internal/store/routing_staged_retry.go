@@ -49,7 +49,27 @@ const maxOutputRetryBytes = 128 * 1024 * 1024
 // WriteTurnOutputRetry commits one private, opaque producer record before its
 // first DB attempt. Sync both the file and directories before acknowledging it.
 func (s *Store) WriteTurnOutputRetry(id string, payload []byte) error {
-	if !validOutputRetryID(id) {
+	return s.writeTurnOutputRetry(id, id, payload, false, false)
+}
+
+// ErrDuplicateWithheldOutput means two producer outputs claimed one turn identity.
+var ErrDuplicateWithheldOutput = errors.New("duplicate withheld turn output")
+
+// WriteWithheldTurnOutputRetry refuses a second producer, even if its safe
+// notice happens to match. Replays use the already committed journal record.
+func (s *Store) WriteWithheldTurnOutputRetry(id string, payload []byte) error {
+	return s.writeTurnOutputRetry(id, id, payload, false, true)
+}
+
+// RewriteTurnOutputRetry replaces an explicitly secret legacy record with its
+// safe notice before replay. It preserves expiry and commits with an atomic
+// rename; the ordinary producer path still never overwrites a committed body.
+func (s *Store) RewriteTurnOutputRetry(oldID, newID string, payload []byte) error {
+	return s.writeTurnOutputRetry(oldID, newID, payload, true, false)
+}
+
+func (s *Store) writeTurnOutputRetry(id, newID string, payload []byte, replace, exclusive bool) error {
+	if !validOutputRetryID(id) || !validOutputRetryID(newID) {
 		return errors.New("invalid turn output retry record")
 	}
 	dir, err := s.turnOutputRetryDir()
@@ -65,6 +85,23 @@ func (s *Store) WriteTurnOutputRetry(id string, payload []byte) error {
 	if err := syncOutputRetryDir(filepath.Dir(dir)); err != nil {
 		return err
 	}
+	var original os.FileInfo
+	if replace {
+		original, err = os.Stat(filepath.Join(dir, id+".json"))
+		if err != nil {
+			return err
+		}
+		if id != newID {
+			if target, statErr := os.Stat(filepath.Join(dir, newID+".json")); statErr == nil && os.SameFile(original, target) {
+				// A crash after linking the scrubbed inode but before unlinking
+				// the old name is the same record, not a second producer.
+				if err := os.Remove(filepath.Join(dir, id+".json")); err != nil {
+					return err
+				}
+				return syncOutputRetryDir(dir)
+			}
+		}
+	}
 	// A unique temporary name prevents concurrent writers sharing a scratch file.
 	tmp := filepath.Join(dir, id+".tmp-"+uuid.NewString())
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // Selected state DB directory plus validated hex ID and random scratch suffix.
@@ -73,6 +110,9 @@ func (s *Store) WriteTurnOutputRetry(id string, payload []byte) error {
 	}
 	defer os.Remove(tmp) //nolint:errcheck // only this writer's uncommitted scratch file
 	_, writeErr := f.Write(payload)
+	if writeErr == nil && original != nil {
+		writeErr = os.Chtimes(tmp, original.ModTime(), original.ModTime())
+	}
 	if writeErr == nil {
 		writeErr = f.Sync()
 	}
@@ -80,10 +120,42 @@ func (s *Store) WriteTurnOutputRetry(id string, payload []byte) error {
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
+	if replace {
+		if err := os.Rename(tmp, filepath.Join(dir, id+".json")); err != nil {
+			return err
+		}
+		if err := syncOutputRetryDir(dir); err != nil {
+			return err
+		}
+		if id != newID {
+			// First remove the raw body atomically, then retire its old hash
+			// filename. A crash between steps leaves a safe notice that the
+			// upgrade pass recognizes and finishes rekeying before replay.
+			if err := os.Link(filepath.Join(dir, id+".json"), filepath.Join(dir, newID+".json")); err != nil {
+				if !errors.Is(err, os.ErrExist) {
+					return err
+				}
+				oldInfo, oldErr := os.Stat(filepath.Join(dir, id+".json"))
+				newInfo, newErr := os.Stat(filepath.Join(dir, newID+".json"))
+				if oldErr != nil || newErr != nil || !os.SameFile(oldInfo, newInfo) {
+					return ErrDuplicateWithheldOutput
+				}
+			}
+			if err := os.Remove(filepath.Join(dir, id+".json")); err != nil {
+				return err
+			}
+		}
+		return syncOutputRetryDir(dir)
+	}
 	// Linking the synced scratch inode atomically publishes without replacing
 	// an earlier committed record or extending its retention on replay.
-	if err := os.Link(tmp, filepath.Join(dir, id+".json")); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
+	if err := os.Link(tmp, filepath.Join(dir, id+".json")); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if exclusive {
+			return ErrDuplicateWithheldOutput
+		}
 	}
 	if err := os.Remove(tmp); err != nil {
 		return err
@@ -102,6 +174,16 @@ func syncOutputRetryDir(dir string) error {
 // PendingTurnOutputRetries pages lexically by output ID. Expired records remain
 // available for explicit operator retention/purge, as do expired DB stages.
 func (s *Store) PendingTurnOutputRetries(after string, limit int) ([]string, error) {
+	return s.outputRetryIDs(after, limit, false)
+}
+
+// TurnOutputRetryUpgradeCandidates includes expired files: they must not retain
+// raw explicitly-secret bodies even though ordinary replay leaves them alone.
+func (s *Store) TurnOutputRetryUpgradeCandidates(after string, limit int) ([]string, error) {
+	return s.outputRetryIDs(after, limit, true)
+}
+
+func (s *Store) outputRetryIDs(after string, limit int, includeExpired bool) ([]string, error) {
 	dir, err := s.turnOutputRetryDir()
 	if err != nil {
 		return nil, err
@@ -126,7 +208,7 @@ func (s *Store) PendingTurnOutputRetries(after string, limit int) ([]string, err
 		if err != nil {
 			return nil, err
 		}
-		if !info.ModTime().After(time.Now().Add(-RoutingStageRetention)) {
+		if !includeExpired && !info.ModTime().After(time.Now().Add(-RoutingStageRetention)) {
 			continue
 		}
 		out = append(out, id)
@@ -244,7 +326,8 @@ func (s *Store) VerifyTurnOutputAcceptance(ctx context.Context, tx *sql.Tx, sess
 }
 
 // VerifyTurnOutputContent additionally binds a native completion source, kind,
-// and original body. It preserves the acceptance-only API for receipt owners
+// and original body (or the exact content-free withholding notice). It preserves
+// the acceptance-only API for receipt owners
 // that already enforce these expected-content checks in their own transaction.
 func (s *Store) VerifyTurnOutputContent(ctx context.Context, tx *sql.Tx, sessionID, outputID, messageID, turnID, providerResultID, expectedText, expectedKind string) error {
 	if err := s.VerifyTurnOutputAcceptance(ctx, tx, sessionID, outputID, messageID, turnID); err != nil {
@@ -254,7 +337,21 @@ func (s *Store) VerifyTurnOutputContent(ctx context.Context, tx *sql.Tx, session
 	if err != nil {
 		return err
 	}
-	if !found || output.ProviderResultID != providerResultID || string(output.Kind) != expectedKind || outputID != TurnOutputID(sessionID, turnID, expectedKind, providerResultID, expectedText) {
+	if !found || output.ProviderResultID != providerResultID || string(output.Kind) != expectedKind {
+		return errors.New("turn output accepted native identity mismatch")
+	}
+	if output.Reason == "secret_withheld" {
+		if outputID != WithheldTurnOutputID(sessionID, turnID, expectedKind, providerResultID) {
+			return errors.New("turn output withheld identity mismatch")
+		}
+		if output.Size != len(expectedText) || output.Text != "" || output.TextTruncated || output.StopReason != "" {
+			return errors.New("turn output withheld metadata mismatch")
+		}
+		if messageID == "" {
+			return nil
+		}
+		expectedText = events.SecretWithheldNotice(sessionID, turnID, output.Size)
+	} else if outputID != TurnOutputID(sessionID, turnID, expectedKind, providerResultID, expectedText) {
 		return errors.New("turn output accepted native content identity mismatch")
 	}
 	if messageID == "" {
@@ -283,4 +380,20 @@ func TurnOutputID(sessionID, turnID, kind, providerResultID, text string) string
 	identity, _ := json.Marshal([5]string{sessionID, turnID, kind, providerResultID, text})
 	digest := sha256.Sum256(identity)
 	return hex.EncodeToString(digest[:])
+}
+
+// WithheldTurnOutputID deliberately excludes text and size. The reducer emits
+// one Output per completed turn, so session/turn/kind/provider-result is unique;
+// no output ordinal is needed. Domain separation prevents normal-ID collisions.
+func WithheldTurnOutputID(sessionID, turnID, kind, providerResultID string) string {
+	identity, _ := json.Marshal([5]string{"withheld/v1", sessionID, turnID, kind, providerResultID})
+	digest := sha256.Sum256(identity)
+	return hex.EncodeToString(digest[:])
+}
+
+func turnOutputStopReasonMatches(output events.TurnOutputEvent, expected string) bool {
+	if output.Reason == "secret_withheld" {
+		return output.StopReason == ""
+	}
+	return output.StopReason == expected
 }

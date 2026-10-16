@@ -131,6 +131,12 @@ func (s *Service) startOutputRetryReplay() {
 	r.mu.Unlock()
 	go func() {
 		defer r.wg.Done()
+		// Upgrade old explicitly-classified secret records before replay.
+		// readOutputRetry repeats the gate per record, including after an I/O
+		// failure or a concurrent addition, so no unsafe job reaches a worker.
+		if err := s.rewriteSecretOutputRetries(ctx); err != nil {
+			log.Printf("turn output retry journal upgrade: %v", err)
+		}
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		cursor := ""
@@ -173,4 +179,34 @@ func (s *Service) startOutputRetryReplay() {
 			}
 		}
 	}()
+}
+
+// Unmarked old records cannot be classified without the gated detector; their
+// behavior is unchanged. Explicit native secret floors are rewritten in place.
+func (s *Service) rewriteSecretOutputRetries(ctx context.Context) error {
+	cursor := ""
+	var firstError error
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ids, err := s.Store.TurnOutputRetryUpgradeCandidates(cursor, 128)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if _, err := readOutputRetry(s, id); err != nil && !errors.Is(err, os.ErrNotExist) && firstError == nil {
+				// Preserve the error but keep scrubbing later records, including
+				// expired ones. One corrupt file must not strand other secrets.
+				firstError = err
+			}
+			cursor = id
+		}
+		if len(ids) < 128 {
+			return firstError
+		}
+	}
 }
