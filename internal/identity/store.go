@@ -101,10 +101,10 @@ func mint(ctx context.Context, writer principalWriter, p Principal) (string, err
 	}
 	result, err := writer.ExecContext(ctx, `INSERT INTO principals
         (principal_id, kind, display, token_hash, scopes_json, session_id, addresses_json,
-         created_by, created_at, expires_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         created_by, created_at, expires_at, launch_attribution) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE ? != 'session' OR EXISTS (SELECT 1 FROM sessions WHERE id=? AND state NOT IN ('completed','failed','killed','orphaned'))`,
 		p.ID, p.Kind, p.Display, HashToken(token), string(scopes), p.SessionID,
-		string(addresses), p.CreatedBy, p.CreatedAt.Format(time.RFC3339Nano), expires, p.Kind, p.SessionID)
+		string(addresses), p.CreatedBy, p.CreatedAt.Format(time.RFC3339Nano), expires, p.LaunchAttribution, p.Kind, p.SessionID)
 	if err != nil {
 		return "", fmt.Errorf("persist principal: %w", err)
 	}
@@ -263,4 +263,84 @@ func (s *Store) SessionGrantedScopes(ctx context.Context, sessionID string) ([]s
 		return nil, false, fmt.Errorf("decode session scopes: %w", err)
 	}
 	return scopes, true, nil
+}
+
+// Launch attributions that mean a session credential was born with the full
+// profile ceiling and nothing bounding it.
+const (
+	AttributionInternalUnattributed = "internal_unattributed"
+	AttributionAnonymousExternal    = "anonymous_external"
+	// AttributionLegacy labels a credential from before attribution was
+	// recorded whose launcher is unknown (created_by empty).
+	AttributionLegacy = "legacy_unknown_launcher"
+)
+
+// UnboundedSession is a live session credential that nothing bounded at launch.
+type UnboundedSession struct {
+	SessionID   string
+	Attribution string
+	CreatedAt   time.Time
+	ExpiresAt   *time.Time
+}
+
+// UnboundedSessions lists live (unrevoked, unexpired) session credentials that
+// were born without a bounding authority: recorded as anonymous_external or
+// internal_unattributed, or legacy ones (no attribution recorded and an empty
+// created_by, i.e. launched before the launcher was recorded). Switching
+// identity to enforce must not leave these standing.
+func (s *Store) UnboundedSessions(ctx context.Context) ([]UnboundedSession, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("identity store unavailable")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT session_id, launch_attribution, created_by, created_at, expires_at
+        FROM principals WHERE kind = 'session' AND revoked_at IS NULL
+          AND (launch_attribution IN (?, ?) OR (launch_attribution = '' AND created_by = ''))
+        ORDER BY created_at`, AttributionAnonymousExternal, AttributionInternalUnattributed)
+	if err != nil {
+		return nil, fmt.Errorf("list unbounded session credentials: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	now := time.Now()
+	var out []UnboundedSession
+	for rows.Next() {
+		var u UnboundedSession
+		var createdBy, created string
+		var expires sql.NullString
+		if err = rows.Scan(&u.SessionID, &u.Attribution, &createdBy, &created, &expires); err != nil {
+			return nil, fmt.Errorf("list unbounded session credentials: %w", err)
+		}
+		if u.Attribution == "" {
+			u.Attribution = AttributionLegacy
+		}
+		if u.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
+			return nil, fmt.Errorf("decode creation time: %w", err)
+		}
+		if expires.Valid {
+			at, perr := time.Parse(time.RFC3339Nano, expires.String)
+			if perr != nil {
+				return nil, fmt.Errorf("decode expiry: %w", perr)
+			}
+			if !at.After(now) {
+				continue // already dead
+			}
+			u.ExpiresAt = &at
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// RevokeUnbounded revokes the credentials UnboundedSessions lists and returns
+// how many it revoked. It is the explicit step behind switching to enforce.
+func (s *Store) RevokeUnbounded(ctx context.Context) (int, error) {
+	list, err := s.UnboundedSessions(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, u := range list {
+		if err = s.RevokeSession(ctx, u.SessionID); err != nil {
+			return 0, err
+		}
+	}
+	return len(list), nil
 }
