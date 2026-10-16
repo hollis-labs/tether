@@ -232,3 +232,41 @@ func TestRotateKeepsAnActiveKeyWhenGenerationFails(t *testing.T) {
 		t.Fatalf("active key lost after failed rotate: %q", kid)
 	}
 }
+
+func TestServiceSessionMintNeedsLaunchGrantAndIsCapped(t *testing.T) {
+	is, _ := newIssuer(t)
+	svc := identity.Principal{Verified: true, ID: "msg://service/launcher", Kind: "service", Scopes: []string{"*"}}
+	other := identity.Principal{Verified: true, ID: "msg://service/other", Kind: "service", Scopes: []string{"*"}}
+	req := Request{Audience: "tesseract", Scopes: []string{"tesseract.read"}, SessionID: "s1"}
+	if _, err := is.Exchange(svc, req); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("service without a grant minted for a session: %v", err)
+	}
+	// non-sid service tokens are unchanged
+	if _, err := is.Exchange(svc, Request{Audience: "tesseract", Scopes: []string{"tesseract.read"}}); err != nil {
+		t.Fatalf("non-sid service mint: %v", err)
+	}
+	if err := is.RegisterSessionGrant("s1", svc.ID, map[string][]string{"tesseract": {"tesseract.read"}}, time.Now().Add(10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := is.Exchange(svc, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := claimsOf(t, tok.Token); c.Kind != "agent" || c.SID != "s1" || c.Par != svc.ID {
+		t.Fatalf("claims %+v", c)
+	}
+	if tok.ExpiresAt.After(time.Now().Add(11 * time.Minute)) {
+		t.Fatalf("expiry not capped by grant: %v", tok.ExpiresAt)
+	}
+	if _, err := is.Exchange(other, req); !errors.Is(err, ErrForbidden) {
+		t.Fatal("another service used the grant")
+	}
+	if _, err := is.Exchange(svc, Request{Audience: "tesseract", Scopes: []string{"tesseract.write"}, SessionID: "s1"}); !errors.Is(err, ErrForbidden) {
+		t.Fatal("scope beyond the grant issued")
+	}
+	// the operator stays unrestricted
+	op := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	if _, err := is.Exchange(op, Request{Audience: "tesseract", Scopes: []string{"tesseract.read"}, SessionID: "s2"}); err != nil {
+		t.Fatalf("operator sid mint: %v", err)
+	}
+}

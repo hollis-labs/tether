@@ -27,14 +27,14 @@ type denyEntry struct {
 }
 
 // SessionGrant is the launch policy for one agent session: what the machine
-// outpost (a paired device) may ask the issuer to mint for it. The hub
+// outpost (a paired device) or a service launcher may ask the issuer to mint for it. The hub
 // registers it when it sends the launch, so an outpost's token requests are
 // bounded by what the hub authorized for that session and that device, not by
 // the device's own Tether scopes.
 type SessionGrant struct {
-	Device  string              `json:"device"`
-	Scopes  map[string][]string `json:"scopes"` // audience -> scopes
-	Expires time.Time           `json:"expires"`
+	Launcher string              `json:"device"` // launching device or service id; json key kept for stored state
+	Scopes   map[string][]string `json:"scopes"` // audience -> scopes
+	Expires  time.Time           `json:"expires"`
 }
 
 type stateDoc struct {

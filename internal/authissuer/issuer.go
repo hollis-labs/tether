@@ -156,10 +156,10 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 			return Token{}, forbidden("session has ended")
 		}
 		switch parent.Kind {
-		case "device":
+		case "device", "service":
 			g, ok := i.State.GrantFor(req.SessionID)
-			if !ok || g.Device != parent.ID {
-				return Token{}, forbidden("no launch grant for this session on this device")
+			if !ok || g.Launcher != parent.ID {
+				return Token{}, forbidden("no launch grant for this session on this %s", parent.Kind)
 			}
 			if !identity.ScopesCover(g.Scopes[req.Audience], scopes) {
 				return Token{}, forbidden("requested scopes exceed the session's launch grant")
@@ -167,7 +167,7 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 			if g.Expires.Before(exp) {
 				exp = g.Expires.UTC()
 			}
-		default: // operator, service: bounded by their own scopes
+		default: // operator (local socket only): bounded by its own scopes
 			if !identity.ScopesCover(parent.Scopes, scopes) {
 				return Token{}, forbidden("requested scopes exceed the parent's")
 			}
@@ -241,7 +241,7 @@ func (i *Issuer) RegisterSessionGrant(sid, device string, scopes map[string][]st
 		}
 		norm[aud] = n
 	}
-	return i.State.Grant(sid, SessionGrant{Device: device, Scopes: norm, Expires: expires.UTC()})
+	return i.State.Grant(sid, SessionGrant{Launcher: device, Scopes: norm, Expires: expires.UTC()})
 }
 
 // RevokeSession ends a session's tokens: its sid goes on the deny-list (for
