@@ -13,6 +13,10 @@ This file was backfilled from the git history and is a good-faith summary, not a
   parent (`principal_id`), `session_id`, scopes (`required_scope`) and
   `event = token_mint aud=<aud> jti=<jti> exp=<unix>`. Never the token. The token
   response now carries the `jti`. Retention follows `identity_audit`.
+- `tether identity rotate-operator` now also denies the unexpired issued tokens the old
+  operator credential had minted (CW-20261016-0099): the issuer tracks operator-minted
+  `jti`s (ids only) in its state file, and `POST /auth/denylist` accepts kind `par` to
+  deny them by parent. An operator mint that cannot be tracked is refused.
 - Fix the issuer on the remote listener (CW-20261016-0017): the protocol gate no longer
   demands `Tether-Protocol` on `GET /.well-known/jwks.json` and `GET /auth/denylist`
   (non-Tether verifiers fetch and poll these with a bearer only), and the outpost

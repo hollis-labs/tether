@@ -1395,6 +1395,36 @@ func (c *Client) messageRecipientAction(ctx context.Context, id, action, as stri
 	return readError(resp)
 }
 
+// DenyIssuedBy asks the daemon to deny every unexpired issued token minted from
+// the named parent principal (POST /auth/denylist kind "par"). It needs the
+// local operator credential over the local socket.
+func (c *Client) DenyIssuedBy(ctx context.Context, parent string) (int, error) {
+	body, err := json.Marshal(map[string]string{"kind": "par", "value": parent})
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/auth/denylist", bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, readError(resp)
+	}
+	var out struct {
+		Tokens int `json:"tokens"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, err
+	}
+	return out.Tokens, nil
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {

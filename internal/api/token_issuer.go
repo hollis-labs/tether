@@ -40,6 +40,10 @@ func WithMintAudit(record func(context.Context, identity.Observation) error) Iss
 	return func(c *issuerConfig) { c.mintAudit = record }
 }
 
+// DenyKindParent is the DenyRequest kind that denies every unexpired token
+// minted from the named parent principal (see authissuer.State.DenyMintedBy).
+const DenyKindParent = "par"
+
 // DenyRequest is the body of POST /auth/denylist.
 type DenyRequest struct {
 	Kind  string `json:"kind"`
@@ -127,6 +131,18 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		}
 		var req DenyRequest
 		if !decodeDeviceBody(w, r, &req) {
+			return
+		}
+		if req.Kind == DenyKindParent {
+			// Deny every unexpired token still tracked as minted from this
+			// parent: what rotating the operator credential needs.
+			n, err := is.State.DenyMintedBy(req.Value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, CodeInvalidRequest, "value must name a parent principal")
+				return
+			}
+			log.Printf("authissuer: denied %d unexpired tokens minted from %s", n, req.Value)
+			writeJSON(w, http.StatusOK, map[string]any{"denied": true, "tokens": n})
 			return
 		}
 		until := time.Now().Add(authissuer.DenyHorizon)

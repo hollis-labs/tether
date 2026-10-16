@@ -270,3 +270,74 @@ func TestServiceSessionMintNeedsLaunchGrantAndIsCapped(t *testing.T) {
 		t.Fatalf("operator sid mint: %v", err)
 	}
 }
+
+func TestOperatorRotationDeniesAlreadyIssuedTokens(t *testing.T) {
+	is, dir := newIssuer(t)
+	stored := fakeStored{map[string]identity.Principal{}}
+	v, err := NewVerifier(stored, is)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	operator := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	device := identity.Principal{Verified: true, ID: "msg://device/d1", Kind: "device", Scopes: []string{"read"}}
+	fromOperator, _ := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"read"}})
+	sidFromOperator, _ := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"read"}, SessionID: "s1"})
+	fromDevice, _ := is.Exchange(device, Request{Audience: "tether", Scopes: []string{"read"}})
+	for _, tok := range []Token{fromOperator, sidFromOperator, fromDevice} {
+		if _, err := v.Verify(ctx, tok.Token); err != nil {
+			t.Fatalf("token should verify before rotation: %v", err)
+		}
+	}
+	// Tracking survives a daemon restart (state.json), so a rotation after a
+	// restart still denies what was minted before it.
+	st2, err := OpenState(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := st2.DenyMintedBy(identity.OperatorID)
+	if err != nil || n != 2 {
+		t.Fatalf("denied %d tokens (%v), want the 2 operator-minted ones", n, err)
+	}
+	v2, err := NewVerifier(stored, New(is.Name, is.Keys, st2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v2.Verify(ctx, fromOperator.Token); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatalf("operator-minted token survived rotation: %v", err)
+	}
+	if _, err := v2.Verify(ctx, sidFromOperator.Token); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatalf("operator-minted session token survived rotation: %v", err)
+	}
+	if _, err := v2.Verify(ctx, fromDevice.Token); err != nil {
+		t.Fatalf("a device-minted token must be unaffected: %v", err)
+	}
+	// the denied jtis are on the wire deny-list that other apps poll
+	body, _ := st2.DenyDoc()
+	if !strings.Contains(string(body), claimsOf(t, fromOperator.Token).JTI) {
+		t.Fatal("denied jti missing from the deny-list document")
+	}
+	// idempotent, and a token minted afterwards (by the new credential) is fine
+	if n, err := st2.DenyMintedBy(identity.OperatorID); err != nil || n != 0 {
+		t.Fatalf("second run denied %d (%v)", n, err)
+	}
+	fresh, _ := (New(is.Name, is.Keys, st2)).Exchange(operator, Request{Audience: "tether", Scopes: []string{"read"}})
+	if _, err := v2.Verify(ctx, fresh.Token); err != nil {
+		t.Fatalf("token minted after the rotation was denied: %v", err)
+	}
+}
+
+func TestOperatorMintFailsClosedWhenItCannotBeTracked(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory permissions do not bind root")
+	}
+	is, dir := newIssuer(t)
+	operator := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	if _, err := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"read"}}); err == nil {
+		t.Fatal("minted an untrackable operator token")
+	}
+}

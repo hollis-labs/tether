@@ -181,6 +181,13 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 		return Token{}, forbidden("parent credential is about to expire")
 	}
 	c.Exp = exp.Unix()
+	if parent.Kind == "operator" {
+		// The operator credential can be rotated. Remember what it minted so the
+		// rotation can deny it; if that cannot be recorded, do not mint.
+		if err := i.State.TrackMint(c.JTI, parent.ID, exp); err != nil {
+			return Token{}, fmt.Errorf("authissuer: cannot record the minted token: %w", err)
+		}
+	}
 	tok, kid, err := i.sign(c)
 	if err != nil {
 		return Token{}, err
