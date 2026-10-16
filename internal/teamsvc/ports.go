@@ -36,6 +36,26 @@ type Runs interface {
 	MarkDissolved(context.Context, string) error
 }
 
+// Adopter is the host seam that adopts an already-running actor and session as
+// a member. The host derives every fact from the session's own records; nothing
+// in the command is trusted. Adopt is idempotent by Key. Nil makes Adopt
+// unavailable.
+type Adopter interface {
+	Adopt(context.Context, AdoptCommand) (teams.Member, error)
+}
+
+// AdoptCommand is what the service has already authorized for one adoption.
+type AdoptCommand struct {
+	Key, MemberID, RunID string
+	Slot                 teams.Slot
+	Actor                mesh.URN
+	SessionID            string
+	BindingGeneration    uint64
+	// Principal is the forming principal; the binding must be owned by it.
+	Principal mesh.URN
+	Limits    mesh.Limits
+}
+
 type Deps struct {
 	Ceilings    Ceilings
 	Principals  Principals
@@ -46,6 +66,7 @@ type Deps struct {
 	Ledger      teams.LaunchLedger
 	Signals     teams.SignalStore
 	Provisioner teams.MemberProvisioner
+	Adopter     Adopter
 	Workflows   teams.WorkflowLauncher
 	Triggers    teams.TriggerEvaluator
 	Sender      teams.MessageSender
