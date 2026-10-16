@@ -199,6 +199,27 @@ Sessions launched in observe hold a 7-day token and keep working.
 5. Mixed state is expected for a short window; if a critical agent cannot be
    relaunched, roll back (section 1) rather than leave it down.
 
+### Unbounded session credentials (CW-20261016-0218)
+
+A session credential minted while identity was `observe` or `off` can have been
+launched with nothing bounding its scopes: with no verified launcher
+(`anonymous_external`), or by the daemon itself with no origin session to bound
+it (`internal_unattributed`). Credentials minted before the launcher was recorded
+and with an empty `created_by` (for example every worker-hosted session before
+tether#428) are treated the same way (`legacy_unknown_launcher`). Each holds the
+full launch-profile scopes for its 7-day life, so enforcing would only harden
+new traffic.
+
+- `tether identity unbounded` (read-only) counts and lists the live ones.
+- `tether identity flip ... --to enforce` (and a `rollback` that restores enforce)
+  **refuses** while any exist, prints the same counts and list, and changes
+  nothing. Relaunch those sessions on a current build first (section 4), or pass
+  `--revoke-anonymous` to revoke exactly that list; their sessions then lose
+  authentication. A revocation is recorded in the flip's evidence.
+- The guard fails closed: if the state database exists but cannot be read, the
+  flip is refused. A catalog with no state database yet is not blocked.
+- Flips to `observe` or `off` never consult it.
+
 ## 5. Declared fail mode per enforcement point
 
 "Fail-open" = the request proceeds on identity-system failure; "fail-closed" =
