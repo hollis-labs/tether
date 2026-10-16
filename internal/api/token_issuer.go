@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -26,6 +28,18 @@ type TokenRequest struct {
 	SessionID  string   `json:"session_id,omitempty"`
 }
 
+type issuerConfig struct {
+	mintAudit func(context.Context, identity.Observation) error
+}
+
+// IssuerOption configures NewTokenIssuerHandler.
+type IssuerOption func(*issuerConfig)
+
+// WithMintAudit records an identity audit row for every session-bound mint.
+func WithMintAudit(record func(context.Context, identity.Observation) error) IssuerOption {
+	return func(c *issuerConfig) { c.mintAudit = record }
+}
+
 // DenyRequest is the body of POST /auth/denylist.
 type DenyRequest struct {
 	Kind  string `json:"kind"`
@@ -36,7 +50,11 @@ type DenyRequest struct {
 // token exchange, and the deny-list verifiers poll. The exchange and the
 // deny-list use Tether's own bearer auth; issued tokens (agent tokens in
 // particular) can never mint.
-func NewTokenIssuerHandler(is *authissuer.Issuer) http.Handler {
+func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Handler {
+	var cfg issuerConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -69,6 +87,19 @@ func NewTokenIssuerHandler(is *authissuer.Issuer) http.Handler {
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, CodeInternalError, "token could not be issued")
 			return
+		}
+		if req.SessionID != "" && cfg.mintAudit != nil {
+			// One audit row per session-bound mint: who minted (par), for which
+			// session, audience, scopes, token id and expiry. Never the token.
+			rec := identity.Observation{
+				At: time.Now().UTC(), PrincipalID: p.ID, SessionID: req.SessionID, Mode: "issuer",
+				Authentication: "verified", Method: http.MethodPost, Route: TokenPath, RoutePattern: TokenPath,
+				RequiredScope: strings.Join(tok.Scopes, ","),
+				Event:         fmt.Sprintf("token_mint aud=%s jti=%s exp=%d", tok.Audience, tok.JTI, tok.ExpiresAt.Unix()),
+			}
+			if err := cfg.mintAudit(r.Context(), rec); err != nil {
+				log.Printf("authissuer: mint audit row not recorded: %v", err)
+			}
 		}
 		log.Printf("authissuer: issued kind=%s aud=%s sub=%s par=%s sid=%s scopes=%q ttl=%ds", tok.Kind, tok.Audience, subOf(p, req.SessionID), p.ID, req.SessionID, tok.Scopes, tok.TTL)
 		w.Header().Set("Cache-Control", "no-store")

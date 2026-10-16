@@ -95,6 +95,9 @@ type Token struct {
 	Scopes    []string  `json:"scopes"`
 	Kind      string    `json:"kind"`
 	KID       string    `json:"kid"`
+	// JTI is the token id (the jti claim): what the deny-list and the audit row
+	// name. It is not a credential.
+	JTI string `json:"jti"`
 }
 
 // SessionPrincipalID is the principal id of an agent session.
@@ -182,7 +185,7 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 	if err != nil {
 		return Token{}, err
 	}
-	return Token{Token: tok, ExpiresAt: exp, TTL: int(exp.Sub(now).Seconds()), Audience: c.Aud, Scopes: scopes, Kind: c.Kind, KID: kid}, nil
+	return Token{Token: tok, ExpiresAt: exp, TTL: int(exp.Sub(now).Seconds()), Audience: c.Aud, Scopes: scopes, Kind: c.Kind, KID: kid, JTI: c.JTI}, nil
 }
 
 func (i *Issuer) sign(c Claims) (token, kid string, err error) {
