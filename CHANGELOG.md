@@ -15,6 +15,17 @@ This file was backfilled from the git history and is a good-faith summary, not a
   enforce mode `/mcp` and `/p/` admit it (no scope names the gateway). Binding keys on
   `identity.IsBoundAgentToken`, never on Kind alone; an operator-minted narrow token still
   gets nothing. No machine access for agent tokens yet.
+- `events.Bus.Subscribe` replay is now bounded and a slow consumer is told instead of
+  silently lost (CW-20261016-0146, P3a): with the SQL store the replay is read in
+  pages (default 512, filters pushed into SQL) by the subscriber's own goroutine, so a
+  `since_seq=0` subscribe no longer loads the whole table into memory while holding the
+  publish lock. A subscriber that falls behind the live buffer is re-fed from the durable
+  log and receives a synthetic `stream.gap` event (reason `overrun`, `recovered: true`,
+  dropped count, bounds); a subscriber whose requested history was trimmed gets
+  `stream.gap` reason `trimmed` with `earliest_available`/`high_water`; an evicted one
+  gets a final `stream.gap` reason `evicted` before the channel closes. `stream.gap` is
+  never persisted, bypasses the subscriber's filter, and carries `seq` = the last
+  sequence processed (so an SSE `id:` never moves). Consumers must tolerate the new kind.
 - Add the worker-resume opt-in (CW-20261014-0113): `catalog.defaults.worker_resume` (default
   false) enables resume of a worker-placed session on the same worker; off is the previous refusal.
   `tether execution status` and `tether_execution_status` show `worker resume: on|off`.
