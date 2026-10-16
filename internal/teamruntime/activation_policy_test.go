@@ -42,10 +42,11 @@ func (pinnedDefinitions) Load(_ context.Context, p mesh.DefinitionRef) (definiti
 }
 
 type policyFixture struct {
-	reg     *registry.Service
-	svc     *teamsvc.Service
-	policy  *teamspolicy.Policy
-	effects *sessionEffects
+	reg      *registry.Service
+	svc      *teamsvc.Service
+	policy   *teamspolicy.Policy
+	effects  *sessionEffects
+	sessions *Sessions
 }
 
 func operatorContext(t *testing.T) context.Context {
@@ -102,7 +103,7 @@ func newPolicyFixture(t *testing.T, raw string) (*policyFixture, func(string) in
 		check(t, db.DB().QueryRow("SELECT count(*) FROM "+table).Scan(&n))
 		return n
 	}
-	return &policyFixture{reg: reg, svc: service, policy: policy, effects: effects}, count
+	return &policyFixture{reg: reg, svc: service, policy: policy, effects: effects, sessions: sessions}, count
 }
 
 // poolWorkers is n distinct (unenrolled) agent references; fine for denial cases.

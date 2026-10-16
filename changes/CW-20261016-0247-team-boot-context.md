@@ -1,0 +1,1 @@
+- Fix initial team formation with mission/brief context by resolving the future workflow ID from the verified durable launch intent; preserve retained requests and report missing boot-context run IDs explicitly (CW-20261016-0247).
