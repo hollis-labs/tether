@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/fabricstore"
 )
 

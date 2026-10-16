@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/shim"
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"golang.org/x/sys/unix"
 )

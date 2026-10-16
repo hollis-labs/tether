@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	"github.com/hollis-labs/libs/llm/core/modelsdev"
 )
 
 func TestCatalogLookupAndEstimateCost(t *testing.T) {

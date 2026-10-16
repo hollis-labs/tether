@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/mesh/core"
 )
 
 // DefinitionRevision stores references and digests, never catalog content or

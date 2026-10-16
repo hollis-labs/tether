@@ -6,8 +6,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 // Sessions retains keyed receipts even after an acknowledgement is lost. Stop

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/hollis-labs/substrate/mesh"
-	"github.com/hollis-labs/substrate/mesh/agentdef"
+	"github.com/hollis-labs/libs/mesh/core"
+	"github.com/hollis-labs/libs/mesh/core/agentdef"
 	"github.com/hollis-labs/tether/internal/fabricstore"
 )
 

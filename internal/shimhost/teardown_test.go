@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 )
 
 func testHostHandle(t *testing.T, r Receipt) *processHandle {

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 )
 
 func TestCrashRestart_DeliveryObligationSurvivesRealSIGKILL(t *testing.T) {

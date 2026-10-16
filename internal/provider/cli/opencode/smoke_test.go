@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 
 	"github.com/hollis-labs/tether/internal/launch"
 )

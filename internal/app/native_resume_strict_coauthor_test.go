@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"

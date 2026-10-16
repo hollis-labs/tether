@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 func TestStagedOutputHiddenFromHTTPMailboxReads(t *testing.T) {

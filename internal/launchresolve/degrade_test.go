@@ -3,7 +3,7 @@ package launchresolve
 import (
 	"errors"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 )
 
 // errRegistrarDown is the synthetic outage a faultRegistrar injects.

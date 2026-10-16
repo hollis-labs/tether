@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
+	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
 	"unicode/utf8"
 )
 

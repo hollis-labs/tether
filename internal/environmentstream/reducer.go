@@ -3,7 +3,7 @@ package environmentstream
 import (
 	"encoding/json"
 
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
 )

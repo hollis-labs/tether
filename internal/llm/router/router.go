@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	"github.com/hollis-labs/libs/llm/core/modelsdev"
 	"github.com/hollis-labs/tether/internal/llm"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
 )

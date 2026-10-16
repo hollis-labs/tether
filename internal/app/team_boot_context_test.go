@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
-	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/launcher"
+	providerplant "github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchartifacts"

@@ -1,6 +1,6 @@
 package teamspolicy
 
-import "github.com/hollis-labs/substrate/mesh/agentdef"
+import "github.com/hollis-labs/libs/mesh/core/agentdef"
 
 // PinOfBytes parses an authored agent definition and returns its exact pin
 // (id, revision, semantic digest). It is offline: it does not resolve pinned

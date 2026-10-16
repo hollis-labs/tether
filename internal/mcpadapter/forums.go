@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	f "github.com/hollis-labs/go-forums"
+	f "github.com/hollis-labs/libs/core/forums"
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 )
 

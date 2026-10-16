@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/identity"

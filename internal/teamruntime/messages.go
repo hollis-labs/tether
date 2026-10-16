@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"errors"
 
-	messageDelivery "github.com/hollis-labs/substrate/mesh/messaging/delivery"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	messageDelivery "github.com/hollis-labs/libs/mesh/core/messaging/delivery"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/teamstore"
 )

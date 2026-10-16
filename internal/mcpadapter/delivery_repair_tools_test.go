@@ -17,8 +17,8 @@ import (
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"

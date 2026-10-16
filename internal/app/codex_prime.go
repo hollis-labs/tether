@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 )
 
 // codexPrimeText is the throwaway first turn a Codex app-server team member

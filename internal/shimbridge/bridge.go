@@ -19,8 +19,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/hollis-labs/substrate/harness/shim"
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/shimhost"
 )
 

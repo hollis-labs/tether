@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	"github.com/hollis-labs/substrate/harness/adapters/providertest"
-	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
-	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	gopevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	"github.com/hollis-labs/libs/harness/core/adapters/providertest"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 )
 
 func TestTwoAcceptedEmptyNativeTurnsClearMarkers(t *testing.T) {

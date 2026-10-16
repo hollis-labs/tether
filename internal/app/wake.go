@@ -65,9 +65,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"

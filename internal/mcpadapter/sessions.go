@@ -5,12 +5,12 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/runner"
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	"github.com/hollis-labs/substrate/harness/runner"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"

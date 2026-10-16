@@ -1,8 +1,8 @@
 package config
 
 import (
-	permission "github.com/hollis-labs/substrate/harness/interception/permission"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	permission "github.com/hollis-labs/libs/security/policy/permission"
 )
 
 // Permission postures for launched agents, in Tether's own vocabulary.

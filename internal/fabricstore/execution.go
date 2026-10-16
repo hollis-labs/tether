@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/mesh/core"
 )
 
 func (tx *Tx) PutSession(value mesh.Session, expected int64) error {

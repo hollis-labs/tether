@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/runner"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/runner"
 )
 
 // subprocessStderrTailBytes bounds the stderr a failed turn's error carries.

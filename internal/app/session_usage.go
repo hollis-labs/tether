@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
 	"github.com/hollis-labs/tether/internal/store"
 )
 

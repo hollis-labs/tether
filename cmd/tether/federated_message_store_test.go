@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/memstore"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/memstore"
 
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/store"

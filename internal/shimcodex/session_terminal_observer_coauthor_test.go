@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 )
 
 func TestSessionTerminalObserverRefusalPreservesNativeEvidence(t *testing.T) {

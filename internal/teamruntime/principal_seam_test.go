@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/teamsvc"
 )

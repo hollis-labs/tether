@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	"github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"

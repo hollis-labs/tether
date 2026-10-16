@@ -7,7 +7,7 @@ import (
 	"sort"
 	"sync"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 // ErrNoRoute is returned by a strict-mode Router for a message whose

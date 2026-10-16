@@ -3,8 +3,8 @@ module github.com/hollis-labs/tether/apps/sysop
 go 1.26.9
 
 require (
-	github.com/hollis-labs/substrate/llm-core v0.1.0
-	github.com/hollis-labs/substrate/mesh v0.4.0
+	github.com/hollis-labs/libs/llm/core v0.2.0
+	github.com/hollis-labs/libs/mesh/core v0.4.0
 	github.com/hollis-labs/tether v0.0.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -12,7 +12,10 @@ require (
 require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/hollis-labs/libs/core/forums v0.3.0 // indirect
+	github.com/hollis-labs/libs/harness/core v0.10.0 // indirect
 	github.com/hollis-labs/libs/security/auth v0.1.0 // indirect
+	github.com/hollis-labs/libs/security/policy v0.1.0 // indirect
 	github.com/hollis-labs/libs/security/secrets v0.1.0 // indirect
 	github.com/zalando/go-keyring v0.2.8 // indirect
 )
@@ -40,13 +43,9 @@ require (
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
-	github.com/hollis-labs/go-forums v0.2.1-0.20261013160606-670cbc335d52 // indirect
-	github.com/hollis-labs/go-ssekit v0.2.0 // indirect
 	github.com/hollis-labs/libs/core/util v0.4.0 // indirect
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0 // indirect
 	github.com/hollis-labs/libs/ui/ui-go v0.1.0
-	github.com/hollis-labs/substrate/agent v0.1.0 // indirect
-	github.com/hollis-labs/substrate/harness v0.5.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

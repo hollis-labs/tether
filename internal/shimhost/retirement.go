@@ -15,7 +15,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 )
 
 const submissionFenceVersion = "shim.submission-fence.v1"

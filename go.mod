@@ -7,11 +7,12 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.45.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-forums v0.2.1-0.20261013160606-670cbc335d52
-	github.com/hollis-labs/go-ssekit v0.2.0
-	github.com/hollis-labs/substrate/harness v0.5.0
-	github.com/hollis-labs/substrate/llm-core v0.1.0
-	github.com/hollis-labs/substrate/mesh v0.4.0
+	github.com/hollis-labs/libs/core/forums v0.3.0
+	github.com/hollis-labs/libs/harness/core v0.10.0
+	github.com/hollis-labs/libs/llm/core v0.2.0
+	github.com/hollis-labs/libs/mesh/core v0.4.0
+	github.com/hollis-labs/libs/security/policy v0.1.0
+	github.com/hollis-labs/libs/ui/ui-go v0.1.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
@@ -76,7 +77,6 @@ require (
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0
 	github.com/hollis-labs/libs/security/auth v0.1.0
 	github.com/hollis-labs/libs/security/secrets v0.1.0
-	github.com/hollis-labs/substrate/agent v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

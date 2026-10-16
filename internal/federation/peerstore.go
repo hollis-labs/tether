@@ -13,10 +13,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hollis-labs/go-ssekit"
 	otelprop "github.com/hollis-labs/libs/core/util/otel/propagation"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
+	"github.com/hollis-labs/libs/ui/ui-go/ssekit"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
 )
 

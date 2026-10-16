@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"errors"
-	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	gopevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
 	"testing"
 	"time"
 )

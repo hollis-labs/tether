@@ -1,10 +1,10 @@
 package claudestream
 
 import (
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	events "github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	events "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 
 	"github.com/hollis-labs/tether/internal/launch"
 )

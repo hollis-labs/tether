@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/substrate/mesh/agentdef"
+	"github.com/hollis-labs/libs/mesh/core/agentdef"
 	"github.com/hollis-labs/tether/internal/fabricstore"
 	"github.com/hollis-labs/tether/internal/store"
 	"gopkg.in/yaml.v3"
