@@ -273,7 +273,10 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	// The daemon adds the process dimensions once it has read the environment
 	// identity (SetProcess), which happens after the bus exists.
 	stamp := eventstamp.New()
-	bus := events.NewBus(events.BusOptions{Persister: db, Stages: []events.Stage{stamp}})
+	// The row stage fills worker and the session-bound dimensions for events
+	// published outside the session's own call context.
+	rows := eventstamp.NewRows(stampSessions{db}, 0)
+	bus := events.NewBus(events.BusOptions{Persister: db, Stages: []events.Stage{stamp, rows}})
 	// A transaction that wrote outbox event rows calls Store.EventsCommitted after
 	// its commit; that wakes the bus so the rows are published now, not at the
 	// next sweep. Only StartEventsOutbox (the daemon) runs the drainer.
