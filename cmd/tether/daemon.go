@@ -381,7 +381,7 @@ var daemonRunCmd = &cobra.Command{
 				counts, _ := svc.Store.MCPUpstreamSessionCounts(countCtx)
 				cancelCounts()
 				dropped, failures := mcpHandler.ToolCallRecorderStats()
-				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason, MCPUpstreamSessions: counts, MCPRecorder: map[string]uint64{"dropped": dropped, "failures": failures}}
+				return &daemon.HealthHardening{TurnOutput: svc.TurnOutputPersistenceStats(), ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason, MCPUpstreamSessions: counts, MCPRecorder: map[string]uint64{"dropped": dropped, "failures": failures}}
 			},
 			LogsDir:          filepath.Join(stateRoot, "logs"),
 			SandboxProtect:   func() *daemon.SandboxProtectHealth { return sandboxProtectHealth(svc.ProtectionHealth()) },

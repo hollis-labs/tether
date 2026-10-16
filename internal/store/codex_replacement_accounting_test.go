@@ -28,12 +28,13 @@ import (
 )
 
 type accountingFixture struct {
-	store   *Store
-	state   shimcodex.State
-	receipt shimhost.Receipt
-	journal *shim.Journal
-	root    string
-	routed  bool
+	store    *Store
+	state    shimcodex.State
+	receipt  shimhost.Receipt
+	journal  *shim.Journal
+	root     string
+	routed   bool
+	withheld bool
 }
 
 func newAccountingFixture(t *testing.T, reply bool, routed ...bool) accountingFixture {
@@ -61,7 +62,7 @@ func newAccountingFixture(t *testing.T, reply bool, routed ...bool) accountingFi
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = j.Close() })
-	f := accountingFixture{store: db, journal: j, root: root, routed: selected}
+	f := accountingFixture{store: db, journal: j, root: root, routed: selected, withheld: len(routed) > 1 && routed[1]}
 	first := f.append(t, "shim.launch_intent", map[string]string{"instance": "i"})
 	journal, _, _ := strings.Cut(first.Cursor, ":")
 	f.receipt = shimhost.Receipt{Session: "s", Instance: "i", OperationKey: "p", SubmissionAttemptID: "a", Generation: 1, Journal: journal, Fingerprint: "f", DescriptorPath: filepath.Join(root, "launch.json"), SocketPath: filepath.Join(root, "c", "control.sock"), Backend: "detached", Attempted: true, HostPID: 100, ShimPID: 100, ProviderPID: 101, HostStartTime: 123}
@@ -164,10 +165,19 @@ func (f *accountingFixture) settle(t *testing.T) {
 			continue
 		}
 		id := TurnOutputID("s", turn.StableOutputTurnID, "final", turn.CompletionSourceID, shimcodex.ProjectedTurnText(*turn))
+		if f.withheld {
+			id = WithheldTurnOutputID("s", turn.StableOutputTurnID, "final", turn.CompletionSourceID)
+		}
 		turn.OutputAcceptanceID = id
 		output := events.TurnOutputEvent{OutputID: id, SessionID: "s", TurnID: turn.StableOutputTurnID, ProviderResultID: turn.CompletionSourceID, Kind: turnoutput.KindFinal, Runtime: "codex", StopReason: turn.StopReason, Text: shimcodex.ProjectedTurnText(*turn)}
+		text := output.Text
+		if f.withheld {
+			output.Reason, output.Size = "secret_withheld", len(text)
+			output.Text, output.StopReason = "", ""
+			text = events.SecretWithheldNotice("s", output.TurnID, output.Size)
+		}
 		if f.routed {
-			body, _ := json.Marshal(map[string]string{"text": output.Text})
+			body, _ := json.Marshal(map[string]string{"text": text})
 			staged, e := f.store.StageTurnOutput(ctx, messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s"}, Payload: body, ContentType: "application/json", Metadata: map[string]string{"output_id": id, "session_id": "s", "turn_id": turn.StableOutputTurnID, "kind": "final", "provider_result_id": turn.CompletionSourceID}})
 			if e != nil {
 				t.Fatal(e)
@@ -483,5 +493,47 @@ func TestCodexReplacementAccountingAuthenticSettledExitAndUnaccountedEffects(t *
 	_ = f.journal.Close()
 	if proof, err := f.store.AccountCodexReplacement(ctx, f.state, f.receipt); err == nil || proof != nil {
 		t.Fatal("extra historical effect earned replacement accounting")
+	}
+}
+
+func TestCodexReplacementAccountingWithheldOutput(t *testing.T) {
+	for _, routed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("routed=%v", routed), func(t *testing.T) {
+			f := newAccountingFixture(t, true, routed, true)
+			ctx := context.Background()
+			if _, err := f.store.AccountCodexReplacement(ctx, f.state, f.receipt); err != nil {
+				t.Fatal(err)
+			}
+			// Compact the turn out of the current receipt, forcing historical
+			// accounting to discover its content-free acceptance ID.
+			if _, err := f.store.db.Exec(`UPDATE sessions SET state='running' WHERE id='s'`); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 600; i++ {
+				f.metadata(f.append(t, "shim.attached", map[string]int{"epoch": i + 2}))
+			}
+			f.state.Revision++
+			raw, _ := json.Marshal(f.state)
+			if _, err := f.store.db.Exec(`UPDATE codex_shim_protocol SET state_json=?,revision=? WHERE session_id='s'`, string(raw), strconv.FormatUint(f.state.Revision, 10)); err != nil {
+				t.Fatal(err)
+			}
+			f.settle(t)
+			_ = f.journal.Close()
+			if len(f.state.Delivery.Turns) != 0 {
+				t.Fatal("fixture did not compact withheld turn")
+			}
+			if _, err := f.store.db.Exec(`UPDATE sessions SET state='completed' WHERE id='s'`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.AccountCodexReplacement(ctx, f.state, f.receipt); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.db.Exec(`UPDATE events SET payload_json=json_set(payload_json,'$.size',999) WHERE kind=?`, events.KindSessionTurnOutput); err != nil {
+				t.Fatal(err)
+			}
+			if proof, err := f.store.AccountCodexReplacement(ctx, f.state, f.receipt); err == nil || proof != nil {
+				t.Fatal("withheld metadata tampering passed historical accounting")
+			}
+		})
 	}
 }

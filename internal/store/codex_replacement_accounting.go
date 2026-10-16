@@ -703,17 +703,31 @@ func (s *Store) accountingProjectHistory(ctx context.Context, q CodexAccountingS
 					return accountingRefuse("projection_pending")
 				}
 			}
-			id := TurnOutputID(state.Binding.Session, turn.StableOutputTurnID, codexTurnKind(*turn), turn.CompletionSourceID, shimcodex.ProjectedTurnText(*turn))
+			normalID := TurnOutputID(state.Binding.Session, turn.StableOutputTurnID, codexTurnKind(*turn), turn.CompletionSourceID, shimcodex.ProjectedTurnText(*turn))
+			withheldID := WithheldTurnOutputID(state.Binding.Session, turn.StableOutputTurnID, codexTurnKind(*turn), turn.CompletionSourceID)
+			id := normalID
+			if accepted[withheldID] {
+				id = withheldID
+			}
 			if !accepted[id] {
 				if len(accepted) >= accountingTurns {
 					return accountingRefuse("history_budget")
 				}
 				var payload string
-				if q.QueryRowContext(ctx, `SELECT payload_json FROM events WHERE session_id=? AND kind=? AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json,'$.output_id') END=? LIMIT 1`, state.Binding.Session, events.KindSessionTurnOutput, id).Scan(&payload) != nil {
+				query := `SELECT payload_json FROM events WHERE session_id=? AND kind=? AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json,'$.output_id') END=? LIMIT 1`
+				readErr := q.QueryRowContext(ctx, query, state.Binding.Session, events.KindSessionTurnOutput, id).Scan(&payload)
+				if errors.Is(readErr, sql.ErrNoRows) {
+					id = withheldID
+					readErr = q.QueryRowContext(ctx, query, state.Binding.Session, events.KindSessionTurnOutput, id).Scan(&payload)
+				}
+				if readErr != nil {
 					return accountingRefuse("public_missing")
 				}
 				var output events.TurnOutputEvent
-				if json.Unmarshal([]byte(payload), &output) != nil || output.OutputID != id || output.SessionID != state.Binding.Session || output.TurnID != turn.StableOutputTurnID || output.ProviderResultID != turn.CompletionSourceID || string(output.Kind) != codexTurnKind(*turn) || output.StopReason != turn.StopReason || output.Runtime != "codex" {
+				if json.Unmarshal([]byte(payload), &output) != nil || output.OutputID != id || output.SessionID != state.Binding.Session || output.TurnID != turn.StableOutputTurnID || output.ProviderResultID != turn.CompletionSourceID || string(output.Kind) != codexTurnKind(*turn) || !turnOutputStopReasonMatches(output, turn.StopReason) || output.Runtime != "codex" {
+					return accountingRefuse("public_mismatch")
+				}
+				if (output.Reason == "secret_withheld" && (id != withheldID || output.Size != len(shimcodex.ProjectedTurnText(*turn)) || output.Text != "")) || (output.Reason != "secret_withheld" && id != normalID) {
 					return accountingRefuse("public_mismatch")
 				}
 				turn.OutputAcceptanceID = id

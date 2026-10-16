@@ -106,3 +106,62 @@ This storage change does not switch environment-stream projection or enable raw
 runtime ingress. Those follow-up changes consume the preserved metadata. Rollback
 uses the previous binary; leave additive columns in place (migrations are forward
 only).
+
+## Derived native-event provenance
+
+Native runtime payloads remain in process. The existing approved request-status
+and turn-output builders persist their own payloads with native origin time,
+process/source coordinates, scope, actor and correlation. The native event ID
+becomes `causation_id`; `parent_id` retains its structural meaning. Derived rows
+get fresh event IDs. Original payload-schema and sanitation claims are not
+inherited by the changed payload. Sensitivity and PII floors accumulate across
+a turn's contributing output, and its metadata survives retry replay.
+
+An explicit native `sensitivity: secret` is a policy floor. Before any retry
+journal or reply staging, Tether replaces the output text with a deterministic
+`reply withheld: secret` notice naming only the session, turn and original byte
+size. The routed requester receives that notice through the existing route;
+the `session.turn_output` event contains metadata (`reason: secret_withheld`,
+kind and size), without text or `payload_digest`. Session-local/native logs keep
+their existing behavior. `/health.hardening.turn_output.secret_withheld` counts
+new withholding in the current process.
+
+The withheld output ID hashes only the domain `withheld/v1` and the session,
+turn, kind and provider-result identity. The reducer produces one output per
+completed turn; no body, body hash or size enters this ID. Non-withheld output
+keeps its existing identity contract. Receipt verification checks the withheld
+identity and exact notice metadata/body instead of a secret-content fingerprint.
+A second producer claiming the same withheld identity fails and increments
+`/health.hardening.turn_output.withheld_identity_violation`; a journal replay
+continues the original output without making a new claim.
+
+Before retry replay, an upgrade pass scrubs explicitly marked-secret records,
+including expired files, then retires their old content-hash filenames. It
+preserves the original retention timestamp. A crash between atomic replacement
+of the body and retirement of the old filename leaves a safe notice, whose
+rekeying resumes before it can enter a retry worker. Unmarked historical records
+cannot be classified without detectors and keep their existing behavior.
+Detector-based redaction and raw-kind admission remain gated on the published,
+reviewed sanitizer and per-kind admission decisions.
+
+The native-secret output gate currently applies to callback-fed runtimeevents
+(the ACP ingress). Hosted Codex delivery and worker result frames do not carry a
+native envelope class, so this slice cannot infer a secret floor for them and
+does not claim to sanitize or withhold their unclassified output. The receipt
+and accounting support is defensive preparation for future classified ingress.
+
+The withholding notice's size is deliberately permitted metadata in
+`secret_turn_output_routing_2026_10_16`; the identity contains neither size nor
+content. Journal cleanup is defence in depth for explicitly marked records:
+main's older records had no Origin field, so unmarked historical bodies cannot
+be classified by this gate. For an old unrouted excerpt, size describes only
+the retained excerpt; it cannot reconstruct the full body size or authenticate
+a later full-body receipt. Duplicate-producer detection lasts while its journal
+or published event evidence is retained; it is not a permanent identity ledger
+after both have been purged.
+
+Untagged native inputs cannot safely name one reducer turn. Their sensitivity
+and PII floors apply to every open origin and the next turn; an untagged
+TurnStarted creates no origin identity. Tracking is bounded to 64 origins.
+Eviction carries classification floors forward, so ambiguity can withhold more
+output but never silently downgrade it.

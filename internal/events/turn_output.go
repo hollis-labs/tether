@@ -1,6 +1,7 @@
 package events
 
 import (
+	"fmt"
 	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
 	"unicode/utf8"
 )
@@ -9,6 +10,9 @@ import (
 // excerpt when no message was staged; a message_id references the full output
 // that the router attaches to its channel without storing a second copy.
 type TurnOutputEvent struct {
+	// Reason and Size describe policy-floor withholding; Text stays absent.
+	Reason            string                `json:"reason,omitempty"`
+	Size              int                   `json:"size,omitempty"`
 	OutputID          string                `json:"output_id,omitempty"`
 	FreshConversation bool                  `json:"fresh_conversation,omitempty"`
 	ProviderResultID  string                `json:"provider_result_id,omitempty"`
@@ -38,4 +42,10 @@ func TurnOutputExcerpt(text string) (string, bool) {
 		end--
 	}
 	return text[:end], true
+}
+
+// SecretWithheldNotice is the app-authored replacement for a policy-floor
+// secret reply. It contains only the durable session/turn identity and size.
+func SecretWithheldNotice(sessionID, turnID string, size int) string {
+	return fmt.Sprintf("reply withheld: secret (session=%s turn=%s size=%d bytes)", sessionID, turnID, size)
 }

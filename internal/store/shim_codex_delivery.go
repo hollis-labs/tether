@@ -216,7 +216,7 @@ func (s *Store) verifyCodexTurnTx(ctx context.Context, tx *sql.Tx, sessionID str
 	if err != nil {
 		return err
 	}
-	if !found || string(output.Kind) != kind || output.ProviderResultID != turn.CompletionSourceID || output.StopReason != turn.StopReason || output.Runtime != "codex" {
+	if !found || string(output.Kind) != kind || output.ProviderResultID != turn.CompletionSourceID || !turnOutputStopReasonMatches(output, turn.StopReason) || output.Runtime != "codex" {
 		return ErrSessionShimConflict
 	}
 	return nil

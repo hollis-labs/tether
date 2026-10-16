@@ -34,6 +34,10 @@ type sessionTurnOutput struct {
 	freshConversationPending bool
 	freshConversationTurn    string
 	lastActivity             time.Time
+	runtimeOrigins           map[string]*outputEventOrigin
+	runtimeOriginOrder       []string
+	runtimePendingFloor      *outputEventOrigin
+	runtimeIncomingOrigin    *outputEventOrigin
 	submissionGate           sync.Mutex
 	accepted                 bool
 	submissions              int
@@ -86,6 +90,14 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 		out.ensureTurn()
 		out.noteTurnActivity()
 		out.reducerTurnID = out.turnID
+		if out.runtimePendingFloor != nil {
+			origin := outputEventOrigin{}
+			if out.runtimeIncomingOrigin != nil {
+				origin = *out.runtimeIncomingOrigin
+			}
+			origin.Envelope.TurnID = out.turnID
+			out.rememberRuntimeOrigin(out.turnID, &origin)
+		}
 		out.accepted = true
 		return out.turnID
 	}})
@@ -136,7 +148,12 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 			return
 		}
 	}
-	o.recordEnvironmentRequest(ev)
+	origin, err := derivedRuntimeOrigin(ev)
+	if err != nil {
+		log.Printf("session %q: reject runtime envelope: %v", o.row.ID, err)
+		return
+	}
+	o.recordEnvironmentRequest(ev, origin)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if ev.Kind == runtimeevents.KindSessionLost {
@@ -155,10 +172,24 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		if ev.TurnID != "" && (o.reducerTurnID == "" || ev.Kind == runtimeevents.KindTurnStarted || ev.TurnID == o.reducerTurnID) {
 			o.bindTurn(ev.TurnID)
 		}
+		if ev.TurnID == "" {
+			// The reducer owns untagged-frame attribution. A floor cannot be
+			// guessed from our submission marker or a stale origin entry.
+			o.carryRuntimeFloor(origin)
+		} else {
+			o.rememberRuntimeOrigin(ev.TurnID, origin)
+		}
 	default:
 		// Process/session telemetry does not open a turn.
 	}
-	if result, ok := o.reducer.Observe(ev); ok {
+	o.runtimeIncomingOrigin = origin
+	result, reduced := o.reducer.Observe(ev)
+	o.runtimeIncomingOrigin = nil
+	if reduced {
+		if ev.TurnID == "" {
+			origin.Envelope.TurnID = result.TurnID
+			o.rememberRuntimeOrigin(result.TurnID, origin)
+		}
 		o.publish(result)
 		o.completeTurn(result, false)
 	} else if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
@@ -183,6 +214,9 @@ func (o *sessionTurnOutput) flush() {
 	}
 	// A process can end before its first reduced event.
 	o.settleTurn()
+	if len(o.runtimeOrigins) == 0 {
+		o.runtimePendingFloor = nil
+	}
 	// The session is gone: queued replies hand off or become undeliverable.
 	o.service.notifyReplyIdle(o.row.ID)
 }
@@ -225,12 +259,17 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	job := &turnOutputWrite{storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID, freshConversation: o.freshConversationTurn != "" && o.freshConversationTurn == o.turnID}
+	job := &turnOutputWrite{origin: o.runtimeOrigins[result.TurnID], storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID, freshConversation: o.freshConversationTurn != "" && o.freshConversationTurn == o.turnID}
 	// Claim under the retry lock while committing the journal, so a replay
 	// sweep cannot race the synchronous publication of this same output.
 	r := &o.service.outputRetries
 	r.mu.Lock()
 	journalErr := job.journal(o.service)
+	if errors.Is(journalErr, store.ErrDuplicateWithheldOutput) {
+		r.mu.Unlock()
+		log.Printf("ERROR session %q turn %q: duplicate withheld output refused", o.row.ID, result.TurnID)
+		return
+	}
 	if r.active == nil {
 		r.active = make(map[string]bool)
 	}
@@ -264,17 +303,23 @@ type turnOutputStore interface {
 // create a second durable body for the same output. The reader supplies one
 // overall deadline; retry workers additionally bound each operation.
 type turnOutputWrite struct {
-	journalID         string
-	journaled         bool
-	textTruncated     bool
-	freshConversation bool
-	providerResultID  string
-	storage           turnOutputStore
-	row               store.SessionRow
-	route             *launchprofile.Route
-	routeUnread       bool
-	result            turnoutput.Output
-	messageID         string
+	invariantFailed    bool
+	rewriteJournalFrom string
+	withheldReason     string
+	withheldSize       int
+	origin             *outputEventOrigin
+	journalID          string
+	journaled          bool
+	journalClaimed     bool
+	textTruncated      bool
+	freshConversation  bool
+	providerResultID   string
+	storage            turnOutputStore
+	row                store.SessionRow
+	route              *launchprofile.Route
+	routeUnread        bool
+	result             turnoutput.Output
+	messageID          string
 }
 
 func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
@@ -289,7 +334,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	}
 	if found {
 		w.messageID = published.MessageID
-		return s.Store.CompleteTurnOutputRetry(w.journalID)
+		return w.completeJournal(s)
 	}
 	storage := w.storage
 	if storage == nil {
@@ -322,7 +367,8 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	payload := events.TurnOutputEvent{SessionID: w.row.ID, TurnID: result.TurnID, Kind: result.Kind,
 		ProviderResultID: w.providerResultID, OutputID: w.journalID, FreshConversation: w.freshConversation,
 		StopReason: result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
-		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, WorkstreamID: workstream, MessageID: w.messageID}
+		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, WorkstreamID: workstream, MessageID: w.messageID,
+		Reason: w.withheldReason, Size: w.withheldSize}
 	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
 			Text string `json:"text"`
@@ -343,18 +389,18 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 		w.messageID = env.ID
 		payload.MessageID = env.ID
 	}
-	if payload.MessageID == "" {
+	if payload.MessageID == "" && w.withheldReason == "" {
 		payload.Text, payload.TextTruncated = turnOutputExcerpt(result.Text)
 		payload.TextTruncated = payload.TextTruncated || w.textTruncated
 	}
 	data, _ := json.Marshal(payload)
 	ctx, cancel = s.outputPersistenceContextFrom(parent)
 	defer cancel()
-	if err := s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
-		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)}); err != nil {
+	if err := s.Bus.Publish(ctx, w.origin.apply(events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
+		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)})); err != nil {
 		return err
 	}
-	return s.Store.CompleteTurnOutputRetry(w.journalID)
+	return w.completeJournal(s)
 }
 
 func turnOutputExcerpt(text string) (string, bool) { return events.TurnOutputExcerpt(text) }
@@ -381,4 +427,14 @@ func (s *Service) finalizeSessionOutput(ctx context.Context, id string, output *
 		}
 		s.turnOutputs.CompareAndDelete(id, output)
 	}()
+}
+
+func (w *turnOutputWrite) completeJournal(s *Service) error {
+	if w.withheldReason == "secret_withheld" {
+		// Keep a new producer claim from slipping between its DB lookup and
+		// journal link while the first output retires its journal file.
+		s.withheldOutputMu.Lock()
+		defer s.withheldOutputMu.Unlock()
+	}
+	return s.Store.CompleteTurnOutputRetry(w.journalID)
 }
