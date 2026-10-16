@@ -120,7 +120,9 @@ the running daemon to deny them by `jti` (`POST /auth/denylist`, kind `par`,
 authenticated with the new credential over the local socket). If the daemon
 cannot be reached the command warns and those tokens stay valid until expiry
 (max 60 minutes); repeat the request, or deny them individually. Tokens minted
-by a build that predates this tracking are not covered. A `run/operator.token.prev`
+by a build that predates this tracking are not covered. A token minted from the
+new credential in the short window between the rotation and the deny call is
+also denied (the caller just mints again). A `run/operator.token.prev`
 file can only remain if the process crashed between the link and the commit; it
 holds the old (still valid until the next rotation) credential, so remove it
 after confirming the pair verifies. Never remove principal records
