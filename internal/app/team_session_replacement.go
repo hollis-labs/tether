@@ -81,10 +81,12 @@ func (s *Service) launchRetainedTeamReplacementLocked(ctx context.Context, key, 
 	if err := s.Store.DB().QueryRowContext(ctx, store.RetainedTeamRecoverySQL, id, id, id, id).Scan(&eligible); err != nil || !eligible {
 		return store.ErrSessionReplacementUnavailable
 	}
-	var savedKey string
-	if err := s.Store.DB().QueryRowContext(ctx, `SELECT intent_key FROM session_replacements WHERE replacement_session_id=?`, id).Scan(&savedKey); err != nil {
+	var savedKey, sourceID string
+	if err := s.Store.DB().QueryRowContext(ctx, `SELECT intent_key, source_session_id FROM session_replacements WHERE replacement_session_id=?`, id).Scan(&savedKey, &sourceID); err != nil {
 		return err
 	}
+	// The replacement continues the source member's work: bounded by its grant.
+	ctx = withLaunchOrigin(ctx, InternalLaunch{Kind: OriginTeam, OriginSessionID: sourceID})
 	if savedKey != key {
 		return store.ErrSessionReplacementUnavailable
 	}

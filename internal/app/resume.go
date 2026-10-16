@@ -306,7 +306,9 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("persist session: %w", err)
 	}
 
-	l, err := s.LaunchSessionWithContext(ctx, sessID)
+	// A resume continues the source session's work, so it may not hold more than
+	// that session did, whoever asked for it.
+	l, err := s.LaunchSessionWithContext(withLaunchOrigin(ctx, InternalLaunch{Kind: OriginResume, OriginSessionID: sourceID}), sessID)
 	if err != nil {
 		return api.LaunchResult{}, err
 	}

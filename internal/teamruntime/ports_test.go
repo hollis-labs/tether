@@ -363,3 +363,34 @@ func testBindingSecret(t *testing.T, e *LegacyEnroller, key string) string {
 	check(t, err)
 	return r.bindingSecret
 }
+
+// internalEffects is a session service that, like app.Service, can start a
+// session bounded by an origin session.
+type internalEffects struct {
+	*sessionEffects
+	origin []app.InternalLaunch
+}
+
+func (f *internalEffects) LaunchInternal(ctx context.Context, id string, o app.InternalLaunch) (*app.Launched, error) {
+	f.origin = append(f.origin, o)
+	return f.LaunchSessionWithContext(ctx, id)
+}
+
+// The team host starts a spawned member through LaunchInternal with its parent
+// session as the origin, so the member cannot hold more than its parent.
+func TestTeamMemberLaunchIsBoundedByItsParentSession(t *testing.T) {
+	db, s, reg := dbFixture(t, filepath.Join(t.TempDir(), "db"))
+	e := enroller(t, db, s, reg)
+	req := fresh("bounded")
+	actor, err := e.Ensure(ctx, req)
+	check(t, err)
+	check(t, e.AcquireBinding(ctx, "bounded", actor.Actor))
+	effects := &internalEffects{sessionEffects: &sessionEffects{db: db}}
+	port, err := NewSessions(db, s, effects, e)
+	check(t, err)
+	_, err = port.Launch(ctx, teamhost.SessionRequest{IntentKey: "bounded", Actor: actor.Actor, ParentSession: "the-parent", Provision: req.Provision})
+	check(t, err)
+	if len(effects.origin) != 1 || effects.origin[0] != (app.InternalLaunch{Kind: app.OriginTeam, OriginSessionID: "the-parent"}) {
+		t.Fatalf("launch origin %+v", effects.origin)
+	}
+}
