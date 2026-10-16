@@ -138,6 +138,56 @@ func (s *Store) EventsSinceContext(ctx context.Context, sinceSeq int64) ([]event
 	return scanEvents(rows)
 }
 
+// StreamBoundsContext reports the oldest and newest events-table sequence
+// (events.PagedPersister).
+func (s *Store) StreamBoundsContext(ctx context.Context) (earliest, head int64, err error) {
+	var lo, hi sql.NullInt64
+	if err = s.db.QueryRowContext(ctx, `SELECT MIN(id), MAX(id) FROM events`).Scan(&lo, &hi); err != nil {
+		return 0, 0, err
+	}
+	return lo.Int64, hi.Int64, nil
+}
+
+// EventsPageContext returns one bounded page of the replay (events.PagedPersister).
+// The filter is pushed into SQL so a narrow subscriber does not read, or hold
+// the single connection for, rows it will discard in memory.
+func (s *Store) EventsPageContext(ctx context.Context, f events.Filter, afterSeq, upToSeq int64, limit int) ([]events.Event, error) {
+	if limit <= 0 {
+		limit = 512
+	}
+	q := strings.Builder{}
+	q.WriteString(`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE id > ? AND id <= ?`)
+	args := []any{afterSeq, upToSeq}
+	if len(f.Scopes) > 0 {
+		q.WriteString(` AND scope IN (` + placeholders(len(f.Scopes)) + `)`)
+		for _, v := range f.Scopes {
+			args = append(args, v)
+		}
+	}
+	if f.SessionID != "" {
+		q.WriteString(` AND session_id = ?`)
+		args = append(args, f.SessionID)
+	}
+	if len(f.Kinds) > 0 {
+		q.WriteString(` AND kind IN (` + placeholders(len(f.Kinds)) + `)`)
+		for _, v := range f.Kinds {
+			args = append(args, v)
+		}
+	}
+	q.WriteString(` ORDER BY id ASC LIMIT ?`)
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
 // ListRecentEvents returns the newest events across all scopes, newest
 // first, up to limit (defaulted to 200, capped at 1000). A pure read for
 // operator / dashboard views — the events table is otherwise consumed via
