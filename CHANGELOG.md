@@ -15,6 +15,9 @@ This file was backfilled from the git history and is a good-faith summary, not a
   enforce mode `/mcp` and `/p/` admit it (no scope names the gateway). Binding keys on
   `identity.IsBoundAgentToken`, never on Kind alone; an operator-minted narrow token still
   gets nothing. No machine access for agent tokens yet.
+- Add the worker-resume opt-in (CW-20261014-0113): `catalog.defaults.worker_resume` (default
+  false) enables resume of a worker-placed session on the same worker; off is the previous refusal.
+  `tether execution status` and `tether_execution_status` show `worker resume: on|off`.
 - Worker half of session resume (CW-20261014-0113): tether-worker advertises the `worker-resume`
   feature and honors `LaunchSpec.resume_session_id` by starting `claude --resume <id>` in the
   workspace the provider session ran in (dropping any other resume flags from the hub's args). A

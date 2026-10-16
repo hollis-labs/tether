@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
@@ -138,7 +139,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_session_health",
-		Description: "Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running.",
+		Description: "Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, live state, and observed last_activity_at, pending_approval and pending_question when known. Omitted observations are unknown, not false. Returns not_found if the session does not exist, conflict if the session is not currently running.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
 		),
@@ -614,7 +615,7 @@ func (a *Adapter) handleSessionHealth(ctx context.Context, args map[string]any) 
 		if err != nil {
 			return nil, daemonReadError(err, id)
 		}
-		return toolJSON(sessionHealthData(id, h.Alive, h.PID, h.LiveState, h.TurnID, h.ProviderID, h.ProviderKind, h.Caps)), nil
+		return toolJSON(sessionHealthData(id, h.Alive, h.PID, h.LiveState, h.TurnID, h.ProviderID, h.ProviderKind, h.Caps, h.SessionHealthObservations)), nil
 	}
 	// Verify the session exists in the store.
 	if _, err := a.svc.GetSession(id); err != nil {
@@ -629,6 +630,11 @@ func (a *Adapter) handleSessionHealth(ctx context.Context, args map[string]any) 
 		return nil, toolError("conflict", "session is not currently running; no live health available")
 	}
 	caps := result.Caps
+	observations, err := a.svc.SessionHealthObservations(ctx, id)
+	if err != nil {
+		slog.Warn("session health observations unavailable", "session_id", id)
+		observations = api.SessionHealthObservations{}
+	}
 	return toolJSON(sessionHealthData(id, result.Health.Alive, result.Health.PID, result.Health.State.String(), result.Health.TurnID, result.ProviderID, result.ProviderKind, api.CapabilitiesDTO{
 		PTY:               caps.PTY,
 		StreamingStdio:    caps.StreamingStdio,
@@ -637,12 +643,12 @@ func (a *Adapter) handleSessionHealth(ctx context.Context, args map[string]any) 
 		ProviderSessionID: caps.ProviderSessionID,
 		CheckpointResume:  caps.CheckpointResume,
 		BinaryRequired:    caps.BinaryRequired,
-	})), nil
+	}, observations)), nil
 }
 
 // sessionHealthData is tether_session_health's result, from the daemon's
 // health response or the in-process runtime alike.
-func sessionHealthData(id string, alive bool, pid int, liveState, turnID, providerID, providerKind string, caps api.CapabilitiesDTO) map[string]any {
+func sessionHealthData(id string, alive bool, pid int, liveState, turnID, providerID, providerKind string, caps api.CapabilitiesDTO, observations api.SessionHealthObservations) map[string]any {
 	data := map[string]any{
 		"ok":            true,
 		"session_id":    id,
@@ -663,6 +669,15 @@ func sessionHealthData(id string, alive bool, pid int, liveState, turnID, provid
 	}
 	if pid != 0 {
 		data["pid"] = pid
+	}
+	if observations.LastActivityAt != nil {
+		data["last_activity_at"] = observations.LastActivityAt
+	}
+	if observations.PendingApproval != nil {
+		data["pending_approval"] = *observations.PendingApproval
+	}
+	if observations.PendingQuestion != nil {
+		data["pending_question"] = *observations.PendingQuestion
 	}
 	return data
 }

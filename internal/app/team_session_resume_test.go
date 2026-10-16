@@ -25,6 +25,9 @@ func retainedRecoveryRig(t *testing.T) (*codexRig, string, string) {
 		t.Fatal(err)
 	}
 	r.ended(id)
+	// StopSession leaves a goroutine reading svc.Manager and svc.stops until the Manager has
+	// recorded the terminal state. Callers replace Service fields next; wait for it first.
+	r.svc.stopWatchers.Wait()
 	r.svc.Registry = registry.NewService(registry.NewStorage(r.svc.Store.DB()))
 	actor, err := r.svc.Registry.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Retained member", Props: map[string]string{"team_definition": `{"id":"worker","revision":"r1"}`}})
 	if err != nil {

@@ -888,6 +888,7 @@ func (s *Service) stopSessionImmediate(id string) error {
 		s.stops.clear(id)
 		return err
 	}
+	s.stopWatchers.Add(1)
 	go s.clearStopOnExit(id)
 	if err == nil && strings.TrimSpace(row.LogicalAgentID) != "" {
 		s.revokeActorBindingIfCurrent(id, row.LogicalAgentID)
@@ -900,6 +901,7 @@ func (s *Service) stopSessionImmediate(id string) error {
 // written the state row and emitted the event, so neither sink can miss
 // the mark.
 func (s *Service) clearStopOnExit(id string) {
+	defer s.stopWatchers.Done()
 	_, _ = s.Manager.WaitSession(context.Background(), id)
 	s.stops.clear(id)
 }

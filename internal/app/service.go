@@ -58,6 +58,7 @@ type Service struct {
 	LineageLimits LineageLimits
 	// WorkerResume opts in to resuming a worker-placed session on the same
 	// worker. Off by default: resume of a worker-placed source is refused.
+	// catalog.defaults.worker_resume enables it too; see workerResumeEnabled.
 	WorkerResume bool
 	// Interrupt bounds are configured before use; zero selects 2s cancel/gate
 	// and 30s terminal defaults. Caller deadlines take precedence.
@@ -136,6 +137,10 @@ type Service struct {
 	// stopRequests. Nil when the Manager was built without
 	// newSessionManager, in which case a stop is recorded as "completed".
 	stops *stopRequests
+	// stopWatchers counts the clearStopOnExit goroutines in flight. Production never
+	// waits on it; tests that replace Service fields wait first so they do not race the
+	// goroutine's reads of Manager and stops.
+	stopWatchers sync.WaitGroup
 
 	// codexThreads caches Codex app-server JSON-RPC thread state per
 	// Tether session id. Populated lazily on the first SendTurn call.

@@ -84,6 +84,17 @@ type Snapshot struct {
 	Sessions          []Session `json:"sessions"`
 }
 
+// SessionFromSnapshot uses the same request reducer as the environment stream
+// for a read-only projection of one session's durable observation state.
+func SessionFromSnapshot(base store.EnvironmentSnapshot, id string) (Session, bool) {
+	for _, session := range snapshot("", base).Sessions {
+		if session.ID == id {
+			return session, true
+		}
+	}
+	return Session{}, false
+}
+
 func snapshot(environmentID string, base store.EnvironmentSnapshot) Snapshot {
 	out := Snapshot{EnvironmentID: environmentID, HighWaterSeq: base.HighWater, EarliestAvailable: base.EarliestAvailable, Sessions: make([]Session, 0, len(base.Sessions))}
 	for _, row := range base.Sessions {
