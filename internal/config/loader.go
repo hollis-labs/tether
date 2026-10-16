@@ -175,6 +175,21 @@ func resolveRoot(catalogRoot, fromGlobal, fallback string) string {
 	return filepath.Join(catalogRoot, fallback)
 }
 
+// LoadIdentity reads only the identity block of the catalog's global.yaml, as it
+// is on disk now. The daemon applies identity.mode and identity.points once, at
+// start; this is how a running daemon learns what the operator has since
+// persisted (for example with `tether identity flip`) without a restart. It
+// does not validate beyond parsing.
+func LoadIdentity(catalogRoot string) (IdentityConfig, error) {
+	var g struct {
+		Identity IdentityConfig `yaml:"identity"`
+	}
+	if err := loadYAML(filepath.Join(Expand(catalogRoot), "global.yaml"), &g); err != nil {
+		return IdentityConfig{}, err
+	}
+	return g.Identity, nil
+}
+
 func loadYAML(path string, out any) error {
 	// Catalog paths originate from the user's own catalog directory, not
 	// from an HTTP/network boundary.
