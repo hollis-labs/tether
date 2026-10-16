@@ -255,10 +255,10 @@ func readWorkspaceDecision(ctx context.Context, tx *sql.Tx, id string) (Workspac
 	var decision WorkspaceLaunchDecision
 	row := &decision.Session
 	err := tx.QueryRowContext(ctx, `SELECT id,launch_id,project_id,logical_agent_id,provider_id,provider_kind,workspace,state,pid,exit_code,
-		created_at,updated_at,ended_at,session_group_id,parent_session_id,intent,publication,workstream_id,ref_attribution,route_json,pid_started_at
+		created_at,updated_at,ended_at,session_group_id,parent_session_id,intent,publication,workstream_id,ref_attribution,route_json,task_id,pid_started_at
 		FROM sessions WHERE id=?`, id).Scan(&row.ID, &row.LaunchID, &row.ProjectID, &row.LogicalAgentID, &row.ProviderID, &row.ProviderKind,
 		&row.Workspace, &row.State, &row.PID, &row.ExitCode, &row.CreatedAt, &row.UpdatedAt, &row.EndedAt, &row.SessionGroupID,
-		&row.ParentSessionID, &row.Intent, &row.Publication, &row.WorkstreamID, &row.RefAttribution, &row.RouteJSON, &decision.PIDStartedAt)
+		&row.ParentSessionID, &row.Intent, &row.Publication, &row.WorkstreamID, &row.RefAttribution, &row.RouteJSON, &row.TaskID, &decision.PIDStartedAt)
 	if err != nil {
 		return WorkspaceLaunchDecision{}, err
 	}

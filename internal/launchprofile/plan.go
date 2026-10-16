@@ -20,6 +20,10 @@ type Plan struct {
 	ProviderID     string `json:"provider_id"`
 	ProviderBrand  string `json:"provider_brand,omitempty"`
 	RuntimeKind    string `json:"runtime_kind,omitempty"`
+	// TaskID is the Torque task the launcher named for this session
+	// (CW-20261012-0062a): a bare Torque id, asserted only by the launcher at creation
+	// and never changed. Empty when none was named.
+	TaskID string `json:"task_id,omitempty"`
 	// ResumeProviderSessionID is set only by explicit or boot recovery. LaunchSession
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.

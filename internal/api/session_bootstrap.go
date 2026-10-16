@@ -63,6 +63,7 @@ type sessionBootstrapRequest struct {
 	ParentSessionID  string                            `json:"parent_session_id,omitempty"`
 	LogicalAgentID   string                            `json:"logical_agent_id,omitempty"` // set for a durable-actor bootstrap
 	Publication      string                            `json:"publication,omitempty"`      // private-local|published-local|tether-hosted; default "private-local"
+	TaskID           string                            `json:"task_id,omitempty"`          // launcher-asserted Torque task id; applied only when the row is created (CW-20261012-0062a)
 	ProviderMappings []sessionBootstrapProviderMapping `json:"provider_mappings,omitempty"`
 }
 
@@ -97,6 +98,9 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "session_id is required")
 		return
 	}
+	if !checkTaskStamp(w, r, req.TaskID) {
+		return
+	}
 
 	created := false
 	if _, err := s.SessionBootstrap.GetSession(req.SessionID); err != nil {
@@ -114,6 +118,9 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			State:          "external",
 			Intent:         intent,
 			Publication:    req.Publication,
+			// A later bootstrap of an existing session never reaches this literal, so a
+			// second claim cannot rebind the task (CW-20261012-0062a).
+			TaskID: sql.NullString{String: req.TaskID, Valid: req.TaskID != ""},
 			// This endpoint records identity and launches nothing, so no
 			// .mcp.json is planted and no `tether mcp --session` carries this
 			// id. The session's proxied calls therefore cannot be attributed

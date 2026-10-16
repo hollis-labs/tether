@@ -197,6 +197,11 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		if prior.TeamMember {
 			return api.LaunchResult{}, fmt.Errorf("%w: enrolled team sessions require recovery of their retained session identity", session.ErrRecoveryConflict)
 		}
+		// A resume continues the same work, so it keeps the launcher's task stamp
+		// (CW-20261012-0062a); only the original launch ever asserts one.
+		if parent.TaskID.Valid {
+			stampTaskID(plan, parent.TaskID.String)
+		}
 		plan.WorkRoot = prior.EffectiveWorkRoot()
 		if parent.ProviderID == plan.ProviderID && prior.ProviderBrand == plan.ProviderBrand {
 			plan.NativeStateRoot = prior.NativeStateRoot
@@ -288,6 +293,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		// the existing checkpoint-driven --resume decision above.
 		Intent:          "resume",
 		ParentSessionID: sql.NullString{String: sourceID, Valid: sourceID != ""},
+		TaskID:          nullableTaskID(plan.TaskID),
 	}
 	if key != nil {
 		// Audit only: the parent the resolver chose, outside the digest.

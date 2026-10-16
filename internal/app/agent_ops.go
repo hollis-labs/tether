@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -103,7 +104,17 @@ type CreateSessionInput struct {
 	// boot prompt. Unlike BootPromptOverride, it does not replace catalog,
 	// agent, or boot-profile content.
 	BootPromptAppend string
+
+	// TaskID is the Torque task this session is launched for (CW-20261012-0062a).
+	// Server-set after the API has checked that the caller is a launcher and the id is
+	// well-formed; never decoded from a client into this struct. Stored on the session
+	// row and planted as TETHER_TASK_ID; no existence check against Torque.
+	TaskID string
 }
+
+// TaskIDEnv is the environment variable that carries the launcher-asserted task id
+// into the agent's process (hub-local and Outpost launches alike).
+const TaskIDEnv = "TETHER_TASK_ID"
 
 // LaunchOverride mirrors the JSON shape accepted in CreateSessionInput.Override.
 // Defined as a named type so the JSON contract is auditable in one place.
@@ -623,4 +634,8 @@ func isUnsupportedProvider(err error) bool {
 		e = u.Unwrap()
 	}
 	return false
+}
+
+func nullableTaskID(id string) sql.NullString {
+	return sql.NullString{String: id, Valid: id != ""}
 }
