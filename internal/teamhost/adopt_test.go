@@ -391,16 +391,16 @@ func TestReboundAdoptionSuspendsUntilReadopted(t *testing.T) {
 	}
 }
 
-// A cancelled caller is the usual reason an adoption fails; the failure must
+// A canceled caller is the usual reason an adoption fails; the failure must
 // still release the actor so it can join a team later.
-func TestCancelledAdoptionStillFreesTheActor(t *testing.T) {
+func TestCanceledAdoptionStillFreesTheActor(t *testing.T) {
 	f, a := fake(), newAdopter()
 	db, s, h := openAdopt(t, t.TempDir()+"/state.db", f, a, adoptOptions())
 	run := adoptRun(t, s, h)
-	cancelled, cancel := context.WithCancel(ctx)
+	canceled, cancel := context.WithCancel(ctx)
 	a.hook = func() { cancel() }
-	if _, err := h.Adopt(cancelled, adoptRequest(run, "adopt-cancel", fleetActor, "fleet-session-1")); err == nil {
-		t.Fatal("adoption with a cancelled context must fail")
+	if _, err := h.Adopt(canceled, adoptRequest(run, "adopt-cancel", fleetActor, "fleet-session-1")); err == nil {
+		t.Fatal("adoption with a canceled context must fail")
 	}
 	a.hook = nil
 	var tombstone string
@@ -411,6 +411,6 @@ func TestCancelledAdoptionStillFreesTheActor(t *testing.T) {
 		t.Fatalf("failed adoption not fenced: tombstone=%q cleaned=%d bindings=%d", tombstone, cleaned, bound)
 	}
 	if _, err := h.Adopt(ctx, adoptRequest(run, "adopt-after", fleetActor, "fleet-session-1")); err != nil {
-		t.Fatalf("actor stayed bound after a cancelled adoption: %v", err)
+		t.Fatalf("actor stayed bound after a canceled adoption: %v", err)
 	}
 }
