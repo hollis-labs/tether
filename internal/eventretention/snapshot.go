@@ -26,6 +26,8 @@ func (c Config) EncodeSnapshot() ([]byte, error) {
 
 // RestoreSnapshot validates persisted policy values without re-asking for
 // acknowledgment: admission already validated the operator's configuration.
+// Old audit payload ages remain decodable as provenance, even if today's floor
+// would reject them. ValidateForPass refuses restored snapshots as active policy.
 func RestoreSnapshot(data []byte) (Config, error) {
 	var stored snapshot
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -47,6 +49,6 @@ func RestoreSnapshot(data []byte) (Config, error) {
 	for class, rule := range stored.Rules {
 		raw.Retention.Classes[class] = rawRule{Full: &rule.Full, Envelope: &rule.Envelope, Rollups: &rule.Rollups}
 	}
-	c, _, err := compile(raw)
+	c, _, err := compile(raw, true)
 	return c, err
 }

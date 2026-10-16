@@ -1,0 +1,2 @@
+- CW-20261016-0146: Make dormant payload retention use the current pass policy for existing rows while preserving admission provenance, and prevent audit rows from becoming trim-eligible.
+- CW-20261016-0146: Require acknowledgement for finite audit payload retention and enforce its 400-day floor, while retaining historical snapshots as audit evidence and preserving the PII payload override.

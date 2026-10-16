@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func TestRetentionAdmissionIsTrustedAndSurvivesRestart(t *testing.T) {
 func TestRetentionTombstonesExactPayloadAndPreservesAllOtherColumns(t *testing.T) {
 	ctx := context.Background()
 	db := openEventsStore(t)
-	installTestRetention(t, db, "", map[string]eventretention.Class{"session.state_changed": eventretention.State})
+	cfg := installTestRetention(t, db, "", map[string]eventretention.Class{"session.state_changed": eventretention.State})
 	ids := []int64{}
 	before := map[int64]map[string]any{}
 	for _, pii := range []bool{false, true} {
@@ -90,11 +91,11 @@ func TestRetentionTombstonesExactPayloadAndPreservesAllOtherColumns(t *testing.T
 		before[stored.Seq] = rowByID(t, db, stored.Seq)
 	}
 	now := time.Now().Add(181 * eventretention.Day)
-	batch, err := db.TombstoneEventPayloads(ctx, now, 0, 1)
+	batch, err := db.TombstoneEventPayloads(ctx, cfg, now, 0, 1)
 	if err != nil || batch.Scanned != 1 || batch.Tombstoned != 1 || batch.NextCursor != ids[0] {
 		t.Fatalf("bounded batch %+v %v", batch, err)
 	}
-	batch, err = db.TombstoneEventPayloads(ctx, now, batch.NextCursor, 1)
+	batch, err = db.TombstoneEventPayloads(ctx, cfg, now, batch.NextCursor, 1)
 	if err != nil || batch.Tombstoned != 1 {
 		t.Fatalf("second %+v %v", batch, err)
 	}
@@ -118,7 +119,7 @@ func TestRetentionTombstonesExactPayloadAndPreservesAllOtherColumns(t *testing.T
 			t.Fatal("tombstone changed envelope/cursor metadata")
 		}
 	}
-	batch, err = db.TombstoneEventPayloads(ctx, now, 0, 100)
+	batch, err = db.TombstoneEventPayloads(ctx, cfg, now, 0, 100)
 	if err != nil || batch.Tombstoned != 0 || batch.Scanned != 0 {
 		t.Fatalf("repeat %+v %v", batch, err)
 	}
@@ -130,7 +131,7 @@ func TestRetentionPendingLegacyAndYoungPayloadsStayIntact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	installTestRetention(t, db, "retention: {classes: {state: {full: 1h}}}", map[string]eventretention.Class{"session.state_changed": eventretention.State})
+	cfg := installTestRetention(t, db, "retention: {classes: {state: {full: 1h}}}", map[string]eventretention.Class{"session.state_changed": eventretention.State})
 	young, err := db.InsertEventEnvelope(ctx, fullEnvelope())
 	if err != nil {
 		t.Fatal(err)
@@ -147,11 +148,11 @@ func TestRetentionPendingLegacyAndYoungPayloadsStayIntact(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	batch, err := db.TombstoneEventPayloads(ctx, time.Now(), 0, 100)
+	batch, err := db.TombstoneEventPayloads(ctx, cfg, time.Now(), 0, 100)
 	if err != nil || batch.Tombstoned != 0 {
 		t.Fatalf("young %+v %v", batch, err)
 	}
-	batch, err = db.TombstoneEventPayloads(ctx, time.Now().Add(2*time.Hour), 0, 100)
+	batch, err = db.TombstoneEventPayloads(ctx, cfg, time.Now().Add(2*time.Hour), 0, 100)
 	if err != nil || batch.Tombstoned != 1 {
 		t.Fatalf("eligible %+v %v", batch, err)
 	}
@@ -166,7 +167,7 @@ func TestRetentionPendingLegacyAndYoungPayloadsStayIntact(t *testing.T) {
 	if err := db.MarkPublishedContext(ctx, []int64{pending.Seq}); err != nil {
 		t.Fatal(err)
 	}
-	batch, err = db.TombstoneEventPayloads(ctx, time.Now().Add(2*time.Hour), 0, 100)
+	batch, err = db.TombstoneEventPayloads(ctx, cfg, time.Now().Add(2*time.Hour), 0, 100)
 	if err != nil || batch.Tombstoned != 1 {
 		t.Fatalf("published retry %+v %v", batch, err)
 	}
@@ -174,7 +175,7 @@ func TestRetentionPendingLegacyAndYoungPayloadsStayIntact(t *testing.T) {
 func TestRetentionTombstoneFailureRollsBackWholeBatch(t *testing.T) {
 	ctx := context.Background()
 	db := openEventsStore(t)
-	installTestRetention(t, db, "retention: {classes: {state: {full: 1h}}}", map[string]eventretention.Class{"session.state_changed": eventretention.State})
+	cfg := installTestRetention(t, db, "retention: {classes: {state: {full: 1h}}}", map[string]eventretention.Class{"session.state_changed": eventretention.State})
 	first, err := db.InsertEventEnvelope(ctx, fullEnvelope())
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +188,7 @@ func TestRetentionTombstoneFailureRollsBackWholeBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := rowByID(t, db, first.Seq)
-	batch, err := db.TombstoneEventPayloads(ctx, time.Now().Add(2*time.Hour), 0, 100)
+	batch, err := db.TombstoneEventPayloads(ctx, cfg, time.Now().Add(2*time.Hour), 0, 100)
 	if err == nil || batch != (EventTombstoneBatch{}) {
 		t.Fatalf("failed batch reported success: %+v %v", batch, err)
 	}
@@ -198,7 +199,7 @@ func TestRetentionTombstoneFailureRollsBackWholeBatch(t *testing.T) {
 func TestRetentionEnvironmentRequestPreservesPIIAndRefusesSecrets(t *testing.T) {
 	ctx := context.Background()
 	db := openEventsStore(t)
-	installTestRetention(t, db, "", map[string]eventretention.Class{EnvironmentRequestKind: eventretention.Audit})
+	cfg := installTestRetention(t, db, "", map[string]eventretention.Class{EnvironmentRequestKind: eventretention.Audit})
 	e := fullEnvelope()
 	e.Kind = EnvironmentRequestKind
 	e.PayloadJSON = `{"turn_id":"turn-1","request_id":"req-1","request_kind":"question","open":true}`
@@ -210,7 +211,7 @@ func TestRetentionEnvironmentRequestPreservesPIIAndRefusesSecrets(t *testing.T) 
 	if row["pii"] != int64(1) || row["retention_class"] != events.RetentionAudit {
 		t.Fatal("special path lost sensitivity/class")
 	}
-	batch, err := db.TombstoneEventPayloads(ctx, time.Now().Add(31*eventretention.Day), 0, 100)
+	batch, err := db.TombstoneEventPayloads(ctx, cfg, time.Now().Add(31*eventretention.Day), 0, 100)
 	if err != nil || batch.Tombstoned != 1 || rowByID(t, db, stored.Seq)["payload_digest"] != "withheld" {
 		t.Fatalf("PII audit cap %+v %v", batch, err)
 	}
@@ -265,38 +266,98 @@ func TestRetentionAdmissionUpdateAndOutboxRollbackAreAtomic(t *testing.T) {
 	}
 }
 
-func TestRetentionUsesAdmissionPolicyAfterConfigChangeAndRejectsMissingPolicy(t *testing.T) {
+func TestRetentionUsesCurrentPolicyAndKeepsAdmissionProvenance(t *testing.T) {
 	ctx := context.Background()
 	db := openEventsStore(t)
-	installTestRetention(t, db, "", map[string]eventretention.Class{"session.state_changed": eventretention.State})
+	original := installTestRetention(t, db, "", map[string]eventretention.Class{"session.state_changed": eventretention.State})
 	e := fullEnvelope()
 	e.Envelope.Class.PII = false
 	old, err := db.InsertEventEnvelope(ctx, e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	installTestRetention(t, db, "retention: {classes: {state: {full: 1h}}}", map[string]eventretention.Class{"session.state_changed": eventretention.State})
+	shorter := installTestRetention(t, db, "retention: {classes: {state: {full: 1h}}}", map[string]eventretention.Class{"session.state_changed": eventretention.State})
+	now := time.Now().Add(2 * time.Hour)
+	batch, err := db.TombstoneEventPayloads(ctx, shorter, now, 0, 100)
+	if err != nil || batch.Tombstoned != 1 {
+		t.Fatalf("shortened policy %+v %v", batch, err)
+	}
+	row := rowByID(t, db, old.Seq)
+	if row["payload_json"] != nil || row["retention_policy_id"] != original.ID() {
+		t.Fatal("current policy not applied or admission provenance changed")
+	}
+	// Lengthening preserves remaining payloads; it cannot restore a tombstone.
 	recent, err := db.InsertEventEnvelope(ctx, e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err := db.TombstoneEventPayloads(ctx, time.Now().Add(2*time.Hour), 0, 100)
-	if err != nil || batch.Tombstoned != 1 {
-		t.Fatalf("forward policy %+v %v", batch, err)
+	batch, err = db.TombstoneEventPayloads(ctx, original, now, 0, 100)
+	if err != nil || batch.Tombstoned != 0 || rowByID(t, db, recent.Seq)["payload_json"] == nil || rowByID(t, db, old.Seq)["payload_json"] != nil {
+		t.Fatalf("lengthened policy %+v %v", batch, err)
 	}
-	if rowByID(t, db, old.Seq)["payload_json"] == nil || rowByID(t, db, recent.Seq)["payload_json"] != nil {
-		t.Fatal("new policy applied retroactively")
+	// The audit snapshot is still integrity-checked, but cannot select the age.
+	if _, err := db.db.Exec(`UPDATE events SET retention_policy_id='missing-policy' WHERE id=?`, recent.Seq); err != nil {
+		t.Fatal(err)
 	}
-	corrupt, err := db.InsertEventEnvelope(ctx, e)
+	before := rowByID(t, db, recent.Seq)
+	batch, err = db.TombstoneEventPayloads(ctx, shorter, now, 0, 100)
+	if err == nil || batch != (EventTombstoneBatch{}) || !reflect.DeepEqual(before, rowByID(t, db, recent.Seq)) {
+		t.Fatal("missing admission snapshot did not fail closed")
+	}
+}
+
+func TestRetentionCurrentPIICapReachesExistingAuditRows(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	original := installTestRetention(t, db, "", map[string]eventretention.Class{"session.state_changed": eventretention.Audit})
+	e := fullEnvelope()
+	e.Envelope.Class.PII = true
+	stored, err := db.InsertEventEnvelope(ctx, e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(`UPDATE events SET retention_policy_id='missing-policy' WHERE id=?`, corrupt.Seq); err != nil {
+	current, _, err := eventretention.Parse([]byte("retention: {pii_cap: 1h}"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	before := rowByID(t, db, old.Seq)
-	batch, err = db.TombstoneEventPayloads(ctx, time.Now().Add(181*eventretention.Day), 0, 100)
-	if err == nil || batch != (EventTombstoneBatch{}) || !reflect.DeepEqual(before, rowByID(t, db, old.Seq)) {
-		t.Fatal("missing policy did not fail closed/rollback")
+	now := time.Now().Add(2 * time.Hour)
+	if batch, err := db.TombstoneEventPayloads(ctx, eventretention.Config{}, now, 0, 100); err == nil || batch != (EventTombstoneBatch{}) {
+		t.Fatal("missing current policy accepted")
+	}
+	if batch, err := db.TombstoneEventPayloads(ctx, current, now, 0, 100); err != nil || batch.Tombstoned != 1 {
+		t.Fatalf("PII cap %+v %v", batch, err)
+	}
+	row := rowByID(t, db, stored.Seq)
+	if row["payload_json"] != nil || row["payload_digest"] != "withheld" || row["retention_policy_id"] != original.ID() || row["retention_class"] != events.RetentionAudit {
+		t.Fatal("PII override lost audit provenance or emitted hash")
+	}
+}
+
+func TestRetentionHistoricalAuditPolicyCannotDriveAdmissionOrSweep(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	cfg := installTestRetention(t, db, "retention: {acknowledge_risk: true, classes: {audit: {full: 400d}}}", map[string]eventretention.Class{"session.state_changed": eventretention.Audit})
+	raw, err := cfg.EncodeSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := eventretention.RestoreSnapshot([]byte(strings.Replace(string(raw), `"full":34560000000000000`, `"full":86400000000000`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetEventRetentionAdmission(ctx, legacy, map[string]eventretention.Class{"session.state_changed": eventretention.Audit}); err == nil {
+		t.Fatal("historical below-floor config admitted")
+	}
+	e := fullEnvelope()
+	e.Envelope.Class.PII = false
+	stored, err := db.InsertEventEnvelope(ctx, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TombstoneEventPayloads(ctx, legacy, time.Now().Add(2*eventretention.Day), 0, 100); err == nil {
+		t.Fatal("historical below-floor sweep allowed")
+	}
+	if row := rowByID(t, db, stored.Seq); row["payload_json"] == nil || row["retention_policy_id"] != cfg.ID() {
+		t.Fatal("rejected old config altered admission or payload")
 	}
 }

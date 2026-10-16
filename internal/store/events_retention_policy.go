@@ -17,6 +17,9 @@ import (
 // daemon/catalog caller invokes this yet; an empty mapping disables new class
 // admission but does not alter policies already referenced by events.
 func (s *Store) SetEventRetentionAdmission(ctx context.Context, cfg eventretention.Config, kinds map[string]eventretention.Class) error {
+	if err := cfg.ValidateForPass(); err != nil {
+		return err
+	}
 	encoded, err := cfg.EncodeSnapshot()
 	if err != nil {
 		return err
@@ -96,12 +99,16 @@ type EventTombstoneBatch struct {
 }
 
 // TombstoneEventPayloads scans at most limit classified, published payloads and
-// removes only payloads whose admission policy permits it. Policy, metadata and
+// removes only payloads whose current policy permits it. Admission snapshots are
+// audit provenance, not retention decisions. Snapshot integrity, metadata and
 // pending guards are checked in the same transaction as the conditional UPDATE.
 // No row is deleted and no envelope/cursor metadata is modified.
-func (s *Store) TombstoneEventPayloads(ctx context.Context, now time.Time, after int64, limit int) (EventTombstoneBatch, error) {
+func (s *Store) TombstoneEventPayloads(ctx context.Context, current eventretention.Config, now time.Time, after int64, limit int) (EventTombstoneBatch, error) {
 	if now.IsZero() || after < 0 || limit <= 0 || limit > 1000 {
 		return EventTombstoneBatch{}, fmt.Errorf("retention: require now, nonnegative cursor and limit in [1,1000]")
+	}
+	if err := current.ValidateForPass(); err != nil {
+		return EventTombstoneBatch{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -134,24 +141,23 @@ func (s *Store) TombstoneEventPayloads(ctx context.Context, now time.Time, after
 		return EventTombstoneBatch{}, err
 	}
 	result := EventTombstoneBatch{NextCursor: after}
-	configs := map[string]eventretention.Config{}
+	verified := map[string]bool{}
 	for _, r := range selected {
-		cfg, ok := configs[r.policy]
-		if !ok {
+		if !verified[r.policy] {
 			var raw string
 			if err := tx.QueryRowContext(ctx, `SELECT policy_json FROM event_retention_policies WHERE id=?`, r.policy).Scan(&raw); err != nil {
 				return EventTombstoneBatch{}, fmt.Errorf("retention policy lookup: %w", err)
 			}
-			cfg, err = eventretention.RestoreSnapshot([]byte(raw))
+			cfg, err := eventretention.RestoreSnapshot([]byte(raw))
 			if err != nil {
 				return EventTombstoneBatch{}, err
 			}
 			if cfg.ID() != r.policy {
 				return EventTombstoneBatch{}, fmt.Errorf("retention: policy ID does not match stored snapshot")
 			}
-			configs[r.policy] = cfg
+			verified[r.policy] = true
 		}
-		policy, err := cfg.Snapshot(eventretention.Class(strings.TrimPrefix(r.class, "R-")))
+		policy, err := current.Snapshot(eventretention.Class(strings.TrimPrefix(r.class, "R-")))
 		if err != nil {
 			return EventTombstoneBatch{}, err
 		}

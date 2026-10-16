@@ -34,18 +34,21 @@ These are the defaults; omitted fields inherit them. `0` means forever, and
 from server-recorded admission, not cumulative tier durations. A day is 24 hours
 and a year 365 days; other positive Go durations are accepted. A class needs at
 least one rollup bucket so its rows can eventually be trimmed safely. Buckets
-must be positive and unique. Shortening retention is free, except that cutting
-audit's full/envelope horizon below 400 days needs acknowledgment. Extending the
+must be positive and unique. Shortening non-audit retention is free. Finite audit payload retention requires
+acknowledgment and must be at least 400 days; a longer envelope horizon cannot
+bypass that payload floor. The PII payload override still applies. Extending the
 PII payload cap also needs acknowledgment. Both return warnings even with the
 flag. Secrets cannot be configured for storage and secret records are rejected.
 
 A compiled configuration is immutable and has a content-derived epoch ID.
-`Snapshot` captures a class policy for an admitted event. Later configurations
-never modify that snapshot. The persistence adapter must store the epoch and
-policy at admission, rather than applying current settings to old rows.
+`Snapshot` captures a class policy. Admission snapshots remain immutable audit
+provenance, but each retention pass resolves every classified row against its
+current configuration (D7 rev 2.2). Shortening reaches existing rows, including
+PII; lengthening preserves remaining payloads but cannot restore tombstones.
 
 `Plan` determines payload removal and trim eligibility. PII caps only payload
-age: an audit event still keeps its envelope forever by default. `Tombstone`
+age: an audit event always keeps its envelope and row, even when its full
+payload retention is finite. `Tombstone`
 removes exact stored payload bytes and returns `sha256:<64 lowercase hex>`, or
 `withheld` for PII (the amended digest ruling). It must only be called for an
 eligible, present payload; nil means already absent and returns no new digest.
@@ -64,7 +67,7 @@ bucket is counted directly, avoiding double-counting hourly and daily totals.
 
 `HeadTrim` requires rows from the actual log head in ascending cursor order,
 never a prefiltered set of old rows. It stops at the first retained, pending,
-legacy/unclassified or unrolled row, including an audit-forever barrier. It
+legacy/unclassified or unrolled row; every audit row is a permanent barrier. It
 cannot delete holes later in the stream. Numeric cursor gaps are allowed and
 IDs are never reassigned. Pending outbox rows are also excluded from payload
 removal and rollups.
@@ -72,7 +75,7 @@ removal and rollups.
 Production integration must stack after X1a/X1c and consume persisted v1.1
 class/sensitivity and recorded time. It must preserve unpublished outbox rows,
 commit rollups before head deletion, use bounded transactions, preserve legacy
-policy, and prevent the old age-only sweep from competing with class retention.
+unclassified rows, and prevent the old age-only sweep from competing with class retention.
 The separate identity_audit table retains its 400-day floor. None of that wiring
 or a live retention-setting change is part of this package.
 
@@ -88,11 +91,20 @@ caller's connection. Environment requests preserve their envelope through their
 existing request-status transaction.
 
 `TombstoneEventPayloads` scans at most 1,000 published, classified payloads per
-transaction, restores and verifies each admission snapshot, and clears only
-eligible payloads. Its conditional UPDATE repeats the pending/payload/policy
+transaction. Its caller must pass the current compiled configuration explicitly;
+an uninitialized or restored historical configuration is refused. Historical
+admission snapshots remain decodable as audit evidence. It verifies admission snapshot
+integrity for audit provenance, resolves eligibility from the current policy,
+and clears only eligible payloads. Its conditional UPDATE repeats the pending/payload/policy
 guards. A failure rolls back the whole batch. The result is a per-sweep scan
 cursor, not a trim checkpoint: a later sweep starts again at zero to reconsider
 younger or formerly pending rows. It changes neither row IDs nor envelope
 metadata. There is no scheduler, row deletion, aggregate persistence or cutover
 in this slice. Deployment/activation still requires disabling the competing
 age-only event sweep and preserving the separate identity audit floor.
+
+The local rollup primitives remain dormant preparation. The shared janitor and
+its Store conformance suite will replace that integration surface after the
+approved library release, including current-policy rollup expiry, per-class
+removal watermarks and retention gap frames. This correction wires no scheduler
+and does not change live settings.

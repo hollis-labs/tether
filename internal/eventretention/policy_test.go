@@ -84,11 +84,12 @@ func TestConfigValidation(t *testing.T) {
 		})
 	}
 }
-func TestOnlyPIIExtensionAndAuditFloorNeedAcknowledgment(t *testing.T) {
+func TestPIIExtensionAndFiniteAuditNeedAcknowledgment(t *testing.T) {
 	for _, body := range []string{
 		"retention: {pii_cap: 31d}",
 		"retention: {pii_cap: 0}",
-		"retention: {classes: {audit: {full: 399d}}}",
+		"retention: {classes: {audit: {full: 400d}}}",
+		"retention: {classes: {audit: {full: 800d}}}",
 	} {
 		_, warnings, err := Parse([]byte(body))
 		if err == nil || len(warnings) != 1 {
@@ -103,13 +104,28 @@ func TestOnlyPIIExtensionAndAuditFloorNeedAcknowledgment(t *testing.T) {
 	for _, body := range []string{
 		"retention: {pii_cap: 1d}",
 		"retention: {classes: {state: {rollups: [{bucket: 1d, keep: 1h}]}}}",
-		"retention: {classes: {audit: {full: 400d}}}",
-		"retention: {classes: {audit: {full: 1d, envelope: 400d}}}",
 		"retention: {classes: {state: {full: 1h, envelope: none, rollups: [{bucket: 1h, keep: 1h}]}}}",
 	} {
 		_, warnings, err := Parse([]byte(body))
 		if err != nil || len(warnings) != 0 {
 			t.Fatalf("free shortening rejected: %v %v", err, warnings)
 		}
+	}
+}
+
+func TestAuditPayloadFloorCannotBeAcknowledgedAway(t *testing.T) {
+	for _, body := range []string{
+		"retention: {classes: {audit: {full: 399d}}}",
+		"retention: {acknowledge_risk: true, classes: {audit: {full: 399d}}}",
+		"retention: {acknowledge_risk: true, classes: {audit: {full: 1d, envelope: 400d}}}",
+	} {
+		if _, _, err := Parse([]byte(body)); err == nil || !strings.Contains(err.Error(), "400d") {
+			t.Fatalf("audit payload floor bypassed: %v", err)
+		}
+	}
+	c := mustConfig(t, "retention: {acknowledge_risk: true, pii_cap: 1d, classes: {audit: {full: 400d}}}")
+	r := Record{Cursor: 1, RecordedAt: time.Now(), Policy: mustPolicy(t, c, Audit), PII: true, PayloadPresent: true, RolledUp: true}
+	if d, err := Plan(r, r.RecordedAt.Add(2*Day)); err != nil || !d.Tombstone || d.TrimEligible {
+		t.Fatalf("PII audit override %+v %v", d, err)
 	}
 }

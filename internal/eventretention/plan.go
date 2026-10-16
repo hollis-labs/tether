@@ -8,9 +8,10 @@ import (
 	"time"
 )
 
-// Record is an adapter input, not an event envelope. Policy is captured when
-// the row is admitted. RolledUp must mean every configured bucket was committed
-// atomically with the rollup checkpoint. Pending marks an unpublished outbox row.
+// Record is an adapter input, not an event envelope. Policy is resolved from
+// the current configuration for the row's trusted class on each pass. RolledUp
+// means every configured bucket was committed atomically with the rollup
+// checkpoint. Pending marks an unpublished outbox row.
 type Record struct {
 	Cursor         int64
 	RecordedAt     time.Time
@@ -61,7 +62,7 @@ func Plan(r Record, now time.Time) (Decision, error) {
 	}
 	return Decision{
 		Tombstone:    r.PayloadPresent && payloadExpired,
-		TrimEligible: horizon > 0 && age >= time.Duration(horizon) && r.RolledUp,
+		TrimEligible: r.Policy.class != Audit && horizon > 0 && age >= time.Duration(horizon) && r.RolledUp,
 		NeedsRollup:  !r.RolledUp,
 	}, nil
 }
