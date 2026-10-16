@@ -66,10 +66,15 @@ func (b *memBus) stamp(ctx context.Context, e Event, tx bool) Event {
 }
 
 // cloneEvent copies e deeply enough that a stage can write anywhere in it
-// without touching the original. Every Envelope field is a value except
-// Class.Labels; add any new slice or map field here.
+// without touching the original. Copy every mutable reference in Envelope;
+// add any new slice, map or pointer field here.
 func cloneEvent(e Event) Event {
 	e.Envelope.Class.Labels = slices.Clone(e.Envelope.Class.Labels)
+	e.Envelope.Actor.OnBehalfOfChain = slices.Clone(e.Envelope.Actor.OnBehalfOfChain)
+	if e.Envelope.RawOffset != nil {
+		offset := *e.Envelope.RawOffset
+		e.Envelope.RawOffset = &offset
+	}
 	return e
 }
 
