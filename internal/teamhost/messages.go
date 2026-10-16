@@ -108,6 +108,15 @@ func (h *Host) SendMessage(ctx context.Context, d teams.Delivery) error {
 	if d.Delivery != "" && d.Delivery != mesh.DeliveryAtIdle {
 		return teams.ErrUnsupported
 	}
+	if d.Recipient.SessionID != "" {
+		suspended, suspendedErr := h.adoptionSuspended(ctx, d.Recipient.Actor, d.Recipient.SessionID)
+		if suspendedErr != nil {
+			return suspendedErr
+		}
+		if suspended {
+			return teams.ErrUnavailable
+		}
+	}
 	payload, err := encode(d)
 	if err != nil {
 		return err
