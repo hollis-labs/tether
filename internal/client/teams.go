@@ -17,8 +17,8 @@ import (
 type TeamError struct {
 	Code   string
 	Status int
-	// Detail is the daemon's bounded cause text. The daemon sends it only to the
-	// verified local operator, for any classified or internal failure.
+	// Detail is a safe request-field diagnostic, or a bounded host cause sent
+	// only to the verified local operator.
 	Detail string
 }
 
@@ -52,7 +52,8 @@ func (c *Client) Team(ctx context.Context, verb, key string, req api.TeamRequest
 		return result, &TeamError{Code: "invalid_request", Status: 400}
 	}
 	if _, err := api.DecodeTeamRequest(verb, key, bytes.NewReader(body.Bytes())); err != nil {
-		return result, &TeamError{Code: "invalid_request", Status: 400}
+		status, detail := api.TeamError(err)
+		return result, &TeamError{Code: detail.Code, Status: status, Detail: detail.Message}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/teams/"+verb, &body)
 	if err != nil {
