@@ -76,7 +76,7 @@ func validRemoteOrigin(origin string) bool {
 }
 
 // RemoteHandler uses the same service router with remote authentication and
-// without MCP/proxy mounts. boundHost is the listener's actual authority,
+// without MCP/proxy mounts, except /mcp for a bound agent token (remote_mcp.go). boundHost is the listener's actual authority,
 // including its allocated port when listen_addr uses port zero.
 func (s *Server) RemoteHandler(boundHost string) http.Handler {
 	remote := s.handler(true)
@@ -101,6 +101,16 @@ func (s *Server) RemoteHandler(boundHost string) http.Handler {
 			if !allowed {
 				http.Error(w, "remote Origin refused", http.StatusForbidden)
 				return
+			}
+		}
+		// A bound agent token (a JWT) may reach the MCP gateway remotely; everything else, and every other route,
+		// takes the existing remote chain unchanged. See remote_mcp.go.
+		if r.URL.Path == remoteMCPPath {
+			if _, jwt := jwtBearer(r); jwt {
+				if gate := s.remoteMCPGate(); gate != nil {
+					gate.ServeHTTP(w, r)
+					return
+				}
 			}
 		}
 		remote.ServeHTTP(w, r)

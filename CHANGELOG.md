@@ -8,6 +8,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Serve `/mcp` on the remote listener to bound issuer agent tokens only (CW-20261016-0160 H1): a worker's agent can reach the hub's MCP
+  gateway over HTTPS (Tailscale Serve) with its session's own token. The token must verify (signature, expiry, `aud=tether`, jti/sid
+  deny-list) and its session must be live; everything else on `/mcp` and every other route behaves as before. Same saved policy,
+  fingerprint, limits and capture as local; one `identity_audit` row per remote initialize and denial counters in `/health`.
+  Supporting changes: the MCP view prepares for an issued token and follows its refreshed token (A1). See `docs/remote-mcp.md`.
 - Worker MCP over the hub's `/mcp` (CW-20261016-0160 PR B): a launch with a session agent token plants the `tether` entry as
   `tether-worker mcp-http-relay` against `<hub>/mcp` with the refreshed token file, so worker tool calls get session binding, the
   saved policy and proxy capture. The ssh `--daemon-only` entry is now an explicit, logged fallback (`mcp_ssh_fallback`, default

@@ -217,7 +217,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		transportError(w, http.StatusServiceUnavailable, "mcp_stopping")
 		return
 	}
-	if !h.authority.validate(r) {
+	// A request with server-owned remote provenance came through the remote listener, whose exact Host and Origin
+	// allow-lists already ran; the local authority (unix/loopback names) does not apply to it.
+	if !identity.IsRemote(r.Context()) && !h.authority.validate(r) {
 		transportError(w, http.StatusForbidden, "mcp_origin_refused")
 		return
 	}
