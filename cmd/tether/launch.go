@@ -78,8 +78,9 @@ var launchCmd = &cobra.Command{
 			idemKey = deriveLaunchIdempotencyKey(launchID, launchWorker, launchTorqueTasks)
 		}
 
+		taskID := launchTaskStamp(launchTorqueTasks)
 		var res api.LaunchResponse
-		if launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
+		if taskID != "" || launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Worker:          launchWorker,
 				Launch:          launchID,
@@ -92,6 +93,7 @@ var launchCmd = &cobra.Command{
 				PromptAppend:    promptAppend,
 				Injection:       injection,
 				IdempotencyKey:  idemKey,
+				TaskID:          taskID,
 
 				ReplaceIdempotency: launchReplace,
 			})
@@ -174,4 +176,15 @@ func deriveLaunchIdempotencyKey(launchID, worker string, tasks []string) string 
 	sort.Strings(ids)
 	sum := sha256.Sum256([]byte(launchID + "\x00" + worker + "\x00" + strings.Join(ids, ",")))
 	return "launch-" + hex.EncodeToString(sum[:16])
+}
+
+// launchTaskStamp is the launch-time task stamp (CW-20261012-0062a) for `--torque-task`: the
+// operator launching for exactly one Torque task names it. With several tasks there is no
+// single task to stamp, so none is sent. The daemon accepts it only from the operator
+// credential this CLI presents.
+func launchTaskStamp(tasks []string) string {
+	if len(tasks) == 1 {
+		return strings.TrimSpace(tasks[0])
+	}
+	return ""
 }

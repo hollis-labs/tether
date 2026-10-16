@@ -26,6 +26,14 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
   found (`SessionResolved`), so `tool_call_start`/`tool_call_end` attribution carries it for managed sessions and
   never for unmanaged ones. Missing is allowed; wrong is not.
 
+## Who sends it today
+
+- `tether launch --torque-task <id>` stamps that task when exactly one is given (several tasks: no single task, no stamp).
+  The CLI presents `operator.token`, so the daemon accepts it.
+- The MCP `tether_session_create` tool takes an optional `task_id`. It is honored only when the MCP server presents the
+  operator credential; an agent session gets `task_id_not_permitted`.
+- Torque's own launches wait for a Torque service principal (see the TODO in `internal/api/task_stamp.go`).
+
 ## Not yet
 
 `task_id` on `session.turn_output` (CW-20261012-0062b) and any backfill of older sessions (0062c) are separate.
