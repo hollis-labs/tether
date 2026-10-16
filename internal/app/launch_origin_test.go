@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"github.com/hollis-labs/tether/internal/launch"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -70,7 +72,10 @@ func TestLaunchCeilingBoundsByLauncherAndByOriginAndSaysWhatVouched(t *testing.T
 		"anonymous external":                {context.Background(), granted, AttributionAnonymous},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, attribution := svc.launchCeiling(tc.ctx, granted)
+			got, attribution, err := svc.launchCeiling(tc.ctx, granted)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !slices.Equal(got, tc.want) || attribution != tc.attrb {
 				t.Fatalf("got %v / %s, want %v / %s", got, attribution, tc.want, tc.attrb)
 			}
@@ -186,5 +191,70 @@ func TestWorkerPathIsNeverBroaderThanTheHubPathForTheSameOrigin(t *testing.T) {
 				t.Fatalf("hub %v and worker %v disagree about the shared scope %q for the same origin", hub, worker, common)
 			}
 		})
+	}
+}
+
+// An origin whose grant cannot be read refuses the launch; it never falls back
+// to the profile ceiling. This holds on both credential paths and in any
+// identity mode.
+func TestAnUnreadableOriginGrantRefusesTheLaunch(t *testing.T) {
+	svc, ids := ceilingService(t)
+	mintSessionWithScopes(t, svc, ids, "corrupt-origin", false, "a")
+	if _, err := svc.Store.DB().Exec(`UPDATE principals SET scopes_json='{not json' WHERE session_id='corrupt-origin'`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: "corrupt-origin"})
+	got, _, err := svc.launchCeiling(ctx, []string{"a", "b"})
+	if !errors.Is(err, ErrLaunchRefused) || got != nil {
+		t.Fatalf("corrupt origin grant: got %v, %v; want a refusal", got, err)
+	}
+	// Hub-local credential path.
+	if err = svc.Store.CreateSession(store.SessionRow{ID: "child", LaunchID: "pm", ProjectID: "tether", ProviderID: "claude", ProviderKind: "cli", State: "created"}, &launch.Plan{LaunchID: "pm", ProjectID: "tether", ProviderID: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.mintSessionCredential(ctx, "child"); !errors.Is(err, ErrLaunchRefused) {
+		t.Fatalf("hub path minted a credential for an unreadable origin: %v", err)
+	}
+	var n int
+	if err = svc.Store.DB().QueryRow(`SELECT COUNT(*) FROM principals WHERE session_id='child'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a credential exists for the refused launch: %d %v", n, err)
+	}
+	// A closed database is an error too, not a pass.
+	closed, cids := ceilingService(t)
+	mintSessionWithScopes(t, closed, cids, "o", false, "a")
+	_ = closed.Store.Close()
+	if _, _, err = closed.launchCeiling(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginResume, OriginSessionID: "o"}), []string{"a"}); !errors.Is(err, ErrLaunchRefused) {
+		t.Fatalf("closed store: %v", err)
+	}
+}
+
+// Worker path: the same refusal, and no credential is left behind.
+func TestWorkerLaunchWithAnUnreadableOriginIsRefused(t *testing.T) {
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	mintSessionWithScopes(t, r.svc, r.ids, "bad-parent", false, "a")
+	if _, err := r.db.DB().Exec(`UPDATE principals SET scopes_json='{not json' WHERE session_id='bad-parent'`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.launchAs(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: "bad-parent"}), "worker-child", "")
+	if !errors.Is(err, ErrLaunchRefused) {
+		t.Fatalf("worker launch with an unreadable origin: %v", err)
+	}
+}
+
+// An origin that never had a credential keeps the profile ceiling by design
+// (legacy parity: it predates session credentials or identity was off); the
+// result says so.
+func TestAnOriginThatNeverHadACredentialKeepsTheProfileCeilingAndSaysSo(t *testing.T) {
+	svc, _ := ceilingService(t)
+	var logs strings.Builder
+	orig := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(orig) })
+	got, attribution, err := svc.launchCeiling(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginResume, OriginSessionID: "pre-credentials"}), []string{"a", "b"})
+	if err != nil || !slices.Equal(got, []string{"a", "b"}) || attribution != AttributionInternalUnattributed {
+		t.Fatalf("got %v / %s / %v", got, attribution, err)
+	}
+	if !strings.Contains(logs.String(), "pre-credentials") {
+		t.Fatalf("no log line for the unbounded fallback: %q", logs.String())
 	}
 }

@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log"
 	"slices"
 
 	"github.com/hollis-labs/tether/internal/identity"
@@ -29,6 +32,11 @@ type InternalLaunch struct {
 	// internal_unattributed).
 	OriginSessionID string
 }
+
+// ErrLaunchRefused marks a launch the daemon refused because the authority it
+// may hand out could not be established. It is never downgraded to an
+// anonymous launch, in any identity mode.
+var ErrLaunchRefused = errors.New("launch refused")
 
 // Attribution says what vouched for a launch's scopes.
 type Attribution string
@@ -80,13 +88,28 @@ func (s *Service) LaunchInternal(ctx context.Context, sessionID string, o Intern
 //     started;
 //   - with neither, the profile ceiling stands, and the result is either
 //     internal_unattributed (the daemon launched it) or anonymous_external.
-func (s *Service) launchCeiling(ctx context.Context, granted []string) ([]string, Attribution) {
+//
+// It fails closed: if an internal launch names an origin session and that
+// session's grant cannot be read (a locked database, a malformed record), the
+// launch is refused. A transient error must never widen authority. The one
+// deliberate exception is an origin session that never had a credential at all
+// (it predates session credentials, or identity was off when it started): there
+// is no grant to bound by, so the profile ceiling stands as it does for any
+// launch with no origin, the case is logged, and it is classed
+// internal_unattributed.
+func (s *Service) launchCeiling(ctx context.Context, granted []string) ([]string, Attribution, error) {
 	scopes := narrowToLauncher(ctx, granted)
 	_, hasPrincipal := identity.FromContext(ctx)
 	origin, internal := launchOriginFrom(ctx)
 	bounded := false
 	if internal && origin.OriginSessionID != "" && s.Store != nil {
-		if held, ok, err := identity.NewStore(s.Store.DB()).SessionGrantedScopes(ctx, origin.OriginSessionID); err == nil && ok {
+		held, ok, err := identity.NewStore(s.Store.DB()).SessionGrantedScopes(ctx, origin.OriginSessionID)
+		if err != nil {
+			return nil, "", fmt.Errorf("%w: the grant of origin session %q cannot be read: %w", ErrLaunchRefused, origin.OriginSessionID, err)
+		}
+		if !ok {
+			log.Printf("launch origin session %q has no recorded credential; the profile ceiling applies (internal_unattributed)", origin.OriginSessionID)
+		} else {
 			bounded = true
 			if !slices.Contains(held, "*") {
 				var narrowed []string
@@ -101,12 +124,12 @@ func (s *Service) launchCeiling(ctx context.Context, granted []string) ([]string
 	}
 	switch {
 	case hasPrincipal:
-		return scopes, AttributionPrincipal
+		return scopes, AttributionPrincipal, nil
 	case bounded:
-		return scopes, AttributionOrigin
+		return scopes, AttributionOrigin, nil
 	case internal:
-		return scopes, AttributionInternalUnattributed
+		return scopes, AttributionInternalUnattributed, nil
 	default:
-		return scopes, AttributionAnonymous
+		return scopes, AttributionAnonymous, nil
 	}
 }
