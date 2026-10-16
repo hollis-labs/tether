@@ -16,6 +16,28 @@ const sessionTokenTTL = 7 * 24 * time.Hour
 
 var workerScopes = []string{"session.write", "message.write", "catalog.write"}
 
+// narrowToLauncher returns the part of granted that the launching principal
+// itself holds, so a launch can never hand a session more authority than its
+// launcher has. A launcher holding "*" keeps all of granted. A launch with no
+// principal in its context (anonymous or daemon-internal, which only happens
+// when identity is observe or off) has nothing to inherit from and keeps
+// granted as the catalog or profile set it; it does not widen anything, since
+// granted is itself the ceiling. Both the hub-local and the worker credential
+// paths use this, so they cannot drift apart.
+func narrowToLauncher(ctx context.Context, granted []string) []string {
+	parent, ok := identity.FromContext(ctx)
+	if !ok || slices.Contains(parent.Scopes, "*") {
+		return slices.Clone(granted)
+	}
+	var out []string
+	for _, scope := range granted {
+		if slices.Contains(parent.Scopes, scope) {
+			out = append(out, scope)
+		}
+	}
+	return out
+}
+
 func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (string, error) {
 	floor, replacement, err := s.Store.ReplacementCredentialFloor(ctx, sessionID)
 	if err != nil {
@@ -48,14 +70,7 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	}
 	if parent, ok := identity.FromContext(ctx); ok {
 		p.CreatedBy = parent.ID
-		if !slices.Contains(parent.Scopes, "*") {
-			p.Scopes = nil
-			for _, scope := range granted {
-				if slices.Contains(parent.Scopes, scope) {
-					p.Scopes = append(p.Scopes, scope)
-				}
-			}
-		}
+		p.Scopes = narrowToLauncher(ctx, granted)
 	}
 	if replacement {
 		if !slices.Contains(floor.Scopes, "*") {

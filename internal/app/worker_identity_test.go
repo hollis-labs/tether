@@ -340,3 +340,82 @@ func TestWorkerSessionCredentialRecordsTheLauncher(t *testing.T) {
 		t.Fatalf("anonymous launch: created_by %q, want empty", got)
 	}
 }
+
+func launcherWith(scopes ...string) context.Context {
+	return identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://agent/test/launcher", Kind: "agent", Scopes: scopes})
+}
+
+func (r *identityRig) storedScopes(id string) []string {
+	r.t.Helper()
+	var raw string
+	if err := r.db.DB().QueryRow(`SELECT scopes_json FROM principals WHERE kind='session' AND session_id=? AND revoked_at IS NULL`, id).Scan(&raw); err != nil {
+		r.t.Fatal(err)
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		r.t.Fatal(err)
+	}
+	return out
+}
+
+// A worker-hosted session never holds more than the principal that launched it,
+// whichever way the credential and the launch spec are read back.
+func TestWorkerSessionScopesAreNarrowedToTheLauncher(t *testing.T) {
+	defaults := launchprofile.DefaultMCPScopes
+	if len(defaults) < 2 {
+		t.Fatalf("test needs at least two default scopes, have %v", defaults)
+	}
+	one := defaults[0]
+	for name, tc := range map[string]struct {
+		ctx  context.Context
+		want []string
+	}{
+		"launcher holds one scope":       {launcherWith(one), []string{one}},
+		"launcher holds a wildcard":      {launcherWith("*"), defaults},
+		"launcher holds none of them":    {launcherWith("unrelated.scope"), nil},
+		"launcher holds a superset":      {launcherWith(append([]string{"extra.scope"}, defaults...)...), defaults},
+		"anonymous launch keeps profile": {context.Background(), defaults},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+			spec, err := r.launchAs(tc.ctx, "sess-scopes", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(spec.MCPScopes, tc.want) {
+				t.Fatalf("spec scopes %v, want %v", spec.MCPScopes, tc.want)
+			}
+			if got := r.storedScopes("sess-scopes"); !slices.Equal(got, tc.want) {
+				t.Fatalf("credential scopes %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The helper both credential paths share.
+func TestNarrowToLauncher(t *testing.T) {
+	granted := []string{"a", "b", "c"}
+	for name, tc := range map[string]struct {
+		ctx  context.Context
+		want []string
+	}{
+		"no principal": {context.Background(), granted},
+		"wildcard":     {launcherWith("*"), granted},
+		"subset":       {launcherWith("c", "a", "zzz"), []string{"a", "c"}},
+		"disjoint":     {launcherWith("zzz"), nil},
+		"empty scopes": {launcherWith(), nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := narrowToLauncher(tc.ctx, granted); !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// The input is never aliased or mutated.
+	in := []string{"a", "b"}
+	out := narrowToLauncher(context.Background(), in)
+	out[0] = "changed"
+	if in[0] != "a" {
+		t.Fatal("narrowToLauncher aliased its input")
+	}
+}
