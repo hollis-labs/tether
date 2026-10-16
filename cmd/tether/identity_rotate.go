@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
@@ -45,7 +46,16 @@ func identityRotateOperatorCmd() *cobra.Command {
 				return fmt.Errorf("state_db not configured in catalog")
 			}
 			tokenPath := filepath.Join(filepath.Dir(root), "run", "operator.token")
-			return runRotateOperator(cmd.Context(), cmd.OutOrStdout(), root, dbPath, tokenPath, by, evidence)
+			daemonCfg, derr := daemonConfigFromCatalog(cat)
+			var deny func(context.Context, string) (int, error)
+			if derr == nil && daemonCfg.ListenAddr != "" {
+				addr := daemonCfg.ListenAddr
+				deny = func(ctx context.Context, tokenPath string) (int, error) {
+					c := client.New(addr, client.WithTokenFile(tokenPath))
+					return c.DenyIssuedBy(ctx, identity.OperatorID)
+				}
+			}
+			return runRotateOperator(cmd.Context(), cmd.OutOrStdout(), root, dbPath, tokenPath, by, evidence, deny)
 		},
 	}
 	cmd.Flags().StringVar(&by, "by", "", "label recorded as who rotated (default: OS user; not authenticated)")
@@ -53,7 +63,10 @@ func identityRotateOperatorCmd() *cobra.Command {
 	return cmd
 }
 
-func runRotateOperator(ctx context.Context, w io.Writer, catalogRoot, dbPath, tokenPath, by, evidence string) error {
+// runRotateOperator rotates the credential, audits it, and then asks the
+// running daemon (deny, authenticated with the NEW credential) to deny the
+// tokens the old credential had already issued. A nil deny skips that step.
+func runRotateOperator(ctx context.Context, w io.Writer, catalogRoot, dbPath, tokenPath, by, evidence string, deny func(context.Context, string) (int, error)) error {
 	if by == "" {
 		if u, err := user.Current(); err == nil {
 			by = u.Username
@@ -91,5 +104,17 @@ func runRotateOperator(ctx context.Context, w io.Writer, catalogRoot, dbPath, to
 	}
 	fmt.Fprintf(w, "operator credential rotated: revoked %d, new %s (%s); wrote %s (0600)\n", res.Revoked, res.NewHashPrefix, state, tokenPath)
 	fmt.Fprintln(w, "a running daemon already enforces the new credential; restart long-lived readers and replace other copies of the old one")
+	if deny == nil {
+		return nil
+	}
+	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	n, derr := deny(dctx, tokenPath)
+	switch {
+	case derr == nil:
+		fmt.Fprintf(w, "denied %d issued token(s) the old credential had minted (they would otherwise live until expiry, up to 60 minutes)\n", n)
+	default:
+		fmt.Fprintf(w, "WARNING: could not deny tokens already issued from the old credential (%v); they stay valid until expiry (up to 60 minutes). With the daemon running, repeat: POST /auth/denylist {\"kind\":\"par\",\"value\":\"%s\"} with the new operator token over the local socket, or deny their jti individually.\n", derr, identity.OperatorID)
+	}
 	return nil
 }

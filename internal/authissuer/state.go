@@ -37,9 +37,19 @@ type SessionGrant struct {
 	Expires  time.Time           `json:"expires"`
 }
 
+// mintedEntry remembers an unexpired token minted from a parent credential
+// that can be rotated (the operator), so that rotating it can deny the tokens
+// it already issued. It holds ids only, never a token.
+type mintedEntry struct {
+	JTI string    `json:"jti"`
+	Par string    `json:"par"`
+	Exp time.Time `json:"exp"`
+}
+
 type stateDoc struct {
 	Deny   []denyEntry             `json:"deny"`
 	Grants map[string]SessionGrant `json:"grants"`
+	Minted []mintedEntry           `json:"minted,omitempty"`
 }
 
 // State is the issuer's small persisted state: the deny-list and the session
@@ -98,6 +108,15 @@ func (s *State) pruneLocked() bool {
 			changed = true
 		}
 	}
+	keptMinted := s.doc.Minted[:0]
+	for _, m := range s.doc.Minted {
+		if !now.Before(m.Exp) {
+			changed = true
+			continue
+		}
+		keptMinted = append(keptMinted, m)
+	}
+	s.doc.Minted = keptMinted
 	return changed
 }
 
@@ -205,4 +224,54 @@ func (s *State) DropGrant(sid string) error {
 	}
 	delete(s.doc.Grants, sid)
 	return s.saveLocked()
+}
+
+// TrackMint remembers a token minted from a rotatable parent until it expires.
+func (s *State) TrackMint(jti, par string, exp time.Time) error {
+	if jti == "" || par == "" {
+		return errors.New("authissuer: invalid minted entry")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	s.doc.Minted = append(s.doc.Minted, mintedEntry{JTI: jti, Par: par, Exp: exp.UTC()})
+	return s.saveLocked()
+}
+
+// DenyMintedBy denies every unexpired token still tracked as minted from par
+// (by jti, until the token's own expiry) and stops tracking them. It returns
+// how many tokens were denied. Run it after rotating the parent credential:
+// issued tokens are stateless JWTs and would otherwise stay valid until exp.
+func (s *State) DenyMintedBy(par string) (int, error) {
+	if par == "" {
+		return 0, errors.New("authissuer: parent required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	n := 0
+	kept := s.doc.Minted[:0]
+	for _, m := range s.doc.Minted {
+		if m.Par != par {
+			kept = append(kept, m)
+			continue
+		}
+		n++
+		dup := false
+		for _, e := range s.doc.Deny {
+			if e.Kind == DenyJTI && e.Value == m.JTI {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			s.doc.Deny = append(s.doc.Deny, denyEntry{DenyJTI, m.JTI, m.Exp})
+		}
+	}
+	s.doc.Minted = kept
+	if n == 0 {
+		return 0, nil
+	}
+	s.rebuildLocked()
+	return n, s.saveLocked()
 }
