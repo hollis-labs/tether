@@ -13,7 +13,7 @@ func (b *memBus) SubscribeLive(ctx context.Context, f Filter) (<-chan Event, fun
 		return nil, nil, err
 	}
 	b.nextID++
-	s := &subscriber{id: b.nextID, filter: f, live: make(chan Event, b.subBuffer), out: make(chan Event, b.subBuffer), done: make(chan struct{}), maxConsec: b.maxConsecDrops}
+	s := &subscriber{id: b.nextID, filter: f, ctx: context.WithoutCancel(ctx), live: make(chan Event, b.subBuffer), out: make(chan Event, b.subBuffer), done: make(chan struct{}), maxConsec: b.maxConsecDrops}
 	b.subs[s.id] = s
 	b.unlock()
 	go b.runSubscriber(s)

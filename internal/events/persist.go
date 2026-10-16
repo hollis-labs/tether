@@ -29,3 +29,36 @@ type ContextPersister interface {
 	InsertEventContext(context.Context, Scope, string, string, string) (int64, time.Time, error)
 	EventsSinceContext(context.Context, int64) ([]Event, error)
 }
+
+// PagedPersister bounds replay. The bus pages history outside its publish lock
+// instead of loading everything since a sequence into memory, and uses the
+// bounds to tell a subscriber when history it asked for was trimmed. Tether's
+// SQL store implements it; embedders without it keep the one-shot EventsSince.
+type PagedPersister interface {
+	// StreamBoundsContext returns the oldest and newest stored sequence
+	// (0, 0 when the log is empty).
+	StreamBoundsContext(ctx context.Context) (earliest, head int64, err error)
+	// EventsPageContext returns up to limit events with afterSeq < Seq <= upToSeq
+	// that match f's Scopes, SessionID and Kinds, in ascending Seq order.
+	EventsPageContext(ctx context.Context, f Filter, afterSeq, upToSeq int64, limit int) ([]Event, error)
+}
+
+// GapPayload is the JSON payload of a KindStreamGap event.
+type GapPayload struct {
+	// Reason is overrun (live events were dropped for a slow consumer),
+	// trimmed (requested history no longer exists), evicted (the subscriber
+	// made no progress and was closed) or replay_error.
+	Reason string `json:"reason"`
+	// Dropped counts live events dropped since the previous signal.
+	Dropped int64 `json:"dropped,omitempty"`
+	// LastSeq is the last sequence the subscriber processed; resume with
+	// since_seq=LastSeq.
+	LastSeq int64 `json:"last_seq"`
+	// EarliestAvailable and HighWater bound what the log holds (paged
+	// persisters only).
+	EarliestAvailable int64 `json:"earliest_available,omitempty"`
+	HighWater         int64 `json:"high_water,omitempty"`
+	// Recovered says the bus re-read the dropped events from the durable log and
+	// delivers them next, so nothing was lost.
+	Recovered bool `json:"recovered,omitempty"`
+}

@@ -4,6 +4,13 @@ package events
 // depend on stable kind strings. New kinds should be documented in
 // docs/api/README.md alongside their payload schema.
 const (
+	// KindStreamGap is a synthetic signal a Bus delivers to a subscriber in place
+	// of silent loss: it is never persisted, always bypasses the subscriber's
+	// Filter, and carries Seq = the last sequence the subscriber processed (so an
+	// SSE id never moves). Payload (see GapPayload): reason, dropped, last_seq,
+	// earliest_available, high_water, recovered.
+	KindStreamGap = "stream.gap"
+
 	// KindSessionTurnRouted is the atomic durable audit of channel attachment.
 	KindSessionTurnRouted = "session.turn_routed"
 

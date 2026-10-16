@@ -8,6 +8,17 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- `events.Bus.Subscribe` replay is now bounded and a slow consumer is told instead of
+  silently lost (CW-20261016-0146, P3a): with the SQL store the replay is read in
+  pages (default 512, filters pushed into SQL) by the subscriber's own goroutine, so a
+  `since_seq=0` subscribe no longer loads the whole table into memory while holding the
+  publish lock. A subscriber that falls behind the live buffer is re-fed from the durable
+  log and receives a synthetic `stream.gap` event (reason `overrun`, `recovered: true`,
+  dropped count, bounds); a subscriber whose requested history was trimmed gets
+  `stream.gap` reason `trimmed` with `earliest_available`/`high_water`; an evicted one
+  gets a final `stream.gap` reason `evicted` before the channel closes. `stream.gap` is
+  never persisted, bypasses the subscriber's filter, and carries `seq` = the last
+  sequence processed (so an SSE `id:` never moves). Consumers must tolerate the new kind.
 - Record an identity audit row for every session-bound token mint (CW-20261016-0089):
   `POST /auth/token` with `session_id` writes `identity_audit` with the minting
   parent (`principal_id`), `session_id`, scopes (`required_scope`) and
