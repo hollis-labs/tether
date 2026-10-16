@@ -258,4 +258,25 @@ func TestTaskStampThroughRealOperatorToken(t *testing.T) {
 	if got := post("/sessions", `{"launch":"l1","task_id":"CW-20261016-0155"}`, false); got != http.StatusUnauthorized {
 		t.Fatalf("anonymous launch: %d, want 401 (it never reaches taskStamp)", got)
 	}
+
+	// An agent's real session token through the same enforcing middleware is refused, and nothing reaches the service.
+	if err := db.CreateSession(store.SessionRow{ID: "agent-s", LaunchID: "l", ProjectID: "p", ProviderID: "x", ProviderKind: "cli", Workspace: "/w", State: "running"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	agentToken, err := ids.Mint(context.Background(), identity.Principal{ID: "session:agent-s", Kind: "session", SessionID: "agent-s", Scopes: []string{"*"}, Addresses: []string{"session:agent-s"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(svc.createInputs)
+	req, _ := http.NewRequest("POST", srv.URL+"/sessions", strings.NewReader(`{"launch":"l1","task_id":"CW-20261016-0155"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || len(svc.createInputs) != before {
+		t.Fatalf("agent session token: %d (service inputs %d -> %d), want 403 and nothing created", resp.StatusCode, before, len(svc.createInputs))
+	}
 }
