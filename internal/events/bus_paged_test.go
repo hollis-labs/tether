@@ -180,6 +180,10 @@ func TestBus_PagedSubscriber_OverrunIsSignaledAndRecovered(t *testing.T) {
 	if first := readN(t, ch, 1)[0]; first.Seq != 1 {
 		t.Fatalf("first event seq %d", first.Seq)
 	}
+	// Receiving the first event does not prove the subscriber is live: a worker that started late delivers it from its
+	// initial catch-up read, and drops that happen while a catch-up runs are covered by that read and deliberately not
+	// signaled. Only once the catch-up is over does a stalled consumer overrun the live buffer and get a gap frame.
+	waitNotCatchingUp(t, bus)
 	for i := 0; i < 60; i++ {
 		if err := bus.Publish(ctx, Event{Scope: ScopeSession, SessionID: "s1", Kind: "k"}); err != nil {
 			t.Fatal(err)
@@ -571,5 +575,30 @@ func TestBus_TrimDuringReplayIsAnnounced(t *testing.T) {
 	}
 	if !sawGap {
 		t.Fatal("a trim during replay was not announced")
+	}
+}
+
+// waitNotCatchingUp blocks until no subscriber of bus is in a catch-up read. It polls an atomic flag set and cleared by the
+// worker itself, so it waits for that state, not for a guessed duration; the ceiling only turns a hang into a failure.
+func waitNotCatchingUp(t *testing.T, bus Bus) {
+	t.Helper()
+	mb := bus.(*memBus)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mb.mu <- struct{}{}
+		busy := false
+		for _, s := range mb.subs {
+			if s.catching.Load() {
+				busy = true
+			}
+		}
+		mb.unlock()
+		if !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the subscriber never finished its catch-up")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
