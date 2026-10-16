@@ -29,7 +29,8 @@ func TestClaudeHookMapping(t *testing.T) {
 		"Notification-idle":        K(runtimeevents.KindSessionIdle),
 		"Notification-other":       nil,
 		"SubagentStart":            K(runtimeevents.KindAgentSubagentSpawn),
-		"SubagentStop":             K(runtimeevents.KindTurnCompleted),
+		"SubagentStop":             K(KindAgentSubagentStop),
+		"TeammateIdle":             nil,
 		"Stop":                     K(runtimeevents.KindTurnCompleted, runtimeevents.KindSessionIdle),
 		"SessionEnd":               K(runtimeevents.KindProcessExited),
 		"Unknown":                  nil,
@@ -102,14 +103,24 @@ func TestClaudeHookRefusesPayloadsThatAreNotHooks(t *testing.T) {
 	}
 }
 
-func TestSubagentStopIsLabeledAndTheLabelSurvivesRecording(t *testing.T) {
+func TestSubagentStopIsTheRuledKindWithItsRequiredPayload(t *testing.T) {
 	raw, _ := os.ReadFile(filepath.Join("testdata", "claude", "SubagentStop.json"))
 	obs, _ := ClaudeHook(raw)
-	if len(obs) != 1 || len(obs[0].Labels) != 1 || obs[0].Labels[0] != "subagent" {
+	if len(obs) != 1 || obs[0].Kind != "agent.subagent_stop" {
 		t.Fatalf("SubagentStop = %+v", obs)
 	}
+	if got, _ := json.Marshal(obs[0].Payload); string(got) != `{"agent_type":"Explore","outcome":"completed","subagent_id":"a1"}` {
+		t.Fatalf("payload = %s", got)
+	}
+	// It records as a valid event, and the adapter can set ParentID to the spawn event.
+	obs[0].ParentID = "evt_spawn"
 	ev, err := newRecorder(t, t.TempDir(), "sess-sub").Record(context.Background(), obs[0])
-	if err != nil || ev.Class == nil || len(ev.Class.Labels) != 1 || ev.Class.Labels[0] != "subagent" {
+	if err != nil || ev.ParentID != "evt_spawn" {
 		t.Fatalf("recorded = %+v err=%v", ev, err)
+	}
+	start, _ := os.ReadFile(filepath.Join("testdata", "claude", "SubagentStart.json"))
+	spawn, _ := ClaudeHook(start)
+	if got, _ := json.Marshal(spawn[0].Payload); string(got) != `{"agent_type":"Explore","subagent_id":"a1"}` {
+		t.Fatalf("spawn payload = %s", got)
 	}
 }

@@ -17,6 +17,9 @@ import (
 // records the tool name, the tool-use id, sizes, and the ids that join an event to its hook peers; the vendor's transcript
 // path remains the place to read content, under the user's own file permissions.
 //
+// TeammateIdle is not mapped here: it is a session.idle on the teammate's own Tether session, which only the adapter that can
+// resolve team membership can name (never invent one; count the ones that do not resolve).
+//
 // Tier is Exact for every mapping: the hook fired because the thing happened. The stateful joins (a tool result's ParentID,
 // a turn's id) need the earlier event's id and belong to the adapter that holds the session, not to this function.
 func ClaudeHook(payload []byte) ([]Observation, error) {
@@ -59,12 +62,12 @@ func ClaudeHook(payload []byte) ([]Observation, error) {
 		}
 		return nil, nil
 	case "SubagentStart":
-		return []Observation{hook(runtimeevents.KindAgentSubagentSpawn, map[string]any{"agent_id": p.AgentID, "agent_type": p.AgentType})}, nil
+		return []Observation{hook(runtimeevents.KindAgentSubagentSpawn, map[string]any{"subagent_id": p.AgentID, "agent_type": p.AgentType})}, nil
 	case "SubagentStop":
-		// No stable catalog kind says a subagent ended; a turn.completed labeled "subagent" carries it until one exists.
-		o := hook(runtimeevents.KindTurnCompleted, map[string]any{"agent_id": p.AgentID, "agent_type": p.AgentType})
-		o.Labels = []string{"subagent"}
-		return []Observation{o}, nil
+		// The hook fires when the subagent finishes; it does not say how, so the outcome is "completed" (a failed or
+		// canceled ending needs a vendor signal this hook does not carry). The adapter that holds the session sets ParentID to
+		// the matching agent.subagent_spawn event.
+		return []Observation{hook(KindAgentSubagentStop, map[string]any{"subagent_id": p.AgentID, "outcome": "completed", "agent_type": p.AgentType})}, nil
 	case "Stop":
 		return []Observation{hook(runtimeevents.KindTurnCompleted, nil), hook(runtimeevents.KindSessionIdle, nil)}, nil
 	case "SessionEnd":
@@ -72,6 +75,11 @@ func ClaudeHook(payload []byte) ([]Observation, error) {
 	}
 	return nil, nil
 }
+
+// KindAgentSubagentStop says a subagent ended (architect ruling agent_adapter_event_kinds_2026_10_16). Payload: subagent_id and
+// outcome (values as in the ruling) required, agent_type, parent_tool_use_id and duration_ms optional; ParentID is the
+// matching agent.subagent_spawn event. It is registered in harness/core v0.12.0; until Tether depends on that, it is declared here.
+const KindAgentSubagentStop runtimeevents.EventKind = "agent.subagent_stop"
 
 // ClaudeSessionID is the vendor session id a hook payload carries, for the adapter that maps it to a Tether session.
 func ClaudeSessionID(payload []byte) string {
