@@ -123,11 +123,6 @@ func TestRowsCachesAndExpires(t *testing.T) {
 	if src.calls["s9"] != 2 {
 		t.Fatalf("%d lookups after the TTL, want 2", src.calls["s9"])
 	}
-	r.Invalidate("s9")
-	stamp()
-	if src.calls["s9"] != 3 {
-		t.Fatalf("%d lookups after Invalidate, want 3", src.calls["s9"])
-	}
 }
 
 func TestRowsErrorIsReportedNotCached(t *testing.T) {

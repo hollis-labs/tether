@@ -47,10 +47,14 @@ type rowEntry struct {
 // so a busy session costs one lookup per TTL, not one per event; a row's
 // worker, project, launch and logical agent do not change after the launch, and
 // workstream and task are bound at creation or by an explicit attach, so a few
-// seconds of staleness is the bound.
+// seconds of staleness (the TTL) is the bound; there is no explicit
+// invalidation.
 //
 // It is not TxSafe: a miss reads the database, and PublishTx runs inside a
-// caller's transaction that holds the only connection.
+// caller's transaction that holds the only connection. So an event published
+// with PublishTx never gets these dimensions from this stage, and a blank
+// worker_id on such an event does NOT mean hub-local; only a blank worker_id on
+// an event that went through Publish does.
 type Rows struct {
 	src     SessionSource
 	ttl     time.Duration
@@ -70,13 +74,6 @@ func NewRows(src SessionSource, ttl time.Duration) *Rows {
 		ttl = DefaultRowTTL
 	}
 	return &Rows{src: src, ttl: ttl, missTTL: min(ttl, DefaultMissTTL), max: defaultRowCacheMax, now: time.Now, cache: map[string]rowEntry{}}
-}
-
-// Invalidate drops one session from the cache (after an explicit attach).
-func (r *Rows) Invalidate(id string) {
-	r.mu.Lock()
-	delete(r.cache, id)
-	r.mu.Unlock()
 }
 
 // Stamp fills empty dimensions from the event's own session row. A caller
