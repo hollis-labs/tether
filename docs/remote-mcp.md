@@ -19,6 +19,11 @@ remote listener stays loopback-only behind Tailscale Serve, with `--allowed-host
 
 `/p/` is not served remotely. There is no fallback to the device-credential chain for `/mcp`.
 
+The gate matches exactly the path `/mcp` and the MCP methods POST, GET and DELETE, and does not require the
+`Tether-Protocol` header: that header is a version gate for the Tether API, not authentication, and MCP clients negotiate
+their own version through `initialize` and `MCP-Protocol-Version`. Any other path (`/mcp/anything`, `/mcp/`) and any other
+method take the ordinary remote chain and still need the header.
+
 ## Same policy as local
 
 The gateway applies the session's saved MCP policy, the authority fingerprint (an issued token pins its claims, not the

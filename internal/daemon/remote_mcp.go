@@ -93,6 +93,11 @@ func (s *Server) RemoteMCPDenials() map[string]uint64 {
 	return out
 }
 
+// mcpMethod reports the methods streamable-HTTP MCP uses. Anything else on /mcp is not for the gate.
+func mcpMethod(m string) bool {
+	return m == http.MethodPost || m == http.MethodGet || m == http.MethodDelete
+}
+
 // jwtBearer returns the token when r carries exactly one Authorization: Bearer header holding a JWT-shaped value
 // (three dot-separated segments). Anything else is not for this gate.
 func jwtBearer(r *http.Request) (string, bool) {

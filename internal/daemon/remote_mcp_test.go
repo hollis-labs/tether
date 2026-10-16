@@ -200,3 +200,56 @@ func TestRemoteMCPAuditAndDenialCounters(t *testing.T) {
 		t.Fatalf("remote initialize audit rows = %d, want exactly 1", n)
 	}
 }
+
+// The Tether-Protocol exemption is exactly POST/GET/DELETE on exactly /mcp, for a bound agent token. Anything else still
+// takes the ordinary remote chain and still needs the header (architect ask on #392).
+func TestRemoteMCPProtocolExemptionIsExact(t *testing.T) {
+	g := newRemoteMCPRig(t)
+	const host = "localhost:9000"
+	live := g.agentToken(t, "s-live")
+	expires := time.Now().Add(time.Hour)
+	device, err := g.s.Identity.Mint(context.Background(), identity.Principal{ID: "remote-reader", Kind: "device", Scopes: []string{"read"}, ExpiresAt: &expires})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(method, path, token string, header bool) int {
+		r := httptest.NewRequest(method, "http://"+host+path, strings.NewReader(`{}`))
+		r.Header.Set("Authorization", "Bearer "+token)
+		if header {
+			r.Header.Set(environment.ProtocolHeader, "1")
+		}
+		w := httptest.NewRecorder()
+		g.s.RemoteHandler("127.0.0.1:7331").ServeHTTP(w, r)
+		return w.Code
+	}
+	// The gate serves exactly the MCP methods on exactly /mcp, with no protocol header.
+	for _, method := range []string{http.MethodPost, http.MethodGet, http.MethodDelete} {
+		before := g.reached.Load()
+		if code := send(method, "/mcp", live, false); code != 202 || g.reached.Load() != before+1 {
+			t.Errorf("%s /mcp without the header: %d (reached %d)", method, code, g.reached.Load()-before)
+		}
+	}
+	// Other methods on /mcp are not the gate's: they take the ordinary chain and never reach the gateway.
+	before := g.reached.Load()
+	for _, method := range []string{http.MethodPut, http.MethodPatch, http.MethodHead, http.MethodOptions} {
+		if code := send(method, "/mcp", live, false); code != 401 {
+			t.Errorf("%s /mcp: %d, want the ordinary chain's 401", method, code)
+		}
+	}
+	if g.reached.Load() != before {
+		t.Error("a non-MCP method reached the gateway")
+	}
+	// Any other path under /mcp still needs the header: a valid device credential gets the protocol error without it
+	// and the route's 404 with it. The gate is not involved for either.
+	for _, path := range []string{"/mcp/anything", "/mcp/", "/mcpx"} {
+		if code := send(http.MethodPost, path, device, false); code != 409 {
+			t.Errorf("%s without the header: %d, want 409 protocol_mismatch", path, code)
+		}
+		if code := send(http.MethodPost, path, device, true); code != 404 {
+			t.Errorf("%s with the header: %d, want 404", path, code)
+		}
+		if code := send(http.MethodPost, path, live, false); code == 202 {
+			t.Errorf("%s reached the gateway with an agent token", path)
+		}
+	}
+}

@@ -105,7 +105,7 @@ func (s *Server) RemoteHandler(boundHost string) http.Handler {
 		}
 		// A bound agent token (a JWT) may reach the MCP gateway remotely; everything else, and every other route,
 		// takes the existing remote chain unchanged. See remote_mcp.go.
-		if r.URL.Path == remoteMCPPath {
+		if r.URL.Path == remoteMCPPath && mcpMethod(r.Method) {
 			if _, jwt := jwtBearer(r); jwt {
 				if gate := s.remoteMCPGate(); gate != nil {
 					gate.ServeHTTP(w, r)
