@@ -36,6 +36,8 @@ type sessionTurnOutput struct {
 	lastActivity             time.Time
 	runtimeOrigins           map[string]*outputEventOrigin
 	runtimeOriginOrder       []string
+	runtimePendingFloor      *outputEventOrigin
+	runtimeIncomingOrigin    *outputEventOrigin
 	submissionGate           sync.Mutex
 	accepted                 bool
 	submissions              int
@@ -88,6 +90,14 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 		out.ensureTurn()
 		out.noteTurnActivity()
 		out.reducerTurnID = out.turnID
+		if out.runtimePendingFloor != nil {
+			origin := outputEventOrigin{}
+			if out.runtimeIncomingOrigin != nil {
+				origin = *out.runtimeIncomingOrigin
+			}
+			origin.Envelope.TurnID = out.turnID
+			out.rememberRuntimeOrigin(out.turnID, &origin)
+		}
 		out.accepted = true
 		return out.turnID
 	}})
@@ -162,29 +172,24 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		if ev.TurnID != "" && (o.reducerTurnID == "" || ev.Kind == runtimeevents.KindTurnStarted || ev.TurnID == o.reducerTurnID) {
 			o.bindTurn(ev.TurnID)
 		}
-		originID := ev.TurnID
-		if originID == "" {
-			if n := len(o.runtimeOriginOrder); n > 0 {
-				originID = o.runtimeOriginOrder[n-1]
-			} else {
-				originID = o.reducerTurnID
-			}
-			if originID == "" {
-				o.ensureTurn()
-				originID = o.turnID
-			}
+		if ev.TurnID == "" {
+			// The reducer owns untagged-frame attribution. A floor cannot be
+			// guessed from our submission marker or a stale origin entry.
+			o.carryRuntimeFloor(origin)
+		} else {
+			o.rememberRuntimeOrigin(ev.TurnID, origin)
 		}
-		if o.runtimeOrigins == nil {
-			o.runtimeOrigins = make(map[string]*outputEventOrigin)
-		}
-		if _, exists := o.runtimeOrigins[originID]; !exists {
-			o.runtimeOriginOrder = append(o.runtimeOriginOrder, originID)
-		}
-		o.runtimeOrigins[originID] = combineOutputOrigin(o.runtimeOrigins[originID], origin)
 	default:
 		// Process/session telemetry does not open a turn.
 	}
-	if result, ok := o.reducer.Observe(ev); ok {
+	o.runtimeIncomingOrigin = origin
+	result, reduced := o.reducer.Observe(ev)
+	o.runtimeIncomingOrigin = nil
+	if reduced {
+		if ev.TurnID == "" {
+			origin.Envelope.TurnID = result.TurnID
+			o.rememberRuntimeOrigin(result.TurnID, origin)
+		}
 		o.publish(result)
 		o.completeTurn(result, false)
 	} else if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
@@ -209,8 +214,9 @@ func (o *sessionTurnOutput) flush() {
 	}
 	// A process can end before its first reduced event.
 	o.settleTurn()
-	o.runtimeOrigins = nil
-	o.runtimeOriginOrder = nil
+	if len(o.runtimeOrigins) == 0 {
+		o.runtimePendingFloor = nil
+	}
 	// The session is gone: queued replies hand off or become undeliverable.
 	o.service.notifyReplyIdle(o.row.ID)
 }

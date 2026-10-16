@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -294,4 +295,125 @@ func TestDerivedOverlappingTurnsKeepTheirOwnFloors(t *testing.T) {
 		}
 	}
 
+}
+
+type rejectedDerivedOutputBus struct{ events.Bus }
+
+func (b rejectedDerivedOutputBus) Publish(ctx context.Context, e events.Event) error {
+	if e.Kind == events.KindSessionTurnOutput {
+		return errors.New("injected output failure")
+	}
+	return b.Bus.Publish(ctx, e)
+}
+
+func TestDerivedUntaggedSecretDoesNotUseStaleOrigin(t *testing.T) {
+	for _, routed := range []bool{false, true} {
+		for _, failEvent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("routed=%t/retry=%t", routed, failEvent), func(t *testing.T) {
+				var route *launchprofile.Route
+				if routed {
+					route = &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}
+				}
+				svc, output := outputHarness(t, route)
+				if failEvent {
+					svc.Bus = rejectedDerivedOutputBus{svc.Bus}
+				}
+				emit := func(turn string, kind runtimeevents.EventKind, class, text string) {
+					ev := nativeOriginExample()
+					ev.TurnID = turn
+					ev.Kind = kind
+					ev.Class = &runtimeevents.Class{Sensitivity: class, PII: class == "secret"}
+					ev.Payload = nil
+					if text != "" {
+						ev.Payload, _ = json.Marshal(map[string]string{"content": text, "phase": "final"})
+					}
+					output.observeRuntime(ev)
+				}
+				emit("", runtimeevents.KindTurnStarted, "public", "")
+				if len(output.runtimeOrigins) != 0 {
+					t.Fatal("untagged start invented origin identity")
+				}
+				emit("T1", runtimeevents.KindAgentDelta, "public", "ok")
+				emit("T1", runtimeevents.KindTurnCompleted, "", "")
+				emit("", runtimeevents.KindAgentDelta, "secret", "hidden-untagged-marker")
+				emit("", runtimeevents.KindTurnCompleted, "", "")
+				svc.stopOutputRetries()
+				rows, err := svc.Store.EventsSince(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				withheld := false
+				for _, e := range rows {
+					if strings.Contains(e.PayloadJSON, "hidden-untagged-marker") {
+						t.Fatal("untagged secret reached event")
+					}
+					if e.Kind != events.KindSessionTurnOutput {
+						continue
+					}
+					var payload events.TurnOutputEvent
+					if err := json.Unmarshal([]byte(e.PayloadJSON), &payload); err != nil {
+						t.Fatal(err)
+					}
+					if payload.Reason == "secret_withheld" {
+						withheld = true
+						if !e.Envelope.Class.PII {
+							t.Fatal("untagged PII floor lost")
+						}
+						if payload.MessageID != "" {
+							staged, err := svc.Store.StagedTurnOutput(context.Background(), payload.MessageID)
+							if err != nil || strings.Contains(string(staged.Payload), "hidden-untagged-marker") {
+								t.Fatal("untagged secret reached stage", err)
+							}
+						}
+					}
+				}
+				ids, err := svc.Store.PendingTurnOutputRetries("", 128)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, id := range ids {
+					raw, err := svc.Store.ReadTurnOutputRetry(id)
+					if err != nil || strings.Contains(string(raw), "hidden-untagged-marker") {
+						t.Fatal("untagged secret reached journal", err)
+					}
+					if strings.Contains(string(raw), "secret_withheld") {
+						withheld = true
+					}
+				}
+				if !withheld {
+					t.Fatal("untagged secret was not withheld")
+				}
+			})
+		}
+	}
+}
+
+func TestDerivedOriginEvictionCarriesFloor(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	for i := 0; i < 70; i++ {
+		ev := nativeOriginExample()
+		ev.TurnID = fmt.Sprintf("turn-%d", i)
+		ev.Kind = runtimeevents.KindTurnStarted
+		ev.Class = &runtimeevents.Class{Sensitivity: "public"}
+		if i == 0 {
+			ev.Class = &runtimeevents.Class{Sensitivity: "secret", PII: true}
+		}
+		output.observeRuntime(ev)
+	}
+	if len(output.runtimeOrigins) > 64 || len(output.runtimeOriginOrder) > 64 {
+		t.Fatal("origin tracking is unbounded")
+	}
+	ev := nativeOriginExample()
+	ev.TurnID = "turn-69"
+	ev.Kind = runtimeevents.KindAgentDelta
+	ev.Class = nil
+	ev.Payload = json.RawMessage(`{"content":"hidden-eviction-marker","phase":"final"}`)
+	output.observeRuntime(ev)
+	ev.Kind = runtimeevents.KindTurnCompleted
+	ev.Payload = nil
+	output.observeRuntime(ev)
+	payloads := outputEvents(t, svc)
+	if len(payloads) != 1 || payloads[0].Reason != "secret_withheld" || payloads[0].Text != "" {
+		t.Fatalf("eviction discarded conservative floor: %+v", payloads)
+	}
 }

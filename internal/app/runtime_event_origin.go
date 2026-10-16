@@ -100,3 +100,47 @@ func sensitivityRank(value string) int {
 		return 4
 	}
 }
+
+// withOutputFloor copies only classification floors, never attribution from an
+// ambiguous or evicted turn. Callers retain their own causal metadata.
+func withOutputFloor(origin, floor *outputEventOrigin) *outputEventOrigin {
+	if floor == nil {
+		return origin
+	}
+	combined := outputEventOrigin{}
+	if origin != nil {
+		combined = *origin
+	}
+	return combineOutputOrigin(floor, &combined)
+}
+
+// Untagged input can belong to any still-open reducer turn. Preserve its floor
+// on every retained turn and on the next new turn, without inventing an ID.
+func (o *sessionTurnOutput) carryRuntimeFloor(origin *outputEventOrigin) {
+	o.runtimePendingFloor = withOutputFloor(o.runtimePendingFloor, origin)
+	for id, existing := range o.runtimeOrigins {
+		o.runtimeOrigins[id] = withOutputFloor(existing, origin)
+	}
+}
+
+func (o *sessionTurnOutput) rememberRuntimeOrigin(id string, origin *outputEventOrigin) {
+	if o.runtimeOrigins == nil {
+		o.runtimeOrigins = make(map[string]*outputEventOrigin)
+	}
+	previous, exists := o.runtimeOrigins[id]
+	if !exists {
+		origin = withOutputFloor(origin, o.runtimePendingFloor)
+		o.runtimePendingFloor = nil
+		o.runtimeOriginOrder = append(o.runtimeOriginOrder, id)
+	}
+	o.runtimeOrigins[id] = combineOutputOrigin(previous, origin)
+	// Match the reducer's bounded open-turn window. Lost metadata must never
+	// weaken classification: carry evicted floors to retained and future turns.
+	for len(o.runtimeOriginOrder) > 64 {
+		oldest := o.runtimeOriginOrder[0]
+		o.runtimeOriginOrder = o.runtimeOriginOrder[1:]
+		floor := o.runtimeOrigins[oldest]
+		delete(o.runtimeOrigins, oldest)
+		o.carryRuntimeFloor(floor)
+	}
+}

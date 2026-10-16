@@ -159,3 +159,9 @@ the retained excerpt; it cannot reconstruct the full body size or authenticate
 a later full-body receipt. Duplicate-producer detection lasts while its journal
 or published event evidence is retained; it is not a permanent identity ledger
 after both have been purged.
+
+Untagged native inputs cannot safely name one reducer turn. Their sensitivity
+and PII floors apply to every open origin and the next turn; an untagged
+TurnStarted creates no origin identity. Tracking is bounded to 64 origins.
+Eviction carries classification floors forward, so ambiguity can withhold more
+output but never silently downgrade it.
