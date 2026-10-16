@@ -138,6 +138,10 @@ func TestPlantHubMCPFallsBackToSSHOnlyWhenEnabledAndLogsIt(t *testing.T) {
 // the path the planted entry names, and the entry runs the HTTP bridge. (The shim host runs in-process.)
 func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 	fakeClaudeSleeping(t)
+	providerPath, err := exec.LookPath("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
 	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/auth/token" {
 			http.NotFound(w, r)
@@ -147,9 +151,8 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 	}))
 	t.Cleanup(hub.Close)
 	root := lingeringTempDir(t)
-	if err := os.WriteFile(filepath.Join(root, "hub-mcp.json"), []byte(plantHubMCPFile), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// A freshly enrolled worker has no imported SSH template. Its local
+	// command declaration also wins over a catalog executable from another host.
 	deviceFile := filepath.Join(root, "device.token")
 	device, err := identity.NewToken()
 	if err != nil {
@@ -160,6 +163,8 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 	}
 	var sent []workerwire.Frame
 	e := NewExecutor(root, "/opt/tether-worker", func(f workerwire.Frame) error { sent = append(sent, f); return nil })
+	e.Config.ProviderCommands = map[string]string{"claude": providerPath}
+	e.Config.WorkspaceRoot = t.TempDir()
 	e.HubMCPURL = "https://tether.hub.example/mcp"
 	e.Tokens = &TokenMinter{Hub: hub.URL, DeviceTokenFile: deviceFile}
 	var hosts []*shim.Host
@@ -179,7 +184,7 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 			_ = h.Close()
 		}
 	})
-	spec := workerwire.LaunchSpec{Session: "s-http", MCPPolicy: true, Actor: "msg://agent/agent-mux/agt_http_probe", Provider: "claude", RuntimeKind: "streaming-stdio",
+	spec := workerwire.LaunchSpec{Session: "s-http", MCPPolicy: true, Actor: "msg://agent/agent-mux/agt_http_probe", Provider: "claude", Command: "missing-on-this-worker", RuntimeKind: "streaming-stdio",
 		Credential: "cred", MCPServers: []string{}, AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: []string{"tether.read"}}}}
 	raw, _ := json.Marshal(spec)
 	if err := e.Command(context.Background(), workerwire.Frame{T: "launch", CmdID: "c1", Session: "s-http", Spec: raw}); err != nil {

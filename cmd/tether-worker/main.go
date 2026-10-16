@@ -27,6 +27,12 @@ func main() {
 	cmd := &cobra.Command{Use: "tether-worker", Short: "Thin execution outpost for the Tether hub"}
 	cmd.PersistentFlags().StringVar(&root, "root", root, "worker state root")
 	cmd.AddCommand(mailCommand(&root))
+	var providerConfig string
+	providerCmd := &cobra.Command{Use: "provider-process", Hidden: true, RunE: func(c *cobra.Command, _ []string) error {
+		return workerruntime.RunProviderProcess(c.Context(), providerConfig, os.Stdin, os.Stdout, os.Stderr)
+	}}
+	providerCmd.Flags().StringVar(&providerConfig, "config", "", "private prepared provider configuration")
+	cmd.AddCommand(providerCmd)
 	var descriptor string
 	shimCmd := &cobra.Command{Use: "shim-host", Hidden: true, RunE: func(c *cobra.Command, _ []string) error {
 		spec, err := shim.ReadLaunch(descriptor)
@@ -57,6 +63,8 @@ func main() {
 	httpRelayCmd.Flags().StringVar(&httpToken, "token-file", "", "0600 file holding the session's current issuer token (re-read for every request)")
 	cmd.AddCommand(httpRelayCmd)
 	var hub, code, label, mcpSource string
+	var workerPath, workspaceRoot string
+	var providerCommands map[string]string
 	var install bool
 	var mailSocket string
 	var mailUIDs []int
@@ -70,9 +78,21 @@ func main() {
 			return err
 		}
 		cfg.MailSocket = mailSocket
+		if c.Flags().Changed("path") {
+			cfg.Path = workerPath
+		}
+		if c.Flags().Changed("workspace-root") {
+			cfg.WorkspaceRoot = workspaceRoot
+		}
+		if c.Flags().Changed("provider-command") {
+			cfg.ProviderCommands = providerCommands
+		}
 		cfg.MailUIDs = mailUIDs
 		if mailGID >= 0 {
 			cfg.MailGID = &mailGID
+		}
+		if err = cfg.Validate(); err != nil {
+			return err
 		}
 		if err = workerruntime.SaveJSON(filepath.Join(root, "config.json"), cfg); err != nil {
 			return err
@@ -95,6 +115,9 @@ func main() {
 		return nil
 	}}
 	enroll.Flags().StringVar(&hub, "hub", "", "hub HTTP(S) URL")
+	enroll.Flags().StringVar(&workerPath, "path", "", "worker executable search PATH, saved in config.json")
+	enroll.Flags().StringVar(&workspaceRoot, "workspace-root", "", "absolute worker workspace root")
+	enroll.Flags().StringToStringVar(&providerCommands, "provider-command", nil, "worker provider command overrides (brand=command)")
 	enroll.Flags().StringVar(&code, "code", "", "one-time worker pairing code")
 	enroll.Flags().StringVar(&label, "label", "", "worker label")
 	enroll.Flags().StringVar(&mcpSource, "mcp-config", "", "existing JSON with configured hub torque/tesseract/tether clients")
@@ -109,11 +132,17 @@ func main() {
 			return err
 		}
 		w := &workerruntime.Worker{Root: root, Config: cfg, Version: version}
+		if cfg.Path != "" {
+			if err := os.Setenv("PATH", cfg.Path); err != nil {
+				return err
+			}
+		}
 		binary, err := os.Executable()
 		if err != nil {
 			return err
 		}
 		executor := workerruntime.NewExecutor(root, binary, w.Send)
+		executor.Config = cfg
 		executor.Tokens = &workerruntime.TokenMinter{Hub: cfg.Hub, DeviceTokenFile: filepath.Join(root, "device.token")}
 		executor.HubMCPURL = strings.TrimRight(cfg.Hub, "/") + "/mcp"
 		executor.AllowSSHFallback = cfg.MCPSSHFallback || os.Getenv("TETHER_WORKER_MCP_SSH_FALLBACK") == "1"

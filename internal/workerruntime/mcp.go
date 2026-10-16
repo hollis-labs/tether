@@ -314,18 +314,33 @@ func (e *Executor) hubHTTPUnavailable(spec workerwire.LaunchSpec) string {
 // saved policy, authority fingerprint, limits and proxy capture.
 func (e *Executor) plantHubHTTP(cwd, credDir string, spec workerwire.LaunchSpec) error {
 	b, err := os.ReadFile(filepath.Join(e.Root, "hub-mcp.json")) //nolint:gosec // G304: the worker's own state directory
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	var config mcpConfig
-	if err = json.Unmarshal(b, &config); err != nil {
-		return err
+	config := mcpConfig{Servers: map[string]mcpEntry{}}
+	if len(b) > 0 {
+		if err = json.Unmarshal(b, &config); err != nil {
+			return err
+		}
 	}
-	if err = validateHubMCP(config); err != nil {
-		return err
-	}
+	// The hub gateway materializes the catalog's saved per-session policy.
+	// An SSH template is only needed by the explicit degraded fallback. A
+	// fresh enrollment can use HTTP with no machine-wide MCP template at all.
 	config = grantedOnly(config, spec.MCPServers)
+	if config.Servers == nil {
+		config.Servers = map[string]mcpEntry{}
+	}
 	config.Servers["tether"] = mcpEntry{Command: e.Binary, Args: []string{"mcp-http-relay", "--url", e.HubMCPURL, "--token-file", sessionAgentTokenFile(credDir)}}
+	for name, entry := range config.Servers {
+		if err := validateHeaders(name, entry); err != nil {
+			return err
+		}
+		for _, arg := range entry.Args {
+			if arg == "--proxy" {
+				return fmt.Errorf("MCP entry %s: local/legacy Tether MCP proxy is not an outpost", name)
+			}
+		}
+	}
 	out, err := json.Marshal(config)
 	if err != nil {
 		return err
