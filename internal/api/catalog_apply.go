@@ -18,7 +18,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -82,8 +81,8 @@ func catalogWriter(r *http.Request) bool {
 	if !ok {
 		return true // no verified principal: local trust, as for the rest of the local API
 	}
-	if p.Kind == "session" {
-		return slices.Contains(p.Scopes, catalogWriteScope) || slices.Contains(p.Scopes, "*")
+	if p.Kind == "session" || p.Kind == "agent" || p.TokenID != "" {
+		return identity.ScopeGranted(p.Scopes, catalogWriteScope)
 	}
 	return true
 }
@@ -99,7 +98,7 @@ func catalogApprover(r *http.Request) bool {
 	if !ok {
 		return true
 	}
-	return p.Kind == "operator" && p.ID == identity.OperatorID
+	return identity.IsOperatorCredential(p)
 }
 
 func (s *Server) handleCatalogPlans(w http.ResponseWriter, r *http.Request) {

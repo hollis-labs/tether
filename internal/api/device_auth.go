@@ -189,7 +189,7 @@ func NewDeviceAuthHandler(store *identity.Store) http.Handler {
 
 func localOperator(r *http.Request) (identity.Principal, bool) {
 	p, ok := identity.FromContext(r.Context())
-	return p, ok && !identity.IsRemote(r.Context()) && identity.LocalConnection(r.Context()) && p.ID == identity.OperatorID && p.Kind == "operator"
+	return p, ok && !identity.IsRemote(r.Context()) && identity.LocalConnection(r.Context()) && identity.IsOperatorCredential(p)
 }
 
 func deviceAdmin(r *http.Request) bool {

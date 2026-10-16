@@ -346,7 +346,16 @@ func (a *Adapter) checkScope(scope string) error {
 			return nil
 		}
 	}
-	if _, ok := a.scopes[scope]; !ok {
+	// Bare device scopes and tether.* scopes satisfy the legacy child scopes
+	// (session.write, message.write, ...): one vocabulary (CW-20261014-0035).
+	granted := make([]string, 0, len(a.scopes))
+	for s := range a.scopes {
+		if s == "*" && a.principal == nil {
+			continue // a bare --scopes "*" is not the daemon-verified wildcard
+		}
+		granted = append(granted, s)
+	}
+	if !identity.ScopeGranted(granted, scope) {
 		return toolError("insufficient_scope", "token missing required scope: "+scope)
 	}
 	return nil

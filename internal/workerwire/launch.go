@@ -29,6 +29,19 @@ const FeatureWorkerResume = "worker-resume"
 // unrestricted.
 const FeatureEditableAgents = "editable-agents"
 
+// FeatureAgentToken is advertised in a worker's hello when it can request
+// short-lived scoped agent tokens from the hub's issuer, keep them in
+// per-session 0600 token files and refresh them in place. The hub sends
+// LaunchSpec.AgentTokens only to workers that advertise it.
+const FeatureAgentToken = "agent-token"
+
+// AgentTokenSpec is one token the outpost keeps for a session: audience (one
+// app) and the scopes the launch policy grants.
+type AgentTokenSpec struct {
+	Aud    string   `json:"aud"`
+	Scopes []string `json:"scopes"`
+}
+
 type LaunchSpec struct {
 	Session  string `json:"session"`
 	Actor    string `json:"actor"`
@@ -63,4 +76,9 @@ type LaunchSpec struct {
 	// ResumeSessionID is the provider's own conversation id to continue (claude --resume). Set only for a
 	// hub-approved resume on the same worker that ran the source session.
 	ResumeSessionID string `json:"resume_session_id,omitempty"`
+
+	// AgentTokens are the issued-JWT token files the outpost maintains for the
+	// session (see FeatureAgentToken). The hub registers the same set as the
+	// session's launch grant, which bounds what the outpost can mint.
+	AgentTokens []AgentTokenSpec `json:"agent_tokens,omitempty"`
 }

@@ -49,7 +49,7 @@ func TestIdentityMiddlewareModes(t *testing.T) {
 				handler.ServeHTTP(out, req)
 				valid := auth == "Bearer "+good
 				wantCalled := mode != identity.Enforce || valid
-				if called != wantCalled || carried != (mode != identity.Off && valid) {
+				if called != wantCalled || carried != valid { // off verifies and stamps a presented token (go-auth semantics B)
 					t.Fatalf("called=%v principal=%v", called, carried)
 				}
 				if mode == identity.Off || auth == "" {
@@ -266,5 +266,46 @@ func TestStoreVerifyReturnsVerifiedPrincipal(t *testing.T) {
 	p, err := s.Verify(context.Background(), token)
 	if err != nil || !p.Verified {
 		t.Fatalf("Verify = %+v, %v", p, err)
+	}
+}
+
+// Off mode under go-auth semantics B: never rejects, attributes a presented
+// token, and stamps nothing for tth_-style handlers when anonymous.
+func TestOffModeNeverRejectsAndAttributesPresentedToken(t *testing.T) {
+	good, _ := identity.NewToken()
+	verify := verifierFunc(func(_ context.Context, token string) (identity.Principal, error) {
+		if token != good {
+			return identity.Principal{}, identity.ErrInvalidToken
+		}
+		return identity.Principal{ID: "verified", Kind: "device"}, nil
+	})
+	for _, c := range []struct {
+		authz      string
+		wantID     string
+		wantVerify bool
+	}{{"", "", false}, {"Bearer wrong", "", false}, {"Bearer " + good, "verified", true}} {
+		var gotID string
+		var verified bool
+		h := identity.Middleware(identity.Off, verify, func(context.Context, identity.Observation) error {
+			t.Fatal("off mode must not write audit rows")
+			return nil
+		}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, _ := identity.FromContext(r.Context())
+			gotID, verified = p.ID, identity.Verified(r.Context())
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+		if c.authz != "" {
+			req.Header.Set("Authorization", c.authz)
+		}
+		out := httptest.NewRecorder()
+		h.ServeHTTP(out, req)
+		if out.Code != http.StatusNoContent || gotID != c.wantID || verified != c.wantVerify {
+			t.Fatalf("%q: code=%d id=%q verified=%v", c.authz, out.Code, gotID, verified)
+		}
+	}
+	// permissive is an accepted alias of observe
+	if err := identity.Permissive.Validate(); err != nil || identity.Permissive.Canonical() != identity.Observe {
+		t.Fatalf("permissive alias: %v", err)
 	}
 }

@@ -75,11 +75,14 @@ type Service struct {
 	// call tether_team_*; set by daemon startup from modules.teams.
 	TeamsEnabled bool
 
-	CatalogRoot    string
-	Catalog        *config.Catalog
-	catalogState   catalogState
-	Store          *store.Store
-	Workers        *workerhub.Hub
+	CatalogRoot  string
+	Catalog      *config.Catalog
+	catalogState catalogState
+	Store        *store.Store
+	Workers      *workerhub.Hub
+	// AgentTokens, when set, registers a launch grant per worker session and
+	// deny-lists the session id when it ends (the token issuer).
+	AgentTokens    AgentTokenIssuer
 	workerIngestMu sync.Mutex
 	workerCarries  map[string][]byte
 	Manager        *agentsessions.Manager

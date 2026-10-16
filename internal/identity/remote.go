@@ -12,6 +12,9 @@ import (
 
 const PairingExchangePath = "/auth/pair/exchange"
 
+// JWKSPath is the issuer's public key set (served by the api package).
+const JWKSPath = "/.well-known/jwks.json"
+
 type remoteKey struct{}
 type credentialHashKey struct{}
 
@@ -35,6 +38,11 @@ func remoteMiddleware(verifier Verifier, record func(context.Context, Observatio
 		// behind the listener's Host/Origin and protocol gates. The exchange
 		// handler supplies body bounds, a global rate limit and no-cache output.
 		if r.Method == http.MethodPost && r.URL.Path == PairingExchangePath {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// The issuer's public keys: verifiers fetch them unauthenticated.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == JWKSPath {
 			next.ServeHTTP(w, r)
 			return
 		}

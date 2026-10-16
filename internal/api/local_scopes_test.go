@@ -48,8 +48,8 @@ func TestObserveLocalScope(t *testing.T) {
 	}{
 		{"GET", "/sessions/abc/events", operator, "/sessions/{id}/events", "read", true, true},
 		{"GET", "/sessions/abc/events", device, "/sessions/{id}/events", "read", true, true},
-		{"POST", "/sessions/abc/input", device, "/sessions/{id}/input", "terminal", false, true},
-		{"POST", "/messages", session, "/messages", "operate", false, true},
+		{"POST", "/sessions/abc/input", device, "/sessions/{id}/input", "input", false, true},
+		{"POST", "/messages", session, "/messages", "messages", false, true},
 		{"POST", "/auth/pair", device, "/auth/pair", "local-only", false, true},
 		{"POST", "/auth/pair", operator, "/auth/pair", "local-only", true, true},
 		{"GET", "/health", session, "/health", "public", true, true},

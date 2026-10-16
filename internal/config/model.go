@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	goauth "github.com/hollis-labs/libs/security/auth"
 	"strings"
 	"time"
 
@@ -44,6 +45,9 @@ type IdentityConfig struct {
 	// Points overrides Mode for one enforcement point (see IdentityPoints).
 	// An omitted point follows Mode. Applied at daemon start only.
 	Points map[string]string `yaml:"points,omitempty"`
+	// Issuer is the iss claim of tokens Tether issues (POST /auth/token) and
+	// the value verifiers in other apps must be configured with. Default "tether".
+	Issuer string `yaml:"issuer,omitempty"`
 	// MCPGrants is operator-provisioned authority for service/interactive
 	// principals. Omission grants no upstreams, never the operator's inventory.
 	MCPGrants map[string]PrincipalMCPGrant `yaml:"mcp_grants,omitempty"`
@@ -58,8 +62,40 @@ type PrincipalMCPGrant struct {
 }
 
 func (c IdentityConfig) EffectiveMode() string {
-	mode := strings.ToLower(strings.TrimSpace(c.Mode))
+	mode := normalizeIdentityMode(c.Mode)
+	// HOLLIS_AUTH_TETHER, then HOLLIS_AUTH, override the configured global mode
+	// (one setting name across apps). They only affect processes started with
+	// them set; an unparsable value is ignored here and rejected by Validate.
+	// The env can only tighten the configured mode (off < observe < enforce),
+	// never downgrade it: a stray variable must not turn enforce off.
+	if env, err := goauth.ModeFromEnv("tether", ""); err == nil && env != "" {
+		if e := normalizeIdentityMode(string(env)); identityModeRank(e) > identityModeRank(mode) {
+			mode = e
+		}
+	}
 	if mode == "" {
+		return "observe"
+	}
+	return mode
+}
+
+func identityModeRank(mode string) int {
+	switch mode {
+	case "enforce":
+		return 3
+	case "observe", "":
+		return 2
+	case "off":
+		return 1
+	}
+	return 2
+}
+
+// normalizeIdentityMode lower-cases mode and canonicalizes the permissive
+// alias to Tether's stored spelling, observe.
+func normalizeIdentityMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "permissive" {
 		return "observe"
 	}
 	return mode
@@ -68,7 +104,7 @@ func (c IdentityConfig) EffectiveMode() string {
 // ModeFor is the effective mode of one enforcement point: its identity.points
 // override when set, otherwise identity.mode.
 func (c IdentityConfig) ModeFor(point string) string {
-	if m := strings.ToLower(strings.TrimSpace(c.Points[point])); m != "" {
+	if m := normalizeIdentityMode(c.Points[point]); m != "" {
 		return m
 	}
 	return c.EffectiveMode()

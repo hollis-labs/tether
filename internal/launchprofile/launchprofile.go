@@ -151,7 +151,11 @@ var DefaultMCPScopes = []string{"message.write", "registry.write", "groups.write
 // ValidMCPScope reports whether scope may appear in an agent's mcp_scopes.
 func ValidMCPScope(scope string) bool {
 	switch scope {
-	case "session.write", "message.write", "registry.write", "groups.write", "catalog.write", "ai.invoke", "team.write":
+	case "session.write", "message.write", "registry.write", "groups.write", "catalog.write", "ai.invoke", "team.write",
+		// The unified vocabulary (identity.CanonicalScopes): the same set of
+		// capabilities as the device scopes, under the tether.* namespace.
+		"tether.read", "tether.operate", "tether.terminal", "tether.maintain", "tether.admin", "tether.worker",
+		"tether.registry", "tether.catalog", "tether.sessions", "tether.messages", "tether.groups", "tether.teams", "tether.ai":
 		return true
 	}
 	return false

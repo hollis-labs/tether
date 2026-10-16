@@ -87,7 +87,7 @@ func TestLocalScopeAttributionRawRequest(t *testing.T) {
 	s := &Server{Config: Config{IdentityMode: identity.Observe}, Identity: ids}
 	defer s.CloseIdentityAudit()
 	for _, tc := range []struct{ method, path, pattern, scope string }{
-		{"POST", "/sessions/s1/input?x=1", "/sessions/{id}/input", "terminal"},
+		{"POST", "/sessions/s1/input?x=1", "/sessions/{id}/input", "input"},
 		{"GET", "/sessions/s1/events", "/sessions/{id}/events", "read"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, nil)

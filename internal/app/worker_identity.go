@@ -123,8 +123,10 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		return undo, fmt.Errorf("mint worker session credential: %w", err)
 	}
 	spec.Credential, spec.MCPScopes = token, scopes
+	revokeGrant := s.grantAgentTokens(ctx, row, spec, scopes)
 	return func() {
 		revokeBinding()
+		revokeGrant()
 		if err := identity.NewStore(s.Store.DB()).RevokeSession(context.Background(), row.ID); err != nil {
 			log.Printf("worker session %s: credential revocation failed", row.ID)
 		}
@@ -160,10 +162,55 @@ func (s *Service) bindStableIdentity(ctx context.Context, row *store.SessionRow,
 
 // releaseWorkerIdentity revokes a worker session's credential and identity bindings once it has ended.
 func (s *Service) releaseWorkerIdentity(sessionID string) {
+	if s.AgentTokens != nil {
+		if err := s.AgentTokens.RevokeSession(sessionID); err != nil {
+			log.Printf("worker session %s: agent token revocation failed", sessionID)
+		}
+	}
 	if s.Store == nil {
 		return
 	}
 	if err := identity.NewStore(s.Store.DB()).RevokeSession(context.Background(), sessionID); err != nil {
 		log.Printf("worker session %s: credential revocation failed", sessionID)
+	}
+}
+
+// AgentTokenIssuer is the slice of the token issuer the session lifecycle
+// uses: the launch grant bounds what the outpost may mint for a session, and
+// RevokeSession deny-lists the sid when the session ends.
+type AgentTokenIssuer interface {
+	RegisterSessionGrant(sid, device string, scopes map[string][]string, expires time.Time) error
+	RevokeSession(sid string) error
+}
+
+// grantAgentTokens registers the session's launch grant and tells the outpost
+// which token files to keep. The scopes come from the launch policy (the
+// agent's mcp_scopes, mapped into the tether.* vocabulary). It is best effort
+// beside the existing session credential: a worker without FeatureAgentToken,
+// or an issuer failure, leaves the launch as it was. The returned func undoes
+// the grant when the launch fails.
+func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, spec *workerwire.LaunchSpec, mcpScopes []string) func() {
+	noop := func() {}
+	if s.AgentTokens == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureAgentToken) {
+		return noop
+	}
+	canonical, err := identity.CanonicalScopes(mcpScopes)
+	if err != nil || len(canonical) == 0 {
+		return noop
+	}
+	device, err := s.Workers.DeviceID(ctx, row.WorkerID)
+	if err != nil {
+		return noop
+	}
+	grant := map[string][]string{"tether": canonical}
+	if err := s.AgentTokens.RegisterSessionGrant(row.ID, device, grant, time.Now().Add(sessionTokenTTL)); err != nil {
+		log.Printf("worker session %s: agent token grant failed", row.ID)
+		return noop
+	}
+	spec.AgentTokens = []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: canonical}}
+	return func() {
+		if err := s.AgentTokens.RevokeSession(row.ID); err != nil {
+			log.Printf("worker session %s: agent token revocation failed", row.ID)
+		}
 	}
 }

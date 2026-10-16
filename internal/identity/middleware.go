@@ -15,17 +15,33 @@ import (
 type Mode string
 
 const (
-	Off     Mode = "off"
-	Observe Mode = "observe"
-	Enforce Mode = "enforce"
+	// Off verifies and attributes a presented token but never rejects (go-auth
+	// semantics "B"); without a token the request is attributed to the
+	// synthetic principal operator(off-mode) and an audit line is logged.
+	Off Mode = "off"
+	// Observe is Tether's canonical stored spelling of go-auth's permissive
+	// mode: verify, never reject, record would-deny. "permissive" is accepted
+	// everywhere as an alias and canonicalized to Observe, so existing
+	// config, persisted credential modes and comparisons keep working.
+	Observe    Mode = "observe"
+	Permissive Mode = "permissive"
+	Enforce    Mode = "enforce"
 )
+
+// Canonical maps the permissive alias to Observe.
+func (m Mode) Canonical() Mode {
+	if m == Permissive {
+		return Observe
+	}
+	return m
+}
 
 func (m Mode) Validate() error {
 	switch m {
-	case "", Off, Observe, Enforce:
+	case "", Off, Observe, Permissive, Enforce:
 		return nil
 	default:
-		return fmt.Errorf("invalid identity.mode (want off, observe or enforce)")
+		return fmt.Errorf("invalid identity.mode (want off, permissive (alias observe) or enforce)")
 	}
 }
 
@@ -72,16 +88,18 @@ type Verifier interface {
 	Verify(context.Context, string) (Principal, error)
 }
 
-// Middleware carries verified identity in context. Observe never rejects a
-// request, including invalid credentials and storage errors. Health is open.
+// Middleware carries verified identity in context, built on go-auth's Guard.
+// Off and Observe never reject a request, including invalid credentials and
+// storage errors; off additionally attributes anonymous traffic to
+// operator(off-mode). Health is open.
 // Record receives metadata only, never bearer headers, query strings or bodies.
 func Middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, next http.Handler) http.Handler {
-	return middleware(mode, verifier, record, ScopePolicy{}, next, false)
+	return localMiddleware(mode, verifier, record, ScopePolicy{}, next)
 }
 
 // MiddlewareWithScopes is Middleware plus route-to-scope attribution.
 func MiddlewareWithScopes(mode Mode, verifier Verifier, record func(context.Context, Observation) error, scopes ScopePolicy, next http.Handler) http.Handler {
-	return middleware(mode, verifier, record, scopes, next, false)
+	return localMiddleware(mode, verifier, record, scopes, next)
 }
 
 // RemoteMiddleware always enforces verified device credentials. Unlike
@@ -90,6 +108,9 @@ func RemoteMiddleware(verifier Verifier, record func(context.Context, Observatio
 	return remoteMiddleware(verifier, record, next)
 }
 
+// middleware is the pre-go-auth implementation. The local listener moved to
+// localMiddleware; this remains only as the engine of RemoteMiddleware, which
+// is always enforcing and device-only (remote=true).
 func middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, scopes ScopePolicy, next http.Handler, remote bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := mode.Validate(); err != nil {

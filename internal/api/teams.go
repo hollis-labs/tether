@@ -263,7 +263,7 @@ func TeamErrorFor(ctx context.Context, err error) (int, ErrorDetail) {
 	if err == nil {
 		return status, detail
 	}
-	if caller, ok := identity.FromContext(ctx); ok && caller.Verified && caller.Kind == "operator" && caller.ID == identity.OperatorID && identity.LocalConnection(ctx) {
+	if caller, ok := identity.FromContext(ctx); ok && caller.Verified && identity.IsOperatorCredential(caller) && identity.LocalConnection(ctx) {
 		if cause := InternalCause(err); cause != "" {
 			detail.Message = detail.Code + ": " + cause
 		}

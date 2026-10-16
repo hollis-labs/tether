@@ -45,9 +45,14 @@ type execution struct {
 	ExitCode   *int   `json:"exit_code,omitempty"`
 	Provider   string `json:"provider"`
 	Carry      []byte `json:"carry,omitempty"`
-	client     *shim.Client
-	outputs    []outputRecord
-	pending    map[string]chan shim.Frame
+	// AgentTokens/AuthDir persist what a restarted outpost needs to resume
+	// refreshing the session's token files.
+	AgentTokens []workerwire.AgentTokenSpec `json:"agent_tokens,omitempty"`
+	AuthDir     string                      `json:"auth_dir,omitempty"`
+	stopTokens  func()
+	client      *shim.Client
+	outputs     []outputRecord
+	pending     map[string]chan shim.Frame
 	// stderrTail is the last complete-or-partial stderr line, kept so a bare
 	// non-zero exit can be reported with a reason. secrets are the launch
 	// environment values redacted from it.
@@ -61,6 +66,8 @@ type Executor struct {
 	mu       sync.Mutex
 	sessions map[string]*execution
 	Spawn    func(string) (*exec.Cmd, error)
+	// Tokens, when set, lets the executor keep per-session agent token files.
+	Tokens *TokenMinter
 }
 
 func NewExecutor(root, binary string, send func(workerwire.Frame) error) *Executor {
@@ -225,6 +232,20 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	cmd.Dir = cwd
 	cmd.Env = provider.BuildEnv("merge", nil, nil, spec.Env, os.Environ())
 	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+spec.Actor)
+	// Per-session issued tokens: 0600 files outside the checkout, refreshed in
+	// place; the child gets only their paths.
+	authDir := filepath.Join(ws.Root, "auth")
+	tokenEnv, stopTokens, err := e.startAgentTokens(spec.Session, authDir, spec.AgentTokens)
+	if err != nil {
+		return nil, fmt.Errorf("agent token: %w", err)
+	}
+	started := false
+	defer func() {
+		if !started {
+			stopTokens()
+		}
+	}()
+	cmd.Env = append(cmd.Env, tokenEnv...)
 	sandboxed := false
 	if spec.Sandbox != nil {
 		if _, err := sandbox.Apply(cmd, *spec.Sandbox, cwd); err == nil {
@@ -283,7 +304,8 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	s := &execution{secrets: envSecrets(spec.Env), ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
+	started = true
+	s := &execution{AgentTokens: spec.AgentTokens, AuthDir: authDir, stopTokens: stopTokens, secrets: envSecrets(spec.Env), ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
 	if child != nil {
 		s.PID = child.Process.Pid
 		s.HostPID = child.Process.Pid
@@ -451,6 +473,13 @@ func (e *Executor) follow(s *execution) {
 		hostPID := s.HostPID
 		s.mu.Unlock()
 		if exited {
+			// The session is over: stop refreshing and delete the token files.
+			// The hub deny-lists the sid when it learns of the exit.
+			if s.stopTokens != nil {
+				s.stopTokens()
+			} else if s.AuthDir != "" {
+				_ = os.RemoveAll(s.AuthDir)
+			}
 			go teardownHost(s.Descriptor, hostPID)
 		}
 	}

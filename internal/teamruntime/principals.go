@@ -36,7 +36,7 @@ func (p Principals) ResolvePrincipal(ctx context.Context) (teamsvc.Principal, er
 	out := teamsvc.Principal{ID: mesh.URN(caller.ID), Verified: caller.Verified}
 	switch caller.Kind {
 	case "operator":
-		if caller.ID != identity.OperatorID || !identity.LocalConnection(ctx) {
+		if caller.ID != identity.OperatorID || caller.TokenID != "" || !identity.LocalConnection(ctx) {
 			return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
 		}
 		out.Kind = mesh.ActorUser

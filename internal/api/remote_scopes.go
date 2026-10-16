@@ -17,6 +17,13 @@ const (
 	operateScope  = identity.ScopeOperate
 	terminalScope = identity.ScopeTerminal
 	maintainScope = identity.ScopeMaintain
+	registryScope = identity.ScopeRegistry
+	sessionsScope = identity.ScopeSessions
+	messagesScope = identity.ScopeMessages
+	groupsScope   = identity.ScopeGroups
+	teamsScope    = identity.ScopeTeams
+	aiScope       = identity.ScopeAI
+	inputScope    = identity.ScopeInput
 	adminScope    = identity.ScopeAdmin
 	localScope    = "local-only"
 	publicScope   = "public"
@@ -83,16 +90,19 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/auth/devices", "/auth/devices", map[string]string{"GET": adminScope}),
 	routeScope("/auth/revoke", "/auth/revoke", map[string]string{"POST": adminScope}),
 	routeScope("/auth/renew", "/auth/renew", map[string]string{"POST": selfScope}),
+	routeScope("/auth/token", "/auth/token", map[string]string{"POST": selfScope}),
+	routeScope("/auth/denylist", "/auth/denylist", map[string]string{"GET": maintainScope, "POST": adminScope}),
+	routeScope("/.well-known/jwks.json", "/.well-known/jwks.json", map[string]string{"GET": publicScope, "HEAD": publicScope}),
 	routeScope("/auth/context", "/auth/context", map[string]string{"GET": readScope}),
-	routeScope("/sessions", "/sessions", map[string]string{"GET": readScope, "POST": operateScope}, "launch"),
+	routeScope("/sessions", "/sessions", map[string]string{"GET": readScope, "POST": sessionsScope}, "launch"),
 	routeScope("/sessions/", "/sessions/{id}", map[string]string{"GET": readScope}),
-	routeScope("/sessions/", "/sessions/{id}/launch", map[string]string{"POST": operateScope}),
-	routeScope("/sessions/", "/sessions/{id}/stop", map[string]string{"POST": operateScope}),
+	routeScope("/sessions/", "/sessions/{id}/launch", map[string]string{"POST": sessionsScope}),
+	routeScope("/sessions/", "/sessions/{id}/stop", map[string]string{"POST": sessionsScope}),
 	routeScope("/sessions/", "/sessions/{id}/retire-shim", map[string]string{"POST": maintainScope}),
 	routeScope("/sessions/", "/sessions/{id}/wait", map[string]string{"GET": readScope}),
-	routeScope("/sessions/", "/sessions/{id}/input", map[string]string{"POST": terminalScope}),
-	routeScope("/sessions/", "/sessions/{id}/turn", map[string]string{"POST": operateScope}),
-	routeScope("/sessions/", "/sessions/{id}/resize", map[string]string{"POST": terminalScope}),
+	routeScope("/sessions/", "/sessions/{id}/input", map[string]string{"POST": inputScope}),
+	routeScope("/sessions/", "/sessions/{id}/turn", map[string]string{"POST": sessionsScope}),
+	routeScope("/sessions/", "/sessions/{id}/resize", map[string]string{"POST": inputScope}),
 	routeScope("/sessions/", "/sessions/{id}/log", map[string]string{"GET": terminalScope}),
 	routeScope("/sessions/", "/sessions/{id}/attach", map[string]string{"GET": terminalScope}),
 	routeScope("/sessions/", "/sessions/{id}/checkpoint", map[string]string{"POST": operateScope}),
@@ -101,8 +111,8 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/sessions/", "/sessions/{id}/checkpoints", map[string]string{"GET": readScope}),
 	routeScope("/sessions/", "/sessions/{id}/usage", map[string]string{"GET": readScope}),
 	routeScope("/sessions/", "/sessions/{id}/health", map[string]string{"GET": readScope}),
-	routeScope("/sessions/", "/sessions/{id}/workstream", map[string]string{"POST": operateScope}),
-	routeScope("/sessions/", "/sessions/{id}/refs", map[string]string{"GET": readScope, "POST": operateScope}),
+	routeScope("/sessions/", "/sessions/{id}/workstream", map[string]string{"POST": sessionsScope}),
+	routeScope("/sessions/", "/sessions/{id}/refs", map[string]string{"GET": readScope, "POST": sessionsScope}),
 	routeScope("/sessions/", "/sessions/{id}/workstream-namespace", map[string]string{"GET": readScope}),
 	routeScope("/sessions/", "/sessions/{id}/digest", map[string]string{"GET": readScope}),
 	routeScope("/sessions/bootstrap", "/sessions/bootstrap", map[string]string{"POST": localScope}),
@@ -112,7 +122,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/environment/events", "/environment/events", map[string]string{"GET": readScope}),
 	routeScope("/logical-agents", "/logical-agents", map[string]string{"GET": readScope}),
 	routeScope("/logical-agents/", "/logical-agents/{id}/checkpoints", map[string]string{"GET": readScope}),
-	routeScope("/logical-agents/", "/logical-agents/{id}/resume", map[string]string{"POST": operateScope}),
+	routeScope("/logical-agents/", "/logical-agents/{id}/resume", map[string]string{"POST": sessionsScope}),
 	routeScope("/logical-agents/", "/logical-agents/{id}/policy", map[string]string{"GET": readScope, "PATCH": maintainScope}),
 	routeScope("/broker/envelopes", "/broker/envelopes", map[string]string{"GET": readScope, "POST": operateScope}),
 	routeScope("/broker/envelopes/", "/broker/envelopes/{id}", map[string]string{"GET": readScope}),
@@ -122,33 +132,33 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/session-groups/", "/session-groups/{id}", map[string]string{"GET": readScope}),
 	routeScope("/session-groups/", "/session-groups/{id}/sessions", map[string]string{"GET": readScope}),
 	routeScope("/session-groups/", "/session-groups/{id}/members", map[string]string{"POST": operateScope}),
-	routeScope("/workstreams", "/workstreams", map[string]string{"GET": readScope, "POST": operateScope}),
-	routeScope("/workstreams/", "/workstreams/{id}", map[string]string{"GET": readScope, "PATCH": operateScope}),
-	routeScope("/workstreams/", "/workstreams/{id}/sessions", map[string]string{"POST": operateScope}),
+	routeScope("/workstreams", "/workstreams", map[string]string{"GET": readScope, "POST": sessionsScope}),
+	routeScope("/workstreams/", "/workstreams/{id}", map[string]string{"GET": readScope, "PATCH": sessionsScope}),
+	routeScope("/workstreams/", "/workstreams/{id}/sessions", map[string]string{"POST": sessionsScope}),
 	routeScope("/workstreams/", "/workstreams/{id}/refs", map[string]string{"GET": readScope}),
 	routeScope("/workstreams/", "/workstreams/{id}/digest", map[string]string{"GET": readScope}),
 	routeScope("/routing/capabilities", "/routing/capabilities", map[string]string{"GET": readScope}),
 	routeScope("/channels", "/channels", map[string]string{"GET": readScope}),
 	routeScope("/channels/", "/channels/{id}/messages", map[string]string{"GET": readScope}),
 	routeScope("/channels/", "/channels/{id}/subscribe", map[string]string{"GET": readScope}),
-	routeScope("/messages", "/messages", map[string]string{"POST": operateScope}),
-	routeScope("/messages/notify", "/messages/notify", map[string]string{"POST": operateScope}),
-	routeScope("/messages/request", "/messages/request", map[string]string{"POST": operateScope}),
+	routeScope("/messages", "/messages", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/notify", "/messages/notify", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/request", "/messages/request", map[string]string{"POST": messagesScope}),
 	routeScope("/messages/subscribe", "/messages/subscribe", map[string]string{"GET": readScope}),
 	routeScope("/messages/watch", "/messages/watch", map[string]string{"GET": readScope}),
 	routeScope("/messages/inbox", "/messages/inbox", map[string]string{"GET": readScope}),
 	routeScope("/messages/list", "/messages/list", map[string]string{"GET": readScope}),
 	routeScope("/messages/thread/", "/messages/thread/{id}", map[string]string{"GET": readScope}),
 	routeScope("/messages/", "/messages/{id}", map[string]string{"GET": readScope, "DELETE": maintainScope}),
-	routeScope("/messages/", "/messages/{id}/consume", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/cancel", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/read", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/archive", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/unarchive", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/claim", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/ack", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/nack", map[string]string{"POST": operateScope}),
-	routeScope("/messages/", "/messages/{id}/reply", map[string]string{"POST": operateScope}),
+	routeScope("/messages/", "/messages/{id}/consume", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/cancel", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/read", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/archive", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/unarchive", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/claim", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/ack", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/nack", map[string]string{"POST": messagesScope}),
+	routeScope("/messages/", "/messages/{id}/reply", map[string]string{"POST": messagesScope}),
 	routeScope("/messages/", "/messages/{id}/delivery", map[string]string{"GET": readScope}),
 	routeScope("/messages/", "/messages/{id}/trace", map[string]string{"GET": readScope}),
 	routeScope("/messages/", "/messages/{id}/redrive", map[string]string{"POST": maintainScope}),
@@ -177,39 +187,39 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/docs/mcp", "/docs/mcp", map[string]string{"GET": readScope}),
 	routeScope("/docs/mcp/{id}", "/docs/mcp/{id}", map[string]string{"GET": readScope}),
 	routeScope("/docs/mcp/{id}/file", "/docs/mcp/{id}/file", map[string]string{"GET": readScope}),
-	routeScope("/registry/bootstrap", "/registry/bootstrap", map[string]string{"POST": maintainScope}),
-	routeScope("/registry/reonboard", "/registry/reonboard", map[string]string{"POST": maintainScope}),
+	routeScope("/registry/bootstrap", "/registry/bootstrap", map[string]string{"POST": registryScope}),
+	routeScope("/registry/reonboard", "/registry/reonboard", map[string]string{"POST": registryScope}),
 	routeScope("/registry/bindings", "/registry/bindings", map[string]string{"GET": readScope, "POST": localScope}),
 	routeScope("/registry/bindings/", "/registry/bindings/{id}/renew", map[string]string{"POST": localScope}),
 	routeScope("/registry/bindings/", "/registry/bindings/{id}/revoke", map[string]string{"POST": localScope}),
-	routeScope("/registry/scoped-bindings", "/registry/scoped-bindings", map[string]string{"POST": maintainScope}),
+	routeScope("/registry/scoped-bindings", "/registry/scoped-bindings", map[string]string{"POST": registryScope}),
 	routeScope("/registry/scoped-bindings/resolve", "/registry/scoped-bindings/resolve", map[string]string{"GET": readScope}),
 	routeScope("/registry/scoped-bindings/revisions", "/registry/scoped-bindings/revisions", map[string]string{"GET": readScope}),
-	routeScope("/registry/", "/registry/{kind}", map[string]string{"GET": readScope, "POST": maintainScope}, "registry-kind"),
-	routeScope("/registry/", "/registry/{kind}/{id}", map[string]string{"GET": readScope, "PATCH": maintainScope, "DELETE": maintainScope}, "registry-kind"),
-	routeScope("/registry/", "/registry/{kind}/{id}/sync", map[string]string{"POST": maintainScope}, "registry-kind"),
-	routeScope("/registry/", "/registry/{kind}/{id}/merge", map[string]string{"POST": maintainScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}", map[string]string{"GET": readScope, "POST": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}", map[string]string{"GET": readScope, "PATCH": registryScope, "DELETE": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}/sync", map[string]string{"POST": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}/merge", map[string]string{"POST": registryScope}, "registry-kind"),
 	routeScope("/whoami", "/whoami", map[string]string{"GET": readScope}),
 	routeScope("/execution/policy", "/execution/policy", map[string]string{"GET": readScope, "PUT": localScope}),
 	routeScope("/capacity", "/capacity", map[string]string{"GET": readScope}),
 	routeScope("/settings/mcp", "/settings/mcp", map[string]string{"GET": readScope, "PUT": maintainScope}),
 	routeScope("/settings/onboarding", "/settings/onboarding", map[string]string{"GET": readScope}),
 	routeScope("/settings/onboarding/", "/settings/onboarding/{scope}", map[string]string{"GET": readScope, "POST": maintainScope, "PUT": maintainScope}),
-	routeScope("/groups", "/groups", map[string]string{"GET": readScope, "POST": operateScope}),
-	routeScope("/groups/", "/groups/{id}", map[string]string{"GET": readScope, "DELETE": operateScope}),
-	routeScope("/groups/", "/groups/{id}/members", map[string]string{"GET": readScope, "POST": operateScope}),
-	routeScope("/groups/", "/groups/{id}/members/{member}", map[string]string{"PATCH": operateScope, "DELETE": operateScope}),
-	routeScope("/groups/", "/groups/{id}/leave", map[string]string{"POST": operateScope}),
-	routeScope("/groups/", "/groups/{id}/messages", map[string]string{"GET": readScope, "POST": operateScope}),
-	routeScope("/groups/", "/groups/{id}/read", map[string]string{"POST": operateScope}),
+	routeScope("/groups", "/groups", map[string]string{"GET": readScope, "POST": groupsScope}),
+	routeScope("/groups/", "/groups/{id}", map[string]string{"GET": readScope, "DELETE": groupsScope}),
+	routeScope("/groups/", "/groups/{id}/members", map[string]string{"GET": readScope, "POST": groupsScope}),
+	routeScope("/groups/", "/groups/{id}/members/{member}", map[string]string{"PATCH": groupsScope, "DELETE": groupsScope}),
+	routeScope("/groups/", "/groups/{id}/leave", map[string]string{"POST": groupsScope}),
+	routeScope("/groups/", "/groups/{id}/messages", map[string]string{"GET": readScope, "POST": groupsScope}),
+	routeScope("/groups/", "/groups/{id}/read", map[string]string{"POST": groupsScope}),
 	routeScope("/mentions", "/mentions", map[string]string{"GET": readScope}),
 	routeScope("/logs/daemon", "/logs/daemon", map[string]string{"GET": maintainScope}),
 	routeScope("/fs/validate", "/fs/validate", map[string]string{"POST": maintainScope}),
 	routeScope("/fs/detect", "/fs/detect", map[string]string{"GET": maintainScope}),
-	routeScope("/ai/chat", "/ai/chat", map[string]string{"POST": operateScope}),
-	routeScope("/ai/chat/stream", "/ai/chat/stream", map[string]string{"POST": operateScope}),
-	routeScope("/ai/embeddings", "/ai/embeddings", map[string]string{"POST": operateScope}),
-	routeScope("/ai/decide", "/ai/decide", map[string]string{"POST": operateScope}),
+	routeScope("/ai/chat", "/ai/chat", map[string]string{"POST": aiScope}),
+	routeScope("/ai/chat/stream", "/ai/chat/stream", map[string]string{"POST": aiScope}),
+	routeScope("/ai/embeddings", "/ai/embeddings", map[string]string{"POST": aiScope}),
+	routeScope("/ai/decide", "/ai/decide", map[string]string{"POST": aiScope}),
 	routeScope("/ai/providers", "/ai/providers", map[string]string{"GET": readScope}),
 	routeScope("/ai/models", "/ai/models", map[string]string{"GET": readScope}),
 	routeScope("/ai/routes", "/ai/routes", map[string]string{"GET": readScope}),
@@ -230,15 +240,15 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/mcp", "/mcp", map[string]string{"GET": localScope, "POST": localScope, "DELETE": localScope}),
 	routeScope("/p/", "/p/{rest...}", map[string]string{"GET": localScope, "POST": localScope, "DELETE": localScope}),
 	routeScope("/teams/roster", "/teams/roster", map[string]string{"GET": readScope}),
-	routeScope("/teams/form", "/teams/form", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/dissolve", "/teams/dissolve", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/member_add", "/teams/member_add", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/member_remove", "/teams/member_remove", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/assign", "/teams/assign", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/delegate", "/teams/delegate", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/address", "/teams/address", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/cancel", "/teams/cancel", map[string]string{"POST": operateScope}, "team-idempotency"),
-	routeScope("/teams/report_result", "/teams/report_result", map[string]string{"POST": operateScope}, "team-idempotency"),
+	routeScope("/teams/form", "/teams/form", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/dissolve", "/teams/dissolve", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/member_add", "/teams/member_add", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/member_remove", "/teams/member_remove", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/assign", "/teams/assign", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/delegate", "/teams/delegate", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/address", "/teams/address", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/cancel", "/teams/cancel", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/report_result", "/teams/report_result", map[string]string{"POST": teamsScope}, "team-idempotency"),
 }
 
 func matchScopePath(pattern, escapedPath string) (int, bool) {
@@ -300,6 +310,33 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		p, ok := identity.FromContext(r.Context())
+		applyRouteScopes(w, r, next, ok && p.Kind == "device" && p.ID != identity.OperatorID, true, func(scope string) bool { return identity.HasDeviceScope(p, scope) })
+	})
+}
+
+// AgentScopeMiddleware applies the remote route-to-scope policy, unchanged, to
+// issued tokens (JWTs) on the local listener: an unlisted route or method is
+// unavailable, local-custody routes are refused, payload policies hold, and the
+// token's tether.* scopes must cover the route. Stored tth_ credentials are not
+// touched (their local behavior is unchanged), and only enforce mode rejects;
+// observe/off keep the would-deny attribution in identity_audit.
+func AgentScopeMiddleware(mode identity.Mode, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := identity.FromContext(r.Context())
+		if mode.Canonical() != identity.Enforce || identity.IsRemote(r.Context()) || !ok || p.TokenID == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		applyRouteScopes(w, r, next, true, false, func(scope string) bool { return identity.ScopeGranted(p.Scopes, scope) })
+	})
+}
+
+// applyRouteScopes is the one scope gate. authenticated says the caller is of
+// an admissible kind; allowSelf lets the current-device marker pass (devices
+// only). has reports whether the caller holds a scope.
+func applyRouteScopes(w http.ResponseWriter, r *http.Request, next http.Handler, authenticated, allowSelf bool, has func(string) bool) {
+	{
 		scope, payload, known := RequiredRemoteScope(r)
 		if !known {
 			writeError(w, 404, CodeNotFound, "remote route or method unavailable")
@@ -317,8 +354,7 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 			}
 			return
 		}
-		p, ok := identity.FromContext(r.Context())
-		if !ok || p.Kind != "device" || p.ID == identity.OperatorID {
+		if !authenticated {
 			writeError(w, 401, "unauthorized", "verified device required")
 			return
 		}
@@ -343,7 +379,11 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if scope != selfScope && !identity.HasDeviceScope(p, scope) {
+		if scope == selfScope && !allowSelf {
+			writeError(w, 403, "scope_required", "route requires a paired device credential")
+			return
+		}
+		if scope != selfScope && !has(scope) {
 			writeError(w, 403, "scope_required", "required scope: "+scope)
 			return
 		}
@@ -378,11 +418,11 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 				writeError(w, 400, CodeInvalidRequest, "invalid launch payload")
 				return
 			}
-			if (req.AgentFile != "" || req.AgentInline != "" || req.Override != "" || req.BootProfileFile != "" || req.Injection != "") && !identity.HasDeviceScope(p, maintainScope) {
+			if (req.AgentFile != "" || req.AgentInline != "" || req.Override != "" || req.BootProfileFile != "" || req.Injection != "") && !has(maintainScope) {
 				writeError(w, 403, "scope_required", "custom launch policy requires maintain scope")
 				return
 			}
 		}
 		next.ServeHTTP(w, r)
-	})
+	}
 }

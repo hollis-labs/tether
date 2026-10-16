@@ -94,6 +94,13 @@ func (h *Hub) Supports(id, name string) bool {
 	c := h.connections[id]
 	return c != nil && feature(c.features, name)
 }
+
+// DeviceID returns the paired-device principal id behind a worker.
+func (h *Hub) DeviceID(ctx context.Context, workerID string) (string, error) {
+	var id string
+	err := h.db.QueryRowContext(ctx, `SELECT device_id FROM workers WHERE id=?`, workerID).Scan(&id)
+	return id, err
+}
 func (h *Hub) Resolve(ctx context.Context, name string) (string, error) {
 	var id string
 	err := h.db.QueryRowContext(ctx, `SELECT id FROM workers WHERE id=? OR label=? ORDER BY id LIMIT 1`, name, name).Scan(&id)
