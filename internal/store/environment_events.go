@@ -55,7 +55,7 @@ func (s *Store) EnvironmentEvents(ctx context.Context, after int64, limit int) (
 		w.GapReason = "purged"
 		return w, nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,scope,session_id,at,kind,payload_json,event_id FROM events WHERE id>? AND id<=? ORDER BY id LIMIT ?`, after, w.HighWater, limit+1)
+	rows, err := tx.QueryContext(ctx, `SELECT `+eventReadColumns+` FROM events WHERE id>? AND id<=? ORDER BY id LIMIT ?`, after, w.HighWater, limit+1)
 	if err != nil {
 		return w, err
 	}

@@ -86,7 +86,7 @@ func (s *Store) InsertEventTx(ctx context.Context, tx events.Tx, e events.Event)
 	}
 	if existing {
 		// A repeat of an id already stored is that row, not what this caller sent.
-		rows, err := tx.QueryContext(ctx, `SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE id = ?`, stored.Seq)
+		rows, err := tx.QueryContext(ctx, `SELECT `+eventReadColumns+` FROM events WHERE id = ?`, stored.Seq)
 		if err != nil {
 			return events.Event{}, err
 		}
@@ -109,7 +109,7 @@ func (s *Store) PendingEventsContext(ctx context.Context, beforeSeq int64, limit
 		limit = 256
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE pending = 1 AND (? <= 0 OR id < ?) ORDER BY id ASC LIMIT ?`, beforeSeq, beforeSeq, limit)
+		`SELECT `+eventReadColumns+` FROM events WHERE pending = 1 AND (? <= 0 OR id < ?) ORDER BY id ASC LIMIT ?`, beforeSeq, beforeSeq, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -135,27 +135,15 @@ func (s *Store) MarkPublishedContext(ctx context.Context, seqs []int64) error {
 	return nil
 }
 
-// scanEventsWithID is scanEvents for queries that also select event_id (last).
+// scanEventsWithID hydrates eventReadColumns, including the producer ID.
 func scanEventsWithID(rows *sql.Rows) ([]events.Event, error) {
 	var out []events.Event
 	for rows.Next() {
-		var (
-			id          int64
-			scope       string
-			sessionID   sql.NullString
-			atStr       string
-			kind        string
-			payloadJSON sql.NullString
-			eventID     sql.NullString
-		)
-		if err := rows.Scan(&id, &scope, &sessionID, &atStr, &kind, &payloadJSON, &eventID); err != nil {
+		e, err := scanEvent(rows)
+		if err != nil {
 			return nil, err
 		}
-		at, perr := time.Parse(time.RFC3339Nano, atStr)
-		if perr != nil {
-			at, _ = time.Parse(time.RFC3339, atStr)
-		}
-		out = append(out, events.Event{Seq: id, At: at, Scope: scope, SessionID: sessionID.String, Kind: kind, PayloadJSON: payloadJSON.String, EventID: eventID.String})
+		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
