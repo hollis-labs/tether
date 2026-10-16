@@ -27,6 +27,7 @@ type TeamOps interface {
 	Dissolve(context.Context, teamsvc.RunRequest) (teamsvc.Result, error)
 	AddMember(context.Context, teamsvc.AddMemberRequest) (teamsvc.Result, error)
 	RemoveMember(context.Context, teamsvc.RemoveMemberRequest) (teamsvc.Result, error)
+	Adopt(context.Context, teamsvc.AdoptRequest) (teamsvc.Result, error)
 	Assign(context.Context, teamsvc.MessageRequest) (teamsvc.Result, error)
 	Delegate(context.Context, teamsvc.MessageRequest) (teamsvc.Result, error)
 	Address(context.Context, teamsvc.MessageRequest) (teamsvc.Result, error)
@@ -51,6 +52,11 @@ type TeamRequest struct {
 	History     mesh.HistoryPolicy `json:"history,omitempty"`
 	Cascade     bool               `json:"cascade,omitempty"`
 	DelegateKey string             `json:"delegate_key,omitempty"`
+	// Adopt names the actor, its session and the binding generation it runs
+	// under. The daemon verifies all three against its own records.
+	Actor             mesh.URN `json:"actor,omitempty"`
+	SessionID         string   `json:"session_id,omitempty"`
+	BindingGeneration uint64   `json:"binding_generation,omitempty"`
 }
 
 // TeamLaunchRequest contains formation options without a second caller key.
@@ -62,7 +68,7 @@ type TeamLaunchRequest struct {
 
 // TeamVerbs is the vocabulary shared by HTTP, MCP and CLI.
 func TeamVerbs() []string {
-	return []string{"form", "dissolve", "member_add", "member_remove", "assign", "delegate", "address", "cancel", "report_result"}
+	return []string{"form", "dissolve", "member_add", "member_remove", "adopt", "assign", "delegate", "address", "cancel", "report_result"}
 }
 
 // HasTeamOps treats nil pointers stored in an interface as absent.
@@ -97,6 +103,8 @@ func TeamRequestFields(verb string) []string {
 		return []string{"run_id", "slot", "limits"}
 	case "member_remove":
 		return []string{"run_id", "member_id"}
+	case "adopt":
+		return []string{"run_id", "slot", "actor", "session_id", "binding_generation"}
 	case "assign", "delegate", "address":
 		return []string{"run_id", "address", "body", "kind", "history"}
 	case "cancel":
@@ -118,6 +126,8 @@ func TeamRequiredFields(verb string) []string {
 		return []string{"run_id", "slot"}
 	case "member_remove", "cancel":
 		return []string{"run_id", "member_id"}
+	case "adopt":
+		return []string{"run_id", "slot", "actor", "session_id", "binding_generation"}
 	case "assign", "delegate", "address":
 		return []string{"run_id", "body"}
 	case "report_result":
@@ -163,6 +173,13 @@ func DecodeTeamRequest(verb, key string, r io.Reader) (TeamRequest, error) {
 		if field == "team" {
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return req, invalidTeamField(field, "must be a non-null object")
+			}
+			continue
+		}
+		if field == "binding_generation" {
+			var generation uint64
+			if json.Unmarshal(value, &generation) != nil || generation == 0 {
+				return req, invalidTeamField(field, "must be a positive integer")
 			}
 			continue
 		}
@@ -223,6 +240,8 @@ func CallTeam(ctx context.Context, ops TeamOps, verb, key string, r TeamRequest)
 		return ops.AddMember(ctx, teamsvc.AddMemberRequest{Key: key, RunID: r.RunID, Slot: r.Slot, Limits: r.Limits})
 	case "member_remove":
 		return ops.RemoveMember(ctx, teamsvc.RemoveMemberRequest{Key: key, RunID: r.RunID, MemberID: r.MemberID})
+	case "adopt":
+		return ops.Adopt(ctx, teamsvc.AdoptRequest{Key: key, RunID: r.RunID, Slot: r.Slot, Actor: r.Actor, SessionID: r.SessionID, BindingGeneration: r.BindingGeneration})
 	case "assign":
 		return ops.Assign(ctx, teamMessage(key, r))
 	case "delegate":

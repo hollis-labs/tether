@@ -240,3 +240,39 @@ func wouldAllowColumn(v *bool) any {
 	}
 	return 0
 }
+
+// SessionOwner returns the principal that launched a session, read from the
+// session's own live credential: the created_by of its unrevoked, unexpired
+// principal row. It is empty when the session has no such credential (identity
+// observe or off mode, a revoked or expired credential), which callers must
+// treat as unverified rather than as ownerless-and-trusted.
+func (s *Store) SessionOwner(ctx context.Context, sessionID string) (string, error) {
+	if s == nil || s.db == nil || sessionID == "" {
+		return "", fmt.Errorf("identity store unavailable")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT created_by, expires_at FROM principals
+        WHERE kind = 'session' AND session_id = ? AND revoked_at IS NULL
+        ORDER BY created_at DESC`, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("lookup session owner: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var owner string
+		var expires sql.NullString
+		if err = rows.Scan(&owner, &expires); err != nil {
+			return "", fmt.Errorf("lookup session owner: %w", err)
+		}
+		if expires.Valid {
+			at, parseErr := time.Parse(time.RFC3339Nano, expires.String)
+			if parseErr != nil || !at.After(time.Now()) {
+				continue
+			}
+		}
+		return owner, nil
+	}
+	if err = rows.Err(); err != nil {
+		return "", fmt.Errorf("lookup session owner: %w", err)
+	}
+	return "", nil
+}

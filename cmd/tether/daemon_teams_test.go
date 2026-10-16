@@ -591,3 +591,36 @@ func TestDaemonTeamsFormExampleClaudeTeam(t *testing.T) {
 		t.Fatalf("form status %d without underlying cause: %s", status, body)
 	}
 }
+
+// Adoption is opt-in in the teams policy; with it the daemon builds the
+// registry-backed adopter and the host's adoptable launch allowlist from the
+// same policy file, and an unknown policy key still fails startup clearly.
+func TestDaemonTeamsAdoptionPolicyBuilds(t *testing.T) {
+	on := true
+	f := newDaemonTeamFixture(t, &on)
+	policyPath := filepath.Join(f.svc.CatalogRoot, "teams-policy.yaml")
+	base := "version: 1\nlaunches:\n  - {launch: tether-claude, runtime: claude, definition: {id: worker, revision: r1, digest: verified-pin}}\n"
+	for _, tc := range []struct {
+		name, body, wantErr string
+	}{
+		{"adoption on", base + "adoption: true\n", ""},
+		{"adoption off", base + "adoption: false\n", ""},
+		{"misspelled key", base + "adopt: true\n", "teams-policy.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			teamRequire(t, os.WriteFile(policyPath, []byte(tc.body), 0600))
+			ops, closeOps, err := buildDaemonTeams(f.svc, f.cfg)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("want %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			teamRequire(t, err)
+			defer closeOps()
+			if ops == nil {
+				t.Fatal("no service built")
+			}
+		})
+	}
+}

@@ -63,6 +63,9 @@ func teamRequestSchema(verb string) map[string]any {
 		if field == "cascade" {
 			kind = "boolean"
 		}
+		if field == "binding_generation" {
+			kind = "integer"
+		}
 		prop := map[string]any{"type": kind}
 		switch field {
 		case "kind":
@@ -71,6 +74,8 @@ func teamRequestSchema(verb string) map[string]any {
 		case "history":
 			prop["enum"] = []string{"none", "summary", "filtered", "full"}
 			prop["description"] = "Optional; may not widen the team's history policy. Omit unless needed"
+		case "actor", "session_id", "binding_generation":
+			prop["description"] = "Adopt: the running agent, its session and the registry binding generation it runs under; the daemon verifies all three"
 		case "address":
 			prop["description"] = "@slot, @slot*, @all or @member-id; the grants must allow your slot to reach it"
 		}

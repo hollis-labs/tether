@@ -18,7 +18,7 @@ subprocess; no daemon needs to be running first.
 
 When the host supplies an enabled team service, its native tool catalog adds
 `tether_team_form`, `tether_team_dissolve`, `tether_team_member_add`,
-`tether_team_member_remove`, `tether_team_assign`, `tether_team_delegate`,
+`tether_team_member_remove`, `tether_team_adopt`, `tether_team_assign`, `tether_team_delegate`,
 `tether_team_address`, `tether_team_cancel`, and `tether_team_report_result`.
 With teams disabled these tools are absent, including the gateway's native
 catalog. Every team verb requires the `team.write` token scope in addition to

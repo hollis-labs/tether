@@ -54,6 +54,9 @@ func (f *teamCapture) AddMember(ctx context.Context, r teamsvc.AddMemberRequest)
 func (f *teamCapture) RemoveMember(ctx context.Context, r teamsvc.RemoveMemberRequest) (teamsvc.Result, error) {
 	return f.record(ctx, "member_remove", r)
 }
+func (f *teamCapture) Adopt(ctx context.Context, r teamsvc.AdoptRequest) (teamsvc.Result, error) {
+	return f.record(ctx, "adopt", r)
+}
 func (f *teamCapture) Assign(ctx context.Context, r teamsvc.MessageRequest) (teamsvc.Result, error) {
 	return f.record(ctx, "assign", r)
 }
@@ -82,6 +85,11 @@ func teamInputs(verb string) map[string]any {
 		r["limits"] = map[string]any{"max_depth": 1}
 	case "member_remove":
 		r["member_id"] = "member"
+	case "adopt":
+		r["slot"] = "workers"
+		r["actor"] = "msg://agent/fleet/one"
+		r["session_id"] = "session-1"
+		r["binding_generation"] = 3
 	case "assign", "delegate", "address":
 		r["address"] = "@worker"
 		r["body"] = "do work"

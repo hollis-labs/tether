@@ -101,6 +101,7 @@ exception affects verification only, never membership, grants or host ceilings.
 | `/teams/dissolve` | `run_id` |
 | `/teams/member_add` | `run_id`, `slot`, optional `limits` |
 | `/teams/member_remove` | `run_id`, `member_id` |
+| `/teams/adopt` | `run_id`, `slot`, `actor`, `session_id`, `binding_generation` (needs `adoption: true`, see [teams-activation.md](../teams-activation.md#adopting-running-agents)) |
 | `/teams/assign` | `run_id`, `body`, optional `address`, `kind`, `history` |
 | `/teams/delegate` | `run_id`, `body`, optional `address`, `kind`, `history` |
 | `/teams/address` | `run_id`, `body`, optional `address`, `kind`, `history` |
@@ -148,7 +149,7 @@ tether team cancel --key stop-1 --request '{"run_id":"run-id","member_id":"membe
 tether team form --key start-1 --request-file team-request.json
 ```
 
-Every route suffix is also a CLI verb, including `member_add`, `member_remove`
+Every route suffix is also a CLI verb, including `member_add`, `member_remove`, `adopt`
 and `report_result`. `--request-file -` reads stdin. Results are JSON; CLI errors
 retain the same typed code and HTTP status without server causes. There is no
 CLI flag or environment variable that enables teams.

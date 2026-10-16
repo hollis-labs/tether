@@ -276,3 +276,39 @@ func TestIdentitySessionReplacementIsAtomicAndCreatedOnly(t *testing.T) {
 		t.Fatal("running credential revoked", err)
 	}
 }
+
+func TestSessionOwnerReadsOnlyALiveSessionCredential(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ids, db := identityStore(t)
+	ctx := context.Background()
+	if err := db.CreateSession(store.SessionRow{ID: "owned", State: "created"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if owner, err := ids.SessionOwner(ctx, "owned"); err != nil || owner != "" {
+		t.Fatalf("no credential yet: %q %v", owner, err)
+	}
+	future := time.Now().Add(time.Hour)
+	token, err := ids.MintSessionForLaunch(ctx, identity.Principal{ID: "msg://session/local/owned", Kind: "session", SessionID: "owned", CreatedBy: identity.OperatorID, ExpiresAt: &future})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, err := ids.SessionOwner(ctx, "owned"); err != nil || owner != identity.OperatorID {
+		t.Fatalf("owner = %q %v", owner, err)
+	}
+	if owner, _ := ids.SessionOwner(ctx, "someone-else"); owner != "" {
+		t.Fatalf("another session's owner leaked: %q", owner)
+	}
+	if err = ids.RevokeToken(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if owner, _ := ids.SessionOwner(ctx, "owned"); owner != "" {
+		t.Fatalf("revoked credential still vouches: %q", owner)
+	}
+	// An expired credential does not vouch either.
+	if _, err = db.DB().Exec(`UPDATE principals SET revoked_at=NULL, expires_at=? WHERE session_id='owned'`, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if owner, _ := ids.SessionOwner(ctx, "owned"); owner != "" {
+		t.Fatalf("expired credential still vouches: %q", owner)
+	}
+}
