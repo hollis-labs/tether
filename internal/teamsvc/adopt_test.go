@@ -134,6 +134,10 @@ func (permissive) FormationCeilings(context.Context, teamsvc.Principal) (teamsvc
 	return teamsvc.FormationPolicy{Limits: limitsFor(), MaxSlots: 4, MaxMembersPerSlot: 4, MaxInitialMembers: 4, AllowedPermissions: []teams.Permission{teams.MayMessage, teams.MayAssign, teams.MayDelegate}, AllowAdoptedSlots: true}, nil
 }
 
+func (permissive) AdmitAdoption(context.Context, teamsvc.Principal, teams.Team, teams.Slot) error {
+	return nil
+}
+
 func limitsFor() mesh.Limits {
 	return mesh.Limits{MaxDepth: 2, MaxChildren: 4, FanOut: 4, Budget: 10, Timeout: time.Minute, MaxRounds: 16, MaxStalls: 4}
 }
@@ -413,6 +417,23 @@ func TestSlotCardinalityAndOneSeatPerActor(t *testing.T) {
 	}
 	if _, ok := r.member(t, workerTwo); ok {
 		t.Fatal("refused adoption joined the roster")
+	}
+}
+
+// bareCeilings has no adoption gate at all.
+type bareCeilings struct{}
+
+func (bareCeilings) FormationCeilings(context.Context, teamsvc.Principal) (teamsvc.FormationPolicy, error) {
+	return permissive{}.FormationCeilings(context.Background(), teamsvc.Principal{})
+}
+
+func TestCeilingsWithoutAnAdoptionGateRefuseAdoption(t *testing.T) {
+	r := newRig(t, team(teams.MayMessage), bareCeilings{})
+	if _, err := r.adopt(t, "a1", workerOne, "workers"); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("got %v, want denied", err)
+	}
+	if _, ok := r.member(t, workerOne); ok {
+		t.Fatal("member joined without an adoption gate")
 	}
 }
 

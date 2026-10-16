@@ -20,8 +20,9 @@ type AdoptRequest struct {
 	BindingGeneration uint64
 }
 
-// AdoptionAdmitter is an optional Ceilings extension that gates adoption by
-// host policy (enabled, paused) before the host is asked to verify anything.
+// AdoptionAdmitter is the Ceilings extension that gates adoption by host
+// policy (enabled, paused) before the host is asked to verify anything.
+// Ceilings without it refuse every adoption.
 type AdoptionAdmitter interface {
 	AdmitAdoption(context.Context, Principal, teams.Team, teams.Slot) error
 }
@@ -56,10 +57,14 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (Result, error) {
 		if !ok {
 			return Result{}, ErrInvalidRequest
 		}
-		if admitter, ok := s.deps.Ceilings.(AdoptionAdmitter); ok {
-			if err = admitter.AdmitAdoption(ctx, p, t, slot); err != nil {
-				return Result{}, err
-			}
+		// Fail closed: host ceilings that cannot say adoption is enabled do not
+		// get it by default.
+		admitter, ok := s.deps.Ceilings.(AdoptionAdmitter)
+		if !ok {
+			return Result{}, fmt.Errorf("%w: the host policy has no adoption gate", ErrDenied)
+		}
+		if err = admitter.AdmitAdoption(ctx, p, t, slot); err != nil {
+			return Result{}, err
 		}
 		if slot.Name == t.Routing.CoordinatorSlot {
 			if err = delegateOnly(t, slot); err != nil {
