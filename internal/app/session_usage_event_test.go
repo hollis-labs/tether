@@ -117,3 +117,19 @@ func TestTerminalLifecycleEventClosesTheUsageStream(t *testing.T) {
 		t.Fatalf("first event %q %v", first, err)
 	}
 }
+
+// Two terminal changes for one session (a stop, then the provider's exit) close
+// the stream once.
+func TestFinalUsageIsReportedAtMostOncePerSession(t *testing.T) {
+	db, bus := usageFixture(t)
+	if err := db.AddSessionTurnUsage("s1", store.TurnUsage{Reported: true, InputTokens: 5, OutputTokens: 2}); err != nil {
+		t.Fatal(err)
+	}
+	publishFinalUsageIfTerminal(bus, db, "s1", "la", "killed")
+	publishFinalUsageIfTerminal(bus, db, "s1", "la", "failed")
+	publishFinalUsageIfTerminal(bus, db, "s1", "la", "orphaned")
+	got := usageEvents(t, db)
+	if len(got) != 1 || !got[0].Final {
+		t.Fatalf("final reports: %+v", got)
+	}
+}

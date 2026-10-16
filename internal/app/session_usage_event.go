@@ -58,10 +58,18 @@ func publishSessionUsage(bus events.Publisher, db *store.Store, sessionID, logic
 }
 
 // publishFinalUsageIfTerminal sends the closing report (final=true) when a
-// state change ends the session. A metered session gets exactly one, from
-// whichever path recorded the terminal transition.
+// state change ends the session. Several paths can record terminal changes for
+// one session (a stop followed by the provider's exit, a reaper move), so it is
+// at most once per session: a final report already on the log suppresses
+// another.
 func publishFinalUsageIfTerminal(bus events.Publisher, db *store.Store, sessionID, logicalAgentID, to string) {
-	if session.State(to).Terminal() {
-		publishSessionUsage(bus, db, sessionID, logicalAgentID, "", true)
+	if !session.State(to).Terminal() || db == nil {
+		return
 	}
+	var already bool
+	err := db.DB().QueryRow(`SELECT EXISTS(SELECT 1 FROM events WHERE session_id=? AND kind=? AND json_extract(payload_json,'$.final')=1)`, sessionID, events.KindSessionUsage).Scan(&already)
+	if err != nil || already {
+		return
+	}
+	publishSessionUsage(bus, db, sessionID, logicalAgentID, "", true)
 }
