@@ -2,6 +2,7 @@ package identity_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -310,5 +311,71 @@ func TestSessionOwnerReadsOnlyALiveSessionCredential(t *testing.T) {
 	}
 	if owner, _ := ids.SessionOwner(ctx, "owned"); owner != "" {
 		t.Fatalf("expired credential still vouches: %q", owner)
+	}
+}
+
+func TestUnboundedSessionsListsOnlyLiveCredentialsBornWithoutABoundingAuthority(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ids, db := identityStore(t)
+	ctx := context.Background()
+	future := time.Now().Add(time.Hour)
+	mintSession := func(id, createdBy, attribution string, expires *time.Time) {
+		t.Helper()
+		if err := db.CreateSession(store.SessionRow{ID: id, State: "created"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		p := identity.Principal{ID: "msg://session/local/" + id, Kind: "session", SessionID: id, CreatedBy: createdBy, LaunchAttribution: attribution, ExpiresAt: expires}
+		if _, err := ids.MintSessionForLaunch(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mintSession("bounded-by-principal", identity.OperatorID, "principal", &future)
+	mintSession("bounded-by-origin", "", "origin", &future) // empty created_by, but an origin bounded it
+	mintSession("anonymous", "", "anonymous_external", &future)
+	mintSession("internal", "", "internal_unattributed", &future)
+	mintSession("legacy", "", "", &future)                                // before attribution was recorded, launcher unknown
+	mintSession("legacy-with-launcher", identity.OperatorID, "", &future) // before attribution, but a launcher is recorded
+	mintSession("revoked", "", "anonymous_external", &future)
+	if err := ids.RevokeSession(ctx, "revoked"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ids.UnboundedSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]string{}
+	for _, u := range got {
+		have[u.SessionID] = u.Attribution
+	}
+	want := map[string]string{"anonymous": "anonymous_external", "internal": "internal_unattributed", "legacy": "legacy_unknown_launcher"}
+	if len(have) != len(want) {
+		t.Fatalf("unbounded %v, want %v", have, want)
+	}
+	for id, attribution := range want {
+		if have[id] != attribution {
+			t.Fatalf("unbounded %v, want %v", have, want)
+		}
+	}
+	// An expired credential is already dead and is not listed.
+	if _, err = db.DB().Exec(`UPDATE principals SET expires_at=? WHERE session_id='anonymous'`, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = ids.UnboundedSessions(ctx)
+	for _, u := range got {
+		if u.SessionID == "anonymous" {
+			t.Fatal("an expired credential is listed")
+		}
+	}
+	// RevokeUnbounded revokes exactly the listed ones.
+	n, err := ids.RevokeUnbounded(ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("revoked %d (%v), want 2 (internal and legacy)", n, err)
+	}
+	if left, _ := ids.UnboundedSessions(ctx); len(left) != 0 {
+		t.Fatalf("still unbounded after revoking: %v", left)
+	}
+	var revoked sql.NullString
+	if err = db.DB().QueryRow(`SELECT revoked_at FROM principals WHERE session_id='bounded-by-principal'`).Scan(&revoked); err != nil || revoked.Valid {
+		t.Fatalf("a bounded credential was revoked (%v, %v)", revoked, err)
 	}
 }

@@ -39,15 +39,19 @@ type Principal struct {
 	// from an issued JWT (authissuer): the iss and aud claims, the jti claim
 	// and the minting parent. A non-empty TokenID is how the daemon tells an
 	// issued token from a stored tth_ credential.
-	Issuer    string     `json:"issuer,omitempty"`
-	Audience  string     `json:"audience,omitempty"`
-	TokenID   string     `json:"token_id,omitempty"`
-	Parent    string     `json:"parent,omitempty"`
-	Addresses []string   `json:"addresses"`
-	CreatedBy string     `json:"created_by,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Issuer    string   `json:"issuer,omitempty"`
+	Audience  string   `json:"audience,omitempty"`
+	TokenID   string   `json:"token_id,omitempty"`
+	Parent    string   `json:"parent,omitempty"`
+	Addresses []string `json:"addresses"`
+	CreatedBy string   `json:"created_by,omitempty"`
+	// LaunchAttribution records, for a session credential, what vouched for its
+	// scopes when it was minted: principal, origin, internal_unattributed or
+	// anonymous_external (empty before it was recorded).
+	LaunchAttribution string     `json:"launch_attribution,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
 }
 
 type principalKey struct{}
