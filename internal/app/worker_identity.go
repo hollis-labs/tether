@@ -130,6 +130,9 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 	}
 	// A worker session may not hold more than the principal that launched it.
 	scopes, attribution, err := s.launchCeiling(ctx, scopes)
+	if err == nil {
+		err = s.refuseUnboundedWhenEnforced(attribution)
+	}
 	if err != nil {
 		revokeBinding()
 		return undo, err

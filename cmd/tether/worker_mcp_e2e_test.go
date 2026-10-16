@@ -135,7 +135,10 @@ func TestWorkerLaunchThroughRelayToRemoteMCPEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create worker session: %v", err)
 	}
-	if _, err := svc.LaunchSession(created.SessionID); err != nil {
+	// The catalog is enforce, so a launch always has a verified launcher; an
+	// anonymous one would (rightly) be refused before any restart.
+	operator := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+	if _, err := svc.LaunchSessionWithContext(operator, created.SessionID); err != nil {
 		t.Fatalf("launch worker session: %v", err)
 	}
 	var spec workerwire.LaunchSpec
