@@ -149,6 +149,10 @@ func Parse(data []byte) (Config, []string, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return Config{}, nil, fmt.Errorf("retention: expected one YAML document")
 	}
+	return compile(raw)
+}
+
+func compile(raw rawConfig) (Config, []string, error) {
 	c := Config{piiCap: Age(30 * Day), rules: map[Class]Rule{
 		Audit:    {Full: 0, Envelope: -1, Rollups: []RollupRule{{Age(Day), 0}}},
 		State:    {Full: Age(180 * Day), Envelope: Age(2 * Year), Rollups: []RollupRule{{Age(time.Hour), Age(2 * Year)}, {Age(Day), 0}}},
