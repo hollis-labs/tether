@@ -161,6 +161,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool, live .
 
 	// 3. Daemon reachable (requires catalog for listen addr).
 	checks = append(checks, checkDaemon(cat), checkIdentity(cat), checkMCPUpstreamOwnership(cat))
+	checks = append(checks, checkCredentialHealth(cat)...)
 	checks = append(checks, checkClaudeStrictMCP(cat, localStrictMCPStatus()))
 
 	// 4. Migrations current (opens DB; idempotent — migrations are a no-op if already applied).

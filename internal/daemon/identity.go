@@ -34,8 +34,9 @@ func (s *Server) CloseIdentityAudit() {
 }
 
 type IdentityHealth struct {
-	Mode             identity.Mode `json:"mode"`
-	OperatorDegraded bool          `json:"operator_degraded"`
+	DeviceExpiry     *DeviceExpiryHealth `json:"device_expiry,omitempty"`
+	Mode             identity.Mode       `json:"mode"`
+	OperatorDegraded bool                `json:"operator_degraded"`
 	// Points lists per-enforcement-point overrides in effect (CW-20261010-0268).
 	Points map[string]identity.Mode `json:"points,omitempty"`
 	Audit  identity.AuditStats      `json:"audit"`
@@ -49,5 +50,6 @@ func (s *Server) identityHealth() *IdentityHealth {
 	if queue != nil {
 		h.Audit = queue.Stats()
 	}
+	h.DeviceExpiry = s.deviceExpiryHealth()
 	return h
 }

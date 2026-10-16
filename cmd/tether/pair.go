@@ -117,7 +117,8 @@ func newPairCommand(factory deviceAdminFactory) *cobra.Command {
 }
 
 func newAuthCommand(factory deviceAdminFactory) *cobra.Command {
-	cmd := &cobra.Command{Use: "auth", Short: "List and revoke paired devices through the local operator socket"}
+	cmd := &cobra.Command{Use: "auth", Short: "Manage paired devices and renew their credentials"}
+	cmd.AddCommand(newDeviceRenewCommand())
 	cmd.AddCommand(&cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := factory()
 		if err != nil {

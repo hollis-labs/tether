@@ -164,3 +164,34 @@ func safeDeviceMetadata(value string, limit int) string {
 	}
 	return strings.ToValidUTF8(value, "")
 }
+
+// DeviceExpiryCounts contains no identifiers and is safe for public health.
+type DeviceExpiryCounts struct {
+	Expiring int `json:"expiring_within_7d"`
+	Expired  int `json:"expired"`
+}
+
+func (s *Store) DeviceExpiry(ctx context.Context, now time.Time) (DeviceExpiryCounts, error) {
+	var out DeviceExpiryCounts
+	rows, err := s.db.QueryContext(ctx, `SELECT expires_at FROM principals WHERE kind='device' AND revoked_at IS NULL`)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return DeviceExpiryCounts{}, err
+		}
+		expiry, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return DeviceExpiryCounts{}, err
+		}
+		if !expiry.After(now) {
+			out.Expired++
+		} else if !expiry.After(now.Add(7 * 24 * time.Hour)) {
+			out.Expiring++
+		}
+	}
+	return out, rows.Err()
+}

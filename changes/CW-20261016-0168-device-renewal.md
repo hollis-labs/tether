@@ -1,0 +1,2 @@
+- Renew worker device credentials at startup and daily while connected, retry independently of active work, and add `tether auth renew` for file/ref credentials without changing the bearer or scopes (CW-20261016-0168).
+- Report aggregate device expiry and optional durable deny-list detector health through `/health` and `tether doctor`, without exposing credentials, device labels or log content (CW-20261016-0168).
