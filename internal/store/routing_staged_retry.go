@@ -137,8 +137,17 @@ func (s *Store) writeTurnOutputRetry(id, newID string, payload []byte, replace, 
 				}
 				oldInfo, oldErr := os.Stat(filepath.Join(dir, id+".json"))
 				newInfo, newErr := os.Stat(filepath.Join(dir, newID+".json"))
-				if oldErr != nil || newErr != nil || !os.SameFile(oldInfo, newInfo) {
-					return ErrDuplicateWithheldOutput
+				if oldErr != nil || newErr != nil {
+					return errors.Join(oldErr, newErr)
+				}
+				if !os.SameFile(oldInfo, newInfo) {
+					// Keep the first notice, but retire the second record's
+					// body-derived name as well. Report the dropped duplicate
+					// so the caller counts an invariant violation.
+					if err := os.Remove(filepath.Join(dir, id+".json")); err != nil {
+						return err
+					}
+					return errors.Join(ErrDuplicateWithheldOutput, syncOutputRetryDir(dir))
 				}
 			}
 			if err := os.Remove(filepath.Join(dir, id+".json")); err != nil {
