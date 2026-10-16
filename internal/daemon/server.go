@@ -688,15 +688,16 @@ func (s *Server) handler(remote bool) http.Handler {
 // Health is the response body shape for GET /health. Kept small on purpose —
 // full session/API surfaces arrive in Sprint v002-s05.
 type Health struct {
-	EnvironmentID string          `json:"environmentId,omitempty"`
-	ServerVersion string          `json:"serverVersion,omitempty"`
-	Protocol      int             `json:"protocol,omitempty"`
-	Identity      *IdentityHealth `json:"identity,omitempty"`
-	Status        string          `json:"status"`
-	PID           int             `json:"pid"`
-	UptimeSec     int64           `json:"uptime_sec"`
-	Listener      string          `json:"listener"`
-	Sessions      int             `json:"sessions"`
+	DenyListWatch *DenyListWatchHealth `json:"deny_list_watch,omitempty"`
+	EnvironmentID string               `json:"environmentId,omitempty"`
+	ServerVersion string               `json:"serverVersion,omitempty"`
+	Protocol      int                  `json:"protocol,omitempty"`
+	Identity      *IdentityHealth      `json:"identity,omitempty"`
+	Status        string               `json:"status"`
+	PID           int                  `json:"pid"`
+	UptimeSec     int64                `json:"uptime_sec"`
+	Listener      string               `json:"listener"`
+	Sessions      int                  `json:"sessions"`
 	// Hardening reports the launch-hardening switches the running daemon
 	// decided from its own environment, so `tether doctor` can report what
 	// tetherd does rather than what the doctor's environment would do. Absent
@@ -817,6 +818,7 @@ func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode,
 		Listener:  addr,
 	}
 	h.Identity = s.identityHealth()
+	h.DenyListWatch = denyListWatchHealth(os.Getenv("TETHER_DENYLIST_WATCH_STATE"), time.Now())
 	h.Identity.Mode = mode
 	if s.Environment != nil {
 		h.EnvironmentID, h.ServerVersion, h.Protocol = s.Environment.Identity()

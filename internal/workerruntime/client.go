@@ -150,6 +150,9 @@ func (w *Worker) Send(f workerwire.Frame) error {
 	return ws.WriteJSON(f)
 }
 func (w *Worker) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go w.keepDeviceCredential(ctx)
 	if err := ValidateHubMCPFile(w.Root); err != nil {
 		log.Printf("WARN worker: launches will fail until this is fixed: %v", err)
 	}
