@@ -28,4 +28,13 @@ func TestMeterTurnRecordsUsageAndMarksUnmetered(t *testing.T) {
 	if u.Turns != 2 || u.FailedTurns != 1 || u.UsageTurns != 1 || u.InputTokens != 100 || u.OutputTokens != 40 || u.CostUSD != 0.5 || u.TurnMS != 2000 {
 		t.Fatalf("usage %+v", u)
 	}
+	// Each finished turn also reported the cumulative totals on the stream.
+	got := usageEvents(t, svc.Store)
+	want := []sessionUsagePayload{
+		{InputTokens: 100, OutputTokens: 40, Turns: 1, Source: "provider", TurnID: "t1"},
+		{InputTokens: 100, OutputTokens: 40, Turns: 2, Source: "provider", TurnID: "t2"},
+	}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("usage events %+v, want %+v", got, want)
+	}
 }

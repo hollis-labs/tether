@@ -247,6 +247,7 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 		Kind:           events.KindSessionStateChanged,
 		PayloadJSON:    string(payload),
 	})
+	publishFinalUsageIfTerminal(a.bus, a.db, ev.SessionID, logicalAgentID, to)
 }
 
 // mapLifecycleStates translates a lib LifecycleEvent's From/To pair into
