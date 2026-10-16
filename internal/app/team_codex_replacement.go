@@ -137,5 +137,7 @@ func (s *Service) recoverRetainedCodexTeam(ctx context.Context, key string, row 
 	if err != nil {
 		return err
 	}
+	// the replacement event was written as an outbox row on that transaction
+	s.Store.EventsCommitted()
 	return s.launchRetainedTeamReplacement(ctx, key, id)
 }
