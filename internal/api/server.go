@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"go.opentelemetry.io/otel"
@@ -216,7 +217,7 @@ type Server struct {
 func NewHandler(deps Deps) http.Handler {
 	refAssertions, err := otel.Meter("github.com/hollis-labs/tether/api").Int64Counter("tether.refs.source_asserted", metric.WithDescription("Rejected caller assertions of proxy reference provenance"))
 	if err != nil {
-		otel.Handle(err)
+		slog.Warn("initialize session ref rejection counter", "error", err)
 	}
 	s := &Server{
 		refSourceAssertions: refAssertions,
