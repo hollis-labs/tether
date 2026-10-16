@@ -216,6 +216,21 @@ func TestWorkerLaunchThroughRelayToRemoteMCPEndToEnd(t *testing.T) {
 	if tools["error"] != nil || len(list) == 0 {
 		t.Fatalf("tools/list through the remote /mcp: %v", tools)
 	}
+	// One tool call that goes through the gateway's native client to the daemon, authenticated with the bound token.
+	names := map[string]bool{}
+	for _, item := range list {
+		if m, ok := item.(map[string]any); ok {
+			names[fmt.Sprint(m["name"])] = true
+		}
+	}
+	if !names["tether_health"] {
+		t.Fatalf("tools/list lacks tether_health: %v", names)
+	}
+	callResult := call(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tether_health","arguments":{}}}`)
+	res, _ := callResult["result"].(map[string]any)
+	if callResult["error"] != nil || res == nil || res["isError"] == true {
+		t.Fatalf("tools/call tether_health through the remote /mcp: %v", callResult)
+	}
 	// The outpost refreshes the token in place; the relay re-reads it and the session continues.
 	if err := tokenfile.Write(tokenPath, mint()); err != nil {
 		t.Fatal(err)
