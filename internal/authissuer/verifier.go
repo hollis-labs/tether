@@ -32,6 +32,8 @@ func (l localJWKS) RoundTrip(*http.Request) (*http.Response, error) {
 type Verifier struct {
 	Stored identity.Verifier
 	JWT    *auth.JWTVerifier
+	// Issuer is the iss every accepted JWT carries (the JWT verifier pins it).
+	Issuer string
 }
 
 // NewVerifier builds the composite verifier for the issuer's own audience.
@@ -44,7 +46,7 @@ func NewVerifier(stored identity.Verifier, is *Issuer) (*Verifier, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Verifier{Stored: stored, JWT: jv}, nil
+	return &Verifier{Stored: stored, JWT: jv, Issuer: is.Name}, nil
 }
 
 // Verify implements identity.Verifier.
@@ -69,5 +71,5 @@ func (v *Verifier) Verify(ctx context.Context, token string) (identity.Principal
 		display = "Issued token for " + p.ID
 	}
 	return identity.Principal{Verified: true, ID: p.ID, Kind: p.Kind, Display: display, Scopes: append([]string(nil), p.Scopes...),
-		SessionID: p.SessionID, Audience: p.Audience, TokenID: p.TokenID, Parent: p.Parent, ExpiresAt: &exp, Addresses: []string{p.ID}}, nil
+		SessionID: p.SessionID, Issuer: v.Issuer, Audience: p.Audience, TokenID: p.TokenID, Parent: p.Parent, ExpiresAt: &exp, Addresses: []string{p.ID}}, nil
 }

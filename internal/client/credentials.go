@@ -102,8 +102,12 @@ func (c *Client) resolveToken() (string, error) {
 	return token, err
 }
 
+// maxBearerToken bounds a bearer credential. Stored credentials are short; an issued agent JWT is about
+// 470 characters, so the old 256 cap made the daemon's native client refuse every issued token.
+const maxBearerToken = 4096
+
 func validBearerToken(token string) bool {
-	if token == "" || len(token) > 256 {
+	if token == "" || len(token) > maxBearerToken {
 		return false
 	}
 	for _, b := range []byte(token) {
