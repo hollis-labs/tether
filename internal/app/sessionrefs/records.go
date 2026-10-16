@@ -31,8 +31,8 @@ type SessionRefListResponse struct {
 	Refs []SessionRefDTO `json:"refs"`
 }
 
-// SessionRefAttachRequest carries an explicit capture. Source records the
-// asserting party, not authentication; existing caller-set source is preserved.
+// SessionRefAttachRequest carries an explicit capture. The HTTP boundary
+// derives Source from verified identity; callers cannot choose provenance.
 type SessionRefAttachRequest struct {
 	Kind         string `json:"kind"`
 	RefID        string `json:"ref_id"`
@@ -92,28 +92,8 @@ func (s *Records) Attach(sessionID string, req SessionRefAttachRequest) (Session
 	if source == "" {
 		source = store.SourceAPI
 	}
-	// THERE IS DELIBERATELY NO GUARD ON source HERE, INCLUDING ON
-	// source=proxy. An earlier version of this handler rejected it, on the
-	// reasoning that a caller claiming its assertion was proxy-observed would
-	// erase the distinction the column carries. That was wrong twice over.
-	//
-	// It did not enforce what it claimed. Under ADR 0045 the daemon cannot
-	// distinguish the real proxy from any other same-host caller — identity
-	// here is self-asserted and unverified by design, the same as ?as=. So
-	// the guard blocked nothing an impersonator would do.
-	//
-	// And it blocked the one caller telling the truth. `tether mcp --proxy` runs
-	// in a SEPARATE PROCESS from the daemon and cannot reach the store; it
-	// writes through this endpoint like everyone else (the same route
-	// proxy_events already takes, cmd/tether/mcp.go). A guard that cannot detect
-	// impersonation but does stop the honest caller is strictly worse than no
-	// guard: it costs a real obstacle and buys a false assurance.
-	//
-	// What `source` actually records is WHO ASSERTED the ref — proxy-observed
-	// versus agent-self-reported. Provenance, not authentication. No consumer
-	// may read source=proxy as verified; see migration 0024 and
-	// store.AttachSessionRef. Making it verifiable is deferred hardening,
-	// tracked at CW-20260912-0100, and deliberately not attempted here.
+	// The HTTP boundary derives Source from verified identity before calling
+	// this storage operation. Source is not an authentication input here.
 	row := store.SessionRefRow{
 		SessionID:    sessionID,
 		Kind:         req.Kind,

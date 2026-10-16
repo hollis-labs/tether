@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -10,18 +11,19 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app/sessionrefs"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
 type plantedRefSessions struct{ api.LaunchService }
 
 // This is the separate proxy process's HTTP storage boundary. Record chooses
-// source=proxy; the attacher only transports that choice to the real API/store.
+// source=proxy internally; HTTP transport leaves provenance to the daemon.
 type plantedRefAttacher struct{ client *client.Client }
 
-func (a plantedRefAttacher) AttachSessionRef(ctx context.Context, id, kind, refID, uri, relation, source, parent string) error {
+func (a plantedRefAttacher) AttachSessionRef(ctx context.Context, id, kind, refID, uri, relation, _ string, parent string) error {
 	_, err := a.client.AttachSessionRef(ctx, id, api.SessionRefAttachRequest{
-		Kind: kind, RefID: refID, URI: uri, Relation: relation, Source: source, ParentItemID: parent,
+		Kind: kind, RefID: refID, URI: uri, Relation: relation, ParentItemID: parent,
 	})
 	return err
 }
@@ -37,7 +39,13 @@ func assertPlantedProxyCapture(t *testing.T, db *store.Store, args []string, ses
 			plantedSession = args[i+1]
 		}
 	}
-	server := httptest.NewServer(api.NewHandler(api.Deps{Service: &plantedRefSessions{}, SessionRefs: db}))
+	handler := api.NewHandler(api.Deps{Service: &plantedRefSessions{}, SessionRefs: db})
+	// Supply the authenticated boundary fixture here; the real bearer path is
+	// covered by cmd/tether.TestRefAttacherDerivesSourceFromSessionBearer.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, Kind: "session", SessionID: sessionID})
+		handler.ServeHTTP(w, r.WithContext(ctx))
+	}))
 	t.Cleanup(server.Close)
 	dc := client.New("tcp:"+strings.TrimPrefix(server.URL, "http://"), client.WithToken(""))
 	capture := sessionrefs.New(slices.Contains(args, "--extract-refs"), plantedSession, nil, plantedRefAttacher{client: dc}, nil)
@@ -60,7 +68,7 @@ func assertPlantedProxyCapture(t *testing.T, db *store.Store, args []string, ses
 		t.Fatalf("successful capture/retry/failed call: %+v", refs)
 	}
 	ref := refs[0]
-	if ref.SessionID != sessionID || ref.Kind != "torque_task" || ref.RefID != "CW-20261012-0069" || ref.Relation != "read" || ref.Source != "proxy" {
+	if ref.SessionID != sessionID || ref.Kind != "torque_task" || ref.RefID != "CW-20261012-0069" || ref.Relation != "read" || ref.Source != store.SourceSession {
 		t.Fatalf("persisted capture: %+v", ref)
 	}
 }
