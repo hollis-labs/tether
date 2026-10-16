@@ -107,7 +107,7 @@ func newTransportFixtureWithIssuer(t *testing.T, unix, upstream bool, timeout ti
 	}
 	f.verifier = &switchableVerifier{inner: f.ids}
 	if issuer != nil {
-		composite, err := authissuer.NewVerifier(f.ids, issuer)
+		composite, err := authissuer.NewVerifier(f.ids, issuer, authissuer.WithLeeway(100*time.Millisecond))
 		if err != nil {
 			t.Fatal(err)
 		}

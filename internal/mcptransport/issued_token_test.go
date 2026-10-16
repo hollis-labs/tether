@@ -156,10 +156,11 @@ func TestTransportIssuedTokenRevokedOrExpiredRefusedOnOpenSession(t *testing.T) 
 	}
 }
 
-// CW-20261016-0160: a view follows the latest verified token instead of the one it was prepared with. The first
-// token here is short-lived; the verifier allows some clock leeway, so the test proves the view adopts the newest
-// token (which its monitor, per-call admission and native client then use) rather than observing the expiry itself.
-func TestTransportViewFollowsRefreshedTokenAfterTheFirstExpires(t *testing.T) {
+// CW-20261016-0160 A1 (architect notes 2 and 3): the view adopts a new token only after that request verified and
+// matched its fingerprint, and never one that expires earlier than the pinned token. After the token the view was
+// prepared with has really expired (the fixture's verifier allows 100ms of skew), the view keeps working on the
+// adopted token, and revoking the adopted token's jti ends the view on the next request.
+func TestTransportViewSurvivesFirstTokenExpiryAndDiesWithTheAdoptedJTI(t *testing.T) {
 	g := newIssuedRig(t)
 	op := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
 	short, err := g.issuer.Exchange(op, authissuer.Request{Audience: authissuer.TetherAudience, Scopes: []string{"tether.read"}, SessionID: "s-rot", TTL: 2 * time.Second})
@@ -170,20 +171,21 @@ func TestTransportViewFollowsRefreshedTokenAfterTheFirstExpires(t *testing.T) {
 	if id == "" {
 		t.Fatal("no session")
 	}
-	deadline := time.Now().Add(3500 * time.Millisecond)
+	// Keep refreshing across the first token's expiry.
+	var adopted, adoptedJTI string
+	deadline := time.Now().Add(2500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		fresh, _ := g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read")
-		if status, _ := g.call(t, fresh, id); status != http.StatusOK {
+		adopted, adoptedJTI = g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read")
+		if status, _ := g.call(t, adopted, id); status != http.StatusOK {
 			t.Fatalf("refreshed token on the open session: %d", status)
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 	}
-	// The first token is long expired, yet the view is alive and follows the newest verified token, which is also
-	// what its native client sends to the daemon (it reads the token through the view).
-	latest, _ := g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read")
-	if status, _ := g.call(t, latest, id); status != http.StatusOK {
-		t.Fatalf("latest token: %d", status)
+	// The pinned token is now really expired: it is refused on its own...
+	if status, _ := g.call(t, short.Token, id); status != http.StatusUnauthorized {
+		t.Fatalf("the expired first token: %d, want 401", status)
 	}
+	// ...but the view lives on, following the newest verified token.
 	h := g.f.handler
 	h.mu.Lock()
 	v := h.sessions[id]
@@ -191,10 +193,10 @@ func TestTransportViewFollowsRefreshedTokenAfterTheFirstExpires(t *testing.T) {
 	if v == nil {
 		t.Fatal("the view was dropped when its first token expired")
 	}
-	if got := h.viewToken(v); got != latest {
+	if got := h.viewToken(v); got != adopted {
 		t.Fatal("the view is not following the latest verified token")
 	}
-	// A late, older (but still valid) token must not move the view back.
+	// A refresh that expires earlier than the pinned token never replaces it.
 	older, err := g.issuer.Exchange(op, authissuer.Request{Audience: authissuer.TetherAudience, Scopes: []string{"tether.read"}, SessionID: "s-rot", TTL: 5 * time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +204,29 @@ func TestTransportViewFollowsRefreshedTokenAfterTheFirstExpires(t *testing.T) {
 	if status, _ := g.call(t, older.Token, id); status != http.StatusOK {
 		t.Fatalf("shorter-lived valid token: %d", status)
 	}
-	if got := h.viewToken(v); got != latest {
+	if got := h.viewToken(v); got != adopted {
 		t.Fatal("a token that expires sooner replaced the view's current token")
+	}
+	// Revoking the adopted token's jti ends the view: the token itself is refused on its next request, and the
+	// view, which holds that token, is removed by the monitor.
+	if err := g.issuer.State.Deny(authissuer.DenyJTI, adoptedJTI, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := g.call(t, adopted, id); status != http.StatusUnauthorized {
+		t.Fatalf("the revoked adopted token: %d, want 401", status)
+	}
+	end := time.Now().Add(3 * time.Second)
+	for time.Now().Before(end) {
+		h.mu.Lock()
+		gone := h.sessions[id] == nil
+		h.mu.Unlock()
+		if gone {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	fresh, _ := g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read")
+	if status, _ := g.call(t, fresh, id); status == http.StatusOK {
+		t.Fatal("the view survived the revocation of its adopted token's jti")
 	}
 }
