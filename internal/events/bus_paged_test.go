@@ -193,7 +193,7 @@ func TestBus_PagedSubscriber_OverrunIsSignaledAndRecovered(t *testing.T) {
 		case e := <-ch:
 			if e.Kind == KindStreamGap {
 				g := gapOf(t, e)
-				if g.Reason != "overrun" || !g.Recovered || g.Dropped == 0 {
+				if g.Reason != "overrun" || !g.Recovered || g.Dropped == 0 || g.EarliestAvailable != 1 || g.HighWater < 2 {
 					t.Fatalf("gap %+v", g)
 				}
 				sawGap = true
@@ -302,7 +302,45 @@ func TestBus_EvictedSubscriberReceivesAFinalGap(t *testing.T) {
 			t.Fatal("subscriber not closed")
 		}
 	}
-	if g := gapOf(t, last); g.Reason != "evicted" {
-		t.Fatalf("final signal %+v, want evicted", g)
+	if g := gapOf(t, last); g.Reason != "evicted" || g.HighWater < g.LastSeq || g.HighWater == 0 {
+		t.Fatalf("final signal %+v, want evicted with a high_water at or past last_seq", g)
+	}
+}
+
+// Every gap frame carries earliest_available and high_water (architect ruling):
+// also the non-paged overrun, and the paged eviction.
+func TestBus_EveryGapFrameCarriesTheLogBounds(t *testing.T) {
+	// non-paged overrun
+	bus := NewBus(BusOptions{Persister: &fakePersister{}, SubBuffer: 1, MaxConsecDrops: 1 << 20})
+	ctx := context.Background()
+	ch, cancel, err := bus.Subscribe(ctx, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	for i := 0; i < 20; i++ {
+		_ = bus.Publish(ctx, Event{Scope: ScopeSession, Kind: "k"})
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case e := <-ch:
+			if e.Kind != KindStreamGap {
+				continue
+			}
+			var raw map[string]any
+			if err := json.Unmarshal([]byte(e.PayloadJSON), &raw); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := raw["earliest_available"]; !ok {
+				t.Fatalf("gap frame lacks earliest_available: %s", e.PayloadJSON)
+			}
+			if hw, ok := raw["high_water"].(float64); !ok || hw < 1 {
+				t.Fatalf("gap frame lacks a high_water: %s", e.PayloadJSON)
+			}
+			return
+		case <-deadline:
+			t.Fatal("no gap frame")
+		}
 	}
 }

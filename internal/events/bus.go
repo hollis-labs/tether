@@ -75,7 +75,7 @@ type subscriber struct {
 	closed    atomic.Bool
 	slow      atomic.Bool // evicted for lack of progress (not a plain cancel)
 	drops     atomic.Int64
-	signaled int64 // drops already reported to the subscriber
+	signaled  int64 // drops already reported to the subscriber
 	consec    atomic.Int64
 	maxConsec int64
 }
@@ -88,6 +88,8 @@ type memBus struct {
 	subBuffer      int
 	maxConsecDrops int64
 	replayPage     int
+
+	published atomic.Int64 // newest sequence this bus persisted (high_water for non-paged persisters)
 
 	mu     chan struct{}
 	nextID int64
@@ -152,6 +154,7 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	}
 	e.Seq = seq
 	e.At = at
+	b.published.Store(seq)
 
 	for _, s := range b.subs {
 		if s.filter.matches(e) {
@@ -317,6 +320,25 @@ func (b *memBus) catchUp(s *subscriber) bool {
 	}
 }
 
+// bounds reports what the log holds for a gap frame; it is best effort and
+// never blocks a closing subscriber for long.
+func (b *memBus) bounds(s *subscriber) (earliest, head int64) {
+	if b.paged != nil {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 2*time.Second)
+		defer cancel()
+		if lo, hi, err := b.paged.StreamBoundsContext(ctx); err == nil {
+			return lo, hi
+		}
+	}
+	return 0, b.published.Load()
+}
+
+// gapAt sends a gap frame carrying the log bounds.
+func (b *memBus) gapAt(s *subscriber, p GapPayload) bool {
+	p.EarliestAvailable, p.HighWater = b.bounds(s)
+	return s.gap(p)
+}
+
 func (b *memBus) replayFailed(s *subscriber, err error) bool {
 	select {
 	case <-s.done:
@@ -324,7 +346,7 @@ func (b *memBus) replayFailed(s *subscriber, err error) bool {
 	default:
 	}
 	log.Printf("events: replay for subscriber %d failed: %v", s.id, err)
-	s.gap(GapPayload{Reason: "replay_error", LastSeq: s.cursor})
+	b.gapAt(s, GapPayload{Reason: "replay_error", LastSeq: s.cursor})
 	b.evict(s)
 	return false
 }
@@ -338,6 +360,7 @@ func (b *memBus) runSubscriber(s *subscriber) {
 			// Make room if the consumer left out full: the final signal matters
 			// more than the oldest buffered event.
 			g := GapPayload{Reason: "evicted", Dropped: s.drops.Load() - s.signaled, LastSeq: s.cursor}
+			g.EarliestAvailable, g.HighWater = b.bounds(s)
 			raw, _ := json.Marshal(g)
 			ev := Event{Seq: s.cursor, At: time.Now().UTC(), Scope: ScopeDaemon, Kind: KindStreamGap, PayloadJSON: string(raw)}
 			select {
@@ -406,7 +429,7 @@ func (b *memBus) runSubscriber(s *subscriber) {
 					s.signaled = covered
 					continue
 				}
-				if !s.gap(GapPayload{Reason: "overrun", Dropped: dropped, LastSeq: s.cursor}) {
+				if !b.gapAt(s, GapPayload{Reason: "overrun", Dropped: dropped, LastSeq: s.cursor}) {
 					return
 				}
 			}

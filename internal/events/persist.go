@@ -54,10 +54,11 @@ type GapPayload struct {
 	// LastSeq is the last sequence the subscriber processed; resume with
 	// since_seq=LastSeq.
 	LastSeq int64 `json:"last_seq"`
-	// EarliestAvailable and HighWater bound what the log holds (paged
-	// persisters only).
-	EarliestAvailable int64 `json:"earliest_available,omitempty"`
-	HighWater         int64 `json:"high_water,omitempty"`
+	// EarliestAvailable and HighWater bound what the log holds, on every gap
+	// frame. A persister that cannot page reports EarliestAvailable 0 (unknown)
+	// and HighWater as the newest sequence this bus published.
+	EarliestAvailable int64 `json:"earliest_available"`
+	HighWater         int64 `json:"high_water"`
 	// Recovered says the bus re-read the dropped events from the durable log and
 	// delivers them next, so nothing was lost.
 	Recovered bool `json:"recovered,omitempty"`
