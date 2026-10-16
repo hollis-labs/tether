@@ -177,3 +177,90 @@ func TestPruneByAgeThenSize(t *testing.T) {
 		t.Fatalf("missing dir: %d %v", n, err)
 	}
 }
+
+func TestTruncatedOrMissingSidecarNeverRestartsTheSequence(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecorder(t, dir, "sess-seq2")
+	ctx := context.Background()
+	obs := Observation{Kind: runtimeevents.KindSessionHeartbeat, Channel: runtimeevents.ChannelHook, Tier: Inferred}
+	for i := 0; i < 3; i++ {
+		if _, err := r.Record(ctx, obs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seq := filepath.Join(dir, "sess-seq2.seq")
+	want := uint64(3)
+	for _, c := range []struct {
+		name   string
+		damage func()
+	}{
+		{"empty", func() { _ = os.WriteFile(seq, nil, 0o600) }},
+		{"garbage", func() { _ = os.WriteFile(seq, []byte("x1\n"), 0o600) }},
+		{"missing", func() { _ = os.Remove(seq) }},
+	} {
+		c.damage()
+		ev, err := r.Record(ctx, obs)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		want++
+		if ev.Sequence != want {
+			t.Fatalf("%s sidecar: next sequence %d, want %d", c.name, ev.Sequence, want)
+		}
+	}
+	evs, _ := (&Spool{Dir: dir}).Read("sess-seq2")
+	seen := map[uint64]bool{}
+	for _, ev := range evs {
+		if seen[ev.Sequence] {
+			t.Fatalf("duplicate sequence %d", ev.Sequence)
+		}
+		seen[ev.Sequence] = true
+	}
+}
+
+func TestAnExplicitSequenceMustAdvance(t *testing.T) {
+	dir := t.TempDir()
+	r := newRecorder(t, dir, "sess-explicit")
+	if _, err := r.Record(context.Background(), Observation{Kind: runtimeevents.KindSessionIdle, Channel: runtimeevents.ChannelHook, Tier: Exact}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Spool{Dir: dir}
+	ev := runtimeevents.Event{SchemaVersion: "1", ID: "evt_x", Kind: runtimeevents.KindSessionIdle, SessionID: "sess-explicit", Sequence: 1}
+	if _, err := s.Append(context.Background(), ev); err == nil {
+		t.Fatal("a sequence that does not advance was written")
+	}
+	ev.Sequence = 9
+	if got, err := s.Append(context.Background(), ev); err != nil || got.Sequence != 9 {
+		t.Fatalf("a later explicit sequence: %+v %v", got, err)
+	}
+}
+
+func TestPruneSkipsASessionAWriterHolds(t *testing.T) {
+	dir := t.TempDir()
+	s := &Spool{Dir: dir}
+	r := newRecorder(t, dir, "busy")
+	if _, err := r.Record(context.Background(), Observation{Kind: runtimeevents.KindSessionIdle, Channel: runtimeevents.ChannelHook, Tier: Exact}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-100 * time.Hour)
+	_ = os.Chtimes(filepath.Join(dir, "busy.jsonl"), old, old)
+	f, err := os.OpenFile(filepath.Join(dir, "busy.jsonl"), os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockFile(f) // an Append in flight
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Prune(time.Now(), time.Hour, 0); err != nil || n != 0 {
+		t.Fatalf("pruned a locked session: %d %v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "busy.jsonl")); err != nil {
+		t.Fatalf("the locked file is gone: %v", err)
+	}
+	unlock()
+	_ = f.Close()
+	if n, err := s.Prune(time.Now(), time.Hour, 0); err != nil || n != 1 {
+		t.Fatalf("after the writer finished: %d %v", n, err)
+	}
+}
