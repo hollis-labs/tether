@@ -264,3 +264,63 @@ func TestPruneSkipsASessionAWriterHolds(t *testing.T) {
 		t.Fatalf("after the writer finished: %d %v", n, err)
 	}
 }
+
+func TestSpoolBoundsItselfDroppingTheOldestAndCountingThem(t *testing.T) {
+	dir := t.TempDir()
+	sp := &Spool{Dir: dir, MaxSessionBytes: 6000}
+	r := &Recorder{App: "tether", SessionID: "sess-cap", Sink: sp, Process: runtimeevents.Process{Provider: "claude"}}
+	ctx := context.Background()
+	const total = 80
+	for i := 0; i < total; i++ {
+		if _, err := r.Record(ctx, Observation{Kind: runtimeevents.KindAgentToolUse, Channel: runtimeevents.ChannelHook, Tier: Exact,
+			Payload: map[string]any{"tool": "Read", "i": i}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := os.Stat(filepath.Join(dir, "sess-cap.jsonl"))
+	if err != nil || info.Size() > 6000 {
+		t.Fatalf("spool file is %v bytes (err %v), over its 6000 byte cap", info.Size(), err)
+	}
+	evs, err := sp.Read("sess-cap")
+	if err != nil || len(evs) == 0 || len(evs) >= total {
+		t.Fatalf("kept %d of %d (err %v)", len(evs), total, err)
+	}
+	dropped := sp.Dropped("sess-cap")
+	if dropped == 0 || int(dropped)+len(evs) != total {
+		t.Fatalf("dropped %d + kept %d != %d", dropped, len(evs), total)
+	}
+	// The newest are kept, contiguous, and the sequence kept counting through the drops.
+	if evs[len(evs)-1].Sequence != total {
+		t.Fatalf("newest sequence %d, want %d", evs[len(evs)-1].Sequence, total)
+	}
+	for i := 1; i < len(evs); i++ {
+		if evs[i].Sequence != evs[i-1].Sequence+1 {
+			t.Fatalf("kept events are not contiguous at %d: %d then %d", i, evs[i-1].Sequence, evs[i].Sequence)
+		}
+	}
+	next, err := r.Record(ctx, Observation{Kind: runtimeevents.KindSessionIdle, Channel: runtimeevents.ChannelHook, Tier: Exact})
+	if err != nil || next.Sequence != total+1 {
+		t.Fatalf("after the drops: %+v %v", next, err)
+	}
+}
+
+func TestSpoolDirectoryIsBoundedWhenASessionStarts(t *testing.T) {
+	dir := t.TempDir()
+	sp := &Spool{Dir: dir, MaxTotalBytes: 1}
+	ctx := context.Background()
+	for i, name := range []string{"first", "second", "third"} {
+		r := &Recorder{App: "tether", SessionID: name, Sink: sp}
+		if _, err := r.Record(ctx, Observation{Kind: runtimeevents.KindSessionIdle, Channel: runtimeevents.ChannelHook, Tier: Exact}); err != nil {
+			t.Fatal(err)
+		}
+		// make the earlier ones older so "oldest first" is unambiguous
+		old := time.Now().Add(-time.Duration(10-i) * time.Hour)
+		_ = os.Chtimes(filepath.Join(dir, name+".jsonl"), old, old)
+	}
+	// Each new session's creation pruned the older ones past the 1 byte total; the newest session is never pruned by its own
+	// creation (it holds its lock), so at most it remains.
+	entries, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if len(entries) != 1 || !strings.HasSuffix(entries[0], "third.jsonl") {
+		t.Fatalf("remaining spool files: %v", entries)
+	}
+}
