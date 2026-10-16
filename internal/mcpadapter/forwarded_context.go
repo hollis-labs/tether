@@ -121,7 +121,7 @@ func (t *forwardedContextTransport) RoundTrip(req *http.Request) (*http.Response
 	s, resolved := callcontext.FromContext(req.Context())
 	toolCall, _ := req.Context().Value(forwardedToolCallKey{}).(bool)
 	if toolCall && req.Method == http.MethodPost && admitted && resolved && s.SessionResolved && s.Source == "daemon" &&
-		p.Kind == "session" && s.PrincipalKind == p.Kind && s.PrincipalID == p.ID && p.ID != "" &&
+		(p.Kind == "session" || identity.IsBoundAgentToken(p)) && s.PrincipalKind == p.Kind && s.PrincipalID == p.ID && p.ID != "" &&
 		p.SessionID != "" && s.SessionID == p.SessionID && safeForwardedContext(s) {
 		out.Header.Set("X-Forwarded-User-Id", "session:"+s.SessionID)
 		out.Header.Set("X-Tether-Session-Id", s.SessionID)

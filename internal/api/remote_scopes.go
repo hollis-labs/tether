@@ -328,6 +328,14 @@ func AgentScopeMiddleware(mode identity.Mode, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// The MCP gateway is local custody (no scope names it). A session-bound
+		// agent token reaches it like the session credential it replaces; the
+		// gateway then applies that session's own server policy, which the
+		// token's scopes cannot widen. Any other issued token stays refused.
+		if identity.IsBoundAgentToken(p) && (r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/p/")) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		applyRouteScopes(w, r, next, true, false, func(scope string) bool { return identity.ScopeGranted(p.Scopes, scope) })
 	})
 }

@@ -8,6 +8,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- The MCP gateway now binds an issued session-bound agent token (the `#365` JWTs: Kind
+  `agent` with a token id, a session id and that session's subject) to its session
+  (CW-20261016-0138, X3a): `CallerResolver` resolves it to the session's own server policy,
+  the caller-context snapshot and upstream attribution headers carry the session, and in
+  enforce mode `/mcp` and `/p/` admit it (no scope names the gateway). Binding keys on
+  `identity.IsBoundAgentToken`, never on Kind alone; an operator-minted narrow token still
+  gets nothing. No machine access for agent tokens yet.
 - Record an identity audit row for every session-bound token mint (CW-20261016-0089):
   `POST /auth/token` with `session_id` writes `identity_audit` with the minting
   parent (`principal_id`), `session_id`, scopes (`required_scope`) and

@@ -77,3 +77,41 @@ func TestCallerResolver_RefusesChangedOrMismatchedSessionPolicy(t *testing.T) {
 		t.Fatal("disabled grant accepted", err)
 	}
 }
+
+// An issued session-bound agent token (#365) binds to its session like the
+// session credential does; nothing else that is merely token-shaped does.
+func TestCallerResolver_BoundAgentTokenBindsToItsSession(t *testing.T) {
+	cat := &config.Catalog{MCPServerEnabled: map[string]bool{"one": true, "two": true}}
+	policy := mcpgateway.SessionPolicy{SessionID: "s1", AgentID: "agent-a", Servers: []string{"two"}}.Seal()
+	r := CallerResolver{Catalog: func(context.Context) (*config.Catalog, error) { return cat, nil }, Session: func(_ context.Context, id string) (mcpgateway.SessionPolicy, error) {
+		if id != "s1" {
+			return mcpgateway.SessionPolicy{}, errors.New("unknown session")
+		}
+		return policy, nil
+	}}
+	agent := identity.Principal{Verified: true, ID: identity.SessionPrincipalIDPrefix + "s1", Kind: "agent", SessionID: "s1", TokenID: "jti-1", Scopes: []string{"tether.messages"}}
+	caller, err := r.Resolve(identity.WithPrincipal(context.Background(), agent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caller.Policy.AgentID != "agent-a" || len(caller.Policy.Servers) != 1 || caller.Policy.Servers[0] != "two" {
+		t.Fatalf("agent token did not get its session's policy: %+v", caller.Policy)
+	}
+	if caller.Principal.TokenID != "jti-1" || caller.MachineAccess != "" {
+		t.Fatalf("principal %+v machine access %q", caller.Principal, caller.MachineAccess)
+	}
+	for name, p := range map[string]identity.Principal{
+		"no token id":              {Verified: true, ID: identity.SessionPrincipalIDPrefix + "s1", Kind: "agent", SessionID: "s1"},
+		"no session id":            {Verified: true, ID: identity.SessionPrincipalIDPrefix + "s1", Kind: "agent", TokenID: "j"},
+		"subject names another":    {Verified: true, ID: identity.SessionPrincipalIDPrefix + "other", Kind: "agent", SessionID: "s1", TokenID: "j"},
+		"unverified":               {ID: identity.SessionPrincipalIDPrefix + "s1", Kind: "agent", SessionID: "s1", TokenID: "j"},
+		"session that has no row":  {Verified: true, ID: identity.SessionPrincipalIDPrefix + "gone", Kind: "agent", SessionID: "gone", TokenID: "j"},
+		"operator-minted narrow":   {Verified: true, ID: identity.OperatorID, Kind: "operator", TokenID: "j", Scopes: []string{"tether.read"}},
+		"operator-minted with sid": {Verified: true, ID: identity.OperatorID, Kind: "operator", SessionID: "s1", TokenID: "j"},
+		"device-kind with a sid":   {Verified: true, ID: "msg://device/d", Kind: "device", SessionID: "s1", TokenID: "j"},
+	} {
+		if _, err := r.Resolve(identity.WithPrincipal(context.Background(), p)); err == nil {
+			t.Errorf("%s: resolved a gateway caller", name)
+		}
+	}
+}
