@@ -25,3 +25,22 @@ func TestIdentityConfigDefaultsAndValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestEnvModeCanOnlyTighten(t *testing.T) {
+	cases := []struct{ cfg, env, want string }{
+		{"enforce", "off", "enforce"},
+		{"enforce", "observe", "enforce"},
+		{"observe", "off", "observe"},
+		{"observe", "enforce", "enforce"},
+		{"off", "enforce", "enforce"},
+		{"", "off", "observe"},
+		{"enforce", "", "enforce"},
+	}
+	for _, c := range cases {
+		t.Setenv("HOLLIS_AUTH_TETHER", c.env)
+		t.Setenv("HOLLIS_AUTH", "")
+		if got := (IdentityConfig{Mode: c.cfg}).EffectiveMode(); got != c.want {
+			t.Errorf("cfg=%q env=%q: got %q want %q", c.cfg, c.env, got, c.want)
+		}
+	}
+}

@@ -45,7 +45,7 @@ func (s *Server) handleCatalogReload(w http.ResponseWriter, r *http.Request) {
 // the rest of the local API), may.
 func reloadCaller(r *http.Request) bool {
 	p, ok := identity.FromContext(r.Context())
-	if !ok || p.Kind != "session" {
+	if !ok || (p.Kind != "session" && p.Kind != "agent" && p.TokenID == "") {
 		return true
 	}
 	return identity.ScopeGranted(p.Scopes, "catalog.write")

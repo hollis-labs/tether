@@ -337,7 +337,7 @@ func initializeRequest(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (h *Handler) prepare(ctx context.Context, a admission, token string, s selectors) (*transportView, error) {
-	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint, principalKey: a.caller.Principal.Kind + ":" + a.caller.Principal.ID, operator: a.caller.Principal.Kind == "operator" && a.caller.Principal.ID == identity.OperatorID, lastUsed: time.Now()}
+	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint, principalKey: a.caller.Principal.Kind + ":" + a.caller.Principal.ID, operator: identity.IsOperatorCredential(a.caller.Principal), lastUsed: time.Now()}
 	v.localConnection = identity.LocalConnection(ctx)
 	v.callCtx, v.cancelCalls = context.WithCancel(h.ctx)
 	v.streamCtx, v.cancelStreams = context.WithCancel(h.ctx)

@@ -66,13 +66,29 @@ func (c IdentityConfig) EffectiveMode() string {
 	// HOLLIS_AUTH_TETHER, then HOLLIS_AUTH, override the configured global mode
 	// (one setting name across apps). They only affect processes started with
 	// them set; an unparsable value is ignored here and rejected by Validate.
+	// The env can only tighten the configured mode (off < observe < enforce),
+	// never downgrade it: a stray variable must not turn enforce off.
 	if env, err := goauth.ModeFromEnv("tether", ""); err == nil && env != "" {
-		mode = normalizeIdentityMode(string(env))
+		if e := normalizeIdentityMode(string(env)); identityModeRank(e) > identityModeRank(mode) {
+			mode = e
+		}
 	}
 	if mode == "" {
 		return "observe"
 	}
 	return mode
+}
+
+func identityModeRank(mode string) int {
+	switch mode {
+	case "enforce":
+		return 3
+	case "observe", "":
+		return 2
+	case "off":
+		return 1
+	}
+	return 2
 }
 
 // normalizeIdentityMode lower-cases mode and canonicalizes the permissive

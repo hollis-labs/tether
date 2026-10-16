@@ -154,3 +154,11 @@ func (p Principal) DefaultAddress() string {
 	}
 	return p.ID
 }
+
+// IsOperatorCredential reports whether p is the real local operator
+// credential. An issued token minted by the operator (TokenID set) is narrowed
+// by its scopes and is never the operator itself, even though it carries the
+// operator's id and kind.
+func IsOperatorCredential(p Principal) bool {
+	return p.Verified && p.Kind == "operator" && p.ID == OperatorID && p.TokenID == ""
+}

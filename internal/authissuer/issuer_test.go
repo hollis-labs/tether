@@ -214,3 +214,21 @@ func TestLocalVerifierAcceptsIssuedAndStoredAndHonorsDenyList(t *testing.T) {
 		t.Fatalf("token from rotated key: %v", err)
 	}
 }
+
+func TestRotateKeepsAnActiveKeyWhenGenerationFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory permissions do not bind root")
+	}
+	is, dir := newIssuer(t)
+	before, _ := is.Keys.Active()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	if err := is.Rotate(); err == nil {
+		t.Fatal("rotate succeeded in an unwritable key dir")
+	}
+	if kid, priv := is.Keys.Active(); kid != before || priv == nil {
+		t.Fatalf("active key lost after failed rotate: %q", kid)
+	}
+}

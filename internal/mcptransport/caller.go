@@ -73,7 +73,7 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 			return Caller{}, fmt.Errorf("session MCP policy identity mismatch")
 		}
 	case "operator":
-		if p.ID != identity.OperatorID {
+		if p.ID != identity.OperatorID || p.TokenID != "" {
 			return Caller{}, identity.ErrInvalidToken
 		}
 		policy.Servers = []string{}

@@ -146,11 +146,19 @@ func (ks *KeyStore) generateLocked() error {
 func (ks *KeyStore) Rotate() error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
+	// Generate first: if generation fails the current key stays active, so a
+	// failed rotation never leaves the store with no signing key.
+	var oldKID string
 	if a := ks.activeLocked(); a != nil {
-		a.RetireAt = ks.now().UTC().Add(ks.overlap)
+		oldKID = a.KID
 	}
 	if err := ks.generateLocked(); err != nil {
 		return err
+	}
+	for i := range ks.keys {
+		if ks.keys[i].KID == oldKID {
+			ks.keys[i].RetireAt = ks.now().UTC().Add(ks.overlap)
+		}
 	}
 	return ks.persistLocked()
 }

@@ -132,7 +132,7 @@ func denyListReader(r *http.Request, write bool) bool {
 		return false
 	}
 	if p.Kind == "operator" {
-		return localOperatorPrincipal(r, p)
+		return identity.IsOperatorCredential(p) && localOperatorPrincipal(r, p)
 	}
 	if write {
 		return identity.ScopeGranted(p.Scopes, identity.ScopeAdmin)

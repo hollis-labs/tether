@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/libs/security/secrets/tokenfile"
 	auth "github.com/hollis-labs/libs/security/auth"
+	"github.com/hollis-labs/libs/security/secrets/tokenfile"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/identity"
