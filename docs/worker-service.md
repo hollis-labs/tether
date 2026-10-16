@@ -125,6 +125,31 @@ mismatched protocol returns `protocol_mismatch`, `required_protocol` and an
 update hint. Change the client or environment to the same protocol. SemVer
 alone is not a compatibility promise. Pairing remains separate work.
 
+## Resuming a session on a worker
+
+A worker-placed session can be resumed on the same worker, with the provider's own
+conversation, instead of starting fresh. Two halves have to agree:
+
+- **Hub (opt-in, off by default).** `Service.WorkerResume` (#350) allows resume of a worker-placed source.
+  It fails closed unless that worker is connected and advertises `worker-resume`, the source is a claude
+  session, the request is not native-only, and a provider session id is recorded. The hub then sends the
+  new launch with `LaunchSpec.resume_session_id`. Nothing in this repo sets `WorkerResume` from
+  configuration yet, so it stays off.
+- **Worker (this version and later).** The worker advertises `worker-resume` in its hello and honors
+  `resume_session_id`: it finds the claude transcript `<claude config dir>/projects/*/<id>.jsonl`
+  (`CLAUDE_CONFIG_DIR`, else `~/.claude`), reads the directory the session ran in, and starts
+  `claude --resume <id>` there. Any other resume or continue flag in the hub's args is dropped, so the
+  conversation is exactly the one the hub approved.
+
+The worker refuses, with `launch_failed` carrying `resume_unavailable: <reason>` and no fresh start, when the
+id is malformed, the provider is not claude, the transcript is not on this worker, the recorded directory is
+outside the worker's `workspaces/` tree, or that workspace no longer exists. A refused resume creates no
+workspace. The hub decides what to do next; it must not fall back to another worker.
+
+Required worker version: the release that includes CW-20261014-0113. Older workers do not advertise the
+feature, so the hub keeps refusing resume on them. It takes effect only after a worker swap
+(see [Update and switch back](#update-and-switch-back)).
+
 ## Status and removal
 
 ```sh
