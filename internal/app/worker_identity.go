@@ -75,6 +75,18 @@ func (s *Service) SessionIdentityURN(sessionID string) string {
 	return plan.IdentityURN
 }
 
+// launcherID is the verified principal that asked for this launch, from the
+// launch request's context; empty for an anonymous or internal launch. It
+// becomes created_by on the session credential, the record of who launched the
+// session (what adoption reads). mintSessionCredential sets the same field from
+// the same context.
+func launcherID(ctx context.Context) string {
+	if parent, ok := identity.FromContext(ctx); ok {
+		return parent.ID
+	}
+	return ""
+}
+
 // prepareWorkerIdentity mints the session-bound credential into spec and binds the agent's stable URN to
 // the session, before the launch frame is sent. The returned undo releases both when the launch fails.
 // A worker that does not advertise FeatureSessionCred keeps the static MCP entry; if the agent declares a
@@ -118,7 +130,10 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 	}
 	expires := time.Now().UTC().Add(sessionTokenTTL)
 	self := "msg://session/local/" + row.ID
-	pr := identity.Principal{ID: self, Kind: "session", SessionID: row.ID, Display: "Session " + row.ID, Scopes: scopes, ExpiresAt: &expires, Addresses: []string{self}}
+	// CreatedBy records who launched the session, as the hub-local path does
+	// (mintSessionCredential). Without it every worker-hosted session credential
+	// had created_by='' and could never be shown to belong to its launcher.
+	pr := identity.Principal{ID: self, Kind: "session", SessionID: row.ID, Display: "Session " + row.ID, Scopes: scopes, ExpiresAt: &expires, Addresses: []string{self}, CreatedBy: launcherID(ctx)}
 	if row.LogicalAgentID != "" {
 		agent := registry.LogicalAgentBindingTarget(row.LogicalAgentID)
 		if addr, err := messaging.ParseURN(agent); err == nil && addr.URN() == agent {

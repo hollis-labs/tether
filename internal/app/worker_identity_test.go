@@ -111,12 +111,17 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 
 func (r *identityRig) launch(id, urn string) (workerwire.LaunchSpec, error) {
 	r.t.Helper()
+	return r.launchAs(context.Background(), id, urn)
+}
+
+func (r *identityRig) launchAs(ctx context.Context, id, urn string) (workerwire.LaunchSpec, error) {
+	r.t.Helper()
 	plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderBrand: "claude", IdentityURN: urn}
 	row := store.SessionRow{ID: id, WorkerID: r.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderKind: "cli", Workspace: r.t.TempDir(), State: "created"}
 	if err := r.db.CreateSession(row, plan); err != nil {
 		r.t.Fatal(err)
 	}
-	_, err := r.svc.launchWorkerSession(context.Background(), &row, plan)
+	_, err := r.svc.launchWorkerSession(ctx, &row, plan)
 	if err != nil {
 		return workerwire.LaunchSpec{}, err
 	}
@@ -307,4 +312,31 @@ func (s identityTestService) GetSession(id string) (*store.SessionRow, error) {
 }
 func (s identityTestService) SessionIdentityURN(id string) string {
 	return s.svc.SessionIdentityURN(id)
+}
+
+// A worker-hosted session's credential records who launched it, like a
+// hub-local one: this is what lets the operator adopt it later. An anonymous
+// launch records nobody.
+func TestWorkerSessionCredentialRecordsTheLauncher(t *testing.T) {
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	operator := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"})
+	if _, err := r.launchAs(operator, "sess-by-operator", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.launchAs(context.Background(), "sess-anonymous", ""); err != nil {
+		t.Fatal(err)
+	}
+	owner := func(id string) string {
+		var created string
+		if err := r.db.DB().QueryRow(`SELECT created_by FROM principals WHERE kind='session' AND session_id=? AND revoked_at IS NULL`, id).Scan(&created); err != nil {
+			t.Fatal(err)
+		}
+		return created
+	}
+	if got := owner("sess-by-operator"); got != identity.OperatorID {
+		t.Fatalf("operator launch: created_by %q, want %q", got, identity.OperatorID)
+	}
+	if got := owner("sess-anonymous"); got != "" {
+		t.Fatalf("anonymous launch: created_by %q, want empty", got)
+	}
 }
