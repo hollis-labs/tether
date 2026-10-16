@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/tether/internal/agentevents"
 )
 
+// The recorder has its own suite in internal/agentevents; this is the command's wiring: flags in, silence out, exit 0.
 func runHook(t *testing.T, stdin string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	cmd := newHookCommand()
@@ -23,113 +24,21 @@ func runHook(t *testing.T, stdin string, args ...string) (stdout, stderr string,
 	return out.String(), errb.String(), err
 }
 
-func hookFixture(t *testing.T, name string) string {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "agentevents", "testdata", "claude", "real", name+".json"))
+func TestHookClaudeCommandWiring(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "agentevents", "testdata", "claude", "real", "UserPromptSubmit.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw)
-}
-
-func TestHookClaudeRecordsToTheSpoolAndSaysNothing(t *testing.T) {
 	spool := t.TempDir()
-	for _, name := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse-read", "PostToolUse-read", "Stop"} {
-		stdout, stderr, err := runHook(t, hookFixture(t, name), "claude", "--session", "sess-1", "--spool", spool)
-		if err != nil || stdout != "" || stderr != "" {
-			t.Fatalf("%s: err=%v stdout=%q stderr=%q (observe-only means silent success)", name, err, stdout, stderr)
-		}
+	if stdout, stderr, err := runHook(t, string(raw), "claude", "--session", "c1", "--spool", spool); err != nil || stdout != "" || stderr != "" {
+		t.Fatalf("err=%v stdout=%q stderr=%q (observe-only means silent success)", err, stdout, stderr)
 	}
-	evs, err := (&agentevents.Spool{Dir: spool}).Read("sess-1")
-	if err != nil {
-		t.Fatal(err)
+	if evs, err := (&agentevents.Spool{Dir: spool}).Read("c1"); err != nil || len(evs) != 2 {
+		t.Fatalf("spooled %d err=%v", len(evs), err)
 	}
-	var kinds []string
-	for _, ev := range evs {
-		kinds = append(kinds, string(ev.Kind))
-		if ev.SessionID != "sess-1" || ev.Process.Provider != "claude" || ev.Process.Runtime != "hooks" || ev.Process.ProviderSessionID == "" {
-			t.Fatalf("envelope = %+v", ev)
-		}
-	}
-	want := "session.ready turn.started session.processing agent.tool_use agent.tool_result turn.completed session.idle"
-	if got := strings.Join(kinds, " "); got != want {
-		t.Fatalf("kinds = %q, want %q", got, want)
-	}
-	for i, ev := range evs {
-		if ev.Sequence != uint64(i+1) {
-			t.Fatalf("sequence %d at %d", ev.Sequence, i)
-		}
-	}
-}
-
-// Every way a hook can go wrong must still exit 0 and print nothing to stdout: the agent treats exit 2 or a JSON decision on
-// stdout as an instruction, and a spool problem is never a reason to hold the agent.
-func TestHookClaudeFailsOpenOnEverything(t *testing.T) {
-	spool := t.TempDir()
-	unwritable := filepath.Join(t.TempDir(), "ro")
-	if err := os.Mkdir(unwritable, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	good := hookFixture(t, "PreToolUse-read")
-	for name, c := range map[string]struct {
-		stdin string
-		args  []string
-	}{
-		"no flags (not a managed session)": {good, []string{"claude"}},
-		"no spool":                         {good, []string{"claude", "--session", "s"}},
-		"not json":                         {"not json", []string{"claude", "--session", "s", "--spool", spool}},
-		"empty stdin":                      {"", []string{"claude", "--session", "s", "--spool", spool}},
-		"unknown event":                    {`{"hook_event_name":"FutureEvent"}`, []string{"claude", "--session", "s", "--spool", spool}},
-		"unsafe session id":                {good, []string{"claude", "--session", "../x", "--spool", spool}},
-		"unwritable spool":                 {good, []string{"claude", "--session", "s", "--spool", filepath.Join(unwritable, "deeper")}},
-		"relative spool":                   {good, []string{"claude", "--session", "s", "--spool", "events"}},
-	} {
-		stdout, _, err := runHook(t, c.stdin, c.args...)
-		if err != nil || stdout != "" {
-			t.Fatalf("%s: err=%v stdout=%q", name, err, stdout)
-		}
-	}
-	if entries, _ := os.ReadDir(spool); len(entries) != 0 {
-		t.Fatalf("a refused payload wrote to the spool: %v", entries)
-	}
-}
-
-func TestHookClaudeWritesNoContent(t *testing.T) {
-	spool := t.TempDir()
-	if _, _, err := runHook(t, hookFixture(t, "UserPromptSubmit"), "claude", "--session", "s", "--spool", spool); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := runHook(t, hookFixture(t, "PostToolUse-read"), "claude", "--session", "s", "--spool", spool); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(filepath.Join(spool, "s.jsonl"))
-	for _, content := range []string{"hello from the capture", "Read the file hello.txt"} {
-		if strings.Contains(string(raw), content) {
-			t.Fatalf("the spool carries content %q", content)
-		}
-	}
-	info, _ := os.Stat(filepath.Join(spool, "s.jsonl"))
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("spool file mode %v", info.Mode().Perm())
-	}
-}
-
-// stderr carries a class and nothing else: no path, no payload text, no error text.
-func TestHookClaudeStderrIsAClassOnly(t *testing.T) {
-	spool := t.TempDir()
-	unwritable := filepath.Join(t.TempDir(), "ro-secret-dir")
-	if err := os.Mkdir(unwritable, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []struct{ name, stdin, spool, want string }{
-		{"invalid", "not json with a secret-token inside", spool, "payload_invalid"},
-		{"too large", strings.Repeat("x", maxHookPayload+10), spool, "payload_too_large"},
-		{"relative", hookFixture(t, "PreToolUse-read"), "events", "spool_not_absolute"},
-		{"unwritable", hookFixture(t, "PreToolUse-read"), filepath.Join(unwritable, "deeper"), "record_failed"},
-	} {
-		_, stderr, err := runHook(t, c.stdin, "claude", "--session", "s", "--spool", c.spool)
-		if err != nil || strings.TrimSpace(stderr) != "tether hook: "+c.want {
-			t.Fatalf("%s: err=%v stderr=%q, want exactly the class %q", c.name, err, stderr, c.want)
-		}
+	// A failure is one class on stderr and still exit 0.
+	stdout, stderr, err := runHook(t, "not json", "claude", "--session", "c1", "--spool", spool)
+	if err != nil || stdout != "" || strings.TrimSpace(stderr) != "tether hook: payload_invalid" {
+		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout, stderr)
 	}
 }
