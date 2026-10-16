@@ -8,6 +8,12 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Worker half of session resume (CW-20261014-0113): tether-worker advertises the `worker-resume`
+  feature and honors `LaunchSpec.resume_session_id` by starting `claude --resume <id>` in the
+  workspace the provider session ran in (dropping any other resume flags from the hub's args). A
+  missing or malformed provider session, a non-claude provider, or a vanished workspace is refused with
+  `launch_failed` `resume_unavailable: ...` and no fresh start. The hub opt-in (`WorkerResume`) is
+  unchanged and still off; a worker swap is required.
 - Record an identity audit row for every session-bound token mint (CW-20261016-0089):
   `POST /auth/token` with `session_id` writes `identity_audit` with the minting
   parent (`principal_id`), `session_id`, scopes (`required_scope`) and
