@@ -50,6 +50,17 @@ func TestScopeGrantedUnifiesDeviceAndChildScopes(t *testing.T) {
 		{[]string{"tether.*"}, "tether.terminal", true},
 		{[]string{"tether.*"}, "tesseract.read", false},
 		{nil, "read", false},
+		{[]string{"events"}, "tether.events", true},
+		{[]string{"tether.events"}, "events", true},
+		{[]string{"operate"}, "events", true},
+		{[]string{"tether.worker"}, "tether.events", true},
+		{[]string{"admin"}, "events", false},
+		{[]string{"tether.admin"}, "tether.events", false},
+		{[]string{"maintain"}, "events", false},
+		{[]string{"read"}, "events", false},
+		{[]string{"tether.events"}, "read", false},
+		{[]string{"tether.events"}, "operate", false},
+		{[]string{"tether.events"}, "worker", false},
 	} {
 		if got := identity.ScopeGranted(c.granted, c.required); got != c.want {
 			t.Errorf("ScopeGranted(%v, %q) = %v, want %v", c.granted, c.required, got, c.want)
@@ -61,5 +72,22 @@ func TestScopeGrantedUnifiesDeviceAndChildScopes(t *testing.T) {
 	}
 	if _, err := identity.CanonicalScopes([]string{"bogus"}); err == nil {
 		t.Fatal("unknown scope accepted")
+	}
+}
+
+func TestEventScopeCanonicalizationAndDeviceContainment(t *testing.T) {
+	got, err := identity.CanonicalScopes([]string{"events", "tether.events"})
+	if err != nil || len(got) != 1 || got[0] != "tether.events" {
+		t.Fatalf("canonical events=%v err=%v", got, err)
+	}
+	for _, scope := range []string{"operate", "worker", "tether.operate", "tether.worker", "admin", "read"} {
+		principal := identity.Principal{ID: "device", Kind: "device", Scopes: []string{scope}}
+		want := scope != "admin" && scope != "read"
+		if got := identity.HasDeviceScope(principal, identity.ScopeEvents); got != want {
+			t.Errorf("%s events=%t want%t", scope, got, want)
+		}
+	}
+	if _, err := identity.NormalizeDeviceScopes([]string{"events"}); err == nil {
+		t.Fatal("narrow events became a standalone pairing capability")
 	}
 }

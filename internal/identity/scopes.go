@@ -26,6 +26,8 @@ const (
 	ScopeGroups   = "groups"   // groups.write
 	ScopeTeams    = "teams"    // team.write
 	ScopeAI       = "ai"       // ai.invoke
+	// ScopeEvents authorizes event publication, independently of event reads.
+	ScopeEvents = "events"
 	// ScopeInput is a route marker, not a grantable scope: session input and
 	// resize need terminal-grade input authority, which tether.terminal or
 	// tether.sessions (what session.write always covered) provides.
@@ -107,13 +109,13 @@ const AppScopePrefix = "tether."
 func CanonicalScope(s string) string {
 	switch s {
 	case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker,
-		ScopeRegistry, ScopeCatalog, ScopeSessions, ScopeMessages, ScopeGroups, ScopeTeams, ScopeAI:
+		ScopeRegistry, ScopeCatalog, ScopeSessions, ScopeMessages, ScopeGroups, ScopeTeams, ScopeAI, ScopeEvents:
 		return AppScopePrefix + s
 	}
 	return s
 }
 
-// IsCanonicalScope reports whether s is one of the thirteen tether.* scopes.
+// IsCanonicalScope reports whether s is a recognized tether.* scope.
 func IsCanonicalScope(s string) bool {
 	rest, ok := strings.CutPrefix(s, AppScopePrefix)
 	return ok && CanonicalScope(rest) == s
@@ -148,6 +150,7 @@ var narrowContainedIn = map[string][]string{
 	AppScopePrefix + ScopeGroups:   {AppScopePrefix + ScopeOperate},
 	AppScopePrefix + ScopeTeams:    {AppScopePrefix + ScopeOperate},
 	AppScopePrefix + ScopeAI:       {AppScopePrefix + ScopeOperate},
+	AppScopePrefix + ScopeEvents:   {AppScopePrefix + ScopeOperate, AppScopePrefix + ScopeWorker},
 }
 
 // IsLegacyChildScope reports whether s is one of the pre-unification MCP child scopes.
