@@ -10,6 +10,13 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SYSOP_ROOT="${REPO_ROOT}/apps/sysop"
+
+# Nobody tags with unassembled changelog fragments (CW-20261016-0159): the release
+# owner runs `make changelog-assemble VERSION=...` in a release/* PR first.
+if ! (cd "${REPO_ROOT}" && ./scripts/changelog.sh pending); then
+  echo "release: run 'make changelog-assemble VERSION=${VERSION}' in a release/* PR and merge it before releasing" >&2
+  exit 1
+fi
 DIST_DIR="${DIST_DIR:-${REPO_ROOT}/dist}"
 BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 COMMIT="${COMMIT:-$(cd "${REPO_ROOT}" && git rev-parse --short HEAD 2>/dev/null || echo unknown)}"

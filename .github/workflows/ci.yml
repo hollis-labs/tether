@@ -49,6 +49,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # check-pr diffs the pull_request merge commit against its base parent.
+          fetch-depth: 2
+
+      - name: Changelog fragments
+        # Cheap, so it runs first. Feature PRs add changes/<TASK-ID>-<slug>.md
+        # instead of editing CHANGELOG.md (changes/README.md). ADVISORY for now:
+        # set CHANGELOG_FRAGMENTS_ENFORCE to "1" (one-line follow-up) once the PRs
+        # already in flight that edit CHANGELOG.md have merged. Malformed
+        # fragments fail regardless. release/* branches may edit CHANGELOG.md.
+        if: github.event_name == 'pull_request'
+        env:
+          CHANGELOG_FRAGMENTS_ENFORCE: "0"
+          CHANGELOG_BRANCH: ${{ github.head_ref }}
+        run: ./scripts/changelog.sh check-pr
 
       - name: Set up Go
         uses: actions/setup-go@v5
