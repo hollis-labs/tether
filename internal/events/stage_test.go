@@ -141,3 +141,34 @@ func TestNoStagesLeavesTheEventUntouched(t *testing.T) {
 		t.Fatalf("envelope changed: %+v", got)
 	}
 }
+
+func TestFailedStageCannotLeaveALabelMutationBehind(t *testing.T) {
+	for name, mutate := range map[string]func(e *Event){
+		"in place": func(e *Event) { e.Envelope.Class.Labels[0] = "x" },
+		"append":   func(e *Event) { e.Envelope.Class.Labels = append(e.Envelope.Class.Labels, "y") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &envPersister{}
+			bad := StageFunc(func(_ context.Context, e *Event) error {
+				mutate(e)
+				return errors.New("then fails")
+			})
+			bus := NewBus(BusOptions{Persister: p, Stages: []Stage{bad}, OnStageError: func(*StageError) {}})
+			// Spare capacity makes an append write into the shared backing array.
+			labels := make([]string, 1, 4)
+			labels[0] = "a"
+			e := Event{Scope: ScopeSession, Kind: "k"}
+			e.Envelope.Class.Labels = labels
+			if err := bus.Publish(context.Background(), e); err != nil {
+				t.Fatal(err)
+			}
+			got := p.last().Envelope.Class.Labels
+			if len(got) != 1 || got[0] != "a" {
+				t.Fatalf("published labels %v, want [a]", got)
+			}
+			if labels[0] != "a" || len(labels) != 1 || labels[:2][1] != "" {
+				t.Fatalf("the producer's slice was written through: %v %v", labels, labels[:2])
+			}
+		})
+	}
+}

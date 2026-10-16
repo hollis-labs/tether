@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 )
 
 // Stage fills an event's envelope from verified context just before the event
@@ -54,13 +55,21 @@ func (b *memBus) stamp(ctx context.Context, e Event, tx bool) Event {
 				continue
 			}
 		}
-		next := e
+		next := cloneEvent(e)
 		if err := runStage(ctx, s, &next); err != nil {
 			b.onStageError(&StageError{Stage: i, Kind: e.Kind, Err: err})
 			continue
 		}
 		e = next
 	}
+	return e
+}
+
+// cloneEvent copies e deeply enough that a stage can write anywhere in it
+// without touching the original. Every Envelope field is a value except
+// Class.Labels; add any new slice or map field here.
+func cloneEvent(e Event) Event {
+	e.Envelope.Class.Labels = slices.Clone(e.Envelope.Class.Labels)
 	return e
 }
 
