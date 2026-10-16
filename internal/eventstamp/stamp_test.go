@@ -100,7 +100,12 @@ func TestActorFollowsVerifiedFactsNotKind(t *testing.T) {
 		want events.Actor
 	}{
 		"operator":                    {identity.WithPrincipal(context.Background(), operator), events.Actor{Kind: "user", URN: identity.OperatorID, Verified: "token"}},
-		"operator-minted token":       {identity.WithPrincipal(context.Background(), narrow), events.Actor{}},
+		"operator-minted token":       {identity.WithPrincipal(context.Background(), narrow), events.Actor{Kind: "user", URN: identity.OperatorID, Verified: "token"}},
+		"device (no mesh kind yet)":   {identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://device/laptop-1", Kind: "device"}), events.Actor{}},
+		"service principal":           {identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://service/local/member", Kind: "service"}), events.Actor{Kind: "service", URN: "msg://service/local/member", Verified: "token"}},
+		"user principal":              {identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://user/local/alice", Kind: "interactive"}), events.Actor{Kind: "user", URN: "msg://user/local/alice", Verified: "token"}},
+		"agent principal":             {identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://agent/fleet/two", Kind: "agent", TokenID: "jti-9"}), events.Actor{Kind: "agent", URN: "msg://agent/fleet/two", Verified: "token"}},
+		"non-principal subject":       {identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "urn:something:else", Kind: "service"}), events.Actor{}},
 		"unverified operator":         {identity.WithPrincipal(context.Background(), unverified), events.Actor{}},
 		"session credential":          {sessionCtx(resolved, sessionPrincipal), events.Actor{Kind: "agent", URN: "msg://agent/fleet/one", Verified: "token"}},
 		"issued bound token":          {sessionCtx(resolved, bound), events.Actor{Kind: "agent", URN: "msg://agent/fleet/one", Verified: "token"}},

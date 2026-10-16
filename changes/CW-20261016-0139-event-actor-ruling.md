@@ -1,0 +1,1 @@
+- Events: the stamped actor now follows the architect's ruling (CW-20261016-0139). Any verified principal whose subject is a user, agent or service URN is its own actor with the kind its URN names and verified=token, which includes an operator-minted narrow token (its subject is the operator); devices still get no actor until mesh adds a device kind.
