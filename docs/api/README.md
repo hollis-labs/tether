@@ -2889,16 +2889,20 @@ Digest filters, shared by both grains: `kind`, `relation`, `source`, `since`
 
 Three things to know before reading a response:
 
-- **`source` means observed, not validated.** `proxy` says the proxy saw the
-  identifier go by; nothing checked that it refers to anything. The attachment
-  API accepts caller-supplied source values. It is provenance, never
-  authentication or proof of ownership of the referenced object.
-- **An absent ref is never evidence.** Read `coverage.proxy_attributable` and
-  each session's `ref_attribution` before concluding a session did nothing.
-  Extraction is opt-in via `catalog.defaults.extract_refs`, overridden by
-  project/launch `mcp.extract_refs`. Existing proxies and worker/outpost paths
-  do not gain capture coverage just because the default changes. See
-  [ref attribution](../workstreams.md#reading-an-empty-digest).
+- **`source` is daemon-derived.** Verified session/bound-agent credentials
+  produce `session`; the actual operator credential produces `operator`.
+  Anonymous and other legacy HTTP callers remain unattributed `api`.
+  Request source fields are ignored, except an asserted `proxy` is rejected
+  with HTTP 403 / `source_asserted` and increments the label-free OTel counter
+  `tether.refs.source_asserted`. No caller derives `proxy` until the separately
+  scoped issuer proxy-token path lands (CW-20261016-0157 step 3).
+  Migration 0080 changes all historical `proxy` rows to untrusted
+  `proxy_claimed`, preserving their identity, timestamp and other data.
+  `agent` remains a legacy assertion. No source validates an identifier.
+- **An absent ref is never evidence.** `coverage.proxy_attributable` and each
+  session's `ref_attribution` describe planting capability, not authenticated
+  observations or proof that nothing happened. Extraction is opt-in and remains
+  off pending the issuer proxy-token path; direct MCP calls can bypass capture.
 - **Truncation is reported, not silent.** `coverage.limit` and
   `coverage.truncated` always appear.
 

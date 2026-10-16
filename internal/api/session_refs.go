@@ -2,10 +2,8 @@ package api
 
 // session_refs.go — HTTP surface for what a session touched.
 //
-// S2 of SP-20260912-0001 (CW-20260912-0060). What `source` does and does not
-// prove is stated in migration 0024; the short version is that `proxy` means
-// OBSERVED, not validated, and that the absence of a proxy-observed ref is
-// never evidence of anything.
+// Source is derived from verified caller identity (CW-20261016-0157).
+// Historical proxy_claimed rows are untrusted; no source validates an object.
 
 import (
 	"encoding/json"
@@ -14,6 +12,8 @@ import (
 	"net/http"
 
 	"github.com/hollis-labs/tether/internal/app/sessionrefs"
+	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // SessionRefStore is the narrow composition seam for session reference storage.
@@ -59,6 +59,25 @@ func (s *Server) handleAttachSessionRef(w http.ResponseWriter, r *http.Request, 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid JSON body: "+err.Error())
 		return
+	}
+	// CW-20261016-0157: no request field can confer observed provenance.
+	// Until the issuer-minted proxy credential lands, no transport principal
+	// derives SourceProxy, including the operator and a service named proxy.
+	if req.Source == store.SourceProxy {
+		if s.refSourceAssertions != nil {
+			s.refSourceAssertions.Add(r.Context(), 1)
+		}
+		writeError(w, http.StatusForbidden, "source_asserted", "proxy source must come from a verified proxy credential")
+		return
+	}
+	req.Source = store.SourceAPI // legacy anonymous/device/service HTTP capture
+	if p, ok := identity.FromContext(r.Context()); ok && p.Verified {
+		switch {
+		case identity.IsOperatorCredential(p):
+			req.Source = store.SourceOperator
+		case p.Kind == "session" || p.Kind == "agent" && p.SessionID != "":
+			req.Source = store.SourceSession
+		}
 	}
 	out, err := sessionrefs.NewRecords(s.SessionRefs).Attach(sessionID, sessionrefs.SessionRefAttachRequest(req))
 	if err != nil {

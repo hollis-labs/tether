@@ -98,36 +98,40 @@ session in the span carries `ref_attribution`:
 
 | value | meaning |
 |---|---|
-| `proxy` | proxy has session identity and extraction enabled, through planted flags or saved daemon policy. Can produce observed refs. |
+| `proxy` | session identity and extraction enabled through planted flags or saved daemon policy. Credential provenance is separate. |
 | `none` | proxy has session identity, extraction off. Cannot. |
 | `unlaunched` | nothing was planted for this session — the `POST /sessions/bootstrap` path. No proxy carries its id. |
-| `unknown` | no reliable stamp was recorded, including rows predating the stamp. **Not** a synonym for `none`. |
+| `unknown` | the stamp is absent or the launch path does not support it. **Not** a synonym for `none`. |
 
 `coverage.proxy_attributable` counts how many sessions in the span could
 produce one, and `coverage.note` says so in prose when the answer is zero.
 
-Extraction is opt-in. `catalog.defaults.extract_refs` sets the fleet default;
-project and launch `mcp.extract_refs` override it, with the launch taking
-precedence. The default is false. Hub-local legacy proxy planting emits
-`--session` and `--extract-refs` together when enabled; daemon-owned MCP uses
-the saved session policy instead. Successful supported tool calls then pass
-through `sessionrefs.Service.Record` and persist identifier refs with
-`source=proxy`. Failed calls produce no ref, and retries are idempotent.
+Capture is opt-in (`launch.mcp.extract_refs`, then project, then the global
+`catalog.defaults.extract_refs`, default false). Existing planted sessions do
+not change when the catalog does. Capability is separate from authenticated
+provenance: extraction enablement waits for CW-20261016-0157 step 3.
 
-Enabling the default affects launches that resolve or rebuild their policy;
-it does not reconfigure an already-running proxy or reconstruct historical
-refs. It adds identifier correlation metadata and per-call writes, without
-storing raw arguments or results. `proxy_events` contains schema fingerprints,
-not the identifier values needed for backfill. Worker/outpost and externally
-started paths require their own session/policy propagation; do not infer
-capture coverage from the global setting alone. A `none` or `unknown` stamp
-still makes an empty ref list inconclusive.
+Hub-local legacy planting uses `--session` and `--extract-refs`; daemon-owned
+MCP uses saved session policy. Supported successful calls pass through
+`sessionrefs.Service.Record`; failed calls produce no ref and retries deduplicate.
+Capture stores identifiers, not raw arguments or results. Historical
+`proxy_events` fingerprints do not contain the identifiers needed for backfill.
+Worker/outpost and externally started paths need their own session/policy
+propagation; the global setting alone does not establish coverage.
 
-`source` itself means **observed, not validated** (migration 0024). The proxy
-records what it saw; it does not check that the identifier refers to anything.
-The HTTP attachment API accepts caller-supplied source values. Treat the source
-as provenance — who asserted this — never as authentication or proof that the
-caller owns the referenced object.
+The daemon derives ref `source` from verified identity: `session` for a session
+or bound agent credential, `operator` for the actual operator credential, and
+unattributed `api` for other legacy HTTP callers. Caller source fields are
+ignored; asserting `proxy` currently returns 403 `source_asserted` and increments
+`tether.refs.source_asserted` (no request data in metric labels).
+
+Migration 0080 downgrades old `proxy` assertions to **`proxy_claimed`**, which is
+untrusted and cannot trigger the store's proxy upgrade rule. It preserves row
+IDs, refs, timestamps, relations and parents. `agent` is also a legacy assertion.
+`proxy` is reserved for the future issuer-minted proxy credential; no HTTP caller
+currently derives it. None of these labels validates the referenced object.
+The migration is forward-only; do not run an older binary against the expanded
+source vocabulary.
 
 ## Truncation
 

@@ -1667,10 +1667,9 @@ func (c *Client) EnsureSessionWorkstream(ctx context.Context, sessionID, name, w
 
 // ─── session refs (S2, CW-20260912-0060) ─────────────────────────────────────
 
-// AttachSessionRef records that a session touched an object, via
-// POST /sessions/{id}/refs. Idempotent: a repeat succeeds with
-// inserted=false. source=proxy is accepted for the separate proxy process's
-// captures. Source is asserted provenance, not proof of authenticated ownership.
+// AttachSessionRef records a reference through the daemon. Source is derived
+// from verified caller identity; an asserted proxy source is rejected. Leave
+// Source empty for ordinary captures. Historical proxy_claimed is untrusted.
 func (c *Client) AttachSessionRef(ctx context.Context, sessionID string, req api.SessionRefAttachRequest) (api.SessionRefAttachResponse, error) {
 	var out api.SessionRefAttachResponse
 	err := c.postWorkstreamJSON(ctx, "/sessions/"+url.PathEscape(sessionID)+"/refs", req, &out, http.StatusOK)

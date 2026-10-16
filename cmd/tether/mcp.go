@@ -465,9 +465,9 @@ func splitScopes(s string) []string {
 // it is the proxy, not the daemon -- so the shape is flattened here.
 type refAttacherClient struct{ c *client.Client }
 
-func (r refAttacherClient) AttachSessionRef(ctx context.Context, sessionID, kind, refID, uri, relation, source, parentItemID string) error {
+func (r refAttacherClient) AttachSessionRef(ctx context.Context, sessionID, kind, refID, uri, relation, _ string, parentItemID string) error {
 	_, err := r.c.AttachSessionRef(ctx, sessionID, api.SessionRefAttachRequest{
-		Kind: kind, RefID: refID, URI: uri, Relation: relation, Source: source, ParentItemID: parentItemID,
+		Kind: kind, RefID: refID, URI: uri, Relation: relation, ParentItemID: parentItemID,
 	})
 	return err
 }

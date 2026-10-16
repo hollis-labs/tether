@@ -8,7 +8,7 @@ import (
 
 type daemonRefAttacher struct{ client *client.Client }
 
-func (r daemonRefAttacher) AttachSessionRef(ctx context.Context, sessionID, kind, refID, uri, relation, source, parentItemID string) error {
-	_, err := r.client.AttachSessionRef(ctx, sessionID, api.SessionRefAttachRequest{Kind: kind, RefID: refID, URI: uri, Relation: relation, Source: source, ParentItemID: parentItemID})
+func (r daemonRefAttacher) AttachSessionRef(ctx context.Context, sessionID, kind, refID, uri, relation, _ string, parentItemID string) error {
+	_, err := r.client.AttachSessionRef(ctx, sessionID, api.SessionRefAttachRequest{Kind: kind, RefID: refID, URI: uri, Relation: relation, ParentItemID: parentItemID})
 	return err
 }

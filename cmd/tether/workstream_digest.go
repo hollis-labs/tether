@@ -223,7 +223,7 @@ func countsLine(m map[string]int) string {
 	// Fixed key order rather than map iteration: a digest a human re-runs
 	// should not reshuffle between calls. Unknown keys follow, sorted, so a
 	// value added later still prints instead of vanishing.
-	known := []string{"proxy", "api", "agent", "none", "unlaunched", "unknown"}
+	known := []string{"proxy", "proxy_claimed", "session", "operator", "api", "agent", "none", "unlaunched", "unknown"}
 	seen := map[string]bool{}
 	parts := []string{}
 	for _, k := range known {
@@ -259,7 +259,7 @@ func init() {
 	f.StringVar(&digestForRef, "for-ref", "", "resolve <kind>:<ref_id> to its workstreams and digest each (prints all matches)")
 	f.StringVar(&digestKind, "kind", "", "filter to one ref kind")
 	f.StringVar(&digestRelation, "relation", "", "filter to one relation: created, updated, read, referenced")
-	f.StringVar(&digestSource, "source", "", "filter to one source: proxy, api, agent")
+	f.StringVar(&digestSource, "source", "", "filter to one source: session, operator, proxy, proxy_claimed, api, agent")
 	f.StringVar(&digestSince, "since", "", "RFC3339 UTC lower bound: what was in flight, not everything ever")
 	f.IntVar(&digestLimit, "limit", 0, "maximum refs; the output reports whether it truncated")
 	f.BoolVar(&digestLeftOnly, "left-behind", false, "print only the created/updated section")

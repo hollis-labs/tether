@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/hollis-labs/libs/llm/core/modelsdev"
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
@@ -204,13 +207,19 @@ type Server struct {
 	IdentityMode  identity.Mode
 	IdentityAudit func(context.Context, identity.Observation) error
 
-	chatReplays chatReplays
+	chatReplays         chatReplays
+	refSourceAssertions metric.Int64Counter
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
 // api package. The daemon package layers /health on top of this.
 func NewHandler(deps Deps) http.Handler {
+	refAssertions, err := otel.Meter("github.com/hollis-labs/tether/api").Int64Counter("tether.refs.source_asserted", metric.WithDescription("Rejected caller assertions of proxy reference provenance"))
+	if err != nil {
+		otel.Handle(err)
+	}
 	s := &Server{
+		refSourceAssertions: refAssertions,
 		Forums:              deps.Forums,
 		Teams:               deps.Teams,
 		Docs:                deps.Docs,
