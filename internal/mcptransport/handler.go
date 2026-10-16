@@ -446,6 +446,10 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		return nil, err
 	}
 	adapter.ExtractRefs = a.caller.Policy.ExtractRefs
+	// The session's editable_agents allowlist rides in its saved policy: a
+	// session on the hub relay keeps the restriction the ssh-launched
+	// `tether mcp --editable-agent` flags carried. Empty = unrestricted, as before.
+	adapter.SetEditableAgents(a.caller.Policy.EditableAgents)
 	if h.cfg.TeamsEnabled && api.HasTeamOps(h.cfg.Teams) {
 		adapter.SetTeams(h.cfg.Teams)
 	}

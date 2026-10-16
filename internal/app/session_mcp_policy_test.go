@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
@@ -76,5 +77,61 @@ func TestSessionMCPPolicy_PersistedBeforeCredentialDelivery(t *testing.T) {
 	p, err := svc.Store.SessionMCPPolicy(context.Background(), id)
 	if err != nil || p.AgentID != "agent" || p.SessionID != id {
 		t.Fatalf("delivered credential without bound policy: %+v %v", p, err)
+	}
+}
+
+// The catalog agent's editable_agents allowlist is saved into the session's MCP
+// policy at launch, so a session on the hub /mcp relay keeps the restriction.
+func TestSessionMCPPolicy_SavesTheCatalogAgentsEditableAgents(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		catalog []string
+		plan    []string
+		want    []string
+	}{
+		{"none declared", nil, nil, nil},
+		{"from the catalog agent", []string{"worker", "reviewer"}, nil, []string{"reviewer", "worker"}},
+		{"the plan's copy (a worker plan) wins", []string{"other"}, []string{"worker"}, []string{"worker"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, id, _ := credentialLaunch(t)
+			svc.Catalog.Agents = map[string]config.LaunchProfile{"agent": {EditableAgents: tc.catalog}}
+			if tc.plan != nil {
+				plan, err := svc.Store.GetLaunchPlan(id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan.EditableAgents = tc.plan
+				raw, _ := json.Marshal(plan)
+				if _, err := svc.Store.DB().Exec("UPDATE launch_plans SET plan_json=? WHERE session_id=?", string(raw), id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := svc.LaunchSession(id); err != nil {
+				t.Fatal(err)
+			}
+			p, err := svc.Store.SessionMCPPolicy(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(p.EditableAgents, tc.want) {
+				t.Fatalf("saved allowlist %v, want %v", p.EditableAgents, tc.want)
+			}
+		})
+	}
+}
+
+// A team member never takes the base agent's allowlist (same rule as the ssh flags).
+func TestLaunchEditableAgentsSkipsTeamMembers(t *testing.T) {
+	svc, _, _, _ := credentialLaunch(t)
+	svc.Catalog.Agents = map[string]config.LaunchProfile{"agent": {EditableAgents: []string{"worker"}}}
+	if got := svc.launchEditableAgents(&launch.Plan{LogicalAgentID: "agent"}); !slices.Equal(got, []string{"worker"}) {
+		t.Fatalf("plain agent: %v", got)
+	}
+	if got := svc.launchEditableAgents(&launch.Plan{LogicalAgentID: "agent#1", TeamMember: true}); len(got) != 0 {
+		t.Fatalf("team member took the base agent's allowlist: %v", got)
+	}
+	if got := svc.launchEditableAgents(nil); len(got) != 0 {
+		t.Fatalf("nil plan: %v", got)
 	}
 }

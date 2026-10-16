@@ -87,6 +87,7 @@ func (s *Service) nativeOnlyLaunchAuthority(ctx context.Context, plan *launch.Pl
 	}
 	policy.UpstreamOwnership = ownership
 	policy.ExtractRefs = plan.ExtractRefs
+	policy.EditableAgents = s.launchEditableAgents(plan)
 	if !policy.ExtractRefs && s.cat() != nil {
 		policy.ExtractRefs = config.EffectiveExtractRefs(s.cat().Global, s.cat().Projects[plan.ProjectID], s.cat().Launches[plan.LaunchID])
 	}

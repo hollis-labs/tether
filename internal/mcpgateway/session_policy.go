@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 var ErrInvalidSessionMCPPolicy = errors.New("invalid session MCP policy")
@@ -23,7 +24,15 @@ type SessionPolicy struct {
 	LaunchProfile     *Profile `json:"launch_profile,omitempty"`
 	ToolProfile       *Profile `json:"tool_profile,omitempty"`
 	DiscoveryMode     *string  `json:"discovery_mode,omitempty"`
-	Digest            string   `json:"digest"`
+	// EditableAgents is the catalog agent's editable_agents allowlist: the agent
+	// ids this session's tether_agent_create / tether_agent_edit may touch. It is
+	// saved with the policy at launch so a session reaching the hub over /mcp
+	// keeps the restriction the ssh-launched `tether mcp --editable-agent` flags
+	// carried. Seal sorts and de-duplicates it, so the same set always has the
+	// same digest. Empty (omitted, which leaves the digest of every policy saved
+	// before this field existed unchanged) means no per-agent restriction.
+	EditableAgents []string `json:"editable_agents,omitempty"`
+	Digest         string   `json:"digest"`
 }
 
 func (p SessionPolicy) hash() string {
@@ -35,6 +44,7 @@ func (p SessionPolicy) hash() string {
 
 func (p SessionPolicy) Seal() SessionPolicy {
 	p.Servers = append([]string{}, p.Servers...)
+	p.EditableAgents = normalizeEditableAgents(p.EditableAgents)
 	if p.ToolProfile != nil {
 		value := CloneProfile(*p.ToolProfile)
 		p.ToolProfile = &value
@@ -47,9 +57,29 @@ func (p SessionPolicy) Seal() SessionPolicy {
 	return p
 }
 
+// normalizeEditableAgents returns the allowlist sorted and without duplicates
+// or empty ids; nil when nothing is left.
+func normalizeEditableAgents(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	out = slices.Compact(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (p SessionPolicy) Validate() error {
 	if p.SessionID == "" || p.Servers == nil || p.Digest == "" || p.Digest != p.hash() {
 		return fmt.Errorf("%w: invalid or missing snapshot; resume or relaunch the session", ErrInvalidSessionMCPPolicy)
+	}
+	if !slices.Equal(p.EditableAgents, normalizeEditableAgents(p.EditableAgents)) {
+		return fmt.Errorf("%w: editable_agents must be sorted, unique and non-empty", ErrInvalidSessionMCPPolicy)
 	}
 	if p.DiscoveryMode != nil {
 		if err := ValidateMode(*p.DiscoveryMode); err != nil {

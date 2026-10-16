@@ -54,6 +54,17 @@ func (s *Service) catalogEditableAgents(plan *launch.Plan) []string {
 	return slices.Clone(agent.EditableAgents)
 }
 
+// launchEditableAgents is the editable_agents allowlist a launch saves into the
+// session's MCP policy: the plan's copy (a worker plan carries it from
+// applyCatalogIdentity) or, failing that, the catalog agent's. Both come from the
+// catalog agent only, so this agrees with what withEditableAgents plants.
+func (s *Service) launchEditableAgents(plan *launch.Plan) []string {
+	if plan != nil && len(plan.EditableAgents) > 0 {
+		return slices.Clone(plan.EditableAgents)
+	}
+	return s.catalogEditableAgents(plan)
+}
+
 // SessionIdentityURN returns the stable URN a session was launched to act as, if any. It is only a
 // claim: ResolveCallerContext trusts it solely when the registry binding for that URN names the session.
 func (s *Service) SessionIdentityURN(sessionID string) string {

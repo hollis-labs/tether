@@ -423,6 +423,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			policy.UpstreamOwnership = ownership
 		}
 		policy.ExtractRefs = extractRefs
+		policy.EditableAgents = s.launchEditableAgents(plan)
 		policy = policy.Seal()
 		if plan.NativeResumeOnly {
 			policy, err = s.nativeOnlyPolicy(ctx, plan, policy)
