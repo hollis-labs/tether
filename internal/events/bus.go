@@ -29,6 +29,12 @@ type BusOptions struct {
 	// blocked on a consumer that is not reading before the subscriber is
 	// evicted (default 30s). Live drops do not evict during replay.
 	StallTimeout time.Duration
+	// Stages stamp every event before it is written, in order (see Stage). Nil
+	// means the bus writes the event exactly as the producer built it.
+	Stages []Stage
+	// OnStageError receives a stage failure; the event is still published.
+	// Default: log it.
+	OnStageError func(*StageError)
 }
 
 // Publisher is the write half of the bus. Lifecycle producers (the
@@ -106,6 +112,8 @@ type memBus struct {
 	maxConsecDrops int64
 	replayPage     int
 	stallTimeout   time.Duration
+	stages         []Stage
+	onStageError   func(*StageError)
 
 	published atomic.Int64 // newest sequence this bus persisted (high_water for non-paged persisters)
 
@@ -135,7 +143,12 @@ func NewBus(opts BusOptions) Bus {
 	if opts.OutboxSweep <= 0 {
 		opts.OutboxSweep = defaultOutboxGap
 	}
+	if opts.OnStageError == nil {
+		opts.OnStageError = defaultOnStageError
+	}
 	b := &memBus{
+		stages:         append([]Stage(nil), opts.Stages...),
+		onStageError:   opts.OnStageError,
 		paged:          paged,
 		txp:            txp,
 		idp:            idp,
@@ -172,6 +185,9 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	if e.Scope == "" {
 		return ErrScopeEmpty
 	}
+	// Stamp before the lock: a stage may read context or a cache, and must not
+	// delay other publishers.
+	e = b.stamp(ctx, e, false)
 
 	if err := b.lock(ctx); err != nil {
 		return err
