@@ -10,6 +10,13 @@ require (
 )
 
 require (
+	github.com/danieljoos/wincred v1.2.3 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/hollis-labs/libs/security/secrets v0.1.0 // indirect
+	github.com/zalando/go-keyring v0.2.8 // indirect
+)
+
+require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.18.2 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
