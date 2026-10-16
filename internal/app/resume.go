@@ -319,8 +319,8 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 // connected and advertise worker-resume, the provider must be claude, and
 // only the checkpoint-prompt path is allowed.
 func (s *Service) checkWorkerResume(parent *store.SessionRow, opts api.ResumeOptions) error {
-	if !s.WorkerResume {
-		return fmt.Errorf("%w: resume source %s is placed on worker %s; resume on a worker is not supported yet", session.ErrRecoveryConflict, parent.ID, parent.WorkerID)
+	if !s.workerResumeEnabled() {
+		return fmt.Errorf("%w: resume source %s is placed on worker %s; resume on a worker is not enabled (catalog.defaults.worker_resume)", session.ErrRecoveryConflict, parent.ID, parent.WorkerID)
 	}
 	if opts.NativeOnly {
 		return fmt.Errorf("%w: native-only resume is not supported for worker-placed source %s", session.ErrRecoveryConflict, parent.ID)
@@ -417,4 +417,14 @@ func buildResumePrompt(ck *checkpoint.Checkpoint, bootPrompt string) string {
 	b.WriteString("\n---\n\n")
 	b.WriteString(bootPrompt)
 	return b.String()
+}
+
+// workerResumeEnabled reports the worker-resume opt-in: the Service field (set
+// by embedders and tests) or catalog.defaults.worker_resume. Default off.
+func (s *Service) workerResumeEnabled() bool {
+	if s.WorkerResume {
+		return true
+	}
+	cat := s.cat()
+	return cat != nil && cat.Global.Catalog.Defaults.WorkerResume
 }

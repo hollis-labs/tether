@@ -26,6 +26,11 @@ func printExecutionStatus(w io.Writer, st execpolicy.Status) {
 	}
 	fmt.Fprintf(w, "state: %s\n", state)
 	fmt.Fprintf(w, "environment: %d live, cap %s\n", st.Usage.Total, capText(st.Policy.MaxSessions))
+	resume := "off"
+	if st.WorkerResume {
+		resume = "on"
+	}
+	fmt.Fprintf(w, "worker resume: %s (catalog.defaults.worker_resume)\n", resume)
 	for _, id := range st.Policy.SortedProjects() {
 		fmt.Fprintf(w, "project %s: %d live, cap %s\n", id, st.Usage.ByProject[id], capText(st.Policy.ProjectCaps[id]))
 	}
