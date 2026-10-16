@@ -54,8 +54,12 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 		return Caller{}, fmt.Errorf("daemon MCP catalog unavailable")
 	}
 	policy := mcpgateway.SessionPolicy{}
-	switch p.Kind {
-	case "session":
+	boundAgent := identity.IsBoundAgentToken(p)
+	switch {
+	case p.Kind == "session" || boundAgent:
+		// A session credential and an issued session-bound agent token (#365)
+		// resolve to the same session policy, read from the session row for
+		// p.SessionID; a token cannot widen it.
 		if p.SessionID == "" || r.Session == nil {
 			return Caller{}, fmt.Errorf("session MCP policy unavailable; resume or relaunch the session")
 		}
@@ -72,7 +76,7 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 		if policy.SessionID != p.SessionID {
 			return Caller{}, fmt.Errorf("session MCP policy identity mismatch")
 		}
-	case "operator":
+	case p.Kind == "operator":
 		if p.ID != identity.OperatorID || p.TokenID != "" {
 			return Caller{}, identity.ErrInvalidToken
 		}
@@ -83,7 +87,7 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 			}
 		}
 		sort.Strings(policy.Servers)
-	case "service", "interactive":
+	case p.Kind == "service" || p.Kind == "interactive":
 		policy.Servers, err = cat.PrincipalMCPServers(p.ID)
 		if err != nil {
 			return Caller{}, err
