@@ -1,0 +1,1 @@
+- CW-20261016-0146: Make dormant payload retention use the current pass policy for existing rows while preserving admission provenance, and prevent audit rows from becoming trim-eligible.

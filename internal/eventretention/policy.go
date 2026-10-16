@@ -100,15 +100,16 @@ type rawConfig struct {
 }
 
 // Config is an immutable compiled configuration. Its ID identifies the policy
-// epoch. Keep a snapshot at admission; never reinterpret old rows using the
-// latest Config. Future persistence must commit that snapshot with the event.
+// epoch. Admission snapshots remain immutable audit provenance; retention
+// decisions use the current Config for all classified rows on each pass.
 type Config struct {
 	rules  map[Class]Rule
 	piiCap Age
 	id     string
 }
 
-// Policy is a per-event immutable snapshot from a Config epoch. Zero Policy
+// Policy is an immutable class snapshot from a Config epoch. Sweep callers
+// resolve it from their current Config, not the admission epoch. Zero Policy
 // means unclassified legacy data and is never eligible for class-based removal.
 type Policy struct {
 	class  Class

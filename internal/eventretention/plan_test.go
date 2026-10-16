@@ -143,3 +143,16 @@ func TestRollupCheckpointBucketsAndRetention(t *testing.T) {
 		t.Fatal("partial batch emitted before invalid secret")
 	}
 }
+
+func TestFiniteAuditPayloadNeverMakesAuditRowTrimmable(t *testing.T) {
+	c := mustConfig(t, "retention: {acknowledge_risk: true, classes: {audit: {full: 400d, envelope: 500d}}}")
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := Record{Cursor: 1, RecordedAt: at, Policy: mustPolicy(t, c, Audit), PayloadPresent: true, RolledUp: true}
+	d, err := Plan(r, at.Add(600*Day))
+	if err != nil || !d.Tombstone || d.TrimEligible {
+		t.Fatalf("audit decision %+v %v", d, err)
+	}
+	if through, n, err := HeadTrim([]Record{r}, at.Add(600*Day), 10); err != nil || through != 0 || n != 0 {
+		t.Fatalf("audit row trimmed: %d %d %v", through, n, err)
+	}
+}
