@@ -84,9 +84,11 @@ func TestWorkerLaunchThroughRelayToRemoteMCPEndToEnd(t *testing.T) {
 	server := &daemon.Server{Config: cfg, Identity: ids, Issuer: issuer, Workers: svc.Workers, Service: &serviceAdapter{svc: svc}, MCP: mcp}
 	t.Cleanup(server.CloseIdentityAudit)
 
-	// The hub's remote listener (Host allow-list = the bound address).
+	// The hub's remote listener: loopback behind a reverse proxy, so the Host header is the public name, never the
+	// loopback address (the first canary 403 came from the MCP SDK's own localhost guard on exactly that pairing).
+	const publicHost = "tether.example"
 	ts := httptest.NewUnstartedServer(nil)
-	server.Config.RemoteListener = daemon.RemoteListenerConfig{Enabled: true, ListenAddr: "tcp:127.0.0.1:7331", AllowedHosts: []string{ts.Listener.Addr().String()}}
+	server.Config.RemoteListener = daemon.RemoteListenerConfig{Enabled: true, ListenAddr: "tcp:127.0.0.1:7331", AllowedHosts: []string{ts.Listener.Addr().String(), publicHost}}
 	ts.Config.Handler = server.RemoteHandler(ts.Listener.Addr().String())
 	ts.Config.ConnContext = identity.ConnectionContext
 	ts.Start()
@@ -171,7 +173,8 @@ func TestWorkerLaunchThroughRelayToRemoteMCPEndToEnd(t *testing.T) {
 	// The worker's relay against the hub's remote /mcp.
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	relay := &workerruntime.HTTPRelay{URL: ts.URL + "/mcp", TokenFile: tokenPath, Stderr: io.Discard}
+	relay := &workerruntime.HTTPRelay{URL: ts.URL + "/mcp", TokenFile: tokenPath, Stderr: io.Discard,
+		Client: &http.Client{Transport: publicHostTransport{host: publicHost}}}
 	done := make(chan error, 1)
 	go func() { done <- relay.Run(ctx, inR, outW); _ = outW.Close() }()
 	lines := bufio.NewScanner(outR)
@@ -254,4 +257,14 @@ func TestWorkerLaunchThroughRelayToRemoteMCPEndToEnd(t *testing.T) {
 	if err := svc.Store.DB().QueryRow(`SELECT COUNT(*) FROM identity_audit WHERE event LIKE 'remote_mcp_initialize worker=%' AND session_id = ?`, created.SessionID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("remote initialize audit rows = %d err=%v", n, err)
 	}
+}
+
+// publicHostTransport sends requests as the reverse proxy would: connection to the loopback listener, Host header the
+// public name.
+type publicHostTransport struct{ host string }
+
+func (t publicHostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Host = t.host
+	return http.DefaultTransport.RoundTrip(r)
 }

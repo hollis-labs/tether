@@ -253,3 +253,72 @@ func TestRemoteMCPProtocolExemptionIsExact(t *testing.T) {
 		}
 	}
 }
+
+// A daemon with a remote listener but no MCP handler (daemon.mcp_endpoint off) must say so, not just refuse callers: the
+// canary of 2026-10-16 read as a token problem for lack of this.
+func TestRemoteMCPStatusReportsWhyTheGateIsMissing(t *testing.T) {
+	g := newRemoteMCPRig(t)
+	if st := g.s.RemoteMCPStatus(); st == nil || !st.Available || st.Reason != "" {
+		t.Fatalf("with an MCP handler: %+v", st)
+	}
+	noMCP := newRemoteMCPRig(t)
+	noMCP.s.MCP = nil
+	st := noMCP.s.RemoteMCPStatus()
+	if st == nil || st.Available || !strings.Contains(st.Reason, "daemon.mcp_endpoint.enabled") {
+		t.Fatalf("without an MCP handler: %+v", st)
+	}
+	// The request is refused, not served, and no denial counter moves: there is no gate to count.
+	w := noMCP.do("POST", "/mcp", "localhost:9000", noMCP.agentToken(t, "s-live"), "", nil)
+	if w.Code != 401 || noMCP.reached.Load() != 0 || len(noMCP.s.RemoteMCPDenials()) != 0 {
+		t.Fatalf("no-gate request: status %d reached %d denials %v", w.Code, noMCP.reached.Load(), noMCP.s.RemoteMCPDenials())
+	}
+	var none Server
+	if none.RemoteMCPStatus() != nil {
+		t.Fatal("status without a remote listener must be absent")
+	}
+}
+
+// The MCP mount repeats the listener's Host and Origin check with the same remoteAuthority value before it attaches remote
+// provenance, so the handler has no route around the allow-lists now that the SDK's localhost Host guard is off
+// (architect ruling tether_mcp_sdk_localhost_guard_disabled_2026_10_16). This hits the mount's check directly, not via
+// RemoteHandler.
+func TestRemoteMCPMountRepeatsTheListenerAuthority(t *testing.T) {
+	g := newRemoteMCPRig(t)
+	g.s.Config.RemoteListener.AllowedHosts = []string{"tether.example", "alt.example:9000"}
+	g.s.Config.RemoteListener.AllowedOrigins = []string{"https://tether.example"}
+	g.s.RemoteHandler("127.0.0.1:7331") // installs the listener's authority
+	gate := g.s.remoteMCPGate()
+	if gate == nil {
+		t.Fatal("no gate")
+	}
+	serve := func(host, origin string) int {
+		r := httptest.NewRequest("POST", "http://"+host+"/mcp", strings.NewReader("{}"))
+		r.Host = host
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		gate.serveMCP(w, r)
+		return w.Code
+	}
+	before := g.reached.Load()
+	for _, tc := range []struct{ host, origin string }{
+		{"evil.example", ""}, {"localhost:9000", ""}, {"127.0.0.1:7331", ""}, {"tether.example:443", ""},
+		{"TETHER.example", ""}, {"tether.example", "https://evil.example"}, {"tether.example", "http://tether.example"},
+	} {
+		if code := serve(tc.host, tc.origin); code != http.StatusForbidden {
+			t.Fatalf("Host %q Origin %q: %d, want 403", tc.host, tc.origin, code)
+		}
+	}
+	if g.reached.Load() != before {
+		t.Fatal("a refused request reached the MCP handler")
+	}
+	for _, tc := range []struct{ host, origin string }{{"tether.example", ""}, {"alt.example:9000", ""}, {"tether.example", "https://tether.example"}} {
+		if code := serve(tc.host, tc.origin); code != http.StatusAccepted {
+			t.Fatalf("Host %q Origin %q: %d, want 202", tc.host, tc.origin, code)
+		}
+	}
+	if g.reached.Load() != before+3 || !g.remote.Load() {
+		t.Fatalf("allowed requests reached %d, remote provenance %v", g.reached.Load()-before, g.remote.Load())
+	}
+}
