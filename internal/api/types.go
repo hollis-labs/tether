@@ -182,6 +182,12 @@ type LaunchRequest struct {
 	// request when the session it was bound to has ended; a live session
 	// answers 409 idempotency_conflict.
 	ReplaceIdempotency bool `json:"replace_idempotency,omitempty"`
+
+	// TaskID is the Torque task this session is launched for (CW-20261012-0062a): the
+	// bare Torque id, stored on the session row and planted as TETHER_TASK_ID. Only the
+	// launcher may assert it (403 task_id_not_permitted otherwise); it is set at creation
+	// and never changed; there is no existence check against Torque.
+	TaskID string `json:"task_id,omitempty"`
 }
 
 // ResumeOptions carries the optional arguments of a resume.
@@ -228,6 +234,8 @@ type CreateSessionInput struct {
 	ReplaceIdempotency bool
 	// IdempotencyPrincipal scopes IdempotencyKey; server-set (CW-20261010-0263).
 	IdempotencyPrincipal string
+	// TaskID is the validated, launcher-asserted task id. See LaunchRequest.TaskID.
+	TaskID string
 }
 
 type LaunchResponse struct {
