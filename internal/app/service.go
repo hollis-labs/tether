@@ -136,6 +136,10 @@ type Service struct {
 	// stopRequests. Nil when the Manager was built without
 	// newSessionManager, in which case a stop is recorded as "completed".
 	stops *stopRequests
+	// stopWatchers counts the clearStopOnExit goroutines in flight. Production never
+	// waits on it; tests that replace Service fields wait first so they do not race the
+	// goroutine's reads of Manager and stops.
+	stopWatchers sync.WaitGroup
 
 	// codexThreads caches Codex app-server JSON-RPC thread state per
 	// Tether session id. Populated lazily on the first SendTurn call.
