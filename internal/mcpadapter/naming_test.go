@@ -222,13 +222,30 @@ func TestNamingLiveProbeCollisionParityNoToolCallsAndTimeout(t *testing.T) {
 	}
 	hung, dir := proxyCatalog(t, "hung")
 	rewriteProfileFixture(t, hung, "hung", func(e *config.MCPServerEntry) { e.Env["TETHER_UPSTREAM_HANG"] = "1" })
+	// Adapter setup opens and migrates SQLite. It must happen before both the
+	// deadline and stopwatch: otherwise setup can exhaust the deadline before
+	// ProbeNames ever attempts the hung upstream's handshake.
+	hungAdapter := newTestAdapter(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	began := time.Now()
-	_, err = newTestAdapter(t).ProbeNames(ctx, hung, ProxyOptions{})
-	if err == nil || time.Since(began) > 5*time.Second {
-		t.Fatalf("probe did not honor overall deadline: %v %v", time.Since(began), err)
+	_, err = hungAdapter.ProbeNames(ctx, hung, ProxyOptions{})
+	elapsed := time.Since(began)
+	t.Logf("hung upstream probe duration: %s", elapsed)
+	if err == nil || elapsed > 5*time.Second {
+		t.Fatalf("probe did not honor overall deadline: %v %v", elapsed, err)
 	}
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) || !strings.Contains(err.Error(), "reached its overall timeout") {
+		t.Fatalf("probe did not reach upstream timeout: %v (context: %v)", err, ctx.Err())
+	}
+	events, readErr := os.ReadFile(filepath.Join(dir, "hung.events"))
+	if readErr != nil || !strings.Contains(string(events), "start ") {
+		t.Fatalf("deadline expired before the hung upstream started: events=%q err=%v", events, readErr)
+	}
+	if strings.Contains(string(events), "call ") {
+		t.Fatal("timeout probe dispatched a tool")
+	}
+
 	awaitFixturesExited(t, dir, "hung")
 }
 func TestNamingLiveProbeUsesConfineAndScrubsTypedJSON(t *testing.T) {
