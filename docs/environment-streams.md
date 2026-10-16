@@ -141,3 +141,28 @@ on the hub. Release N+1 activates X1d and may roll back only to release N, never
 build with partial ID minting. On restart, the identity seed refuses any NULL ID
 above the frozen cutover instead of moving the cutover or silently repairing it.
 A matching database snapshot restore is the last resort.
+
+## Dormant stored-ID projection
+
+`environmentstream.Server.StoredIDs` is unset in production. Its optional
+projection is prepared for release N+1, after the release-N proof above. There
+is no CLI or configuration switch to bypass that gate.
+
+When activated, `id` is the persisted opaque string, including both legacy
+`<environment UUID>:<rowid>` and new `evt_…` values. The JSON `cursor` and SSE
+`id:` remain the independent decimal log sequence. Producer sequence,
+generation, origin time, process, scope, correlation, actor and classification
+are preserved. Legacy rows without producer coordinates report the durable
+`tether.events` log as their source; incomplete producer coordinates are an
+error. An absent or unsupported actor is reported as the hub service with
+`actor_verified: none` and `actor_role: system`, without inherited delegation.
+
+During backfill, a NULL ID at or below the frozen cutover yields HTTP 503 with
+`Retry-After: 1` and reason `backfill_in_progress` before streaming starts. If
+already streaming, it yields a `gap` with the same reason,
+`retry_after_seconds: 1`, and `snapshot_required: false`, then closes. Retry
+from the last delivered cursor; do not take a snapshot that discards the pending
+history. The complete global window is checked before session filtering.
+A NULL above the cutover is an `event_id_invariant` error, never a generated ID
+or skipped row. Existing purged/oversized-window gaps retain their snapshot
+semantics.
