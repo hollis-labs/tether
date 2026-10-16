@@ -357,23 +357,38 @@ func (b *memBus) replayFailed(s *subscriber, err error) bool {
 func (b *memBus) runSubscriber(s *subscriber) {
 	defer func() {
 		if s.slow.Load() {
-			// Make room if the consumer left out full: the final signal matters
-			// more than the oldest buffered event.
+			// Tell the consumer why it is being closed. If it left out full, the
+			// signal matters more than the buffered events: discard them and
+			// resume the cursor just before the first discarded one, so a
+			// resume from last_seq loses and duplicates nothing.
 			g := GapPayload{Reason: "evicted", Dropped: s.drops.Load() - s.signaled, LastSeq: s.cursor}
 			g.EarliestAvailable, g.HighWater = b.bounds(s)
-			raw, _ := json.Marshal(g)
-			ev := Event{Seq: s.cursor, At: time.Now().UTC(), Scope: ScopeDaemon, Kind: KindStreamGap, PayloadJSON: string(raw)}
-			select {
-			case s.out <- ev:
-			default:
+			send := func() bool {
+				raw, _ := json.Marshal(g)
 				select {
-				case <-s.out:
+				case s.out <- Event{Seq: g.LastSeq, At: time.Now().UTC(), Scope: ScopeDaemon, Kind: KindStreamGap, PayloadJSON: string(raw)}:
+					return true
 				default:
+					return false
 				}
-				select {
-				case s.out <- ev:
-				default:
+			}
+			if !send() {
+				first := int64(0)
+			drain:
+				for {
+					select {
+					case d := <-s.out:
+						if d.Kind != KindStreamGap && (first == 0 || d.Seq < first) {
+							first = d.Seq
+						}
+					default:
+						break drain
+					}
 				}
+				if first > 0 && first-1 < g.LastSeq {
+					g.LastSeq = first - 1
+				}
+				send()
 			}
 		}
 		close(s.out)
@@ -433,13 +448,14 @@ func (b *memBus) runSubscriber(s *subscriber) {
 					return
 				}
 			}
-			s.cursor = e.Seq
 			if !s.filter.matches(e) {
+				s.cursor = e.Seq
 				continue
 			}
 			if !s.send(e) {
-				return
+				return // not delivered: the cursor must not claim it was
 			}
+			s.cursor = e.Seq
 		}
 	}
 }

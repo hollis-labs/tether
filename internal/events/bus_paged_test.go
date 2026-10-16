@@ -344,3 +344,76 @@ func TestBus_EveryGapFrameCarriesTheLogBounds(t *testing.T) {
 		}
 	}
 }
+
+// Resuming from the last_seq of the final (evicted) gap frame loses and
+// duplicates nothing, even when the bus had to discard a full out buffer to
+// make room for the frame.
+func TestBus_ResumeFromEvictedGapLosesAndDuplicatesNothing(t *testing.T) {
+	for _, paged := range []bool{true, false} {
+		var p Persister = &fakePersister{}
+		if paged {
+			p = &pagedFake{}
+		}
+		bus := NewBus(BusOptions{Persister: p, SubBuffer: 2, MaxConsecDrops: 2, ReplayPage: 5})
+		ctx := context.Background()
+		ch, _, err := bus.Subscribe(ctx, Filter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 80; i++ {
+			if err := bus.Publish(ctx, Event{Scope: ScopeSession, SessionID: "s", Kind: "k"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var first []int64
+		var gap GapPayload
+		timeout := time.After(5 * time.Second)
+	read:
+		for {
+			select {
+			case e, ok := <-ch:
+				if !ok {
+					break read
+				}
+				if e.Kind == KindStreamGap {
+					gap = gapOf(t, e)
+					continue
+				}
+				first = append(first, e.Seq)
+			case <-timeout:
+				t.Fatal("subscriber was never closed")
+			}
+		}
+		if gap.Reason != "evicted" {
+			t.Fatalf("paged=%v: final frame %+v", paged, gap)
+		}
+		for _, s := range first {
+			if s > gap.LastSeq {
+				t.Fatalf("paged=%v: delivered seq %d past last_seq %d: resuming would repeat it", paged, s, gap.LastSeq)
+			}
+		}
+		if paged {
+			// A paged bus recovers every overrun from the log, so what was
+			// delivered is exactly 1..last_seq. (A non-paged bus cannot recover
+			// events its live buffer dropped; it reports them in an overrun
+			// gap, and the resume still starts right after last_seq.)
+			for i, s := range first {
+				if s != int64(i+1) {
+					t.Fatalf("delivered events not contiguous from 1: %v", first)
+				}
+			}
+			if int64(len(first)) != gap.LastSeq {
+				t.Fatalf("delivered %d events but last_seq=%d: resuming would lose or repeat events", len(first), gap.LastSeq)
+			}
+		}
+		resumed, cancel, err := bus.Subscribe(ctx, Filter{SinceSeq: gap.LastSeq})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rest := readN(t, resumed, 80-int(gap.LastSeq))
+		cancel()
+		if rest[0].Seq != gap.LastSeq+1 || rest[len(rest)-1].Seq != 80 {
+			t.Fatalf("paged=%v: resume gave %d..%d, want %d..80", paged, rest[0].Seq, rest[len(rest)-1].Seq, gap.LastSeq+1)
+		}
+	}
+}
