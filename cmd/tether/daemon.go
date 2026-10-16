@@ -39,6 +39,7 @@ import (
 	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/eventstamp"
 	"github.com/hollis-labs/tether/internal/execpolicy"
 	"github.com/hollis-labs/tether/internal/federation"
 	forumhost "github.com/hollis-labs/tether/internal/forums"
@@ -252,6 +253,11 @@ var daemonRunCmd = &cobra.Command{
 		environmentDescriptor, err := buildEnvironmentDescriptor(svc.Catalog, svc.Store, composedEnvironmentCapabilities(cfg.Modules, svc.Bus, svc.Manager != nil))
 		if err != nil {
 			return err
+		}
+		if svc.EventStamp != nil {
+			environmentID, _, _ := environmentDescriptor.Identity()
+			host, _ := os.Hostname()
+			svc.EventStamp.SetProcess(eventstamp.Process{EnvironmentID: environmentID, Authority: svc.Catalog.Global.Environment.Authority, Host: host})
 		}
 		var environmentStream *environmentstream.Server
 		if cfg.Modules.Enabled(environment.StreamAPI) {

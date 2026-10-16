@@ -27,6 +27,7 @@ import (
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/eventstamp"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
@@ -88,7 +89,9 @@ type Service struct {
 	workerCarries  map[string][]byte
 	Manager        *agentsessions.Manager
 	Bus            events.Bus
-	Broker         *broker.Service
+	// EventStamp is the stamp stage installed on Bus.
+	EventStamp *eventstamp.Stage
+	Broker     *broker.Service
 
 	// Federation is the authority-routing messaging Router, or nil when
 	// federation is disabled (the standalone default). When non-nil it
@@ -266,7 +269,11 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	} else if n > 0 {
 		log.Printf("store: seeded %d logical_agent row(s) from catalog", n)
 	}
-	bus := events.NewBus(events.BusOptions{Persister: db})
+	// The stamp stage fills scope, correlation and actor from verified context.
+	// The daemon adds the process dimensions once it has read the environment
+	// identity (SetProcess), which happens after the bus exists.
+	stamp := eventstamp.New()
+	bus := events.NewBus(events.BusOptions{Persister: db, Stages: []events.Stage{stamp}})
 	// A transaction that wrote outbox event rows calls Store.EventsCommitted after
 	// its commit; that wakes the bus so the rows are published now, not at the
 	// next sweep. Only StartEventsOutbox (the daemon) runs the drainer.
@@ -326,6 +333,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Manager:    mgr,
 		stops:      stops,
 		Bus:        bus,
+		EventStamp: stamp,
 		Broker:     brk,
 		Federation: fedRouter,
 		Registry:   regSvc,
