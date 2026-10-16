@@ -12,7 +12,8 @@
 //	session.stalled                           unknown|healthy    -> degraded   [repeated_tool_denials]
 //	provider.session_lost                     unknown|healthy    -> degraded   [provider_session_lost]
 //	session.turn_output kind=final            degraded           -> healthy    [turn_output_resumed]
-//	session.state_changed to=failed|orphaned  unknown|healthy|degraded -> unhealthy [runtime_stopped]
+//	session.state_changed to=failed           unknown|healthy|degraded -> unhealthy [runtime_failed]
+//	session.state_changed to=orphaned         unknown|healthy|degraded -> unhealthy [runtime_orphaned]
 //	session.shim_status detached/outcome_unknown  any but unhealthy -> unhealthy [shim_outcome_unknown]
 //
 // unhealthy is terminal: nothing leaves it. A completed or killed session (a
@@ -46,7 +47,8 @@ const (
 	ReasonRepeatedToolDenials = "repeated_tool_denials"
 	ReasonProviderSessionLost = "provider_session_lost"
 	ReasonTurnOutputResumed   = "turn_output_resumed"
-	ReasonRuntimeStopped      = "runtime_stopped"
+	ReasonRuntimeFailed       = "runtime_failed"
+	ReasonRuntimeOrphaned     = "runtime_orphaned"
 	ReasonShimOutcomeUnknown  = "shim_outcome_unknown"
 	ReasonTrackerRestart      = "tracker_restart"
 	payloadSchema             = "session_health_changed@1"
@@ -66,7 +68,8 @@ const (
 	sigStalled
 	sigSessionLost
 	sigTurnOutput
-	sigRuntimeStopped
+	sigRuntimeFailed
+	sigRuntimeOrphaned
 	sigShimOutcomeUnknown
 )
 
@@ -180,8 +183,10 @@ func next(from string, sig signal) (to, reason string) {
 		if from == Degraded {
 			return Healthy, ReasonTurnOutputResumed
 		}
-	case sigRuntimeStopped:
-		return Unhealthy, ReasonRuntimeStopped
+	case sigRuntimeFailed:
+		return Unhealthy, ReasonRuntimeFailed
+	case sigRuntimeOrphaned:
+		return Unhealthy, ReasonRuntimeOrphaned
 	case sigShimOutcomeUnknown:
 		return Unhealthy, ReasonShimOutcomeUnknown
 	case sigNone:
@@ -203,8 +208,10 @@ func classify(e events.Event) (sig signal, terminal bool) {
 		switch p.To {
 		case stateRunning:
 			return sigRunning, false
-		case "failed", "orphaned":
-			return sigRuntimeStopped, true
+		case "failed":
+			return sigRuntimeFailed, true
+		case "orphaned":
+			return sigRuntimeOrphaned, true
 		case "completed", "killed":
 			return sigNone, true
 		}

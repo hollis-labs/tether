@@ -136,8 +136,20 @@ func TestUnhealthyIsTerminalAndFromAnyState(t *testing.T) {
 	same(t, r.transitions("b"), []string{
 		"unknown>healthy[session_running]",
 		"healthy>degraded[repeated_tool_denials]",
-		"degraded>unhealthy[runtime_stopped]",
+		"degraded>unhealthy[runtime_orphaned]",
 	})
+}
+
+// The reason names what happened: a failed end and an orphaned end are
+// different causes.
+func TestFailedAndOrphanedEndsHaveTheirOwnReasons(t *testing.T) {
+	r := newRig(t)
+	r.state("f", "running")
+	r.state("f", "failed")
+	same(t, r.transitions("f"), []string{"unknown>healthy[session_running]", "healthy>unhealthy[runtime_failed]"})
+	r.state("o", "running")
+	r.state("o", "orphaned")
+	same(t, r.transitions("o"), []string{"unknown>healthy[session_running]", "healthy>unhealthy[runtime_orphaned]"})
 }
 
 func TestOtherShimStatusAndKilledEndsChangeNothing(t *testing.T) {
@@ -161,6 +173,32 @@ func TestFirstTransitionAfterRestartIsMarked(t *testing.T) {
 	})
 	r.state("fresh", "running") // a session that starts under this tracker is not marked
 	same(t, r.transitions("fresh"), []string{"unknown>healthy[session_running]"})
+}
+
+// After a restart the tracker knows nothing about a session it did not see
+// start: whatever signal comes first, the transition's "from" is unknown (never
+// a guessed prior state) and carries tracker_restart.
+func TestAfterARestartTheFirstTransitionAlwaysStartsFromUnknown(t *testing.T) {
+	for name, tc := range map[string]struct {
+		fire func(r *rig, id string)
+		want string
+	}{
+		"stalled":       {func(r *rig, id string) { r.stalled(id) }, "unknown>degraded[repeated_tool_denials,tracker_restart]"},
+		"provider lost": {func(r *rig, id string) { r.lost(id) }, "unknown>degraded[provider_session_lost,tracker_restart]"},
+		"failed end":    {func(r *rig, id string) { r.state(id, "failed") }, "unknown>unhealthy[runtime_failed,tracker_restart]"},
+		"orphaned end":  {func(r *rig, id string) { r.state(id, "orphaned") }, "unknown>unhealthy[runtime_orphaned,tracker_restart]"},
+		"shim outcome":  {func(r *rig, id string) { r.shim(id, "detached", "outcome_unknown") }, "unknown>unhealthy[shim_outcome_unknown,tracker_restart]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			tc.fire(r, "pre-restart-session")
+			same(t, r.transitions("pre-restart-session"), []string{tc.want})
+		})
+	}
+	// A turn output with nothing known to be wrong is not a transition at all.
+	r := newRig(t)
+	r.turn("quiet", "final")
+	same(t, r.transitions("quiet"), nil)
 }
 
 func TestEventsWithoutASessionAndOurOwnEventsAreIgnored(t *testing.T) {
