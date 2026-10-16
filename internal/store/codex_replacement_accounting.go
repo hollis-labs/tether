@@ -790,8 +790,11 @@ const accountingDeliveryPredicate = `d.recipient_urn=? OR CASE WHEN json_valid(d
 // Actor targets with no old-session association remain Native's independent
 // binding/claim fence, which must run in the same replacement transaction.
 func accountingMessagingSnapshot(ctx context.Context, q CodexAccountingSQL, session string) (string, error) {
+	// Schema 2 adds an append-only transition journal; the delivery, attempt,
+	// and consumed-receipt facts used below are unchanged. Keep this an explicit
+	// allowlist so a future schema cannot silently weaken replacement custody.
 	var schema int
-	if q.QueryRowContext(ctx, `SELECT version FROM messaging_delivery_schema WHERE component='delivery'`).Scan(&schema) != nil || schema != 1 {
+	if q.QueryRowContext(ctx, `SELECT version FROM messaging_delivery_schema WHERE component='delivery'`).Scan(&schema) != nil || (schema != 1 && schema != 2) {
 		return "", accountingRefuse("messaging_unsupported")
 	}
 	args := []any{"msg://session/local/" + session, session, session, session}
