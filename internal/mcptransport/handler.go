@@ -27,15 +27,18 @@ import (
 
 // HandlerConfig is daemon composition, never caller-controlled configuration.
 type HandlerConfig struct {
-	TeamsEnabled        bool
-	Teams               api.TeamOps
-	Publisher           events.Publisher
-	ListenAddr          string
-	IdentityMode        identity.Mode
-	Verifier            identity.Verifier
-	Resolver            CallerResolver
-	Service             *app.Service
-	NativeClient        func(string) *client.Client
+	TeamsEnabled bool
+	Teams        api.TeamOps
+	Publisher    events.Publisher
+	ListenAddr   string
+	IdentityMode identity.Mode
+	Verifier     identity.Verifier
+	Resolver     CallerResolver
+	Service      *app.Service
+	NativeClient func(string) *client.Client
+	// NativeClientSource, when set, is used instead of NativeClient: the client asks fn for the bearer on every
+	// request, so a view whose issued token is refreshed in place keeps calling the daemon with the current one.
+	NativeClientSource  func(fn func() string) *client.Client
 	NewRuntime          func(context.Context, *config.Catalog) (*mcpadapter.SharedUpstreams, error)
 	SessionTimeout      time.Duration
 	RecheckInterval     time.Duration
@@ -60,8 +63,10 @@ type preparedViewKey struct{}
 type transportView struct {
 	view            *mcpadapter.GatewayView
 	localConnection bool
-	// Retained only in memory for stream revocation checks; never exported.
+	// Retained only in memory for stream revocation checks; never exported. Guarded by Handler.mu: an issued
+	// agent token is refreshed in place, so the view follows the latest verified token (see adopt).
 	token                  string
+	tokenExp               time.Time
 	selectors              selectors
 	fingerprint, sessionID string
 	ready                  bool
@@ -274,6 +279,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), preparedViewKey{}, v))
+		h.adopt(v, parts[1], a.caller.Principal.ExpiresAt)
 		h.mu.Lock()
 		v.lastUsed = time.Now()
 		h.mu.Unlock()
@@ -341,8 +347,33 @@ func initializeRequest(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// viewToken is the latest verified token of v.
+func (h *Handler) viewToken(v *transportView) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return v.token
+}
+
+// adopt makes token the view's current credential after the request that carried it verified and matched the
+// view's fingerprint. Only a token that expires later replaces the current one, so a late, older request cannot
+// move the view back to a credential about to lapse.
+func (h *Handler) adopt(v *transportView, token string, exp *time.Time) {
+	if exp == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Equal counts as newer: expiry has one-second resolution, so a refresh minted in the same second is current.
+	if token != v.token && !exp.Before(v.tokenExp) {
+		v.token, v.tokenExp = token, *exp
+	}
+}
+
 func (h *Handler) prepare(ctx context.Context, a admission, token string, s selectors) (*transportView, error) {
 	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint, principalKey: a.caller.Principal.Kind + ":" + a.caller.Principal.ID, operator: identity.IsOperatorCredential(a.caller.Principal), lastUsed: time.Now()}
+	if a.caller.Principal.ExpiresAt != nil {
+		v.tokenExp = *a.caller.Principal.ExpiresAt
+	}
 	v.localConnection = identity.LocalConnection(ctx)
 	v.callCtx, v.cancelCalls = context.WithCancel(h.ctx)
 	v.streamCtx, v.cancelStreams = context.WithCancel(h.ctx)
@@ -404,10 +435,13 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		}
 	}
 	var dc *client.Client
-	if h.cfg.NativeClient != nil {
+	switch {
+	case h.cfg.NativeClientSource != nil:
+		dc = h.cfg.NativeClientSource(func() string { return h.viewToken(v) })
+	case h.cfg.NativeClient != nil:
 		dc = h.cfg.NativeClient(token)
 	}
-	adapter, err := mcpadapter.NewVerifiedAdapter(ctx, h.cfg.Service, dc)
+	adapter, err := mcpadapter.NewVerifiedAdapterWith(ctx, h.cfg.Service, dc, h.cfg.Verifier)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +472,7 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 			v.lastUsed = time.Now()
 			h.mu.Unlock()
 			defer func() { h.mu.Lock(); v.active--; h.mu.Unlock(); h.calls.Done() }()
-			current, err := h.admit(ctx, token, s)
+			current, err := h.admit(ctx, h.viewToken(v), s)
 			if err != nil || current.fingerprint != v.fingerprint {
 				return nil, fmt.Errorf("MCP credential or policy no longer valid")
 			}
@@ -493,7 +527,7 @@ func (h *Handler) monitor() {
 			h.mu.Unlock()
 			for _, v := range views {
 				ctx, cancel := context.WithTimeout(h.monitorCtx, h.cfg.VerificationTimeout)
-				a, err := h.admit(ctx, v.token, v.selectors)
+				a, err := h.admit(ctx, h.viewToken(v), v.selectors)
 				cancel()
 				alive := false
 				for range v.view.Server.Sessions() {

@@ -21,6 +21,7 @@ import (
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
@@ -63,6 +64,13 @@ func newTransportFixtureWithSessionTimeout(t *testing.T, unix, upstream bool, se
 
 func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout time.Duration) *transportFixture {
 	t.Helper()
+	return newTransportFixtureWithIssuer(t, unix, upstream, timeout, nil)
+}
+
+// newTransportFixtureWithIssuer is the fixture with the hub's issued-token verification: when issuer is set, the
+// daemon server and the transport both verify aud=tether JWTs as well as stored credentials.
+func newTransportFixtureWithIssuer(t *testing.T, unix, upstream bool, timeout time.Duration, issuer *authissuer.Issuer) *transportFixture {
+	t.Helper()
 	root, err := os.MkdirTemp(os.TempDir(), "mcp-")
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +106,13 @@ func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout t
 		entries = append(entries, config.MCPServerEntry{ID: "cerberus", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestTransportUpstreamProcess$"}, Env: map[string]string{"TETHER_TRANSPORT_FIXTURE": f.childStarts + ".cerberus", "TETHER_TRANSPORT_CERBERUS": "1"}})
 	}
 	f.verifier = &switchableVerifier{inner: f.ids}
+	if issuer != nil {
+		composite, err := authissuer.NewVerifier(f.ids, issuer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.verifier.inner = composite
+	}
 	var listener net.Listener
 	if unix {
 		f.addr = "unix:" + filepath.Join(run, "test.sock")
@@ -116,7 +131,7 @@ func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout t
 	svc := &app.Service{Store: db, Catalog: f.cat, CatalogRoot: catalog, Bus: f.bus}
 	h, err := NewHandler(context.Background(), HandlerConfig{
 		ListenAddr: f.addr, IdentityMode: identity.Observe, Verifier: f.verifier, Service: svc, Publisher: mcpadapter.NewDaemonToolCallRecorder(recordCtx, f.bus, db), RecheckInterval: 20 * time.Millisecond, SessionTimeout: timeout, MaxViews: 16,
-		NativeClient: func(token string) *client.Client { return client.New(f.addr, client.WithToken(token)) },
+		NativeClientSource: func(token func() string) *client.Client { return client.New(f.addr, client.WithTokenSource(token)) },
 		Resolver: CallerResolver{Catalog: func(context.Context) (*config.Catalog, error) {
 			f.catMu.Lock()
 			defer f.catMu.Unlock()
@@ -133,7 +148,7 @@ func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout t
 		t.Fatal(err)
 	}
 	f.handler = h
-	daemonServer := &daemon.Server{Config: daemon.Config{ListenAddr: f.addr, IdentityMode: identity.Observe}, Identity: f.ids, MCP: h}
+	daemonServer := &daemon.Server{Config: daemon.Config{ListenAddr: f.addr, IdentityMode: identity.Observe}, Identity: f.ids, Issuer: issuer, MCP: h}
 	server := &http.Server{Handler: daemonServer.Handler(), ReadHeaderTimeout: time.Second}
 	f.closeHTTP = server.Close
 	go func() { _ = server.Serve(listener) }()

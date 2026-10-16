@@ -38,6 +38,7 @@ type Client struct {
 	http                               *http.Client
 	token, tokenFile, defaultTokenFile string
 	tokenSet, tokenFileSet             bool
+	tokenSource                        func() string
 	protocolHeader                     bool
 }
 
