@@ -342,10 +342,8 @@ func TestDelegateCannotDissolveRemoveOrAdopt(t *testing.T) {
 	if _, err = r.svc.Adopt(delegate, teamsvc.AdoptRequest{Key: "x", RunID: "run-1", Slot: "workers", Actor: workerTwo, SessionID: r.fleet.live[workerTwo].SessionID, BindingGeneration: 7}); !errors.Is(err, teamsvc.ErrDenied) {
 		t.Fatalf("delegate adopted: %v", err)
 	}
-	// It may message the workers, and may not re-delegate (not granted).
-	if _, err = r.svc.Delegate(delegate, teamsvc.MessageRequest{Key: "m", RunID: "run-1", Address: "workers", Body: "hi", Kind: mesh.ActorAgent}); err == nil {
-		t.Fatal("delegate re-delegated work")
-	}
+	// Its message/assign/delegate grants are asserted via teams.Authorize in
+	// TestNoAdoptedCoordinatorSeatCanHoldOrUseDelegate.
 }
 
 func TestCoordinatorSeatRefusesGrantsBeyondMessageAndAssign(t *testing.T) {
@@ -443,5 +441,41 @@ func TestAdoptWithoutAdopterIsUnavailable(t *testing.T) {
 	}
 	if _, err = svc.Adopt(as(operator), teamsvc.AdoptRequest{Key: "k", RunID: "run-1", Slot: "workers", Actor: workerOne, SessionID: "s", BindingGeneration: 7}); !errors.Is(err, teamsvc.ErrUnavailable) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Every identity the coordinator pool declares gets the slot's grants and no
+// more: the spare is exactly as limited as the first delegate, and no
+// coordinator seat can ever hold or exercise may_delegate.
+func TestNoAdoptedCoordinatorSeatCanHoldOrUseDelegate(t *testing.T) {
+	const spare mesh.URN = "msg://agent/fleet/lead-2"
+	for _, actor := range []mesh.URN{delegateURN, spare} {
+		t.Run(string(actor), func(t *testing.T) {
+			// Refused outright when the slot's grants include may_delegate.
+			bad := newRig(t, team(teams.MayMessage, teams.MayAssign, teams.MayDelegate), permissive{})
+			bad.fleet.live[spare] = teamhost.Adoption{Actor: spare, AgentID: string(spare), Kind: mesh.ActorAgent, SessionID: "session-spare", Generation: 7, Resolved: true, Owner: operatorURN, LaunchID: "tether-claude", Pin: adoptPin}
+			if _, err := bad.adopt(t, "bad", actor, "coordinator"); !errors.Is(err, teamsvc.ErrDenied) {
+				t.Fatalf("adopted with may_delegate granted: %v", err)
+			}
+			// Adopted with message+assign, it can neither re-delegate nor assign
+			// beyond its grants.
+			ok := newRig(t, team(teams.MayMessage, teams.MayAssign), permissive{})
+			ok.fleet.live[spare] = bad.fleet.live[spare]
+			if _, err := ok.adopt(t, "ok", actor, "coordinator"); err != nil {
+				t.Fatalf("adopt: %v", err)
+			}
+			if _, err := ok.adopt(t, "w", workerOne, "workers"); err != nil {
+				t.Fatal(err)
+			}
+			from, _ := ok.member(t, actor)
+			to, _ := ok.member(t, workerOne)
+			def := team(teams.MayMessage, teams.MayAssign)
+			for verb, want := range map[teams.Permission]error{teams.MayMessage: nil, teams.MayAssign: nil, teams.MayDelegate: teams.ErrDenied, teams.MayAdmin: teams.ErrDenied, teams.MaySpawn: teams.ErrDenied} {
+				err := teams.Authorize(def, from, to, verb, "")
+				if want == nil && err != nil || want != nil && !errors.Is(err, want) {
+					t.Fatalf("%s for the adopted coordinator: got %v, want %v", verb, err, want)
+				}
+			}
+		})
 	}
 }
