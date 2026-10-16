@@ -8,6 +8,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Worker MCP over the hub's `/mcp` (CW-20261016-0160 PR B): a launch with a session agent token plants the `tether` entry as
+  `tether-worker mcp-http-relay` against `<hub>/mcp` with the refreshed token file, so worker tool calls get session binding, the
+  saved policy and proxy capture. The ssh `--daemon-only` entry is now an explicit, logged fallback (`mcp_ssh_fallback`, default
+  off); a launch that cannot use `/mcp` fails with the reason. Agents with `editable_agents` need the fallback until the hub
+  carries the allowlist. Deploy is gated on the hub changes (#389, #391, #392) and 0015/0017.
 - The two in-tree `Bus.Subscribe` followers no longer replay from sequence 0 or silently
   stop (CW-20261016-0146, P3a follow-up): `events.Follow`/`FollowAsync` own the subscription,
   track a cursor and re-subscribe from it with backoff when the bus closes the channel, and

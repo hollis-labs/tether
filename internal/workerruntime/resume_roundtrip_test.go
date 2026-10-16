@@ -44,6 +44,17 @@ func lingeringTempDir(t *testing.T) string {
 	return dir
 }
 
+// fakeClaudeSleeping installs a "claude" on PATH that stays alive for a few seconds, so a test can inspect a launched
+// session before its auth directory is cleaned up.
+func fakeClaudeSleeping(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil { //nolint:gosec // G306: a test fixture that must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // fakeClaude installs a "claude" on PATH that records its cwd and argv to $RESUME_RECORD and exits.
 func fakeClaude(t *testing.T) {
 	t.Helper()
@@ -116,6 +127,7 @@ func TestWorkerResumeRoundTripWithFakeHub(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &Worker{Root: root, Config: Config{Hub: server.URL, Label: "resume-probe"}, Caps: func(context.Context) json.RawMessage { return json.RawMessage(`{}`) }}
 	e := NewExecutor(root, "unused", w.Send)
+	e.AllowSSHFallback = true // the fake claude is launched with the static (ssh) MCP entry
 	e.ClaudeDir = cfgDir
 	// Run the shim host in-process instead of re-executing the worker binary.
 	var hosts []*shim.Host

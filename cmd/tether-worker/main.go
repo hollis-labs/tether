@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -114,6 +115,8 @@ func main() {
 		}
 		executor := workerruntime.NewExecutor(root, binary, w.Send)
 		executor.Tokens = &workerruntime.TokenMinter{Hub: cfg.Hub, DeviceTokenFile: filepath.Join(root, "device.token")}
+		executor.HubMCPURL = strings.TrimRight(cfg.Hub, "/") + "/mcp"
+		executor.AllowSSHFallback = cfg.MCPSSHFallback || os.Getenv("TETHER_WORKER_MCP_SSH_FALLBACK") == "1"
 		if err := executor.Restore(); err != nil {
 			return err
 		}
