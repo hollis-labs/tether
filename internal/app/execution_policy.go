@@ -21,7 +21,7 @@ func (s *Service) ExecutionStatus() (execpolicy.Status, error) {
 	if err != nil {
 		return execpolicy.Status{}, err
 	}
-	return execpolicy.Status{Policy: p, Usage: u}, nil
+	return execpolicy.Status{Policy: p, Usage: u, WorkerResume: s.workerResumeEnabled()}, nil
 }
 
 // SetExecutionPolicy validates and stores the policy. It does not touch

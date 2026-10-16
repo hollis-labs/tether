@@ -38,6 +38,9 @@ type Usage struct {
 type Status struct {
 	Policy Policy `json:"policy"`
 	Usage  Usage  `json:"usage"`
+	// WorkerResume reports catalog.defaults.worker_resume (read-only here; it is
+	// configuration, not part of the stored policy).
+	WorkerResume bool `json:"worker_resume"`
 }
 
 // Validate rejects negative caps and empty project ids.
