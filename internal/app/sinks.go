@@ -203,6 +203,9 @@ type sessionStateChangedPayload struct {
 	To       string `json:"to"`
 	ExitCode *int   `json:"exit_code,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+	// Session carries the session-owned fields (X4c); additive and omitted when
+	// the session row is gone.
+	Session *sessionFields `json:"session,omitempty"`
 }
 
 func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleEvent) {
@@ -224,6 +227,7 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 		To:       to,
 		ExitCode: ev.ExitCode,
 		Reason:   reason,
+		Session:  sessionFieldsFor(a.db, ev.SessionID),
 	})
 	if err != nil {
 		return

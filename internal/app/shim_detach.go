@@ -144,7 +144,7 @@ func (s *Service) completeShimExit(row store.SessionShimRow, receipt shimhost.Re
 	if !changed {
 		return
 	}
-	publishSessionEvent(s.Bus, row.SessionID, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: string(state), ExitCode: &exit, Reason: "provider_exit"})
+	publishSessionEvent(s.Bus, row.SessionID, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: string(state), ExitCode: &exit, Reason: "provider_exit", Session: sessionFieldsFor(s.Store, row.SessionID)})
 	if host, err := s.shimHost(); err == nil {
 		if cleanup, ok := host.cleanup.LoadAndDelete(row.SessionID); ok {
 			cleanup.(func())()

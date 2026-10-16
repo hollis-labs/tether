@@ -292,7 +292,7 @@ func (s *Service) stopShimSession(id string) (bool, error) {
 		return true, err
 	}
 	if changed {
-		publishSessionEvent(s.Bus, id, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: change.To, ExitCode: new(int), Reason: s.stops.reason(id)})
+		publishSessionEvent(s.Bus, id, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: change.To, ExitCode: new(int), Reason: s.stops.reason(id), Session: sessionFieldsFor(s.Store, id)})
 	}
 	if err = s.waitShimBinding(context.Background(), id); err != nil {
 		return true, err
