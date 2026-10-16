@@ -68,6 +68,9 @@ func TestRetentionAdmissionIsTrustedAndSurvivesRestart(t *testing.T) {
 	if _, err := db.db.Exec(`UPDATE event_retention_policies SET policy_json='{}' WHERE id=?`, first.ID()); err == nil {
 		t.Fatal("policy snapshot mutable")
 	}
+	if _, err := db.db.Exec(`DELETE FROM event_retention_policies WHERE id=?`, first.ID()); err == nil {
+		t.Fatal("policy snapshot deletable")
+	}
 }
 func TestRetentionTombstonesExactPayloadAndPreservesAllOtherColumns(t *testing.T) {
 	ctx := context.Background()

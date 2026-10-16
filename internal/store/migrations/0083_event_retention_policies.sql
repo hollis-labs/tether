@@ -10,6 +10,11 @@ BEFORE UPDATE ON event_retention_policies
 BEGIN
     SELECT RAISE(ABORT, 'retention policy snapshots are immutable');
 END;
+CREATE TRIGGER event_retention_policies_no_delete
+BEFORE DELETE ON event_retention_policies
+BEGIN
+    SELECT RAISE(ABORT, 'retention policy snapshots are permanent');
+END;
 CREATE TABLE event_retention_admission (
     kind TEXT PRIMARY KEY,
     retention_class TEXT NOT NULL CHECK (retention_class IN ('R-audit','R-state','R-activity','R-debug')),
