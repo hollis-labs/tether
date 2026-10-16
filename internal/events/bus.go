@@ -22,6 +22,9 @@ type BusOptions struct {
 	// ReplayPage bounds how many events one replay page loads when the
 	// Persister is a PagedPersister (default 512).
 	ReplayPage int
+	// OutboxSweep is how often the outbox drainer looks for committed pending
+	// rows nobody kicked it about (default 2s).
+	OutboxSweep time.Duration
 	// StallTimeout is how long a paged subscriber's replay or recovery may sit
 	// blocked on a consumer that is not reading before the subscriber is
 	// evicted (default 30s). Live drops do not evict during replay.
@@ -47,8 +50,9 @@ type Bus interface {
 
 // Errors returned by the bus.
 var (
-	ErrNoPersister = errors.New("events: bus requires a Persister")
-	ErrScopeEmpty  = errors.New("events: Event.Scope is required")
+	ErrNoPersister   = errors.New("events: bus requires a Persister")
+	ErrNoTxPersister = errors.New("events: this bus's Persister cannot write on a caller's transaction")
+	ErrScopeEmpty    = errors.New("events: Event.Scope is required")
 )
 
 const (
@@ -92,6 +96,11 @@ type subscriber struct {
 type memBus struct {
 	persister      Persister
 	paged          PagedPersister
+	txp            TxPersister
+	idp            EventIDPersister
+	outboxGap      time.Duration
+	dirty          atomic.Bool   // committed outbox rows may be waiting
+	kick           chan struct{} // wakes the drainer
 	subBuffer      int
 	maxConsecDrops int64
 	replayPage     int
@@ -119,8 +128,17 @@ func NewBus(opts BusOptions) Bus {
 		opts.StallTimeout = defaultStallTimeout
 	}
 	paged, _ := opts.Persister.(PagedPersister)
+	txp, _ := opts.Persister.(TxPersister)
+	idp, _ := opts.Persister.(EventIDPersister)
+	if opts.OutboxSweep <= 0 {
+		opts.OutboxSweep = defaultOutboxGap
+	}
 	return &memBus{
 		paged:          paged,
+		txp:            txp,
+		idp:            idp,
+		outboxGap:      opts.OutboxSweep,
+		kick:           make(chan struct{}, 1),
 		replayPage:     opts.ReplayPage,
 		stallTimeout:   opts.StallTimeout,
 		persister:      opts.Persister,
@@ -153,13 +171,26 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	}
 	defer b.unlock()
 
+	// Rows committed on a caller's transaction have lower Seq than this event:
+	// deliver them first, so live subscribers see Seq in order.
+	if b.dirty.Load() {
+		if err := b.drainLocked(ctx); err != nil {
+			log.Printf("events: outbox drain before publish: %v", err)
+		}
+	}
+
 	var seq int64
 	var at time.Time
 	var err error
-	if persister, ok := b.persister.(ContextPersister); ok {
-		seq, at, err = persister.InsertEventContext(ctx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
-	} else {
-		seq, at, err = b.persister.InsertEvent(e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+	switch {
+	case b.idp != nil:
+		seq, at, e.EventID, err = b.idp.InsertEventIDContext(ctx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+	default:
+		if persister, ok := b.persister.(ContextPersister); ok {
+			seq, at, err = persister.InsertEventContext(ctx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+		} else {
+			seq, at, err = b.persister.InsertEvent(e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+		}
 	}
 	if err != nil {
 		return err
@@ -167,13 +198,18 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	e.Seq = seq
 	e.At = at
 	b.published.Store(seq)
+	b.fanout(e)
+	return nil
+}
 
+// fanout delivers one persisted event to every matching subscriber. The bus
+// lock must be held.
+func (b *memBus) fanout(e Event) {
 	for _, s := range b.subs {
 		if s.filter.matches(e) {
 			b.pushTo(s, e)
 		}
 	}
-	return nil
 }
 
 // pushTo delivers an event to a single subscriber with drop-oldest
