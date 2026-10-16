@@ -70,6 +70,12 @@ type Executor struct {
 	Tokens *TokenMinter
 	// ClaudeDir overrides claude's config directory (default CLAUDE_CONFIG_DIR, then ~/.claude); tests set it.
 	ClaudeDir string
+	// HubMCPURL is the hub's streamable-HTTP MCP endpoint (the enrolled hub base plus /mcp). A launch with a session
+	// agent token plants the tether entry as 'tether-worker mcp-http-relay' against it (CW-20261016-0160).
+	HubMCPURL string
+	// AllowSSHFallback permits the degraded ssh daemon-only MCP entry (no session binding, saved policy or capture)
+	// when a launch cannot use HubMCPURL. Off by default; logged on every use.
+	AllowSSHFallback bool
 }
 
 func NewExecutor(root, binary string, send func(workerwire.Frame) error) *Executor {

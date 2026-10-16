@@ -75,6 +75,7 @@ func TestPlantHubMCPRefCaptureRejectsUnboundOrUnsafeSession(t *testing.T) {
 		{Session: "$(touch bad)", Credential: "test", ExtractRefs: true},
 	} {
 		e := NewExecutor(t.TempDir(), "/opt/tether-worker", nil)
+		e.AllowSSHFallback = true // these tests pin the (degraded) ssh entry
 		if err := e.plantHubMCP(t.TempDir(), t.TempDir(), spec); err == nil {
 			t.Fatal("unsafe/unbound relay accepted")
 		}
@@ -83,6 +84,7 @@ func TestPlantHubMCPRefCaptureRejectsUnboundOrUnsafeSession(t *testing.T) {
 
 func TestWorkerExtractRefsRejectsProviderWithoutRelay(t *testing.T) {
 	e := NewExecutor(t.TempDir(), "/opt/tether-worker", nil)
+	e.AllowSSHFallback = true // these tests pin the (degraded) ssh entry
 	_, err := e.launch(context.Background(), workerwire.LaunchSpec{Session: "s", Provider: "codex", ExtractRefs: true})
 	if err == nil || !strings.Contains(err.Error(), "claude MCP relay") {
 		t.Fatalf("err = %v", err)
@@ -96,6 +98,7 @@ func TestPlantHubMCPRefCaptureOverridesStaleTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := NewExecutor(root, "/opt/tether-worker", nil)
+	e.AllowSSHFallback = true // these tests pin the (degraded) ssh entry
 	if err := e.plantHubMCP(cwd, t.TempDir(), workerwire.LaunchSpec{Session: "current", Credential: "test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +123,7 @@ func plantedConfig(t *testing.T, spec workerwire.LaunchSpec) (mcpConfig, string,
 		t.Fatal(err)
 	}
 	e := NewExecutor(root, "/opt/tether-worker", nil)
+	e.AllowSSHFallback = true // these tests pin the (degraded) ssh entry
 	if err := e.plantHubMCP(cwd, cred, spec); err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +222,7 @@ func TestPlantHubMCPRefusesEditableAgentsWithoutCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := NewExecutor(root, "/opt/tether-worker", nil)
+	e.AllowSSHFallback = true // these tests pin the (degraded) ssh entry
 	err := e.plantHubMCP(t.TempDir(), filepath.Join(t.TempDir(), "mcp-cred"), workerwire.LaunchSpec{Session: "s", EditableAgents: []string{"chat"}})
 	if err == nil || !strings.Contains(err.Error(), "editable_agents") {
 		t.Fatalf("err = %v, want refusal rather than a silently unrestricted session", err)

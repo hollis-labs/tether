@@ -154,6 +154,23 @@ Required worker version: the release that includes CW-20261014-0113. Older worke
 feature, so the hub keeps refusing resume on them. It takes effect only after a worker swap
 (see [Update and switch back](#update-and-switch-back)).
 
+## How a worker session reaches the hub's MCP gateway
+
+A launch that carries a session agent token (the hub grants one when its issuer is configured and the worker advertises
+`agent-token`) plants the `tether` MCP entry as this worker's own `tether-worker mcp-http-relay --url <hub>/mcp
+--token-file <session auth dir>/tether.token`. The relay speaks streamable-HTTP MCP to the hub's `/mcp` over HTTPS
+(Tailscale Serve), re-reading the token file for every request because the outpost rewrites it before it expires. The
+hub then applies the session's saved policy, the authority fingerprint, the limits and proxy capture
+([remote-mcp.md](remote-mcp.md)). The URL is the enrolled hub base plus `/mcp`.
+
+The old entry (`ssh <hub> tether mcp --daemon-only`) has no session binding, no saved policy and no capture. It is
+**off by default** and only used when `"mcp_ssh_fallback": true` is set in the worker's `config.json` (or
+`TETHER_WORKER_MCP_SSH_FALLBACK=1`); every use is logged `DEGRADED`. Without it, a launch that cannot use `/mcp` fails
+with the reason instead of running unattributed: no hub MCP url, a worker that cannot mint tokens, no agent token granted,
+a non-https url, or an agent that declares `editable_agents` (the allowlist is a flag on the ssh-launched `tether mcp`
+and the hub gateway does not carry it yet). The fallback is for the rollout only and goes away once every worker is on
+`/mcp`. The operator's own CLI keeps its ssh form.
+
 ## Status and removal
 
 ```sh

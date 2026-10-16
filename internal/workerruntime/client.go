@@ -30,6 +30,9 @@ type Config struct {
 	Hub        string `json:"hub"`
 	Label      string `json:"label"`
 	WorkerID   string `json:"worker_id,omitempty"`
+	// MCPSSHFallback keeps the degraded 'ssh <hub> tether mcp --daemon-only' MCP entry available for launches that
+	// cannot use the hub's /mcp (CW-20261016-0160). Off by default; remove once every worker uses /mcp.
+	MCPSSHFallback bool `json:"mcp_ssh_fallback,omitempty"`
 }
 
 var ErrHubDisconnected = errors.New("hub disconnected")

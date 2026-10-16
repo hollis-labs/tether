@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,6 +137,14 @@ func grantedOnly(config mcpConfig, granted []string) mcpConfig {
 // outside the checkout) to the hub-side `tether mcp --token-stdin` over the ssh pipe. The credential is
 // therefore never in any process argument or environment.
 func (e *Executor) plantHubMCP(cwd, credDir string, spec workerwire.LaunchSpec) error {
+	reason := e.hubHTTPUnavailable(spec)
+	if reason == "" {
+		return e.plantHubHTTP(cwd, credDir, spec)
+	}
+	if !e.AllowSSHFallback {
+		return fmt.Errorf("hub MCP over /mcp is unavailable for this launch (%s) and the degraded ssh daemon-only path is not enabled (set mcp_ssh_fallback in the worker config)", reason)
+	}
+	log.Printf("session %s: DEGRADED hub MCP over ssh daemon-only (no session binding, saved policy or proxy capture): %s", spec.Session, reason)
 	if spec.Credential == "" {
 		if spec.ExtractRefs {
 			return fmt.Errorf("extract_refs requires a session credential")
@@ -269,4 +278,57 @@ func ValidateHubMCPFile(root string) error {
 		return fmt.Errorf("hub-mcp.json: %w", err)
 	}
 	return nil
+}
+
+// sessionAgentTokenFile is where the outpost keeps the session's aud=tether agent token, in the auth directory beside
+// the mcp-cred directory (startAgentTokens writes it before the agent starts and rewrites it before it expires).
+func sessionAgentTokenFile(credDir string) string {
+	return TokenFilePath(filepath.Join(filepath.Dir(credDir), "auth"), "tether")
+}
+
+// hubHTTPUnavailable says why this launch cannot reach the hub's /mcp with the session's agent token, or "" when it can.
+func (e *Executor) hubHTTPUnavailable(spec workerwire.LaunchSpec) string {
+	hasToken := false
+	for _, t := range spec.AgentTokens {
+		hasToken = hasToken || t.Aud == "tether"
+	}
+	switch {
+	case e.HubMCPURL == "":
+		return "no hub MCP url configured"
+	case e.Tokens == nil:
+		return "this worker cannot mint agent tokens"
+	case !hasToken:
+		return "the hub did not grant a session agent token"
+	case len(spec.EditableAgents) > 0:
+		// The editable_agents allowlist is enforced by a flag on the ssh-launched 'tether mcp'; the hub gateway does
+		// not carry it yet, so it would silently disappear. Refuse rather than widen.
+		return "the agent declares editable_agents, which /mcp does not enforce yet"
+	case (&HTTPRelay{URL: e.HubMCPURL}).validate() != nil:
+		return "the hub MCP url is not https"
+	}
+	return ""
+}
+
+// plantHubHTTP plants the tether entry as this worker's own mcp-http-relay against the hub's /mcp, authenticated with
+// the session's agent token file. No credential is in an argument or the environment; the hub applies the session's
+// saved policy, authority fingerprint, limits and proxy capture.
+func (e *Executor) plantHubHTTP(cwd, credDir string, spec workerwire.LaunchSpec) error {
+	b, err := os.ReadFile(filepath.Join(e.Root, "hub-mcp.json")) //nolint:gosec // G304: the worker's own state directory
+	if err != nil {
+		return err
+	}
+	var config mcpConfig
+	if err = json.Unmarshal(b, &config); err != nil {
+		return err
+	}
+	if err = validateHubMCP(config); err != nil {
+		return err
+	}
+	config = grantedOnly(config, spec.MCPServers)
+	config.Servers["tether"] = mcpEntry{Command: e.Binary, Args: []string{"mcp-http-relay", "--url", e.HubMCPURL, "--token-file", sessionAgentTokenFile(credDir)}}
+	out, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	return plant(cwd, ".mcp.json", out)
 }
