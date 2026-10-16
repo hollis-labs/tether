@@ -107,34 +107,18 @@ func (s *ToolCallEventStore) Query(f ToolCallEventFilter) []events.ToolCallEvent
 	return out
 }
 
-// Subscribe starts a background goroutine that reads EventTypeToolCallEnd events
-// from bus and appends them to the store. The goroutine stops when ctx is done.
+// Subscribe starts a background goroutine that follows EventTypeToolCallEnd
+// events on bus and appends them to the store. It starts at the live head (the
+// ring only needs recent calls; replaying a large history through it was the
+// cost, not a feature), resumes from its cursor if the bus evicts it, and never
+// sees stream.gap frames. The goroutine stops when ctx is done.
 func (s *ToolCallEventStore) Subscribe(ctx context.Context, bus events.Bus) {
-	ch, cancel, err := bus.Subscribe(ctx, events.Filter{})
-	if err != nil {
-		slog.Warn("mcp-proxy: ToolCallEventStore failed to subscribe to bus", "err", err)
-		return
-	}
-	go func() {
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev, ok := <-ch:
-				if !ok {
-					return
-				}
-				if ev.Kind != events.EventTypeToolCallEnd {
-					continue
-				}
-				var tce events.ToolCallEvent
-				if err := json.Unmarshal([]byte(ev.PayloadJSON), &tce); err != nil {
-					slog.Warn("mcp-proxy: failed to unmarshal ToolCallEvent from bus", "err", err)
-					continue
-				}
-				s.Add(tce)
-			}
+	events.FollowAsync(ctx, bus, events.Filter{Kinds: []string{events.EventTypeToolCallEnd}}, events.FollowOptions{LiveOnly: true, Name: "mcp-proxy: tool call event store"}, func(ev events.Event) {
+		var tce events.ToolCallEvent
+		if err := json.Unmarshal([]byte(ev.PayloadJSON), &tce); err != nil {
+			slog.Warn("mcp-proxy: failed to unmarshal ToolCallEvent from bus", "err", err)
+			return
 		}
-	}()
+		s.Add(tce)
+	})
 }
