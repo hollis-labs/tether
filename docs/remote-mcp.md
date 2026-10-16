@@ -31,6 +31,15 @@ token string, so the outpost's in-place refresh continues the session; any chang
 scopes, is refused), the same limits, and the proxy capture. The view follows the newest verified token. Remote is not a
 lighter path.
 
+## Host and Origin
+
+The remote listener checks the request's exact Host and Origin against `--allowed-host` / `--allowed-origin` in front of every
+remote route. The MCP mount runs the same check again, with the same allowed set, before it marks a request remote, so the MCP
+handler cannot be reached around it. The MCP SDK's own localhost Host guard is off in the daemon handler (behind a reverse
+proxy the connection is loopback and the Host is the public name, which it refused with 403); a local request is checked by the
+handler's local authority instead, and the SDK's cross-origin protection stays on. Tests: `TestRemoteMCPMountRepeatsTheListenerAuthority`,
+`TestLocalAuthorityReplacesSDKLocalhostGuard`.
+
 ## Audit and counters
 
 Each remote MCP session initialize writes one `identity_audit` row: principal, session, and

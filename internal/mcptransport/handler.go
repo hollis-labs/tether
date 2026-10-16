@@ -153,9 +153,12 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 	}, &mcpsdk.StreamableHTTPOptions{
 		SessionTimeout: cfg.SessionTimeout,
 		// The SDK's own DNS-rebinding guard refuses a loopback connection whose Host is not loopback, which is exactly a
-		// request relayed to the remote listener by Tailscale Serve/Caddy (Host = the public name). This handler owns
-		// that decision instead: a local request is checked by h.authority, and a remote one (server-owned provenance)
-		// only reaches it after the remote listener's exact Host/Origin allow-lists and the bound-token gate.
+		// request relayed to the remote listener by a reverse proxy (Host = the public name). It is replaced, not dropped
+		// (architect ruling tether_mcp_sdk_localhost_guard_disabled_2026_10_16): a local request is checked by
+		// h.authority below, a remote one only gets its remote provenance from daemon's remoteMCP.serveMCP after the same
+		// remoteAuthority Host/Origin check the listener ran. Tests that replace the SDK guard:
+		// TestLocalAuthorityReplacesSDKLocalhostGuard (here) and TestRemoteMCPMountRepeatsTheListenerAuthority (daemon).
+		// Cross-origin protection stays on (http.NewCrossOriginProtection wraps the SDK handler below).
 		DisableLocalhostProtection: true,
 	})
 	h.sdk = auth.RequireBearerToken(func(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
@@ -168,7 +171,7 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 			token.Expiration = *a.caller.Principal.ExpiresAt
 		}
 		return token, nil
-	}, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(sdk)
+	}, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(http.NewCrossOriginProtection().Handler(sdk))
 	go h.monitor()
 	return h, nil
 }

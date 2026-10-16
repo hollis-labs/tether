@@ -277,3 +277,48 @@ func TestRemoteMCPStatusReportsWhyTheGateIsMissing(t *testing.T) {
 		t.Fatal("status without a remote listener must be absent")
 	}
 }
+
+// The MCP mount repeats the listener's Host and Origin check with the same remoteAuthority value before it attaches remote
+// provenance, so the handler has no route around the allow-lists now that the SDK's localhost Host guard is off
+// (architect ruling tether_mcp_sdk_localhost_guard_disabled_2026_10_16). This hits the mount's check directly, not via
+// RemoteHandler.
+func TestRemoteMCPMountRepeatsTheListenerAuthority(t *testing.T) {
+	g := newRemoteMCPRig(t)
+	g.s.Config.RemoteListener.AllowedHosts = []string{"tether.example", "alt.example:9000"}
+	g.s.Config.RemoteListener.AllowedOrigins = []string{"https://tether.example"}
+	g.s.RemoteHandler("127.0.0.1:7331") // installs the listener's authority
+	gate := g.s.remoteMCPGate()
+	if gate == nil {
+		t.Fatal("no gate")
+	}
+	serve := func(host, origin string) int {
+		r := httptest.NewRequest("POST", "http://"+host+"/mcp", strings.NewReader("{}"))
+		r.Host = host
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		gate.serveMCP(w, r)
+		return w.Code
+	}
+	before := g.reached.Load()
+	for _, tc := range []struct{ host, origin string }{
+		{"evil.example", ""}, {"localhost:9000", ""}, {"127.0.0.1:7331", ""}, {"tether.example:443", ""},
+		{"TETHER.example", ""}, {"tether.example", "https://evil.example"}, {"tether.example", "http://tether.example"},
+	} {
+		if code := serve(tc.host, tc.origin); code != http.StatusForbidden {
+			t.Fatalf("Host %q Origin %q: %d, want 403", tc.host, tc.origin, code)
+		}
+	}
+	if g.reached.Load() != before {
+		t.Fatal("a refused request reached the MCP handler")
+	}
+	for _, tc := range []struct{ host, origin string }{{"tether.example", ""}, {"alt.example:9000", ""}, {"tether.example", "https://tether.example"}} {
+		if code := serve(tc.host, tc.origin); code != http.StatusAccepted {
+			t.Fatalf("Host %q Origin %q: %d, want 202", tc.host, tc.origin, code)
+		}
+	}
+	if g.reached.Load() != before+3 || !g.remote.Load() {
+		t.Fatalf("allowed requests reached %d, remote provenance %v", g.reached.Load()-before, g.remote.Load())
+	}
+}

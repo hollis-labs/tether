@@ -196,6 +196,7 @@ type Server struct {
 	remoteMCPOnce     sync.Once
 	remoteMCP         *remoteMCP
 	remoteMCPReason   string
+	remoteAuth        *remoteAuthority
 	MCPShutdown       func()
 	MCPDrain          func(context.Context)
 

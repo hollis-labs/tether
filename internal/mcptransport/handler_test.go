@@ -1150,3 +1150,37 @@ func TestTransportEditableAgentsChangeTheViewFingerprint(t *testing.T) {
 		t.Fatal("fingerprint is not a pure function of the allowlist")
 	}
 }
+
+// The SDK's own localhost Host guard is disabled in NewHandler (it refuses every request a reverse proxy relays to the
+// remote listener); this is the check that replaces it for a local request: a loopback or unix connection whose Host is
+// not one of the listener's own names is refused before any MCP work, and the local names still pass.
+func TestLocalAuthorityReplacesSDKLocalhostGuard(t *testing.T) {
+	for _, unix := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unix=%v", unix), func(t *testing.T) {
+			f := newTransportFixture(t, unix, false)
+			alpha := f.token(t, "alpha", nil)
+			r := f.request(t, http.MethodPost, "/mcp", alpha, "", map[string][]string{"Host": {"evil.example"}})
+			data, _ := io.ReadAll(r.Body)
+			closeResponse(r)
+			if r.StatusCode != http.StatusForbidden || !strings.Contains(string(data), "mcp_origin_refused") {
+				t.Fatalf("foreign Host: %d %s", r.StatusCode, data)
+			}
+			names := []string{"localhost", "127.0.0.1"}
+			if !unix {
+				_, port, err := net.SplitHostPort(strings.TrimPrefix(f.addr, "tcp:"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				names = []string{"localhost:" + port, "127.0.0.1:" + port}
+			}
+			for _, host := range names {
+				r := f.request(t, http.MethodPost, "/mcp", alpha, "", map[string][]string{"Host": {host}})
+				data, _ := io.ReadAll(r.Body)
+				closeResponse(r)
+				if r.StatusCode != http.StatusOK {
+					t.Fatalf("Host %s: %d %s", host, r.StatusCode, data)
+				}
+			}
+		})
+	}
+}

@@ -48,6 +48,8 @@ type remoteMCP struct {
 	audit    func(context.Context, identity.Observation) error
 	mode     identity.Mode
 
+	auth func() *remoteAuthority
+
 	mu      sync.Mutex
 	denials map[string]uint64
 }
@@ -90,7 +92,7 @@ func (s *Server) remoteMCPGate() *remoteMCP {
 			s.remoteMCPReason = "issued-token verifier unavailable"
 			return
 		}
-		s.remoteMCP = &remoteMCP{verifier: verifier, sessions: sessions, next: s.MCP, audit: s.recordIdentityObservation, mode: identity.Enforce, denials: map[string]uint64{}}
+		s.remoteMCP = &remoteMCP{verifier: verifier, sessions: sessions, next: s.MCP, audit: s.recordIdentityObservation, auth: func() *remoteAuthority { return s.remoteAuth }, mode: identity.Enforce, denials: map[string]uint64{}}
 	})
 	return s.remoteMCP
 }
@@ -202,8 +204,23 @@ func (g *remoteMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && r.Header.Get("Mcp-Session-Id") == "" {
 		g.auditInitialize(r, p, row)
 	}
-	// The remote listener's Host and Origin allow-lists already ran; the gateway skips its local-authority check for
-	// a request that carries server-owned remote provenance.
+	g.serveMCP(w, r)
+}
+
+// serveMCP is the one place a request becomes "remote" for the MCP handler. The listener's Host and Origin allow-lists
+// already ran in RemoteHandler; they run again here, as the same remoteAuthority value, so the handler has no path around
+// them, and only then is the server-owned remote provenance attached (the gateway skips its local-authority check for it,
+// and the MCP SDK's own localhost Host guard is disabled; see mcptransport.NewHandler).
+func (g *remoteMCP) serveMCP(w http.ResponseWriter, r *http.Request) {
+	auth := g.auth()
+	if auth == nil {
+		g.deny(w, r, "no_remote_authority", "", http.StatusForbidden, "remote_route_unavailable")
+		return
+	}
+	if msg, status := auth.refusal(r); status != 0 {
+		g.deny(w, r, "host_or_origin", "", status, msg)
+		return
+	}
 	g.next.ServeHTTP(w, r.WithContext(identity.WithRemoteContext(r.Context())))
 }
 

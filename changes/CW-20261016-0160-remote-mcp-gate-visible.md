@@ -3,6 +3,8 @@
   gains `remote_mcp: {available, reason}`, startup logs `remote MCP gate ready` / `NOT built` with the reason, each gate
   denial logs a one-line reason (ids only, never the token), and `tether doctor` warns about a catalog remote listener with
   the MCP endpoint off. The MCP SDK's own localhost DNS-rebinding guard is disabled in the daemon MCP handler: behind a
-  reverse proxy the connection is loopback and the Host is the public name, which the SDK refused with 403. The local
-  Host/Origin authority check and the remote listener's exact allow-lists are unchanged and still decide. Every non-2xx
+  reverse proxy the connection is loopback and the Host is the public name, which the SDK refused with 403. It is
+  replaced, not dropped: a local request is checked by the handler's local authority, and a remote one gets its remote
+  provenance only after the mount repeats the remote listener's exact Host/Origin check (the same `remoteAuthority`
+  value, no second list); the SDK's cross-origin protection stays on. Every non-2xx
   from the MCP route now logs one `daemon MCP refused` line with status and reason. See docs/remote-mcp.md.

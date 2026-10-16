@@ -80,28 +80,12 @@ func validRemoteOrigin(origin string) bool {
 // including its allocated port when listen_addr uses port zero.
 func (s *Server) RemoteHandler(boundHost string) http.Handler {
 	remote := s.handler(true)
-	c := s.Config.RemoteListener
-	hosts := append([]string(nil), c.AllowedHosts...)
-	if len(hosts) == 0 {
-		hosts = []string{boundHost}
-	}
-	origins := append([]string(nil), c.AllowedOrigins...)
+	auth := newRemoteAuthority(boundHost, s.Config.RemoteListener)
+	s.remoteAuth = auth
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !containsExact(hosts, r.Host) {
-			http.Error(w, "remote Host refused", http.StatusForbidden)
+		if msg, status := auth.refusal(r); status != 0 {
+			http.Error(w, msg, status)
 			return
-		}
-		if values := r.Header.Values("Origin"); len(values) != 0 {
-			allowed := len(values) == 1 && validRemoteOrigin(values[0])
-			if len(origins) != 0 {
-				allowed = allowed && containsExact(origins, values[0])
-			} else {
-				allowed = allowed && values[0] == "http://"+r.Host
-			}
-			if !allowed {
-				http.Error(w, "remote Origin refused", http.StatusForbidden)
-				return
-			}
 		}
 		// A bound agent token (a JWT) may reach the MCP gateway remotely; everything else, and every other route,
 		// takes the existing remote chain unchanged. See remote_mcp.go.
@@ -115,6 +99,38 @@ func (s *Server) RemoteHandler(boundHost string) http.Handler {
 		}
 		remote.ServeHTTP(w, r)
 	})
+}
+
+// remoteAuthority is the remote listener's exact Host and Origin allow-lists. It is one function with one configured
+// set: the listener runs it in front of every remote route, and the MCP mount runs the very same value again so the MCP
+// handler is never reachable around it (architect ruling tether_mcp_sdk_localhost_guard_disabled_2026_10_16).
+type remoteAuthority struct{ hosts, origins []string }
+
+func newRemoteAuthority(boundHost string, c RemoteListenerConfig) *remoteAuthority {
+	hosts := append([]string(nil), c.AllowedHosts...)
+	if len(hosts) == 0 {
+		hosts = []string{boundHost}
+	}
+	return &remoteAuthority{hosts: hosts, origins: append([]string(nil), c.AllowedOrigins...)}
+}
+
+// refusal returns the refusal message and status for a request this listener does not allow, or status 0.
+func (a *remoteAuthority) refusal(r *http.Request) (string, int) {
+	if !containsExact(a.hosts, r.Host) {
+		return "remote Host refused", http.StatusForbidden
+	}
+	if values := r.Header.Values("Origin"); len(values) != 0 {
+		allowed := len(values) == 1 && validRemoteOrigin(values[0])
+		if len(a.origins) != 0 {
+			allowed = allowed && containsExact(a.origins, values[0])
+		} else {
+			allowed = allowed && values[0] == "http://"+r.Host
+		}
+		if !allowed {
+			return "remote Origin refused", http.StatusForbidden
+		}
+	}
+	return "", 0
 }
 
 func containsExact(values []string, value string) bool {

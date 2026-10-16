@@ -86,7 +86,7 @@ func TestWorkerLaunchThroughRelayToRemoteMCPEndToEnd(t *testing.T) {
 
 	// The hub's remote listener: loopback behind a reverse proxy, so the Host header is the public name, never the
 	// loopback address (the first canary 403 came from the MCP SDK's own localhost guard on exactly that pairing).
-	const publicHost = "tether.hub.nanite.cloud"
+	const publicHost = "tether.example"
 	ts := httptest.NewUnstartedServer(nil)
 	server.Config.RemoteListener = daemon.RemoteListenerConfig{Enabled: true, ListenAddr: "tcp:127.0.0.1:7331", AllowedHosts: []string{ts.Listener.Addr().String(), publicHost}}
 	ts.Config.Handler = server.RemoteHandler(ts.Listener.Addr().String())
