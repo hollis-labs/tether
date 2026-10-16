@@ -343,3 +343,37 @@ func TestUnboundedSessionsListsOnlyLiveCredentialsBornWithoutABoundingAuthority(
 		t.Fatalf("a bounded credential was revoked (%v, %v)", revoked, err)
 	}
 }
+
+// A failure part way through must not leave some credentials revoked and report
+// none: it is all or nothing.
+func TestRevokeUnboundedIsAllOrNothing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ids, db := identityStore(t)
+	ctx := context.Background()
+	future := time.Now().Add(time.Hour)
+	for _, id := range []string{"u1", "u2", "u3"} {
+		if err := db.CreateSession(store.SessionRow{ID: id, State: "created"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ids.MintSessionForLaunch(ctx, identity.Principal{ID: "msg://session/local/" + id, Kind: "session", SessionID: id, LaunchAttribution: "anonymous_external", ExpiresAt: &future}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Make the update for the second credential fail.
+	if _, err := db.DB().Exec(`CREATE TRIGGER fail_u2 BEFORE UPDATE ON principals WHEN NEW.session_id='u2' BEGIN SELECT RAISE(ABORT,'boom'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ids.RevokeUnbounded(ctx); err == nil || n != 0 {
+		t.Fatalf("revoked %d with err %v; want a failure and 0", n, err)
+	}
+	left, err := ids.UnboundedSessions(ctx)
+	if err != nil || len(left) != 3 {
+		t.Fatalf("after the failed revoke %d credentials stand (%v), want all 3", len(left), err)
+	}
+	if _, err = db.DB().Exec(`DROP TRIGGER fail_u2`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ids.RevokeUnbounded(ctx); err != nil || n != 3 {
+		t.Fatalf("revoked %d (%v), want 3", n, err)
+	}
+}
