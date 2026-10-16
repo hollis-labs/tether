@@ -53,6 +53,11 @@ jobs:
           # check-pr diffs the pull_request merge commit against its base parent.
           fetch-depth: 2
 
+      - name: Public infrastructure hygiene
+        run: |
+          ./scripts/public-hygiene.sh
+          ./scripts/public-hygiene-test.sh
+
       - name: Changelog fragments
         # Cheap, so it runs first. Feature PRs add changes/<TASK-ID>-<slug>.md
         # instead of editing CHANGELOG.md (changes/README.md). ADVISORY for now:
