@@ -59,3 +59,47 @@ The form request is Stage A shaped: slots `coordinator` (the operator's seat, no
 member), `workers` (one) and `reviewer` (one, on the other runtime). Messages are
 delivered to member sessions whose runtime has a turn feed (streaming-stdio or
 app-server); a PTY runtime is refused.
+
+## Request shape and diagnostics
+
+Use [team-form.json](../examples/teams/team-form.json) as the complete request
+example. The CLI file contains `{"team": {...}, "launch": {...}}`; the
+idempotency key comes from `--key`. For MCP, pass that same object inside
+`request`, alongside `key`:
+
+```sh
+jq '{key: "first-1", request: .}' examples/teams/team-form.json
+```
+
+Pass the resulting object as the arguments to `tether_team_form`.
+For HTTP, POST the original file contents to `/teams/form` with the caller's credential
+and `Idempotency-Key: first-1`.
+
+| Field in `team` | Meaning |
+| --- | --- |
+| `id`, `name`, `version` | Definition identity, display name and numeric version. |
+| `slots` | Named roles with definition pins (`definition_ref`), resolution, activation and member bounds. |
+| `phases` | Phase IDs, active slots, owner slot and exit triggers. |
+| `authority` | Authority mode and grants between slots. |
+| `routing` | Routing rules and `coordinator_slot`. |
+| `policy` | Spawn ceilings and history policy. |
+
+The MCP tool schema describes these nested fields. Host policy still decides
+which definitions and launches are permitted; a structurally valid request is
+not necessarily allowed by Stage A.
+
+`team.coordinator` and `team.members: [{urn, role}]` are not supported fields.
+They describe a roster, not a team definition. Unknown fields are rejected
+strictly, with a field path such as
+`invalid_request: team.coordinator: unknown field` or
+`invalid_request: team.slots[0].urn: unknown field`. Missing fields and incorrect
+JSON types also return field diagnostics. Request values are not included in
+these diagnostics. Host failure details remain restricted to the verified
+local operator.
+
+Registration of durable actors does not enroll them into a team. Stage A keeps
+the operator's coordinator seat, approved worker/reviewer definitions and its
+existing runtime and resource limits. Forming a team from an already-running
+fleet requires a separate adoption and ownership design. Do not add automatic
+team formation to fleet boot using a roster request; keep it manual until that
+capability and its host policy are explicitly supported.
