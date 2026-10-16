@@ -44,9 +44,8 @@ func (s *Server) taskStamp(w http.ResponseWriter, r *http.Request, taskID string
 		return "", false
 	}
 	if !ok || !identity.IsOperatorCredential(p) {
-		if ok {
-			s.auditTaskIDDropped(r, p)
-		}
+		// No principal is audited too (principal "", authentication "none") so a silent drop is visible.
+		s.auditTaskIDDropped(r, p, ok)
 		return "", true
 	}
 	if !taskIDPattern.MatchString(taskID) {
@@ -57,13 +56,16 @@ func (s *Server) taskStamp(w http.ResponseWriter, r *http.Request, taskID string
 }
 
 // auditTaskIDDropped records the dropped field with the caller's real authentication state.
-func (s *Server) auditTaskIDDropped(r *http.Request, p identity.Principal) {
+func (s *Server) auditTaskIDDropped(r *http.Request, p identity.Principal, hasPrincipal bool) {
 	if s.IdentityAudit == nil {
 		return
 	}
-	auth := "claimed"
-	if p.Verified {
-		auth = "verified"
+	auth := "none"
+	if hasPrincipal {
+		auth = "claimed"
+		if p.Verified {
+			auth = "verified"
+		}
 	}
 	family, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	_ = s.IdentityAudit(r.Context(), identity.Observation{

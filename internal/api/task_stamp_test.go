@@ -79,7 +79,7 @@ func TestTaskStampPolicy(t *testing.T) {
 		{"unknown future kind", &identity.Principal{Verified: true, ID: "x", Kind: "brand-new-kind"}, http.StatusOK, false, true},
 		{"operator-minted narrow token", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", TokenID: "jti-1"}, http.StatusOK, false, true},
 		{"unverified operator claim", &identity.Principal{Verified: false, ID: identity.OperatorID, Kind: "operator"}, http.StatusOK, false, true},
-		{"no principal", nil, http.StatusOK, false, false},
+		{"no principal", nil, http.StatusOK, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, db, audited := bootstrapAsAudited(t, tc.p)
@@ -103,8 +103,12 @@ func TestTaskStampPolicy(t *testing.T) {
 			for _, o := range *audited {
 				if o.Event == eventTaskIDDropped {
 					dropped++
-					if o.PrincipalID != tc.p.ID || o.Authentication != map[bool]string{true: "verified", false: "claimed"}[tc.p.Verified] {
-						t.Fatalf("audit row = %+v", o)
+					wantID, wantAuth := "", "none"
+					if tc.p != nil {
+						wantID, wantAuth = tc.p.ID, map[bool]string{true: "verified", false: "claimed"}[tc.p.Verified]
+					}
+					if o.PrincipalID != wantID || o.Authentication != wantAuth {
+						t.Fatalf("audit row = %+v, want principal %q authentication %q", o, wantID, wantAuth)
 					}
 				}
 			}
@@ -199,5 +203,62 @@ func TestLaunchTaskStampPolicy(t *testing.T) {
 				t.Fatalf("service input = %+v, want task %q", svc.createInputs, tc.taskID)
 			}
 		})
+	}
+}
+
+// The real operator path: the tether CLI sends operator.token over the local API. Behind the actual identity
+// middleware (enforcing), that bearer resolves to the operator credential, so POST /sessions carries the task id to
+// the service and /sessions/bootstrap stores it; a request without the bearer never reaches the handlers at all.
+func TestTaskStampThroughRealOperatorToken(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "op.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ids := identity.NewStore(db.DB())
+	tokenPath := filepath.Join(t.TempDir(), "operator.token")
+	if err := ids.EnsureOperator(context.Background(), tokenPath); err != nil {
+		t.Fatal(err)
+	}
+	token, err := identity.ReadTokenFile(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := ids.Verify(context.Background(), token)
+	if err != nil || !identity.IsOperatorCredential(p) {
+		t.Fatalf("operator.token resolves to %+v err=%v, want the operator credential", p, err)
+	}
+	svc := &fakeLaunchService{}
+	handler := identity.MiddlewareWithScopes(identity.Enforce, ids, nil, identity.ScopePolicy{}, NewHandler(Deps{Service: svc, SessionBootstrap: db}))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	post := func(path, body string, bearer bool) int {
+		req, _ := http.NewRequest("POST", srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if bearer {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := post("/sessions", `{"launch":"l1","task_id":"CW-20261016-0155"}`, true); got != http.StatusCreated {
+		t.Fatalf("POST /sessions with operator.token: %d", got)
+	}
+	if len(svc.createInputs) != 1 || svc.createInputs[0].TaskID != "CW-20261016-0155" {
+		t.Fatalf("operator launch did not carry the task id: %+v", svc.createInputs)
+	}
+	if got := post("/sessions/bootstrap", `{"session_id":"op-s","task_id":"CW-20261016-0155"}`, true); got != http.StatusOK {
+		t.Fatalf("bootstrap with operator.token: %d", got)
+	}
+	if row, err := db.GetSession("op-s"); err != nil || row.TaskID.String != "CW-20261016-0155" {
+		t.Fatalf("bootstrap task = %+v err=%v", row.TaskID, err)
+	}
+	if got := post("/sessions", `{"launch":"l1","task_id":"CW-20261016-0155"}`, false); got != http.StatusUnauthorized {
+		t.Fatalf("anonymous launch: %d, want 401 (it never reaches taskStamp)", got)
 	}
 }
