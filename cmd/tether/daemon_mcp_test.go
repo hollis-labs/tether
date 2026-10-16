@@ -192,3 +192,15 @@ func TestDaemonMCPEndpointOptInGuardsAuthority(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorWarnsRemoteListenerWithoutMCPEndpoint(t *testing.T) {
+	cat := &config.Catalog{}
+	cat.Global.Daemon.RemoteListener.Enabled = true
+	if got := checkMCPEndpoint(cat); got.Status != statusWarn {
+		t.Fatalf("remote listener on, endpoint off: %+v", got)
+	}
+	cat.Global.Daemon.RemoteListener.Enabled = false
+	if got := checkMCPEndpoint(cat); got.Status != statusOK {
+		t.Fatalf("no remote listener: %+v", got)
+	}
+}

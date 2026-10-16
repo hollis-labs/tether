@@ -195,6 +195,7 @@ type Server struct {
 	RemoteMCPSessions sessionLookup
 	remoteMCPOnce     sync.Once
 	remoteMCP         *remoteMCP
+	remoteMCPReason   string
 	MCPShutdown       func()
 	MCPDrain          func(context.Context)
 
@@ -383,6 +384,9 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("open remote listener: %w", err)
 		}
 		defer func() { _ = remoteLis.Close() }()
+	}
+	if remoteLis != nil {
+		s.announceRemoteMCP()
 	}
 	if err := WritePIDFile(s.Config.PIDFile, os.Getpid()); err != nil {
 		lis.Close()
@@ -707,6 +711,9 @@ type Health struct {
 	// (CW-20261016-0160 H1). Absent until the gate has refused something.
 	RemoteMCPDenials map[string]uint64 `json:"remote_mcp_denials,omitempty"`
 
+	// RemoteMCP says whether the remote /mcp gate is built and, if not, why. Absent without a remote listener.
+	RemoteMCP *RemoteMCPStatus `json:"remote_mcp,omitempty"`
+
 	// SandboxProtect is the daemon's own view of control-plane protection
 	// (CW-20261001-0142): decided from the daemon's environment, which `tether
 	// doctor` cannot see from its shell. Absent from an older daemon.
@@ -831,6 +838,7 @@ func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode,
 		h.SandboxProtect = s.SandboxProtect()
 	}
 	h.RemoteMCPDenials = s.RemoteMCPDenials()
+	h.RemoteMCP = s.RemoteMCPStatus()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(h)
 }

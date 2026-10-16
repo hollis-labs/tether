@@ -544,6 +544,10 @@ func checkMCPEndpoint(cat *config.Catalog) checkResult {
 		return ok("mcp-endpoint", "disabled by modules.local_mcp")
 	}
 	if !cat.Global.Daemon.MCPEndpoint.Enabled {
+		if cat.Global.Daemon.RemoteListener.Enabled {
+			return warn("mcp-endpoint", "disabled while daemon.remote_listener is enabled: a worker agent cannot reach /mcp remotely (the remote gate needs the MCP handler)",
+				"set daemon.mcp_endpoint.enabled: true if workers should use this daemon's /mcp; check /health remote_mcp when the listener is started by flag")
+		}
 		return ok("mcp-endpoint", "disabled (daemon.mcp_endpoint.enabled defaults false)")
 	}
 	addr := cat.Global.Daemon.ListenAddr

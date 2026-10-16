@@ -40,6 +40,12 @@ Each remote MCP session initialize writes one `identity_audit` row: principal, s
 
 ## Configuration
 
-Nothing new: it needs the daemon's issuer (`Server.Issuer`), the MCP gateway and the launch service, all present in a
-hub. Without any of them `/mcp` stays unavailable remotely. The worker side is `tether-worker mcp-http-relay`
+It needs the daemon's issuer (`Server.Issuer`), the MCP gateway and the launch service. The gateway exists only when
+`daemon.mcp_endpoint.enabled: true` (and `modules.local_mcp`); with the endpoint off, `/mcp` stays unavailable remotely and every
+remote caller gets the ordinary remote chain's 401 `verified caller identity required`, which looks like a bad token. The daemon
+says so instead: at startup (with a remote listener) it logs `remote MCP gate ready` or `remote MCP gate NOT built` with the reason,
+and `GET /health` carries `remote_mcp: {available, reason}`. Each gate denial logs one line (`remote MCP denied` with reason, status,
+method, session id and node; never the token). `tether doctor` warns when `daemon.remote_listener` is enabled in the catalog while the
+endpoint is off. Enabling the endpoint does not change how sessions plant MCP (`daemon.mcp_upstream_ownership` does) and opens no new
+listener. The worker side is `tether-worker mcp-http-relay`
 (CW-20261016-0160 PR A/B).

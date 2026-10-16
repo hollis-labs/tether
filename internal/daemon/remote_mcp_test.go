@@ -253,3 +253,27 @@ func TestRemoteMCPProtocolExemptionIsExact(t *testing.T) {
 		}
 	}
 }
+
+// A daemon with a remote listener but no MCP handler (daemon.mcp_endpoint off) must say so, not just refuse callers: the
+// canary of 2026-10-16 read as a token problem for lack of this.
+func TestRemoteMCPStatusReportsWhyTheGateIsMissing(t *testing.T) {
+	g := newRemoteMCPRig(t)
+	if st := g.s.RemoteMCPStatus(); st == nil || !st.Available || st.Reason != "" {
+		t.Fatalf("with an MCP handler: %+v", st)
+	}
+	noMCP := newRemoteMCPRig(t)
+	noMCP.s.MCP = nil
+	st := noMCP.s.RemoteMCPStatus()
+	if st == nil || st.Available || !strings.Contains(st.Reason, "daemon.mcp_endpoint.enabled") {
+		t.Fatalf("without an MCP handler: %+v", st)
+	}
+	// The request is refused, not served, and no denial counter moves: there is no gate to count.
+	w := noMCP.do("POST", "/mcp", "localhost:9000", noMCP.agentToken(t, "s-live"), "", nil)
+	if w.Code != 401 || noMCP.reached.Load() != 0 || len(noMCP.s.RemoteMCPDenials()) != 0 {
+		t.Fatalf("no-gate request: status %d reached %d denials %v", w.Code, noMCP.reached.Load(), noMCP.s.RemoteMCPDenials())
+	}
+	var none Server
+	if none.RemoteMCPStatus() != nil {
+		t.Fatal("status without a remote listener must be absent")
+	}
+}

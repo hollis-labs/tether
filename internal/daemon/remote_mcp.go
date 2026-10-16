@@ -52,11 +52,27 @@ type remoteMCP struct {
 	denials map[string]uint64
 }
 
+// RemoteMCPStatus says whether the remote /mcp gate is serving and, when it is not, why. Without the gate every remote
+// /mcp request takes the ordinary remote chain and is refused as an unauthenticated caller, which looks the same as a bad
+// token from outside; this is how an operator tells the two apart (CW-20261016-0160 canary).
+type RemoteMCPStatus struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // remoteMCPGate builds the gate once, or returns nil when the pieces it needs are not configured (then /mcp stays
 // unavailable remotely, as before).
 func (s *Server) remoteMCPGate() *remoteMCP {
 	s.remoteMCPOnce.Do(func() {
-		if s.MCP == nil || s.Issuer == nil || s.Identity == nil {
+		switch {
+		case s.MCP == nil:
+			s.remoteMCPReason = "no MCP handler: set daemon.mcp_endpoint.enabled: true (and keep modules.local_mcp on)"
+		case s.Issuer == nil:
+			s.remoteMCPReason = "no token issuer: the daemon is not issuing agent tokens"
+		case s.Identity == nil:
+			s.remoteMCPReason = "no identity store"
+		}
+		if s.remoteMCPReason != "" {
 			return
 		}
 		sessions := s.RemoteMCPSessions
@@ -66,16 +82,41 @@ func (s *Server) remoteMCPGate() *remoteMCP {
 			}
 		}
 		if sessions == nil {
+			s.remoteMCPReason = "no session lookup for the gate"
 			return
 		}
 		verifier, err := authissuer.NewVerifier(s.Identity, s.Issuer)
 		if err != nil {
-			slog.Warn("remote MCP disabled: issued-token verifier unavailable")
+			s.remoteMCPReason = "issued-token verifier unavailable"
 			return
 		}
 		s.remoteMCP = &remoteMCP{verifier: verifier, sessions: sessions, next: s.MCP, audit: s.recordIdentityObservation, mode: identity.Enforce, denials: map[string]uint64{}}
 	})
 	return s.remoteMCP
+}
+
+// RemoteMCPStatus reports whether the gate is built. It is nil when no remote listener is configured, since the gate
+// has no meaning then.
+func (s *Server) RemoteMCPStatus() *RemoteMCPStatus {
+	if !s.Config.RemoteListener.Enabled {
+		return nil
+	}
+	if s.remoteMCPGate() != nil {
+		return &RemoteMCPStatus{Available: true}
+	}
+	return &RemoteMCPStatus{Reason: s.remoteMCPReason}
+}
+
+// announceRemoteMCP logs, once at startup, whether remote /mcp is serving, so a gate that was never built is not silent.
+func (s *Server) announceRemoteMCP() {
+	st := s.RemoteMCPStatus()
+	switch {
+	case st == nil:
+	case st.Available:
+		slog.Info("remote MCP gate ready: bound agent tokens may reach /mcp on the remote listener")
+	default:
+		slog.Warn("remote MCP gate NOT built: /mcp on the remote listener refuses every caller", "reason", st.Reason)
+	}
 }
 
 // RemoteMCPDenials reports how many remote /mcp requests the gate refused, by reason.
@@ -112,7 +153,9 @@ func jwtBearer(r *http.Request) (string, bool) {
 	return parts[1], true
 }
 
-func (g *remoteMCP) deny(w http.ResponseWriter, reason string, status int, code string) {
+func (g *remoteMCP) deny(w http.ResponseWriter, r *http.Request, reason, session string, status int, code string) {
+	// ids only, never the token or the Authorization header.
+	slog.Info("remote MCP denied", "reason", reason, "status", status, "method", r.Method, "session", cleanAuditField(session), "node", cleanAuditField(r.Header.Get("Tailscale-User-Login")))
 	g.mu.Lock()
 	g.denials[reason]++
 	g.mu.Unlock()
@@ -128,32 +171,32 @@ func (g *remoteMCP) deny(w http.ResponseWriter, reason string, status int, code 
 func (g *remoteMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token, _ := jwtBearer(r)
 	if len(r.Header.Get("Authorization")) > maxRemoteMCPAuthorization {
-		g.deny(w, "header_too_large", http.StatusUnauthorized, "unauthorized")
+		g.deny(w, r, "header_too_large", "", http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	p, err := g.verifier.Verify(r.Context(), token)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidToken) {
-			g.deny(w, "invalid_token", http.StatusUnauthorized, "unauthorized")
+			g.deny(w, r, "invalid_token", "", http.StatusUnauthorized, "unauthorized")
 		} else {
-			g.deny(w, "identity_unavailable", http.StatusServiceUnavailable, "identity_unavailable")
+			g.deny(w, r, "identity_unavailable", "", http.StatusServiceUnavailable, "identity_unavailable")
 		}
 		return
 	}
 	if !identity.IsBoundAgentToken(p) {
-		g.deny(w, "not_bound_agent", http.StatusNotFound, "remote_route_unavailable")
+		g.deny(w, r, "not_bound_agent", p.SessionID, http.StatusNotFound, "remote_route_unavailable")
 		return
 	}
 	row, err := g.sessions.GetSession(p.SessionID)
 	switch {
 	case errors.Is(err, store.ErrSessionNotFound):
-		g.deny(w, "session_gone", http.StatusUnauthorized, "unauthorized")
+		g.deny(w, r, "session_gone", p.SessionID, http.StatusUnauthorized, "unauthorized")
 		return
 	case err != nil:
-		g.deny(w, "session_lookup_failed", http.StatusServiceUnavailable, "identity_unavailable")
+		g.deny(w, r, "session_lookup_failed", p.SessionID, http.StatusServiceUnavailable, "identity_unavailable")
 		return
 	case terminalSession(row.State):
-		g.deny(w, "session_ended", http.StatusUnauthorized, "unauthorized")
+		g.deny(w, r, "session_ended", p.SessionID, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if r.Method == http.MethodPost && r.Header.Get("Mcp-Session-Id") == "" {

@@ -150,7 +150,14 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 			return view.view.Server
 		}
 		return nil
-	}, &mcpsdk.StreamableHTTPOptions{SessionTimeout: cfg.SessionTimeout})
+	}, &mcpsdk.StreamableHTTPOptions{
+		SessionTimeout: cfg.SessionTimeout,
+		// The SDK's own DNS-rebinding guard refuses a loopback connection whose Host is not loopback, which is exactly a
+		// request relayed to the remote listener by Tailscale Serve/Caddy (Host = the public name). This handler owns
+		// that decision instead: a local request is checked by h.authority, and a remote one (server-owned provenance)
+		// only reaches it after the remote listener's exact Host/Origin allow-lists and the bound-token gate.
+		DisableLocalhostProtection: true,
+	})
 	h.sdk = auth.RequireBearerToken(func(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
 		a, ok := ctx.Value(admissionKey{}).(admission)
 		if !ok {
@@ -199,6 +206,13 @@ func (h *Handler) admit(ctx context.Context, token string, s selectors) (admissi
 const maxAuthorizationHeader = 4096
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rl := &refusalLog{ResponseWriter: w}
+	w = rl
+	defer func() {
+		if rl.status >= 400 {
+			slog.Info("daemon MCP refused", "status", rl.status, "method", r.Method, "remote", identity.IsRemote(r.Context()), "detail", rl.detail())
+		}
+	}()
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -603,6 +617,44 @@ func (w *sessionResponse) Flush() {
 	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }
 func (w *sessionResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// refusalLog records the status and the first bytes of an error body so every non-2xx the MCP route answers leaves one log
+// line with its reason, whether transportError or the SDK wrote it. The body of an error carries a code or a short message,
+// never a token. Flush and Unwrap keep streaming responses working.
+type refusalLog struct {
+	http.ResponseWriter
+	status int
+	body   []byte
+}
+
+func (w *refusalLog) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *refusalLog) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if w.status >= 400 && len(w.body) < 200 {
+		w.body = append(w.body, data[:min(len(data), 200-len(w.body))]...)
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *refusalLog) Flush()                      { _ = http.NewResponseController(w.ResponseWriter).Flush() }
+func (w *refusalLog) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *refusalLog) detail() string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(string(w.body)))
+}
 
 func transportError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
