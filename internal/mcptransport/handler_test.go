@@ -1050,3 +1050,85 @@ func TestTransportMachineAccessFromCallerAgent(t *testing.T) {
 		})
 	}
 }
+
+// A session on the hub /mcp relay keeps its catalog agent's editable_agents
+// allowlist: it is saved in the session policy and applied when the view is
+// prepared. No allowlist keeps today's unrestricted behavior.
+func TestTransportEditableAgentsFromTheSavedSessionPolicy(t *testing.T) {
+	f := newTransportFixture(t, true, false)
+	connect := func(id string, editable []string) *mcpsdk.ClientSession {
+		t.Helper()
+		if err := f.db.CreateSession(store.SessionRow{ID: id, LogicalAgentID: "agent-" + id, State: "created"}, &launch.Plan{}); err != nil {
+			t.Fatal(err)
+		}
+		policy := mcpgateway.SessionPolicy{SessionID: id, AgentID: "agent-" + id, Servers: []string{}, EditableAgents: editable}.Seal()
+		if err := f.db.SaveSessionMCPPolicy(context.Background(), policy); err != nil {
+			t.Fatal(err)
+		}
+		token, err := f.ids.Mint(context.Background(), identity.Principal{ID: "session:" + id, Kind: "session", SessionID: id, Scopes: []string{"catalog.write"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cs, err := client.New(f.addr, client.WithToken(token)).ConnectMCP(context.Background(), client.MCPOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = cs.Close() })
+		return cs
+	}
+	// refusal says whether tether_agent_create for target was refused by the
+	// allowlist (agent_not_editable). Any other outcome (it may fail later for
+	// unrelated reasons in this fixture) means the allowlist let it through.
+	refusal := func(cs *mcpsdk.ClientSession, target string) bool {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_agent_create", Arguments: map[string]any{"id": target}})
+		text := ""
+		if err != nil {
+			text = err.Error()
+		}
+		if res != nil {
+			raw, _ := json.Marshal(res)
+			text += string(raw)
+		}
+		return strings.Contains(text, "agent_not_editable")
+	}
+	listed := connect("listed", []string{"worker", "reviewer"})
+	if refusal(listed, "worker") || refusal(listed, "reviewer") {
+		t.Fatal("an agent on the allowlist was refused")
+	}
+	if !refusal(listed, "intruder") {
+		t.Fatal("an agent outside the allowlist was not refused over /mcp")
+	}
+	open := connect("open", nil)
+	if refusal(open, "anything") {
+		t.Fatal("a session with no allowlist lost today's unrestricted default")
+	}
+}
+
+// Changing the allowlist changes the policy digest, hence the view fingerprint:
+// an open MCP view built under the old allowlist is refused afterwards.
+func TestTransportEditableAgentsChangeTheViewFingerprint(t *testing.T) {
+	caller := func(editable []string) Caller {
+		return Caller{
+			Principal: identity.Principal{ID: "session:s", Kind: "session", SessionID: "s"},
+			Policy:    mcpgateway.SessionPolicy{SessionID: "s", AgentID: "a", Servers: []string{}, EditableAgents: editable}.Seal(),
+		}
+	}
+	fp := func(c Caller) string {
+		t.Helper()
+		v, err := viewFingerprint(c, "tth_token", mcpadapter.ProxyOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	a, b, same := fp(caller([]string{"x"})), fp(caller([]string{"x", "y"})), fp(caller([]string{"x"}))
+	if a == b {
+		t.Fatal("a different allowlist produced the same view fingerprint")
+	}
+	if a != same || fp(caller(nil)) == a {
+		t.Fatal("fingerprint is not a pure function of the allowlist")
+	}
+}
