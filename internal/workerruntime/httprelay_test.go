@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -420,11 +421,11 @@ func TestHTTPRelayNeverFollowsRedirectsOrLeaksTheBearer(t *testing.T) {
 // The default client carries the same policy.
 func TestHTTPRelayDefaultClientRefusesRedirects(t *testing.T) {
 	c := (&HTTPRelay{}).client()
-	if c.CheckRedirect == nil || c.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+	if c.CheckRedirect == nil || !errors.Is(c.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Fatal("the default client would follow redirects")
 	}
 	injected := (&HTTPRelay{Client: &http.Client{}}).client()
-	if injected.CheckRedirect == nil || injected.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+	if injected.CheckRedirect == nil || !errors.Is(injected.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Fatal("an injected client would follow redirects")
 	}
 }
