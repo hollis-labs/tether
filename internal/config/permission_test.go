@@ -4,9 +4,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/adapters/registry"
-	permission "github.com/hollis-labs/substrate/harness/interception/permission"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters/registry"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	permission "github.com/hollis-labs/libs/security/policy/permission"
 )
 
 // TestProviderPosture checks default and explicitly unattended launches.

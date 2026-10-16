@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/shim"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	"github.com/hollis-labs/libs/harness/core/shim"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/shimcodex"
 )

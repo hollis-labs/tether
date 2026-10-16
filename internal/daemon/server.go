@@ -15,7 +15,7 @@ import (
 	"time"
 
 	otelprop "github.com/hollis-labs/libs/core/util/otel/propagation"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/authissuer"

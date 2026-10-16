@@ -59,7 +59,7 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 )
 
 const (

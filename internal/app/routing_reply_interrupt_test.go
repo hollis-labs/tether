@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	"github.com/hollis-labs/substrate/harness/adapters/providertest"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/adapters/providertest"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/identity"

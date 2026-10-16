@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 	"github.com/hollis-labs/tether/internal/outpostmail"
 	"github.com/hollis-labs/tether/internal/workerruntime"
 	"github.com/hollis-labs/tether/internal/workerwire"

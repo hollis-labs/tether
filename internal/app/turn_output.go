@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
-	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	gopevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"

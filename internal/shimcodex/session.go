@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/shim"
 )
 
 // Transport injects complete provider frames; Accepted means bytes_written,

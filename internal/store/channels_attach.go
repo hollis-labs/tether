@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 )

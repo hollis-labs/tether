@@ -3,15 +3,15 @@ package app
 import (
 	"context"
 	"encoding/json"
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"path/filepath"
 	"testing"
 	"time"
 
-	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
+	gopevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"

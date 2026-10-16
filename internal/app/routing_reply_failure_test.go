@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/adapters/providertest"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/providertest"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"

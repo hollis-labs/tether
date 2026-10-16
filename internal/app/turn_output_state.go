@@ -6,11 +6,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/adapters/provider"
-	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
-	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
-	"github.com/hollis-labs/substrate/harness/runner"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
+	"github.com/hollis-labs/libs/harness/core/runner"
 )
 
 // TurnCompletion retains the bound Output and whether process exit flushed it.

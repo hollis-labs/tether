@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/substrate/mesh"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )

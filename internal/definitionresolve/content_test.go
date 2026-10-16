@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh/agentdef"
+	"github.com/hollis-labs/libs/mesh/core/agentdef"
 )
 
 func writeContent(t *testing.T, root, name, data string, mode os.FileMode) {

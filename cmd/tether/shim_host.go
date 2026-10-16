@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 	"github.com/spf13/cobra"
 )
 

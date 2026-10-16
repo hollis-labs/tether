@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
 )
 

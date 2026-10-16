@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/app/consumers"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/messaging/channels"

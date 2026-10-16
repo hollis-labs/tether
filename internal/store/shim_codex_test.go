@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 	"path/filepath"
 	"testing"
 

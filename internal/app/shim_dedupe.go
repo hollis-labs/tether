@@ -5,9 +5,9 @@ package app
 import (
 	"encoding/json"
 
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	pevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	pevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 )
 
 // A result's own UUID is carried into the durable published output. Replay

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 func (s *Store) Snapshot(ctx context.Context, id string) (teams.Roster, error) {

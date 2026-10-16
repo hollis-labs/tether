@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 )
 
 const DefaultJournalBytes int64 = 256 << 20

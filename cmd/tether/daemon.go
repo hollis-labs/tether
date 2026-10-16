@@ -20,13 +20,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hollis-labs/substrate/llm-core/modelsdev"
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/llm/core/modelsdev"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	secrets "github.com/hollis-labs/libs/security/secrets"
 	"github.com/hollis-labs/libs/security/secrets/redact"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/a2aadapter"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"

@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/turn"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/app/turnrouting"

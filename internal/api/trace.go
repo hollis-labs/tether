@@ -31,8 +31,8 @@ import (
 	"net/http"
 	"time"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 
 	"github.com/hollis-labs/tether/internal/registry"
 )

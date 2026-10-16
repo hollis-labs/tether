@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hollis-labs/substrate/mesh"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/teamstore"
 )
 

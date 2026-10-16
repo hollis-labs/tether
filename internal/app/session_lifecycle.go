@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/adapters/sessionkit"
-	"github.com/hollis-labs/substrate/harness/adapters/turn"
-	"github.com/hollis-labs/substrate/harness/agentlaunch/sessionshim"
-	"github.com/hollis-labs/substrate/harness/sandbox"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/sessionkit"
+	"github.com/hollis-labs/libs/harness/core/adapters/turn"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/sessionshim"
+	"github.com/hollis-labs/libs/harness/core/sandbox"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"

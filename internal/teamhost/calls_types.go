@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/mesh/core"
 )
 
 // Scope binds a caller key across runs. Reusing it for different content conflicts.

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 // RecordSignal returns ErrNotFound until CreateRun has created the container.

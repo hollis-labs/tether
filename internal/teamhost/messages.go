@@ -6,8 +6,8 @@ import (
 	"errors"
 	"reflect"
 
-	"github.com/hollis-labs/substrate/mesh"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 func (h *Host) BindMessage(ctx context.Context, key, digest string) error {

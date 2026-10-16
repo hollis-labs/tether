@@ -10,16 +10,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
-	"github.com/hollis-labs/substrate/harness/agentlaunch/matrix"
-	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
-	"github.com/hollis-labs/substrate/harness/workspace"
-	"github.com/hollis-labs/substrate/harness/workspace/credentials"
-	"github.com/hollis-labs/substrate/harness/workspace/credentials/localfs"
-	"github.com/hollis-labs/substrate/harness/workspace/effects"
-	"github.com/hollis-labs/substrate/harness/workspace/local"
-	"github.com/hollis-labs/substrate/harness/workspace/materialize"
-	"github.com/hollis-labs/substrate/harness/workspace/materialize/artifact"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/matrix"
+	providerplant "github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
+	"github.com/hollis-labs/libs/harness/core/workspace"
+	"github.com/hollis-labs/libs/harness/core/workspace/credentials"
+	"github.com/hollis-labs/libs/harness/core/workspace/credentials/localfs"
+	"github.com/hollis-labs/libs/harness/core/workspace/effects"
+	"github.com/hollis-labs/libs/harness/core/workspace/local"
+	"github.com/hollis-labs/libs/harness/core/workspace/materialize"
+	"github.com/hollis-labs/libs/harness/core/workspace/materialize/artifact"
 )
 
 // CodexHome is an immutable, explicit pre-redirect capture, never an ambient

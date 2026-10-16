@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 // ErrLeaseLost means an expired or superseded callback cannot mutate storage.

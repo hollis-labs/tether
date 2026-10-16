@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/mesh/core"
 	"time"
 )
 

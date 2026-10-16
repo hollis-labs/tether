@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/app/consumers"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 )

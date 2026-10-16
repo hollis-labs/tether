@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 // GetLaunch is a detached read; read-modify-write callers use WithLease to

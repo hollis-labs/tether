@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
-	"github.com/hollis-labs/substrate/harness/workspace"
+	providerplant "github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
+	"github.com/hollis-labs/libs/harness/core/workspace"
 	"github.com/hollis-labs/tether/internal/launchartifacts"
 	"github.com/hollis-labs/tether/internal/launchartifacts/testfixture"
 )

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/libs/harness/core/shim"
 )
 
 type DeliveryHandler func(context.Context, State) (Projection, error)

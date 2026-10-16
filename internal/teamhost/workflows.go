@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/hollis-labs/substrate/mesh"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 func (h *Host) GetRun(ctx context.Context, runID string) (teams.TeamRun, error) {

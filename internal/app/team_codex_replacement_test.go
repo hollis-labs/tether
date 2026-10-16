@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/shim"
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/shimcodex"
 	"github.com/hollis-labs/tether/internal/shimhost"

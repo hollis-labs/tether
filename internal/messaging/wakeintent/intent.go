@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 const MetadataKey = "tether.wake_intent"

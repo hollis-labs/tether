@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	"gopkg.in/yaml.v3"
 )
 

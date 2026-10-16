@@ -7,10 +7,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
-	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
-	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/launcher"
+	providerplant "github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 	"github.com/hollis-labs/tether/internal/launchartifacts"
 	"github.com/hollis-labs/tether/internal/launchartifacts/testfixture"
 

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	permission "github.com/hollis-labs/substrate/harness/interception/permission"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	permission "github.com/hollis-labs/libs/security/policy/permission"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"

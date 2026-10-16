@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	tetherclient "github.com/hollis-labs/substrate/mesh/tetherclient"
+	tetherclient "github.com/hollis-labs/libs/mesh/core/tetherclient"
 	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 )

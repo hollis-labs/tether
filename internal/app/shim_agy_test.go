@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/shimagy"

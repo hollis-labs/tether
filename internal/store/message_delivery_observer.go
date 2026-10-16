@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 type deliveryObserver struct {

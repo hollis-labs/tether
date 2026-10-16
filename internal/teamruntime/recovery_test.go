@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/registry"

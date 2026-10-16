@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/identity"

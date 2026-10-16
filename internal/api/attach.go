@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 )
 
 // handleAttach streams the named session's live PTY output as an unframed

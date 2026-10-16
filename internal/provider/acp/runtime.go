@@ -25,15 +25,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters"
-	wacp "github.com/hollis-labs/substrate/harness/adapters/acp"
-	"github.com/hollis-labs/substrate/harness/adapters/activity"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/adapters/launch"
-	"github.com/hollis-labs/substrate/harness/adapters/registry"
-	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
-	"github.com/hollis-labs/substrate/harness/adapters/wrapper"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters"
+	wacp "github.com/hollis-labs/libs/harness/core/adapters/acp"
+	"github.com/hollis-labs/libs/harness/core/adapters/activity"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/launch"
+	"github.com/hollis-labs/libs/harness/core/adapters/registry"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	"github.com/hollis-labs/libs/harness/core/adapters/wrapper"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 )
 
 // Kind is the agentsessions.Runtime Kind of an ACP runtime. It is distinct

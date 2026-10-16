@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"sync"
 	"testing"
 	"time"

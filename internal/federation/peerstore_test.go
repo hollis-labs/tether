@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/memstore"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/memstore"
 )
 
 // fakeDaemon mounts the subset of a daemon's /messages/* HTTP surface that

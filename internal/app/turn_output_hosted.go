@@ -5,7 +5,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
+	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
 )
 
 // persistHostedTurnOutput is the producer half of hosted delivery. The caller

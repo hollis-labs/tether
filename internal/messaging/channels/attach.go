@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 // ExistingMessage attaches a staged session output, preserving its body and ID.

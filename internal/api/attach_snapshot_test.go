@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 )
 
 type snapshotAttachService struct {

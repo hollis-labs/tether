@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
+	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )

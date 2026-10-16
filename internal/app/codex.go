@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	"github.com/hollis-labs/libs/harness/core/adapters/turn"
 )
 
 // tetherClientVersion is the value reported in the JSON-RPC initialize

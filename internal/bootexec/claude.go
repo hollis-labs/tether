@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
-	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
-	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/launcher"
+	providerplant "github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
 
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchartifacts"

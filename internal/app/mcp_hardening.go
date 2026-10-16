@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 )
 
 // Claude strict MCP (CW-20261001-0227).

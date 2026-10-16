@@ -13,7 +13,7 @@ import (
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	"github.com/hollis-labs/libs/llm/core/modelsdev"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"

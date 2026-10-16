@@ -6,7 +6,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 // Store keeps atomic delivered marking in Inbox; Consume settles a delivery.

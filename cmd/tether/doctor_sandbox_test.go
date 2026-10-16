@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/sandbox"
+	"github.com/hollis-labs/libs/harness/core/sandbox"
 
 	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/config"

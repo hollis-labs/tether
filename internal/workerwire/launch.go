@@ -1,7 +1,7 @@
 package workerwire
 
 import (
-	"github.com/hollis-labs/substrate/harness/sandbox"
+	"github.com/hollis-labs/libs/harness/core/sandbox"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 

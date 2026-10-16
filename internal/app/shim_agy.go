@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
-	pevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	pevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 	"github.com/hollis-labs/tether/internal/shimagy"
 	"github.com/hollis-labs/tether/internal/shimhost"
 )

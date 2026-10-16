@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	f "github.com/hollis-labs/go-forums"
+	f "github.com/hollis-labs/libs/core/forums"
 	"github.com/hollis-labs/tether/internal/store"
 )
 

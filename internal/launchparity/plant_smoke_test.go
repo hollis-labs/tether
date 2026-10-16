@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
-	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
-	"github.com/hollis-labs/substrate/harness/agentlaunch/matrix"
-	"github.com/hollis-labs/substrate/harness/agentlaunch/parity"
-	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/launcher"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/matrix"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch/parity"
+	providerplant "github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
 	"github.com/hollis-labs/tether/internal/launchartifacts"
 	"github.com/hollis-labs/tether/internal/launchartifacts/testfixture"
 

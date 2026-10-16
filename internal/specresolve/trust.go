@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 )
 
 // catalogTrustTokens is the closed allow-list of TrustGate.Trust tokens the

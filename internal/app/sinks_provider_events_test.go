@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	gopevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
 
 	"github.com/hollis-labs/tether/internal/events"
 )

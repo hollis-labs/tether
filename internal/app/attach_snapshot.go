@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 )
 
 // AttachSessionWithSnapshot exposes the actual retained byte window at atomic

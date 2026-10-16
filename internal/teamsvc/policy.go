@@ -7,8 +7,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/hollis-labs/substrate/mesh"
-	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/libs/mesh/core"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
 // Ceilings supplies trusted host policy, independently of caller-authored teams.

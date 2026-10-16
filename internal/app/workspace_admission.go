@@ -11,7 +11,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/hollis-labs/substrate/harness/workspace/materialize"
+	"github.com/hollis-labs/libs/harness/core/workspace/materialize"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"

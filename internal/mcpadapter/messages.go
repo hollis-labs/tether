@@ -6,7 +6,7 @@ import (
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/internal/client"
 )

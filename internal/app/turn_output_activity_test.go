@@ -1,8 +1,8 @@
 package app
 
 import (
-	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
+	gopevents "github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
 	"testing"
 	"time"
 )

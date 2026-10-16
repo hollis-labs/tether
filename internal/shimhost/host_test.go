@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/runner"
-	"github.com/hollis-labs/substrate/harness/sandbox"
-	"github.com/hollis-labs/substrate/harness/shim"
-	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/libs/harness/core/runner"
+	"github.com/hollis-labs/libs/harness/core/sandbox"
+	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/testutil"
 	"golang.org/x/sys/unix"
 )

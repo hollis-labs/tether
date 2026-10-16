@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/substrate/mesh"
-	"github.com/hollis-labs/substrate/mesh/teams"
-	"github.com/hollis-labs/substrate/mesh/teams/memory"
+	"github.com/hollis-labs/libs/mesh/core"
+	"github.com/hollis-labs/libs/mesh/core/teams"
+	"github.com/hollis-labs/libs/mesh/core/teams/memory"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/identity"
