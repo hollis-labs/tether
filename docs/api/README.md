@@ -986,6 +986,15 @@ engine's session host) can rely on, and what it cannot:
   daemon restart), `GET /sessions/{id}/health` the live runtime,
   `GET /sessions/{id}/wait` blocks for the exit code, and
   `GET /sessions/{id}/events` / `GET /events/stream` carry state changes.
+  Health and `tether_session_health` also expose `last_activity_at` (UTC
+  RFC3339 timestamp), `pending_approval` and `pending_question` when observed.
+  Missing fields mean unknown; `false` means the corresponding observed
+  requests have resolved. If observation reads fail, live health remains
+  available with those optional fields omitted. Activity uses runtime/turn and tool-call evidence,
+  excluding bookkeeping and synthetic heartbeat timestamps. Pending flags
+  reuse the durable request reducer, including concurrent requests and stale
+  replay handling; they do not grant permission or answer questions. Health
+  still returns 404 for an absent session and 409 when no live health is available.
 - **Stalled sessions.** A headless session whose tool actions are refused
   (`provider.permission_denied`) can sit idle looking healthy. After 3 refusals
   since its last turn output the daemon publishes one `session.stalled` event

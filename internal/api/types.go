@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
@@ -266,6 +267,7 @@ type CapabilitiesDTO struct {
 
 // RuntimeHealthResponse is the body of GET /sessions/{id}/health.
 type RuntimeHealthResponse struct {
+	SessionHealthObservations
 	SessionID    string          `json:"session_id"`
 	Alive        bool            `json:"alive"`
 	PID          int             `json:"pid,omitempty"`
@@ -276,6 +278,20 @@ type RuntimeHealthResponse struct {
 	Caps         CapabilitiesDTO `json:"caps"`
 	// Stall is set when the daemon can report stall signals for the session.
 	Stall *StallStatus `json:"stall,omitempty"`
+}
+
+// SessionHealthObservations projects existing activity and request evidence.
+// Omitted fields mean unknown, not observed inactivity or a clear request queue.
+type SessionHealthObservations struct {
+	LastActivityAt  *time.Time `json:"last_activity_at,omitempty"`
+	PendingApproval *bool      `json:"pending_approval,omitempty"`
+	PendingQuestion *bool      `json:"pending_question,omitempty"`
+}
+
+// HealthObservationReporter adds read-only observations to live health without
+// adding database reads to runtime liveness checks used by lifecycle operations.
+type HealthObservationReporter interface {
+	SessionHealthObservations(context.Context, string) (SessionHealthObservations, error)
 }
 
 // StallStatus is the stalled-session signal: repeated refused tool actions

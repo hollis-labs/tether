@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -208,7 +209,7 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 // Returns 404 if the session does not exist in the store, 409 if the session
 // is not currently registered in the runtime manager (not in running state),
 // or 200 with the RuntimeHealthResponse on success.
-func (s *Server) handleSessionHealth(w http.ResponseWriter, _ *http.Request, id string) {
+func (s *Server) handleSessionHealth(w http.ResponseWriter, r *http.Request, id string) {
 	// Confirm the session exists in the store first.
 	if _, err := s.Service.GetSession(id); err != nil {
 		if errors.Is(err, store.ErrSessionNotFound) {
@@ -225,6 +226,15 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, _ *http.Request, id 
 		return
 	}
 	caps := result.Caps
+	var observations SessionHealthObservations
+	if reporter, ok := s.Service.(HealthObservationReporter); ok {
+		var err error
+		observations, err = reporter.SessionHealthObservations(r.Context(), id)
+		if err != nil {
+			slog.Warn("session health observations unavailable", "session_id", id)
+			observations = SessionHealthObservations{}
+		}
+	}
 	var stall *StallStatus
 	if sr, ok := s.Service.(StallReporter); ok {
 		if st, ok := sr.SessionStall(id); ok {
@@ -232,14 +242,15 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, _ *http.Request, id 
 		}
 	}
 	writeJSON(w, http.StatusOK, RuntimeHealthResponse{
-		Stall:        stall,
-		SessionID:    id,
-		Alive:        result.Health.Alive,
-		PID:          result.Health.PID,
-		LiveState:    result.Health.State.String(),
-		TurnID:       result.Health.TurnID,
-		ProviderID:   result.ProviderID,
-		ProviderKind: result.ProviderKind,
+		SessionHealthObservations: observations,
+		Stall:                     stall,
+		SessionID:                 id,
+		Alive:                     result.Health.Alive,
+		PID:                       result.Health.PID,
+		LiveState:                 result.Health.State.String(),
+		TurnID:                    result.Health.TurnID,
+		ProviderID:                result.ProviderID,
+		ProviderKind:              result.ProviderKind,
 		Caps: CapabilitiesDTO{
 			PTY:               caps.PTY,
 			StreamingStdio:    caps.StreamingStdio,

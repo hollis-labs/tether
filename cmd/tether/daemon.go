@@ -1079,6 +1079,10 @@ func (a *serviceAdapter) RuntimeHealth(id string) (api.RuntimeHealthResult, bool
 	return a.svc.RuntimeHealth(id)
 }
 
+func (a *serviceAdapter) SessionHealthObservations(ctx context.Context, id string) (api.SessionHealthObservations, error) {
+	return a.svc.SessionHealthObservations(ctx, id)
+}
+
 func (a *serviceAdapter) ResolveActorSession(ctx context.Context, logicalAgentID string) (string, error) {
 	return a.svc.ResolveActorSession(ctx, logicalAgentID)
 }
