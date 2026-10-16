@@ -47,6 +47,14 @@ func main() {
 	}}
 	relayCmd.Flags().StringVar(&relayToken, "token-file", "", "0600 file holding the session credential")
 	cmd.AddCommand(relayCmd)
+	var httpURL, httpToken string
+	httpRelayCmd := &cobra.Command{Use: "mcp-http-relay", Hidden: true, SilenceUsage: true, Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		r := &workerruntime.HTTPRelay{URL: httpURL, TokenFile: httpToken, Stderr: os.Stderr}
+		return r.Run(c.Context(), os.Stdin, os.Stdout)
+	}}
+	httpRelayCmd.Flags().StringVar(&httpURL, "url", "", "hub streamable-HTTP MCP endpoint (https)")
+	httpRelayCmd.Flags().StringVar(&httpToken, "token-file", "", "0600 file holding the session's current issuer token (re-read for every request)")
+	cmd.AddCommand(httpRelayCmd)
 	var hub, code, label, mcpSource string
 	var install bool
 	var mailSocket string
