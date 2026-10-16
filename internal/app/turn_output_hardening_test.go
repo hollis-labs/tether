@@ -362,7 +362,7 @@ func TestACPCompletedOutOfOrderTurnsRejectLateFrames(t *testing.T) {
 
 func TestInterruptAuditStorageDeadline(t *testing.T) {
 	for _, viaBus := range []bool{false, true} {
-		t.Run(map[bool]string{false: "direct store", true: "bus"}[viaBus], func(t *testing.T) {
+		t.Run(map[bool]string{false: "missing bus", true: "bus"}[viaBus], func(t *testing.T) {
 			svc, _ := outputHarness(t, nil)
 			svc.turnOutputTimeout = 25 * time.Millisecond
 			if !viaBus {
@@ -379,7 +379,11 @@ func TestInterruptAuditStorageDeadline(t *testing.T) {
 			}()
 			select {
 			case err := <-returned:
-				if !errors.Is(err, context.DeadlineExceeded) {
+				want := context.DeadlineExceeded
+				if !viaBus {
+					want = errEventBusUnavailable
+				}
+				if !errors.Is(err, want) {
 					t.Fatalf("audit error: %v", err)
 				}
 			case <-time.After(time.Second):
