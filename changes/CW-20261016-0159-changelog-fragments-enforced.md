@@ -1,0 +1,1 @@
+- CI: a pull request that edits CHANGELOG.md now fails the "Changelog fragments" check instead of warning; add `changes/<TASK-ID>-<slug>.md` instead (CW-20261016-0159). `release/*` branches are exempt.
