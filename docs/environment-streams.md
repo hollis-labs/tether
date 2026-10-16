@@ -129,3 +129,10 @@ Approximately 281 already-minted rows in the observed hub database will change
 visible environment-stream ID once, from the previous computed `<env>:<seq>` to
 their already-stored `evt_` ID. Their stored IDs remain unchanged; consumers may
 observe those events again. All wire IDs must remain JSON strings.
+
+The activation rollout has two releases. Release N runs complete ID minting with
+no seed or Map switch; the coordinator first verifies that no new NULL IDs appear
+on the hub. Release N+1 activates X1d and may roll back only to release N, never a
+build with partial ID minting. On restart, the identity seed refuses any NULL ID
+above the frozen cutover instead of moving the cutover or silently repairing it.
+A matching database snapshot restore is the last resort.
