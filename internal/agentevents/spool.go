@@ -347,6 +347,7 @@ func (s *Spool) removeSession(session string) (bool, error) {
 	}
 	_ = os.Remove(filepath.Join(s.Dir, session+".seq"))
 	_ = os.Remove(filepath.Join(s.Dir, session+".dropped"))
+	_ = os.Remove(filepath.Join(s.Dir, session+".hookdrops"))
 	return true, nil
 }
 
@@ -373,4 +374,38 @@ func openLocked(path string) (*os.File, func(), error) {
 		_ = f.Close()
 	}
 	return nil, nil, errors.New("agentevents: spool file kept changing under the writer")
+}
+
+// NoteHookDrop records that a hook gave up on an event (it ran out of its write budget, or the spool refused it): one line
+// naming the class is appended to the session's ".hookdrops" file. A single O_APPEND write needs no lock, which matters
+// because the usual reason to give up is a lock that is held. It is best effort and returns nothing: the caller is a hook
+// that must not be held up by its own bookkeeping.
+func (s *Spool) NoteHookDrop(sessionID, class string) {
+	if s == nil || s.Dir == "" || !sessionFileName.MatchString(sessionID) || class == "" {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(s.Dir, sessionID+".hookdrops"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: name checked above
+	if err != nil {
+		return
+	}
+	_, _ = f.WriteString(class + "\n")
+	_ = f.Close()
+}
+
+// HookDrops is how many events hooks have given up on for a session, by class.
+func (s *Spool) HookDrops(sessionID string) map[string]int {
+	out := map[string]int{}
+	if !sessionFileName.MatchString(sessionID) {
+		return out
+	}
+	raw, err := os.ReadFile(filepath.Join(s.Dir, sessionID+".hookdrops")) //nolint:gosec // G304: name checked above
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if line != "" {
+			out[line]++
+		}
+	}
+	return out
 }

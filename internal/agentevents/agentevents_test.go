@@ -361,3 +361,18 @@ func TestAppendReopensAFileUnlinkedUnderIt(t *testing.T) {
 		t.Fatalf("events = %d", len(evs))
 	}
 }
+
+func TestHookDropsAreCountedByClassWithoutTheLock(t *testing.T) {
+	dir := t.TempDir()
+	s := &Spool{Dir: dir}
+	s.NoteHookDrop("sess-d", "timeout")
+	s.NoteHookDrop("sess-d", "timeout")
+	s.NoteHookDrop("sess-d", "record_failed")
+	s.NoteHookDrop("../bad", "timeout") // refused silently
+	if got := s.HookDrops("sess-d"); got["timeout"] != 2 || got["record_failed"] != 1 || len(got) != 2 {
+		t.Fatalf("drops = %v", got)
+	}
+	if len(s.HookDrops("nope")) != 0 {
+		t.Fatal("an unknown session has drops")
+	}
+}

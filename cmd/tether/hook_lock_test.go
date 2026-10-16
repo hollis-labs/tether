@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/agentevents"
 )
 
 // A hook may cost the agent at most the write budget even when something holds the session's spool lock.
@@ -29,6 +31,9 @@ func TestHookClaudeGivesUpAtTheWriteBudget(t *testing.T) {
 	_, stderr, err := runHook(t, hookFixture(t, "PreToolUse-read"), "claude", "--session", "held", "--spool", spool)
 	if err != nil || strings.TrimSpace(stderr) != "tether hook: timeout" {
 		t.Fatalf("err=%v stderr=%q", err, stderr)
+	}
+	if drops := (&agentevents.Spool{Dir: spool}).HookDrops("held"); drops["timeout"] != 1 {
+		t.Fatalf("the dropped event was not counted: %v", drops)
 	}
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("a held lock cost the agent %s", took)

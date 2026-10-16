@@ -76,12 +76,17 @@ func recordClaudeHook(ctx context.Context, in io.Reader, session, spool string) 
 	defer cancel()
 	done := make(chan string, 1)
 	go func() { done <- recordClaudePayload(ctx, in, session, spool) }()
+	var class string
 	select {
-	case class := <-done:
-		return class
+	case class = <-done:
 	case <-ctx.Done():
-		return "timeout" // the process exits right after; an append still in flight is abandoned
+		class = "timeout" // the process exits right after; an append still in flight is abandoned
 	}
+	if class == "timeout" || class == "record_failed" {
+		// The event is dropped; count it where the relay and an operator can see it (lock-free, best effort).
+		(&agentevents.Spool{Dir: spool}).NoteHookDrop(session, class)
+	}
+	return class
 }
 
 func recordClaudePayload(ctx context.Context, in io.Reader, session, spool string) string {
