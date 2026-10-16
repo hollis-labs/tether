@@ -288,3 +288,36 @@ func TestNativeSecretDuplicateIdentityRefused(t *testing.T) {
 		t.Fatalf("duplicate output event: %+v", got)
 	}
 }
+
+func TestNativeSecretUpgradeDropsDuplicateAndRetiresHashName(t *testing.T) {
+	svc, _ := outputHarness(t, nil)
+	origin, err := derivedRuntimeOrigin(nativeOriginExample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"first private marker", "second private marker"} {
+		id := store.TurnOutputID("s1", "native-turn", "final", "", text)
+		raw, err := json.Marshal(outputRetryRecord{Version: 1, Origin: origin, SessionID: "s1", Result: turnoutput.Output{TurnID: "native-turn", Kind: turnoutput.KindFinal, Text: text}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.Store.WriteTurnOutputRetry(id, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.rewriteSecretOutputRetries(context.Background()); !errors.Is(err, store.ErrDuplicateWithheldOutput) {
+		t.Fatalf("duplicate upgrade not reported: %v", err)
+	}
+	for _, text := range []string{"first private marker", "second private marker"} {
+		if _, err := svc.Store.ReadTurnOutputRetry(store.TurnOutputID("s1", "native-turn", "final", "", text)); !os.IsNotExist(err) {
+			t.Fatalf("content-derived filename survived duplicate cleanup: %v", err)
+		}
+	}
+	id := store.WithheldTurnOutputID("s1", "native-turn", "final", "")
+	if _, err := readOutputRetry(svc, id); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.TurnOutputPersistenceStats()["withheld_identity_violation"]; got != 1 {
+		t.Fatalf("duplicate count=%d", got)
+	}
+}
