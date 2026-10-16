@@ -4,3 +4,5 @@
   pending rows on their own transaction (committed or rolled back with it) and published by the bus
   drainer after the commit, so live subscribers see them. The daemon starts the drainer
   (`StartEventsOutbox`), which also publishes rows a crashed process committed but never published.
+  Only the daemon runs the drainer: a row written by another process (a CLI or a stdio `tether mcp`)
+  stays pending until the daemon's next sweep publishes it, so it reaches live subscribers late, never lost.
