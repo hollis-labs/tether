@@ -48,6 +48,10 @@ func (s *daemonOnlyService) RuntimeHealth(string) (api.RuntimeHealthResult, bool
 	return s.health, s.healthOK
 }
 
+func (s *daemonOnlyService) SessionHealthObservations(ctx context.Context, id string) (api.SessionHealthObservations, error) {
+	return (&app.Service{Store: s.db}).SessionHealthObservations(ctx, id)
+}
+
 type daemonOnlyFixture struct {
 	client     *client.Client
 	db         *store.Store
@@ -197,6 +201,33 @@ func TestDaemonOnly_SessionHealthComesFromTheDaemon(t *testing.T) {
 	body := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_session_health", map[string]any{"session_id": "sess-1"}))
 	if body["alive"] != true || body["provider_id"] != "claude-code" || body["pid"] != float64(4242) {
 		t.Errorf("health = %v", body)
+	}
+}
+
+func TestDaemonOnly_SessionHealthPreservesObservations(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	f.service.healthOK = true
+	at := "2026-10-12T12:30:00Z"
+	if _, _, err := f.db.InsertEvent(events.ScopeSession, "sess-1", "session.activity", `{"at":"`+at+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []store.EnvironmentRequest{
+		{TurnID: "t", RequestID: "q", Kind: "question", Open: true, SourceSequence: 1},
+		{TurnID: "t", RequestID: "q", Open: false, SourceSequence: 2},
+		{TurnID: "t", RequestID: "a", Kind: "approval", Open: true, SourceSequence: 3},
+	} {
+		raw, _ := json.Marshal(req)
+		if _, _, err := f.db.InsertEvent(events.ScopeSession, "sess-1", store.EnvironmentRequestKind, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	health, err := f.client.SessionHealth(context.Background(), "sess-1")
+	if err != nil || health.LastActivityAt == nil || health.LastActivityAt.Format(time.RFC3339) != at || health.PendingApproval == nil || !*health.PendingApproval || health.PendingQuestion == nil || *health.PendingQuestion {
+		t.Fatalf("HTTP observations: %+v error=%v", health, err)
+	}
+	body := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_session_health", map[string]any{"session_id": "sess-1"}))
+	if body["last_activity_at"] != at || body["pending_approval"] != true || body["pending_question"] != false {
+		t.Fatalf("MCP observations: %+v", body)
 	}
 }
 
