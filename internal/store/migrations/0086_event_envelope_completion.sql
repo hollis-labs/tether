@@ -20,3 +20,5 @@ ALTER TABLE events ADD COLUMN traceparent TEXT;
 ALTER TABLE events ADD COLUMN in_reply_to TEXT;
 ALTER TABLE events ADD COLUMN actor_role TEXT;
 ALTER TABLE events ADD COLUMN on_behalf_of_json TEXT;
+-- Preserve an excessively future-dated origin while at uses safe retention time.
+ALTER TABLE events ADD COLUMN origin_at TEXT;

@@ -79,6 +79,7 @@ const eventReadColumns = `COALESCE(id,0),
  COALESCE(in_reply_to,''),
  COALESCE(actor_role,''),
  COALESCE(on_behalf_of_json,''),
+ COALESCE(origin_at,''),
  COALESCE(payload_digest,'')`
 
 type eventScanner interface{ Scan(...any) error }
@@ -86,7 +87,7 @@ type eventScanner interface{ Scan(...any) error }
 func scanEvent(row eventScanner) (events.Event, error) {
 	var e events.Event
 	env := &e.Envelope
-	var at, recorded, labels, delegation string
+	var at, recorded, origin, labels, delegation string
 	var rawOffset sql.NullInt64
 	if err := row.Scan(
 		&e.Seq,
@@ -157,6 +158,7 @@ func scanEvent(row eventScanner) (events.Event, error) {
 		&env.Corr.InReplyTo,
 		&env.Actor.Role,
 		&delegation,
+		&origin,
 		&env.PayloadDigest,
 	); err != nil {
 		return events.Event{}, err
@@ -164,6 +166,12 @@ func scanEvent(row eventScanner) (events.Event, error) {
 	var err error
 	if e.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
 		return events.Event{}, fmt.Errorf("event %d origin time: %w", e.Seq, err)
+	}
+	if origin != "" {
+		if env.OriginAt, err = time.Parse(time.RFC3339Nano, origin); err != nil {
+			return events.Event{}, fmt.Errorf("event %d origin metadata: %w", e.Seq, err)
+		}
+		e.At = env.OriginAt
 	}
 	if recorded != "" {
 		if env.RecordedAt, err = time.Parse(time.RFC3339Nano, recorded); err != nil {

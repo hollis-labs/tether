@@ -92,6 +92,11 @@ TEXT so the full unsigned 64-bit range survives SQLite storage; they are not
 stream cursors. A raw offset of zero remains distinct from an absent offset.
 
 The origin timestamp is preserved in `at`; `recorded_at` is stamped by the log.
+For origin times more than five minutes ahead of the log clock, `at` uses log time
+so indexed retention cannot be evaded, and `origin_at` preserves the actual
+producer timestamp. Event readers and live delivery return that true origin time;
+the clamp only affects the stored retention key. Producer-supplied origin metadata
+cannot override this value.
 `events.id` remains the ordering and replay cursor, including when events arrive
 with older origin timestamps. Replay, outbox, environment and session-history
 reads hydrate the same stored envelope, including a retention tombstone's

@@ -47,6 +47,7 @@ var envelopeColumns = []string{
 	"in_reply_to",
 	"actor_role",
 	"on_behalf_of_json",
+	"origin_at",
 }
 
 func nullIfZero(n int) any {
@@ -54,6 +55,13 @@ func nullIfZero(n int) any {
 		return nil
 	}
 	return n
+}
+
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 func nullUint64(n uint64) any {
@@ -130,6 +138,7 @@ func envelopeValues(e events.Event, recordedAt string) ([]any, error) {
 		nullIfEmpty(env.Corr.InReplyTo),
 		nullIfEmpty(env.Actor.Role),
 		delegation,
+		nullTime(env.OriginAt),
 	}, nil
 }
 
@@ -167,8 +176,16 @@ func insertEventEnvelopeRow(ctx context.Context, w eventWriter, e events.Event, 
 	if !e.At.IsZero() {
 		at = e.At
 	}
+	logTime := time.Now().UTC()
+	e.Envelope.OriginAt = time.Time{}
+	// Bound producer clock skew without allowing future dates to evade the
+	// existing indexed at-based retention. Keep the original for projection.
+	if at.After(logTime.Add(5 * time.Minute)) {
+		e.Envelope.OriginAt = at.UTC()
+		at = logTime
+	}
 	stamp := at.UTC().Format(time.RFC3339Nano)
-	recorded := time.Now().UTC().Format(time.RFC3339Nano)
+	recorded := logTime.Format(time.RFC3339Nano)
 	values, err := envelopeValues(e, recorded)
 	if err != nil {
 		return events.Event{}, false, err
@@ -194,6 +211,9 @@ func insertEventEnvelopeRow(ctx context.Context, w eventWriter, e events.Event, 
 		return events.Event{}, false, err
 	}
 	e.Seq, e.At, e.EventID = seq, at.UTC(), eventID
+	if !e.Envelope.OriginAt.IsZero() {
+		e.At = e.Envelope.OriginAt
+	}
 	e.Envelope.Epoch = 0
 	e.Envelope.PayloadDigest = ""
 	if e.Envelope.Dims.LogicalAgentID == "" {
