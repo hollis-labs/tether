@@ -123,7 +123,7 @@ func TestHookClaudeStderrIsAClassOnly(t *testing.T) {
 	}
 	for _, c := range []struct{ name, stdin, spool, want string }{
 		{"invalid", "not json with a secret-token inside", spool, "payload_invalid"},
-		{"too large", strings.Repeat("x", maxHookPayload+10), spool, "payload_too_large"},
+		{"too large", strings.Repeat("x", agentevents.MaxHookPayload+10), spool, "payload_too_large"},
 		{"relative", hookFixture(t, "PreToolUse-read"), "events", "spool_not_absolute"},
 		{"unwritable", hookFixture(t, "PreToolUse-read"), filepath.Join(unwritable, "deeper"), "record_failed"},
 	} {
