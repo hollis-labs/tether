@@ -225,11 +225,14 @@ func (h *Host) adoptableSlot(ctx context.Context, req teams.ProvisionRequest) er
 // compensateAdoption fences a failed adoption: nothing was started, so the
 // intent is tombstoned and cleaned without touching any port.
 func (h *Host) compensateAdoption(ctx context.Context, key string, cause error) error {
-	err := h.tx(context.WithoutCancel(ctx), func(conn *sql.Conn) error {
-		if _, err := conn.ExecContext(ctx, `DELETE FROM team_host_bindings WHERE intent_key=?`, key); err != nil {
+	// The caller's context is the likely reason the adoption failed; the fence
+	// must still land or the actor stays bound and cannot join any team.
+	fence := context.WithoutCancel(ctx)
+	err := h.tx(fence, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(fence, `DELETE FROM team_host_bindings WHERE intent_key=?`, key); err != nil {
 			return err
 		}
-		_, err := conn.ExecContext(ctx, `UPDATE team_host_intents SET tombstone='release',cleaned=1 WHERE intent_key=? AND tombstone='' AND member IS NULL`, key)
+		_, err := conn.ExecContext(fence, `UPDATE team_host_intents SET tombstone='release',cleaned=1 WHERE intent_key=? AND tombstone='' AND member IS NULL`, key)
 		return err
 	})
 	return errors.Join(cause, err)
@@ -360,6 +363,8 @@ func (h *Host) adoptionSuspended(ctx context.Context, actor mesh.URN, session st
 	return suspended, err
 }
 
+// isUnique matches the driver's message; both SQLite drivers used here report
+// constraint violations with this text and no typed error.
 func isUnique(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

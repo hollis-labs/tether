@@ -29,6 +29,7 @@ type fakeAdopter struct {
 	released map[string]int
 	releases []string
 	verifyN  int
+	hook     func()
 }
 
 func newAdopter() *fakeAdopter {
@@ -42,6 +43,10 @@ func (a *fakeAdopter) Verify(_ context.Context, c teamhost.AdoptionCheck) (teamh
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.verifyN++
+	if a.hook != nil {
+		a.hook()
+		return teamhost.Adoption{}, context.Canceled
+	}
 	v, ok := a.live[c.Actor]
 	if !ok {
 		return teamhost.Adoption{}, teams.ErrNotFound
@@ -383,5 +388,29 @@ func TestReboundAdoptionSuspendsUntilReadopted(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.stopOrder) != 0 {
 		t.Fatal("session stopped")
+	}
+}
+
+// A cancelled caller is the usual reason an adoption fails; the failure must
+// still release the actor so it can join a team later.
+func TestCancelledAdoptionStillFreesTheActor(t *testing.T) {
+	f, a := fake(), newAdopter()
+	db, s, h := openAdopt(t, t.TempDir()+"/state.db", f, a, adoptOptions())
+	run := adoptRun(t, s, h)
+	cancelled, cancel := context.WithCancel(ctx)
+	a.hook = func() { cancel() }
+	if _, err := h.Adopt(cancelled, adoptRequest(run, "adopt-cancel", fleetActor, "fleet-session-1")); err == nil {
+		t.Fatal("adoption with a cancelled context must fail")
+	}
+	a.hook = nil
+	var tombstone string
+	var cleaned, bound int
+	must(t, db.DB().QueryRow(`SELECT tombstone,cleaned FROM team_host_intents WHERE intent_key='adopt-cancel'`).Scan(&tombstone, &cleaned))
+	must(t, db.DB().QueryRow(`SELECT COUNT(*) FROM team_host_bindings WHERE actor=?`, fleetActor).Scan(&bound))
+	if tombstone == "" || cleaned != 1 || bound != 0 {
+		t.Fatalf("failed adoption not fenced: tombstone=%q cleaned=%d bindings=%d", tombstone, cleaned, bound)
+	}
+	if _, err := h.Adopt(ctx, adoptRequest(run, "adopt-after", fleetActor, "fleet-session-1")); err != nil {
+		t.Fatalf("actor stayed bound after a cancelled adoption: %v", err)
 	}
 }
