@@ -13,7 +13,10 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
-// launchGrant returns the authority a team session is launched under. The
+// launchGrant returns the authority a team session is launched under. Intent
+// keys are caller-scoped: the library derives them from the service call key
+// (teamsvc.serviceKey hashes principal, verb and caller key), so another caller
+// cannot produce the key of a team it did not form and inherit its grant. The
 // first launch of an intent happens inside the verb that formed the team, with
 // a verified caller: that caller's scopes are recorded (first write wins). A
 // recovery or reconcile launch has no caller; it reuses the recorded grant, so
@@ -45,6 +48,16 @@ func (s *Sessions) launchGrant(ctx context.Context, intentKey string) (*app.Laun
 	var scopes []string
 	if err = json.Unmarshal([]byte(raw), &scopes); err != nil {
 		return nil, fmt.Errorf("decode team launch grant: %w", err)
+	}
+	// A recorded grant is only as good as the principal that held it. If that
+	// principal has since been revoked (or every credential of it expired), the
+	// teams it formed must not keep recovering with the scopes it had.
+	live, err := identity.NewStore(s.db).PrincipalLive(ctx, principal)
+	if err != nil {
+		return nil, fmt.Errorf("%w: the principal that formed this team cannot be checked: %w", app.ErrLaunchRefused, err)
+	}
+	if !live {
+		return nil, fmt.Errorf("%w: the principal %q that formed this team is revoked or expired, so its recorded launch grant is void", app.ErrLaunchRefused, principal)
 	}
 	return &app.LaunchGrant{Principal: principal, Scopes: scopes}, nil
 }

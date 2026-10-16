@@ -413,6 +413,9 @@ func TestTeamLaunchGrantIsRecordedOnceAndReusedWithoutACaller(t *testing.T) {
 	actor, err := e.Ensure(ctx, req)
 	check(t, err)
 	check(t, e.AcquireBinding(ctx, "granted", actor.Actor))
+	// The principal that forms the team holds a live operator credential.
+	_, err = identity.NewStore(db.DB()).Mint(ctx, identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+	check(t, err)
 	effects := &internalEffects{sessionEffects: &sessionEffects{db: db}}
 	port, err := NewSessions(db, s, effects, e)
 	check(t, err)
@@ -493,3 +496,52 @@ const runbookNoGrantCheck = `SELECT COUNT(*) FROM team_port_intents i
  WHERE i.port_kind = 'session' AND i.ended = '' AND i.state IN ('pending','done')
    AND COALESCE(json_extract(i.request, '$.ParentSession'), '') = ''
    AND NOT EXISTS (SELECT 1 FROM team_launch_grants g WHERE g.intent_key = i.intent_key)`
+
+// The grant is only as good as the principal that held it: once that principal
+// is revoked (or expired) the teams it formed stop recovering with its scopes.
+func TestRecordedGrantIsVoidOnceItsPrincipalIsRevokedOrExpired(t *testing.T) {
+	for name, end := range map[string]func(t *testing.T, db *store.Store){
+		"revoked": func(t *testing.T, db *store.Store) {
+			check(t, identity.NewStore(db.DB()).Revoke(ctx, identity.OperatorID))
+		},
+		"expired": func(t *testing.T, db *store.Store) {
+			if _, err := db.DB().Exec(`UPDATE principals SET expires_at=? WHERE principal_id=?`, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), identity.OperatorID); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, s, reg := dbFixture(t, filepath.Join(t.TempDir(), "db"))
+			e := enroller(t, db, s, reg)
+			req := fresh("void")
+			actor, err := e.Ensure(ctx, req)
+			check(t, err)
+			check(t, e.AcquireBinding(ctx, "void", actor.Actor))
+			_, err = identity.NewStore(db.DB()).Mint(ctx, identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+			check(t, err)
+			effects := &internalEffects{sessionEffects: &sessionEffects{db: db}}
+			port, err := NewSessions(db, s, effects, e)
+			check(t, err)
+			in := teamhost.SessionRequest{IntentKey: "void", Actor: actor.Actor, Provision: req.Provision}
+			// Recorded while the principal is live (the first launch is made to fail).
+			if _, err = port.launchGrant(operatorAs("*"), "void"); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := port.launchGrant(ctx, "void"); err != nil || got == nil {
+				t.Fatalf("grant while live: %+v %v", got, err)
+			}
+			end(t, db)
+			got, err := port.launchGrant(ctx, "void")
+			if !errors.Is(err, app.ErrLaunchRefused) || got != nil {
+				t.Fatalf("grant of an %s principal: %+v %v; want a refusal", name, got, err)
+			}
+			// And the recovery launch itself is refused before anything starts.
+			if _, err = port.Launch(ctx, in); !errors.Is(err, app.ErrLaunchRefused) {
+				t.Fatalf("recovery launch after the principal was %s: %v", name, err)
+			}
+			if len(effects.origin) != 0 {
+				t.Fatalf("a launch started with a void grant: %+v", effects.origin)
+			}
+		})
+	}
+}

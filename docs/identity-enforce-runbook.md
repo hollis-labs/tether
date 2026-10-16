@@ -248,6 +248,10 @@ caller, and Tether now records that caller's scopes for the intent
 caller; they reuse the recorded grant, so they are bounded by it and attributed
 `origin`. A spawned member is also bounded by its parent session's grant.
 
+A recorded grant is only as good as the principal that held it: if that principal
+is revoked (or every credential of it expired), its teams stop recovering and the
+launch is refused with a logged reason, instead of outliving the revocation.
+
 A root team session whose intent has **no** recorded grant (formed before grants
 were recorded) has nothing to bound it. Under `identity.mode: enforce` its
 recovery launch is refused as `internal_unattributed` (logged:
