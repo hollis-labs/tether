@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/events"
 	forumhost "github.com/hollis-labs/tether/internal/forums"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -95,7 +96,7 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{Store: db, Workers: hub, Registry: reg, Catalog: &config.Catalog{}}
+	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db}), Workers: hub, Registry: reg, Catalog: &config.Catalog{}}
 	hub.Event = svc.ingestWorkerFrame
 	operator, err := ids.Mint(ctx, identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
 	if err != nil {

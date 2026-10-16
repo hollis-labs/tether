@@ -87,20 +87,18 @@ func confinedMCPEnv(plan *launch.Plan, protected []string) map[string]string {
 
 // recordUnenforcedUserServiceManager makes the downgrade loud and auditable:
 // a WARN in the daemon log and a sandbox_rule_unenforced event on the session.
-func (s *Service) recordUnenforcedUserServiceManager(ctx context.Context, sessionID string) {
+func (s *Service) recordUnenforcedUserServiceManager(ctx context.Context, sessionID string) error {
+	if err := s.requireEventBus(); err != nil {
+		return err
+	}
 	log.Printf("WARN: sandbox: session %s: DenyUserServiceManager is NOT enforced on darwin; the Codex MCP proxy can reach the launchd user service manager (enabled by %s)", sessionID, AllowUnenforcedUserServiceManagerEnv)
 	raw, _ := json.Marshal(map[string]string{
 		"rule":    "DenyUserServiceManager",
 		"profile": "tether-mcp-control-plane",
 		"reason":  "darwin sandbox cannot enforce it; operator opted in via " + AllowUnenforcedUserServiceManagerEnv,
 	})
-	var err error
-	if s.Bus == nil {
-		_, _, err = s.Store.InsertEventContext(ctx, events.ScopeSession, sessionID, sandboxRuleUnenforcedEvent, string(raw))
-	} else {
-		err = s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: sessionID, Kind: sandboxRuleUnenforcedEvent, PayloadJSON: string(raw)})
+	if err := s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: sessionID, Kind: sandboxRuleUnenforcedEvent, PayloadJSON: string(raw)}); err != nil {
+		return fmt.Errorf("record sandbox downgrade: %w", err)
 	}
-	if err != nil {
-		log.Printf("WARN: sandbox: session %s: record %s event: %v", sessionID, sandboxRuleUnenforcedEvent, err)
-	}
+	return nil
 }

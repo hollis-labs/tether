@@ -1,0 +1,1 @@
+- Require the shared event bus before worker ingestion and lifecycle mutations; sandbox downgrade audit failure now refuses launch instead of bypassing event stages (CW-20261016-0136).

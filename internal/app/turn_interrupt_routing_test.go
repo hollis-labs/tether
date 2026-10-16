@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
 	"testing"
@@ -15,10 +16,12 @@ func TestRoutingInterruptRequiresDescriptorAndActualWiring(t *testing.T) {
 	svc.Store = &store.Store{}
 	factory := func(*launch.Plan) (agentsessions.Runtime, error) { panic("capability inspection launched a runtime") }
 	svc.factories = map[string]RuntimeFactory{"codex": factory, "claude": factory, "agy": factory}
-	for _, missing := range []string{"", "manager", "store", "factory"} {
+	for _, missing := range []string{"", "manager", "store", "factory", "bus"} {
 		t.Run(missing, func(t *testing.T) {
-			candidate := &Service{Catalog: svc.Catalog, Manager: svc.Manager, Store: svc.Store, factories: svc.factories}
+			candidate := &Service{Bus: events.NewBus(events.BusOptions{}), Catalog: svc.Catalog, Manager: svc.Manager, Store: svc.Store, factories: svc.factories}
 			switch missing {
+			case "bus":
+				candidate.Bus = nil
 			case "manager":
 				candidate.Manager = nil
 			case "store":

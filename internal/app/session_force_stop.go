@@ -33,6 +33,9 @@ func (s *Service) ForceStopSession(ctx context.Context, id string, opts api.Forc
 	if res.WasLive && !opts.AllowLive {
 		return res, api.ErrSessionLive
 	}
+	if err := s.requireEventBus(); err != nil {
+		return res, err
+	}
 	reason := opts.Reason
 	if reason == "" {
 		reason = "operator force close"
@@ -50,10 +53,6 @@ func (s *Service) ForceStopSession(ctx context.Context, id string, opts api.Forc
 		_, _ = s.Registry.RevokeSessionBindings(ctx, id)
 	}
 	payload, _ := json.Marshal(map[string]any{"from": row.State, "to": res.To, "reason": reason, "was_live": res.WasLive, "worker_id": row.WorkerID})
-	if s.Bus == nil {
-		_, _, err = s.Store.InsertEventContext(ctx, events.ScopeSession, id, sessionForceClosedEvent, string(payload))
-		return res, err
-	}
 	return res, s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: id, LogicalAgentID: row.LogicalAgentID, Kind: sessionForceClosedEvent, PayloadJSON: string(payload)})
 }
 

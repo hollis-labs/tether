@@ -176,6 +176,9 @@ func reaperReason(now, started, activity time.Time, d launchprofile.LifecycleDur
 // SweepSessionReaper never runs the daemon-start bulk sweep against live
 // sessions. Manager-owned PID-zero turn runtimes are healthy candidates.
 func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
+	if err := s.requireEventBus(); err != nil {
+		return err
+	}
 	r := s.reaperState()
 	r.sweep.Lock()
 	defer r.sweep.Unlock()
@@ -300,15 +303,14 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 }
 
 func (s *Service) reaperEvent(ctx context.Context, row *store.SessionRow, reason, stage, outcome string, err error) error {
+	if err := s.requireEventBus(); err != nil {
+		return err
+	}
 	payload := map[string]string{"reason": reason, "stage": stage, "outcome": outcome}
 	if err != nil {
 		payload["error"] = err.Error()
 	}
 	raw, _ := json.Marshal(payload)
-	if s.Bus == nil {
-		_, _, err := s.Store.InsertEventContext(ctx, events.ScopeSession, row.ID, sessionReaperEvent, string(raw))
-		return err
-	}
 	return s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: row.ID, LogicalAgentID: row.LogicalAgentID, Kind: sessionReaperEvent, PayloadJSON: string(raw)})
 }
 
@@ -328,6 +330,9 @@ func (s *Service) stopSessionWithLifecycle(id string) error {
 }
 
 func (s *Service) stopSessionForLifecycle(ctx context.Context, id, reason string, d launchprofile.LifecycleDurations) (result error) {
+	if err := s.requireEventBus(); err != nil {
+		return err
+	}
 	r := s.reaperState()
 	op := &reaperStop{done: make(chan struct{})}
 	existing, loaded := r.stops.LoadOrStore(id, op)

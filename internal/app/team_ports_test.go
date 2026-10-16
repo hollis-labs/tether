@@ -14,6 +14,7 @@ import (
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
 	"github.com/hollis-labs/tether/internal/registry"
@@ -336,6 +337,7 @@ func (s stopExitSession) Stop(ctx context.Context) error {
 }
 func TestStopTeamSessionAcknowledgesOwnExitErrorAndRetriesDetached(t *testing.T) {
 	svc, rt, id, _ := credentialLaunch(t)
+	svc.Bus = events.NewBus(events.BusOptions{Persister: svc.Store})
 	if _, err := seedLogicalAgents(svc.Store, map[string]config.Agent{"agent": {ID: "agent"}}); err != nil {
 		t.Fatal(err)
 	}
