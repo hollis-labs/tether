@@ -44,6 +44,9 @@ type FormationPolicy struct {
 	Limits                                         mesh.Limits
 	MaxSlots, MaxMembersPerSlot, MaxInitialMembers int
 	AllowedPermissions                             []teams.Permission
+	// AllowAdoptedSlots lets a formation provision no member at all, leaving
+	// every seat to be filled by adoption. Pool slots then start empty.
+	AllowAdoptedSlots bool
 }
 
 func ConservativePolicy() FormationPolicy {
@@ -147,7 +150,7 @@ func (s *Service) formationPolicy(ctx context.Context, p Principal, req FormRequ
 			return mesh.Limits{}, "", ErrDenied
 		}
 	}
-	if total == 0 || total > limits.FanOut || total > limits.MaxChildren {
+	if total == 0 && !policy.AllowAdoptedSlots || total > limits.FanOut || total > limits.MaxChildren {
 		return mesh.Limits{}, "", ErrDenied
 	}
 	if !ownerProvisioned {

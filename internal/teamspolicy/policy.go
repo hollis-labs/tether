@@ -71,8 +71,11 @@ type file struct {
 	Version int `yaml:"version"`
 	// SessionFormation lets a verified session principal form teams under the
 	// same ceilings and allowlist; the session becomes the run owner. Default off.
-	SessionFormation bool     `yaml:"session_formation"`
-	Launches         []Launch `yaml:"launches"`
+	SessionFormation bool `yaml:"session_formation"`
+	// Adoption lets the run owner adopt already-running fleet agents into pool
+	// seats (see docs/teams-activation.md). Default off; read at daemon start.
+	Adoption bool     `yaml:"adoption"`
+	Launches []Launch `yaml:"launches"`
 }
 
 // Policy is immutable after Load. The zero value and nil both deny.
@@ -82,12 +85,16 @@ type Policy struct {
 	pauseMarker string
 	paused      atomic.Bool
 	sessionForm bool
+	adoption    bool
 	pairingMu   sync.Mutex
 	pairings    map[string]ReviewerPairing
 }
 
 // SessionFormation reports whether verified sessions may form teams.
 func (p *Policy) SessionFormation() bool { return p != nil && p.sessionForm }
+
+// Adoption reports whether adopting running agents into a team is enabled.
+func (p *Policy) Adoption() bool { return p != nil && p.adoption }
 
 // LaunchIDs lists the exact launch ids the policy binds.
 func (p *Policy) LaunchIDs() []string {
@@ -142,7 +149,7 @@ func Parse(raw []byte) (*Policy, error) {
 	if len(f.Launches) == 0 {
 		return nil, errors.New("launches: at least one exact launch is required")
 	}
-	p := &Policy{byPin: map[mesh.DefinitionRef]Launch{}, sessionForm: f.SessionFormation}
+	p := &Policy{byPin: map[mesh.DefinitionRef]Launch{}, sessionForm: f.SessionFormation, adoption: f.Adoption}
 	seen := map[string]bool{}
 	for i, l := range f.Launches {
 		at := fmt.Sprintf("launches[%d] (%q)", i, l.Launch)
@@ -228,6 +235,14 @@ func (p *Policy) HostOptions() teamhost.Options {
 	if p.sessionForm {
 		opts.OwnerAgentTrust = teamhost.TrustTrusted
 	}
+	if p.adoption {
+		// A session may be adopted only if it runs an allowlisted launch with
+		// exactly that launch's pin; the host reads both from the launch record.
+		opts.AdoptableLaunches = teamhost.AdoptedLaunches{}
+		for _, l := range p.launches {
+			opts.AdoptableLaunches[l.Launch] = l.Definition.Ref()
+		}
+	}
 	return opts
 }
 
@@ -240,6 +255,7 @@ type Ceilings struct{ Policy *Policy }
 
 var _ teamsvc.Ceilings = Ceilings{}
 var _ teamsvc.FormationAdmitter = Ceilings{}
+var _ teamsvc.AdoptionAdmitter = Ceilings{}
 
 // StageA is the fixed Stage A formation ceiling: conservative limits at depth 1,
 // messaging authority (message, assign, delegate) and at most three slots.
@@ -255,7 +271,22 @@ func (c Ceilings) FormationCeilings(_ context.Context, p teamsvc.Principal) (tea
 	if err := c.gate(p); err != nil {
 		return teamsvc.FormationPolicy{}, err
 	}
-	return StageA(), nil
+	f := StageA()
+	f.AllowAdoptedSlots = c.Policy.adoption
+	return f, nil
+}
+
+// AdmitAdoption refuses adoption unless the policy enables it and the gate
+// (operator or permitted session, not paused) admits the caller. Everything
+// about the actor and session is verified by the host, not here.
+func (c Ceilings) AdmitAdoption(_ context.Context, p teamsvc.Principal, _ teams.Team, _ teams.Slot) error {
+	if err := c.gate(p); err != nil {
+		return err
+	}
+	if !c.Policy.adoption {
+		return fmt.Errorf("%w: adoption is not enabled in the teams policy", teamsvc.ErrDenied)
+	}
+	return nil
 }
 
 func (c Ceilings) gate(p teamsvc.Principal) error {
@@ -295,14 +326,28 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 	// Workers may be one fresh member or a pool of up to two pre-enrolled
 	// agents (concurrent activation requires a pool).
 	limits := map[string]struct{ min, max int }{SlotCoordinator: {0, 1}, SlotWorkers: {1, maxWorkers}, SlotReviewer: {1, 1}}
+	if c.Policy.adoption {
+		// A pool seat is filled by adoption: it provisions nothing, so it may
+		// start empty. The coordinator pool holds the owner's seat plus one
+		// delegate; workers and reviewer keep their maxima.
+		limits = map[string]struct{ min, max int }{SlotCoordinator: {0, 1}, SlotWorkers: {0, maxWorkers}, SlotReviewer: {0, 1}}
+	}
 	runtimes, models := map[string]string{}, map[string]string{}
 	for name, bounds := range limits {
 		s, ok := slots[name]
 		if !ok {
 			return deny("missing slot %q", name)
 		}
-		if s.Resolution != teams.Fresh && (name != SlotWorkers || s.Resolution != teams.Pool) {
+		adoptable := c.Policy.adoption && s.Resolution == teams.Pool
+		if s.Resolution != teams.Fresh && (name != SlotWorkers || s.Resolution != teams.Pool) && !adoptable {
 			return deny("slot %q must use fresh members (workers may use a pool)", name)
+		}
+		if adoptable && s.Min != 0 {
+			return deny("adoptable pool slot %q must start empty (min 0)", name)
+		}
+		if adoptable && name == SlotCoordinator {
+			// The operator keeps the owner seat; one delegate may share the slot.
+			bounds.max = 2
 		}
 		if s.Min < bounds.min || s.Max > bounds.max || s.Min > s.Max {
 			return deny("slot %q size must be within %d..%d", name, bounds.min, bounds.max)

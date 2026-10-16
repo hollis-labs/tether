@@ -258,3 +258,107 @@ func TestSessionFormationIsOptIn(t *testing.T) {
 		t.Fatal("owner agent not trusted with the option on")
 	}
 }
+
+func adoptionTeam() teams.Team {
+	t := admitTeam()
+	pool := func(name string, size int, ids ...mesh.URN) {
+		for i := range t.Slots {
+			if t.Slots[i].Name == name {
+				t.Slots[i].Resolution, t.Slots[i].Pool, t.Slots[i].Identities = teams.Pool, name, ids
+				t.Slots[i].Activation, t.Slots[i].Min, t.Slots[i].Max = teams.Concurrent, 0, size
+			}
+		}
+	}
+	pool(SlotCoordinator, 2, "msg://agent/fleet/lead", "msg://agent/fleet/lead-2")
+	pool(SlotWorkers, 2, "msg://agent/fleet/one", "msg://agent/fleet/two")
+	pool(SlotReviewer, 1, "msg://agent/fleet/rev")
+	return t
+}
+
+func TestAdoptionIsOptInAndKeepsTheStageAShape(t *testing.T) {
+	off, err := Parse([]byte(validPolicy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	on, err := Parse([]byte(validPolicy + "adoption: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	req := teamsvc.FormRequest{Team: adoptionTeam()}
+	if err = (Ceilings{Policy: off}).AdmitFormation(ctx, operator(), req); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("adoption shape admitted with adoption off: %v", err)
+	}
+	if err = (Ceilings{Policy: on}).AdmitFormation(ctx, operator(), req); err != nil {
+		t.Fatalf("adoption shape refused with adoption on: %v", err)
+	}
+	// Pool seats must start empty, and the maxima do not grow.
+	for name, mutate := range map[string]func(*teams.Team){
+		"pool min 1": func(t *teams.Team) { t.Slots[1].Min = 1 },
+		"coordinator max 3": func(t *teams.Team) {
+			t.Slots[0].Max = 3
+			t.Slots[0].Identities = append(t.Slots[0].Identities, "msg://agent/fleet/lead-3")
+		},
+		"reviewer max 2": func(t *teams.Team) {
+			t.Slots[2].Max = 2
+			t.Slots[2].Identities = append(t.Slots[2].Identities, "msg://agent/fleet/rev-2")
+		},
+		"workers max 3": func(t *teams.Team) {
+			t.Slots[1].Max = 3
+			t.Slots[1].Identities = append(t.Slots[1].Identities, "msg://agent/fleet/three")
+		},
+		"durable coordinator": func(t *teams.Team) {
+			t.Slots[0].Resolution, t.Slots[0].Pool, t.Slots[0].Identities = teams.Durable, "", nil
+		},
+		"same runtime": func(t *teams.Team) { t.Slots[2].Definition = t.Slots[1].Definition },
+	} {
+		t.Run(name, func(t *testing.T) {
+			team := adoptionTeam()
+			mutate(&team)
+			if err := (Ceilings{Policy: on}).AdmitFormation(ctx, operator(), teamsvc.FormRequest{Team: team}); !errors.Is(err, teamsvc.ErrDenied) {
+				t.Fatalf("want denied, got %v", err)
+			}
+		})
+	}
+	// The coordinator seat still provisions nothing.
+	req.Launch.Counts = map[string]int{SlotCoordinator: 1}
+	if err = (Ceilings{Policy: on}).AdmitFormation(ctx, operator(), req); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("provisioned coordinator admitted: %v", err)
+	}
+}
+
+func TestAdoptionGateHostOptionsAndCeilings(t *testing.T) {
+	off, _ := Parse([]byte(validPolicy))
+	on, _ := Parse([]byte(validPolicy + "adoption: true\n"))
+	ctx := context.Background()
+	if err := (Ceilings{Policy: off}).AdmitAdoption(ctx, operator(), teams.Team{}, teams.Slot{}); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("adoption admitted while off: %v", err)
+	}
+	if err := (Ceilings{Policy: on}).AdmitAdoption(ctx, operator(), teams.Team{}, teams.Slot{}); err != nil {
+		t.Fatalf("operator adoption refused: %v", err)
+	}
+	stranger := teamsvc.Principal{ID: "msg://agent/x/y", Kind: mesh.ActorAgent, Verified: true}
+	if err := (Ceilings{Policy: on}).AdmitAdoption(ctx, stranger, teams.Team{}, teams.Slot{}); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("session adoption admitted without session_formation: %v", err)
+	}
+	on.Pause()
+	if err := (Ceilings{Policy: on}).AdmitAdoption(ctx, operator(), teams.Team{}, teams.Slot{}); !errors.Is(err, teamsvc.ErrUnavailable) {
+		t.Fatalf("paused policy admitted adoption: %v", err)
+	}
+	if len(off.HostOptions().AdoptableLaunches) != 0 {
+		t.Fatal("adoptable launches exposed with adoption off")
+	}
+	got := on.HostOptions().AdoptableLaunches
+	if len(got) != 2 || got["tether-claude"] != (mesh.DefinitionRef{ID: "claude-agent", Revision: "r1", Digest: "d-claude"}) {
+		t.Fatalf("adoptable launches: %v", got)
+	}
+	c, _ := (Ceilings{Policy: off}).FormationCeilings(ctx, operator())
+	if c.AllowAdoptedSlots {
+		t.Fatal("empty formation allowed with adoption off")
+	}
+	on.Resume()
+	c, _ = (Ceilings{Policy: on}).FormationCeilings(ctx, operator())
+	if !c.AllowAdoptedSlots {
+		t.Fatal("empty formation refused with adoption on")
+	}
+}

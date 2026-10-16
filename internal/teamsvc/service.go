@@ -156,6 +156,11 @@ func requestBounds(req any) (string, error) {
 		run, body = r.RunID, r.Body
 	case ReportResultRequest:
 		run, body = r.RunID, r.Body
+	case AdoptRequest:
+		run = r.RunID
+		if len(r.Slot) > MaxKeyBytes || len(r.SessionID) > MaxKeyBytes || len(r.Actor) > MaxKeyBytes {
+			return "", ErrInvalidRequest
+		}
 	default:
 		return "", ErrInvalidRequest
 	}
