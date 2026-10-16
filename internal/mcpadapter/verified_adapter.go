@@ -16,6 +16,13 @@ import (
 // the daemon's Service or its existing API client, never another store/runtime.
 // The transport must reverify credentials on every request before dispatch.
 func NewVerifiedAdapter(ctx context.Context, svc *app.Service, dc *client.Client) (*Adapter, error) {
+	return NewVerifiedAdapterWith(ctx, svc, dc, nil)
+}
+
+// NewVerifiedAdapterWith is NewVerifiedAdapter with the verifier that proves the native client's credential.
+// Nil means the stored credential store, which cannot verify an issued JWT; the daemon passes its composite
+// verifier so a view for a bound agent token can prepare.
+func NewVerifiedAdapterWith(ctx context.Context, svc *app.Service, dc *client.Client, verifier identity.Verifier) (*Adapter, error) {
 	p, ok := identity.FromContext(ctx)
 	if !ok || p.ID == "" {
 		return nil, identity.ErrInvalidToken
@@ -24,7 +31,10 @@ func NewVerifiedAdapter(ctx context.Context, svc *app.Service, dc *client.Client
 		if svc == nil || svc.Store == nil {
 			return nil, identity.ErrInvalidToken
 		}
-		actual, err := dc.VerifiedPrincipal(ctx, identity.NewStore(svc.Store.DB()))
+		if verifier == nil {
+			verifier = identity.NewStore(svc.Store.DB())
+		}
+		actual, err := dc.VerifiedPrincipal(ctx, verifier)
 		if err != nil {
 			return nil, err
 		}

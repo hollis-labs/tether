@@ -367,3 +367,55 @@ func TestIssuedSessionTokenIsABoundAgentToken(t *testing.T) {
 		t.Fatalf("operator-minted narrow token passed as a bound agent token: %+v %v", q, err)
 	}
 }
+
+// Architect note on A1: the composite verifier dispatches on the credential's FORMAT with no fallthrough. A JWT-shaped
+// value is judged by issuer verification only, even if the stored store would accept the same string; a stored
+// credential never reaches the JWT verifier. A failure on one path is final.
+func TestCompositeVerifierDispatchesOnFormatWithoutFallthrough(t *testing.T) {
+	is, _ := newIssuer(t)
+	const jwtShaped = "aaa.bbb.ccc"
+	calls := 0
+	stored := countingStored{inner: fakeStored{map[string]identity.Principal{
+		"tth_good":  {ID: "msg://device/d1", Kind: "device"},
+		jwtShaped:   {ID: "msg://device/sneaky", Kind: "device"},
+		"plain-tok": {ID: "msg://device/plain", Kind: "device"},
+	}}, calls: &calls}
+	v, err := NewVerifier(stored, is)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	// A JWT-shaped string that the stored store would accept is still refused: the stored store is never asked.
+	if _, err := v.Verify(ctx, jwtShaped); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatalf("JWT-shaped credential fell through to the stored store: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("the stored store was consulted %d times for a JWT-shaped credential", calls)
+	}
+	// Stored formats go to the stored store.
+	for _, tok := range []string{"tth_good", "plain-tok"} {
+		if p, err := v.Verify(ctx, tok); err != nil || p.TokenID != "" {
+			t.Fatalf("%s: %+v %v", tok, p, err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("stored store calls = %d, want 2", calls)
+	}
+	// A tth_ credential is never handed to the JWT verifier, even when it has two dots.
+	if _, err := v.Verify(ctx, "tth_a.b.c"); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatalf("tth_ with dots: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("tth_ with dots must be judged by the stored store only (calls = %d)", calls)
+	}
+}
+
+type countingStored struct {
+	inner fakeStored
+	calls *int
+}
+
+func (c countingStored) Verify(ctx context.Context, token string) (identity.Principal, error) {
+	*c.calls++
+	return c.inner.Verify(ctx, token)
+}

@@ -21,16 +21,28 @@ func (c *Client) VerifiedPrincipal(ctx context.Context, verifier identity.Verifi
 		return identity.Principal{}, identity.ErrInvalidToken
 	}
 	transport, ok := c.http.Transport.(*credentialTransport)
-	if !ok || transport.err != nil || transport.token == "" {
+	if !ok || transport.err != nil {
 		return identity.Principal{}, identity.ErrInvalidToken
 	}
-	return verifier.Verify(ctx, transport.token)
+	token := transport.current()
+	if token == "" || !validBearerToken(token) {
+		return identity.Principal{}, identity.ErrInvalidToken
+	}
+	return verifier.Verify(ctx, token)
 }
 
 // WithToken supplies an opaque bearer credential. An explicit empty token
 // disables environment/default-file lookup (e.g. for an anonymous health probe).
 func WithToken(token string) Option {
 	return func(c *Client) { c.token, c.tokenSet = token, true }
+}
+
+// WithTokenSource supplies the bearer for each request from fn instead of a fixed string, for a caller whose
+// credential is replaced while the client lives (an issued agent token the outpost rewrites every few minutes).
+// fn is called per request and must return the current token; an empty or malformed value fails the request
+// before anything is sent. It takes precedence over WithToken, TETHER_TOKEN and the default token file.
+func WithTokenSource(fn func() string) Option {
+	return func(c *Client) { c.tokenSource = fn }
 }
 
 // WithProtocolHeader makes every request carry the environment protocol
@@ -49,15 +61,25 @@ func WithTokenFile(path string) Option {
 }
 
 func (c *Client) configureCredentials() error {
-	token, err := c.resolveToken()
-	if err != nil {
-		return err
-	}
-	if token == "" {
-		return nil
-	}
-	if !validBearerToken(token) {
-		return fmt.Errorf("tether: invalid bearer credential")
+	var token string
+	if c.tokenSource != nil {
+		// Validated per request; a placeholder keeps the transport in authenticated mode.
+		token = c.tokenSource()
+		if !validBearerToken(token) {
+			return fmt.Errorf("tether: invalid bearer credential")
+		}
+	} else {
+		var err error
+		token, err = c.resolveToken()
+		if err != nil {
+			return err
+		}
+		if token == "" {
+			return nil
+		}
+		if !validBearerToken(token) {
+			return fmt.Errorf("tether: invalid bearer credential")
+		}
 	}
 	origin, err := url.Parse(c.baseURL)
 	if err != nil || origin.Host == "" || (origin.Scheme != "http" && origin.Scheme != "https") {
@@ -69,7 +91,7 @@ func (c *Client) configureCredentials() error {
 	}
 	// Do not mutate a caller-owned client/transport or its redirect policy.
 	cloned := *c.http
-	cloned.Transport = &credentialTransport{base: base, token: token, scheme: origin.Scheme, host: origin.Host, protocol: c.protocolHeader}
+	cloned.Transport = &credentialTransport{base: base, token: token, source: c.tokenSource, scheme: origin.Scheme, host: origin.Host, protocol: c.protocolHeader}
 	c.http = &cloned
 	return nil
 }
@@ -124,15 +146,29 @@ type credentialTransport struct {
 	base                http.RoundTripper
 	err                 error
 	token, scheme, host string
-	protocol            bool
+	// source, when set, replaces token on every request (WithTokenSource).
+	source   func() string
+	protocol bool
+}
+
+// current is the bearer this transport would send now.
+func (t *credentialTransport) current() string {
+	if t.source != nil {
+		return t.source()
+	}
+	return t.token
 }
 
 func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.err != nil {
 		return nil, t.err
 	}
-	if t.token == "" {
+	token := t.current()
+	if token == "" && t.source == nil {
 		return t.base.RoundTrip(req)
+	}
+	if t.source != nil && !validBearerToken(token) {
+		return nil, fmt.Errorf("tether: invalid bearer credential")
 	}
 	// A client redirect can invoke RoundTrip again at another origin. Refuse
 	// before sending either credential or request there, including redirects
@@ -141,7 +177,7 @@ func (t *credentialTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return nil, fmt.Errorf("tether: authenticated request changed origin")
 	}
 	cloned := req.Clone(req.Context())
-	cloned.Header.Set("Authorization", "Bearer "+t.token)
+	cloned.Header.Set("Authorization", "Bearer "+token)
 	if t.protocol {
 		cloned.Header.Set(environment.ProtocolHeader, strconv.Itoa(environment.Protocol))
 	}

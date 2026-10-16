@@ -36,13 +36,27 @@ type Verifier struct {
 	Issuer string
 }
 
-// NewVerifier builds the composite verifier for the issuer's own audience.
-func NewVerifier(stored identity.Verifier, is *Issuer) (*Verifier, error) {
-	jv, err := auth.NewJWTVerifier(auth.JWTConfig{
+// VerifierOption adjusts how issued JWTs are verified.
+type VerifierOption func(*auth.JWTConfig)
+
+// WithLeeway sets the clock skew allowed for exp/nbf (the library default is 30s). Tests use a tiny value to
+// observe an expiry; the daemon keeps the default.
+func WithLeeway(d time.Duration) VerifierOption { return func(c *auth.JWTConfig) { c.Leeway = d } }
+
+// NewVerifier builds the composite verifier for the issuer's own audience. It dispatches on the credential's
+// format with no fallthrough: a stored "tth_" credential (or anything that is not a three-part JWT) goes to the
+// stored store, a JWT goes to issuer verification, and a failure on one path is final: it is never retried on the
+// other.
+func NewVerifier(stored identity.Verifier, is *Issuer, opts ...VerifierOption) (*Verifier, error) {
+	cfg := auth.JWTConfig{
 		Issuer: is.Name, Audience: TetherAudience, JWKSURL: localJWKSURL,
 		Client: &http.Client{Transport: localJWKS{is.Keys}}, MinRefresh: time.Second,
 		DenyList: is.State.List,
-	})
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	jv, err := auth.NewJWTVerifier(cfg)
 	if err != nil {
 		return nil, err
 	}
