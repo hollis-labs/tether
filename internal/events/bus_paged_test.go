@@ -354,7 +354,7 @@ func TestBus_ResumeFromEvictedGapLosesAndDuplicatesNothing(t *testing.T) {
 		if paged {
 			p = &pagedFake{}
 		}
-		bus := NewBus(BusOptions{Persister: p, SubBuffer: 2, MaxConsecDrops: 2, ReplayPage: 5})
+		bus := NewBus(BusOptions{Persister: p, SubBuffer: 2, MaxConsecDrops: 2, ReplayPage: 5, StallTimeout: 50 * time.Millisecond})
 		ctx := context.Background()
 		ch, _, err := bus.Subscribe(ctx, Filter{})
 		if err != nil {
@@ -365,6 +365,7 @@ func TestBus_ResumeFromEvictedGapLosesAndDuplicatesNothing(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		time.Sleep(250 * time.Millisecond) // a consumer that stops reading outlasts the stall timeout
 		var first []int64
 		var gap GapPayload
 		timeout := time.After(5 * time.Second)
@@ -381,7 +382,7 @@ func TestBus_ResumeFromEvictedGapLosesAndDuplicatesNothing(t *testing.T) {
 				}
 				first = append(first, e.Seq)
 			case <-timeout:
-				t.Fatal("subscriber was never closed")
+				t.Fatalf("paged=%v: subscriber was never closed (got %d events, gap %+v)", paged, len(first), gap)
 			}
 		}
 		if gap.Reason != "evicted" {
@@ -415,5 +416,160 @@ func TestBus_ResumeFromEvictedGapLosesAndDuplicatesNothing(t *testing.T) {
 		if rest[0].Seq != gap.LastSeq+1 || rest[len(rest)-1].Seq != 80 {
 			t.Fatalf("paged=%v: resume gave %d..%d, want %d..80", paged, rest[0].Seq, rest[len(rest)-1].Seq, gap.LastSeq+1)
 		}
+	}
+}
+
+// Stress: a tiny live buffer and a publisher much faster than the consumer. A
+// paged subscriber must still see every event exactly once, in order; the
+// recovery after each overrun must not skip the event the buffer dropped just
+// before the worker read its neighbor (drops are counted before the removal).
+func TestBus_PagedOverrunNeverSkipsADroppedEvent(t *testing.T) {
+	const total = 4000
+	p := &pagedFake{}
+	bus := NewBus(BusOptions{Persister: p, SubBuffer: 2, MaxConsecDrops: 1 << 30, ReplayPage: 16})
+	ctx := context.Background()
+	ch, cancel, err := bus.Subscribe(ctx, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	go func() {
+		for i := 0; i < total; i++ {
+			_ = bus.Publish(ctx, Event{Scope: ScopeSession, SessionID: "s", Kind: "k"})
+		}
+	}()
+	var want int64 = 1
+	deadline := time.After(20 * time.Second)
+	for want <= total {
+		select {
+		case e := <-ch:
+			if e.Kind == KindStreamGap {
+				continue
+			}
+			if e.Seq != want {
+				t.Fatalf("got seq %d, want %d: an event was skipped or repeated", e.Seq, want)
+			}
+			want++
+			if want%97 == 0 {
+				time.Sleep(200 * time.Microsecond) // fall behind now and then
+			}
+		case <-deadline:
+			t.Fatalf("stalled at %d of %d", want, total)
+		}
+	}
+}
+
+// A consumer that keeps up (slowly) through a long replay while the publisher
+// is busy must not be evicted by live drops: the worker is re-reading the log,
+// not stuck.
+func TestBus_PagedSubscriberIsNotEvictedByLiveDropsDuringReplay(t *testing.T) {
+	p := &pagedFake{}
+	seed(t, p, 400)
+	bus := NewBus(BusOptions{Persister: p, SubBuffer: 4, MaxConsecDrops: 3, ReplayPage: 10})
+	ctx := context.Background()
+	ch, cancel, err := bus.Subscribe(ctx, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	go func() {
+		for i := 0; i < 300; i++ {
+			_ = bus.Publish(ctx, Event{Scope: ScopeSession, SessionID: "s1", Kind: "live"})
+		}
+	}()
+	var want int64 = 1
+	deadline := time.After(20 * time.Second)
+	for want <= 700 {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatalf("subscriber evicted at seq %d while it was keeping up", want)
+			}
+			if e.Kind == KindStreamGap {
+				if g := gapOf(t, e); g.Reason == "evicted" {
+					t.Fatalf("evicted gap at %d", want)
+				}
+				continue
+			}
+			if e.Seq != want {
+				t.Fatalf("got %d, want %d", e.Seq, want)
+			}
+			want++
+			time.Sleep(50 * time.Microsecond)
+		case <-deadline:
+			t.Fatalf("stalled at %d", want)
+		}
+	}
+}
+
+// A consumer that stops reading during replay is evicted by the stall timeout,
+// and told why.
+func TestBus_PagedSubscriberThatStopsReadingIsEvictedByTheStallTimeout(t *testing.T) {
+	p := &pagedFake{}
+	seed(t, p, 100)
+	bus := NewBus(BusOptions{Persister: p, SubBuffer: 2, ReplayPage: 5, StallTimeout: 50 * time.Millisecond})
+	ch, _, err := bus.Subscribe(context.Background(), Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond) // never read
+	var last Event
+	timeout := time.After(3 * time.Second)
+	for closed := false; !closed; {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				closed = true
+				break
+			}
+			last = e
+		case <-timeout:
+			t.Fatal("stalled consumer was never evicted")
+		}
+	}
+	if g := gapOf(t, last); g.Reason != "evicted" || g.HighWater != 100 {
+		t.Fatalf("final signal %+v", g)
+	}
+}
+
+// History trimmed while a replay is in flight is announced, not skipped silently.
+func TestBus_TrimDuringReplayIsAnnounced(t *testing.T) {
+	p := &pagedFake{}
+	seed(t, p, 200)
+	bus := NewBus(BusOptions{Persister: p, SubBuffer: 4, ReplayPage: 10})
+	ch, cancel, err := bus.Subscribe(context.Background(), Filter{SinceSeq: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	// consume a little, then trim the head past the cursor while the worker is parked
+	readN(t, ch, 4)
+	time.Sleep(50 * time.Millisecond)
+	p.mu.Lock()
+	p.trimTo = 150
+	p.mu.Unlock()
+	var sawGap bool
+	var last int64
+	deadline := time.After(5 * time.Second)
+	for last < 200 {
+		select {
+		case e := <-ch:
+			if e.Kind == KindStreamGap {
+				g := gapOf(t, e)
+				if g.Reason == "trimmed" {
+					sawGap = true
+					if g.EarliestAvailable != 151 || g.HighWater != 200 {
+						t.Fatalf("gap %+v", g)
+					}
+				}
+				continue
+			}
+			last = e.Seq
+		case <-deadline:
+			t.Fatalf("stalled at %d", last)
+		}
+	}
+	if !sawGap {
+		t.Fatal("a trim during replay was not announced")
 	}
 }

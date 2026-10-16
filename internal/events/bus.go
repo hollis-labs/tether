@@ -22,6 +22,10 @@ type BusOptions struct {
 	// ReplayPage bounds how many events one replay page loads when the
 	// Persister is a PagedPersister (default 512).
 	ReplayPage int
+	// StallTimeout is how long a paged subscriber's replay or recovery may sit
+	// blocked on a consumer that is not reading before the subscriber is
+	// evicted (default 30s). Live drops do not evict during replay.
+	StallTimeout time.Duration
 }
 
 // Publisher is the write half of the bus. Lifecycle producers (the
@@ -51,6 +55,7 @@ const (
 	defaultSubBuffer      = 1024
 	defaultMaxConsecDrops = 64
 	defaultReplayPage     = 512
+	defaultStallTimeout   = 30 * time.Second
 )
 
 type subscriber struct {
@@ -72,6 +77,8 @@ type subscriber struct {
 	live      chan Event    // publisher → worker
 	out       chan Event    // worker → user
 	done      chan struct{} // closed on cancel/eviction; never re-opened
+	stop      context.CancelFunc
+	catching  atomic.Bool // the worker is replaying or recovering from the log
 	closed    atomic.Bool
 	slow      atomic.Bool // evicted for lack of progress (not a plain cancel)
 	drops     atomic.Int64
@@ -88,6 +95,7 @@ type memBus struct {
 	subBuffer      int
 	maxConsecDrops int64
 	replayPage     int
+	stallTimeout   time.Duration
 
 	published atomic.Int64 // newest sequence this bus persisted (high_water for non-paged persisters)
 
@@ -107,10 +115,14 @@ func NewBus(opts BusOptions) Bus {
 	if opts.ReplayPage <= 0 {
 		opts.ReplayPage = defaultReplayPage
 	}
+	if opts.StallTimeout <= 0 {
+		opts.StallTimeout = defaultStallTimeout
+	}
 	paged, _ := opts.Persister.(PagedPersister)
 	return &memBus{
 		paged:          paged,
 		replayPage:     opts.ReplayPage,
+		stallTimeout:   opts.StallTimeout,
 		persister:      opts.Persister,
 		subBuffer:      opts.SubBuffer,
 		maxConsecDrops: opts.MaxConsecDrops,
@@ -183,7 +195,11 @@ func (b *memBus) pushTo(s *subscriber, e Event) {
 		return
 	default:
 	}
-	// Buffer full: drop the oldest buffered event, then push.
+	// Buffer full: drop the oldest buffered event, then push. The drop is
+	// counted BEFORE the oldest event leaves the buffer: a worker that then
+	// reads the next event must already see the overrun, or the removed event
+	// would be missing from a recovery that starts after the one it just read.
+	s.drops.Add(1)
 	select {
 	case <-s.live:
 	default:
@@ -194,7 +210,12 @@ func (b *memBus) pushTo(s *subscriber, e Event) {
 	case s.live <- e:
 	default:
 	}
-	s.drops.Add(1)
+	if s.catching.Load() {
+		// The worker is busy re-reading the durable log, not stuck: everything
+		// dropped now is covered by that read. A consumer that really stopped
+		// reading is evicted by the send stall timeout instead.
+		return
+	}
 	if s.consec.Add(1) >= s.maxConsec {
 		s.slow.Store(true)
 		b.evict(s)
@@ -207,6 +228,9 @@ func (b *memBus) pushTo(s *subscriber, e Event) {
 func (b *memBus) evict(s *subscriber) {
 	if s.closed.CompareAndSwap(false, true) {
 		close(s.done)
+		if s.stop != nil {
+			s.stop() // abandon an in-flight replay read
+		}
 	}
 }
 
@@ -224,17 +248,18 @@ func (b *memBus) Subscribe(ctx context.Context, f Filter) (<-chan Event, func(),
 
 	b.nextID++
 	s := &subscriber{
-		id:     b.nextID,
-		filter: f,
-		// Replay reads outlive the Subscribe call; the subscriber's lifetime is
-		// its cancel func and eviction, as before, not the caller's context.
-		ctx:       context.WithoutCancel(ctx),
+		id:        b.nextID,
+		filter:    f,
 		live:      make(chan Event, b.subBuffer),
 		out:       make(chan Event, b.subBuffer),
 		done:      make(chan struct{}),
 		maxConsec: b.maxConsecDrops,
 		cursor:    f.SinceSeq,
 	}
+	// Replay reads outlive the Subscribe call; the subscriber's lifetime is its
+	// cancel func and eviction, as before, not the caller's context. They stop
+	// when the subscriber does.
+	s.ctx, s.stop = context.WithCancel(context.WithoutCancel(ctx))
 	if b.paged != nil {
 		earliest, head, err := b.paged.StreamBoundsContext(ctx)
 		if err != nil {
@@ -242,6 +267,9 @@ func (b *memBus) Subscribe(ctx context.Context, f Filter) (<-chan Event, func(),
 			return nil, nil, err
 		}
 		s.paged = true
+		// The worker starts by re-reading the log; live drops before it gets
+		// going are covered by that read and must not evict it.
+		s.catching.Store(true)
 		if f.SinceSeq > 0 && earliest > 0 && f.SinceSeq+1 < earliest {
 			s.trimmed, s.trimmedEarliest, s.trimmedHead = true, earliest, head
 			s.cursor = earliest - 1
@@ -283,6 +311,31 @@ func (s *subscriber) send(e Event) bool {
 	}
 }
 
+// sendStalled is send for the replay/recovery path: a consumer that does not
+// take an event for stall is evicted (the live buffer's consecutive-drop count
+// does not apply while the worker is re-reading the log).
+func (b *memBus) sendStalled(s *subscriber, e Event) bool {
+	select {
+	case <-s.done:
+		return false
+	case s.out <- e:
+		return true
+	default:
+	}
+	t := time.NewTimer(b.stallTimeout)
+	defer t.Stop()
+	select {
+	case <-s.done:
+		return false
+	case s.out <- e:
+		return true
+	case <-t.C:
+		s.slow.Store(true)
+		b.evict(s)
+		return false
+	}
+}
+
 // gap delivers a KindStreamGap signal.
 func (s *subscriber) gap(p GapPayload) bool {
 	raw, _ := json.Marshal(p)
@@ -294,28 +347,39 @@ func (s *subscriber) gap(p GapPayload) bool {
 // the live buffer) while it ran are covered. It returns false if the
 // subscriber went away or the log could not be read (a gap was signaled).
 func (b *memBus) catchUp(s *subscriber) bool {
+	s.catching.Store(true)
+	defer s.catching.Store(false)
 	for {
-		_, head, err := b.paged.StreamBoundsContext(s.ctx)
+		// Drops before this bounds read are inside this catch-up. Bounds are
+		// re-read for every page: the head moves while we replay, and so can the
+		// oldest row (a trim mid-replay is announced, not skipped).
+		covered := s.drops.Load()
+		earliest, head, err := b.paged.StreamBoundsContext(s.ctx)
 		if err != nil {
 			return b.replayFailed(s, err)
 		}
+		if s.cursor > 0 && earliest > 0 && s.cursor+1 < earliest {
+			if !s.gap(GapPayload{Reason: "trimmed", LastSeq: s.cursor, EarliestAvailable: earliest, HighWater: head}) {
+				return false
+			}
+			s.cursor = earliest - 1
+		}
 		if s.cursor >= head {
+			s.signaled = covered
 			return true
 		}
-		for s.cursor < head {
-			page, err := b.paged.EventsPageContext(s.ctx, s.filter, s.cursor, head, b.replayPage)
-			if err != nil {
-				return b.replayFailed(s, err)
+		page, err := b.paged.EventsPageContext(s.ctx, s.filter, s.cursor, head, b.replayPage)
+		if err != nil {
+			return b.replayFailed(s, err)
+		}
+		for _, e := range page {
+			if s.filter.matches(e) && !b.sendStalled(s, e) {
+				return false
 			}
-			for _, e := range page {
-				if !s.send(e) {
-					return false
-				}
-				s.cursor = e.Seq
-			}
-			if len(page) < b.replayPage {
-				s.cursor = head
-			}
+			s.cursor = e.Seq
+		}
+		if len(page) < b.replayPage {
+			s.cursor = head
 		}
 	}
 }
@@ -391,6 +455,7 @@ func (b *memBus) runSubscriber(s *subscriber) {
 				send()
 			}
 		}
+		s.stop()
 		close(s.out)
 		b.mu <- struct{}{}
 		delete(b.subs, s.id)
@@ -402,19 +467,15 @@ func (b *memBus) runSubscriber(s *subscriber) {
 		}
 	}
 	if s.paged {
-		covered := s.drops.Load() // live drops before this read are inside the catch-up
 		if !b.catchUp(s) {
 			return
 		}
-		s.signaled = covered
 	} else {
 		for _, e := range s.history {
-			if !s.filter.matches(e) {
-				continue
-			}
-			if !s.send(e) {
+			if s.filter.matches(e) && !s.send(e) {
 				return
 			}
+			s.cursor = e.Seq
 		}
 	}
 	for {
@@ -437,11 +498,9 @@ func (b *memBus) runSubscriber(s *subscriber) {
 					if !s.gap(GapPayload{Reason: "overrun", Dropped: dropped, LastSeq: s.cursor, EarliestAvailable: earliest, HighWater: head, Recovered: true}) {
 						return
 					}
-					covered := s.drops.Load()
 					if !b.catchUp(s) {
 						return
 					}
-					s.signaled = covered
 					continue
 				}
 				if !b.gapAt(s, GapPayload{Reason: "overrun", Dropped: dropped, LastSeq: s.cursor}) {
