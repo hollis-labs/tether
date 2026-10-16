@@ -98,6 +98,7 @@ type memBus struct {
 	paged          PagedPersister
 	txp            TxPersister
 	idp            EventIDPersister
+	envp           EnvelopePersister
 	outboxGap      time.Duration
 	dirty          atomic.Bool   // committed outbox rows may be waiting
 	kick           chan struct{} // wakes the drainer
@@ -130,6 +131,7 @@ func NewBus(opts BusOptions) Bus {
 	paged, _ := opts.Persister.(PagedPersister)
 	txp, _ := opts.Persister.(TxPersister)
 	idp, _ := opts.Persister.(EventIDPersister)
+	envp, _ := opts.Persister.(EnvelopePersister)
 	if opts.OutboxSweep <= 0 {
 		opts.OutboxSweep = defaultOutboxGap
 	}
@@ -137,6 +139,7 @@ func NewBus(opts BusOptions) Bus {
 		paged:          paged,
 		txp:            txp,
 		idp:            idp,
+		envp:           envp,
 		outboxGap:      opts.OutboxSweep,
 		kick:           make(chan struct{}, 1),
 		replayPage:     opts.ReplayPage,
@@ -189,6 +192,14 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	var at time.Time
 	var err error
 	switch {
+	case b.envp != nil:
+		// The whole envelope is written with the row; the log assigns the id,
+		// the time and recorded_at.
+		var stored Event
+		stored, err = b.envp.InsertEventEnvelope(ctx, e)
+		if err == nil {
+			seq, at, e = stored.Seq, stored.At, stored
+		}
 	case b.idp != nil:
 		seq, at, e.EventID, err = b.idp.InsertEventIDContext(ctx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
 	default:
