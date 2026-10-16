@@ -2890,13 +2890,15 @@ Digest filters, shared by both grains: `kind`, `relation`, `source`, `since`
 Three things to know before reading a response:
 
 - **`source` means observed, not validated.** `proxy` says the proxy saw the
-  identifier go by; nothing checked that it refers to anything, and under
-  ADR 0045 the daemon cannot distinguish the real proxy from another same-host
-  caller. It is provenance, never authentication.
+  identifier go by; nothing checked that it refers to anything. The attachment
+  API accepts caller-supplied source values. It is provenance, never
+  authentication or proof of ownership of the referenced object.
 - **An absent ref is never evidence.** Read `coverage.proxy_attributable` and
   each session's `ref_attribution` before concluding a session did nothing.
-  Today that count is always zero — `--extract-refs` has no config seam
-  (`CW-20260912-0112`), so `source=proxy` is unreachable by construction.
+  Extraction is opt-in via `catalog.defaults.extract_refs`, overridden by
+  project/launch `mcp.extract_refs`. Existing proxies and worker/outpost paths
+  do not gain capture coverage just because the default changes. See
+  [ref attribution](../workstreams.md#reading-an-empty-digest).
 - **Truncation is reported, not silent.** `coverage.limit` and
   `coverage.truncated` always appear.
 
