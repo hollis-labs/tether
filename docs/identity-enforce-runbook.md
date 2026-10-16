@@ -225,7 +225,12 @@ new traffic.
   flip log. The daemon keeps its old mode until it restarts, so launches in the
   gap before the restart can still create unbounded credentials: after the
   restart run `tether identity unbounded --check`, which exits non-zero while any
-  stand, and re-run the flip with `--revoke-anonymous` if it lists some.
+  stand, and re-run the flip with `--revoke-anonymous` if it lists some. The
+  required sequence is therefore: **flip, restart the daemon, run
+  `tether identity unbounded --check`, and re-flip with `--revoke-anonymous` if
+  it is non-zero.** A daemon-side rule that refuses these launches as soon as the
+  persisted mode is enforce (CW-20261016-0231) must land before the first real
+  enforce flip on any environment.
 
 ## 5. Declared fail mode per enforcement point
 
