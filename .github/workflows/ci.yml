@@ -21,8 +21,10 @@ env:
   TEST_TIMEOUT: 20m
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PR branches: a new push cancels the stale run. main: every merged commit
+  # gets its own group, so no run on main is ever cancelled by the next merge.
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   check:
