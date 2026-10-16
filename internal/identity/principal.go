@@ -162,3 +162,16 @@ func (p Principal) DefaultAddress() string {
 func IsOperatorCredential(p Principal) bool {
 	return p.Verified && p.Kind == "operator" && p.ID == OperatorID && p.TokenID == ""
 }
+
+// IsBoundAgentToken reports whether p is an issued session-bound agent token
+// (a JWT minted with a session_id, Kind agent): TokenID marks it as issued,
+// SessionID names the session and the subject must be that session's principal
+// id. It deliberately keys on these, never on Kind alone, so an operator-minted
+// narrow token (Kind operator, TokenID set) can never pass as a session.
+func IsBoundAgentToken(p Principal) bool {
+	return p.Kind == "agent" && p.Verified && p.TokenID != "" && p.SessionID != "" && p.ID == SessionPrincipalIDPrefix+p.SessionID
+}
+
+// SessionPrincipalIDPrefix is the subject prefix of an agent session's principal
+// (authissuer.SessionPrincipalID builds the same value).
+const SessionPrincipalIDPrefix = "msg://session/local/"

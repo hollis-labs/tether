@@ -64,6 +64,12 @@ func TestAgentScopeMiddlewareLetsOnlyBoundAgentTokensReachTheGateway(t *testing.
 			t.Errorf("device token carrying a sid reached %s", path)
 		}
 	}
+	// a non-canonical path must not borrow the gateway exemption
+	for _, path := range []string{"/p/../sessions/bootstrap", "/p/./../mcp/../sessions/bootstrap", "/mcp/../sessions/bootstrap", "//mcp", "/p/a/../../sessions/bootstrap"} {
+		if c := call(agent, "POST", path); c == http.StatusNoContent {
+			t.Errorf("bound agent token admitted at non-canonical %q", path)
+		}
+	}
 	// the exemption is only the gateway: another local-custody route stays refused
 	if c := call(agent, "POST", "/sessions/bootstrap"); c == http.StatusNoContent {
 		t.Error("bound agent token reached a local-custody route")

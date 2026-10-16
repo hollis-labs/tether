@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/environment"
@@ -332,7 +333,9 @@ func AgentScopeMiddleware(mode identity.Mode, next http.Handler) http.Handler {
 		// agent token reaches it like the session credential it replaces; the
 		// gateway then applies that session's own server policy, which the
 		// token's scopes cannot widen. Any other issued token stays refused.
-		if identity.IsBoundAgentToken(p) && (r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/p/")) {
+		// Match only a canonical path: "/p/../x" must not borrow the exemption
+		// (net/http's mux redirects such paths today; this does not rely on it).
+		if identity.IsBoundAgentToken(p) && path.Clean(r.URL.Path) == r.URL.Path && (r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/p/")) {
 			next.ServeHTTP(w, r)
 			return
 		}
