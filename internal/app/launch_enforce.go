@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -29,6 +30,8 @@ type persistedIdentity struct {
 	now  func() time.Time                                 // nil = time.Now
 	read func(root string) (config.IdentityConfig, error) // nil = config.LoadIdentity
 	hits int                                              // reads performed (tests)
+	// warned is set once the missing-global.yaml warning has been logged.
+	warned bool
 }
 
 func (p *persistedIdentity) get(root string) (config.IdentityConfig, error) {
@@ -52,6 +55,12 @@ func (p *persistedIdentity) get(root string) (config.IdentityConfig, error) {
 	p.cfg, p.err = read(root)
 	p.at = now()
 	p.hits++
+	if errors.Is(p.err, os.ErrNotExist) && !p.warned {
+		// A catalog root with no global.yaml: the daemon falls back to the mode it
+		// started with. Say so once, so a deleted file is visible.
+		p.warned = true
+		log.Printf("WARNING: catalog root %q has no global.yaml; the persisted identity mode cannot be read, so only the mode this daemon started with applies to unbounded launches", root)
+	}
 	return p.cfg, p.err
 }
 

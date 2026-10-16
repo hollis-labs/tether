@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,8 +215,20 @@ func TestNoGlobalYamlFallsBackToTheStartMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.pastTheTTL()
+	var logs strings.Builder
+	orig := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(orig) })
 	if _, err := r.launchAs(context.Background(), "observe-start", ""); err != nil {
 		t.Fatalf("no global.yaml, observe at start: %v", err)
+	}
+	if !strings.Contains(logs.String(), "has no global.yaml") {
+		t.Fatalf("a missing global.yaml was not warned about: %q", logs.String())
+	}
+	r.pastTheTTL()
+	_, _ = r.launchAs(context.Background(), "again", "")
+	if strings.Count(logs.String(), "has no global.yaml") != 1 {
+		t.Fatalf("the warning repeated: %q", logs.String())
 	}
 	r.svc.Catalog = &config.Catalog{}
 	r.svc.Catalog.Global.Identity.Mode = "enforce"
