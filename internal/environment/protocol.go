@@ -24,6 +24,12 @@ type ProtocolError struct {
 // polls its deny-list): they cannot send the Tether-Protocol header, so the
 // gate must not demand it. Both stay behind their own authentication, and
 // every other issuer route (notably POST /auth/token) still needs the header.
+//
+// The hub's remote MCP gateway (exactly POST, GET and DELETE /mcp for a bound agent token, see internal/daemon/remote_mcp.go)
+// is likewise served without the header, but it is exempt by sitting outside this gate, not by an entry here: Tether-Protocol
+// is a version gate for the Tether API, not authentication, and MCP clients negotiate their own version through initialize
+// and MCP-Protocol-Version, so they cannot be asked to send it. Any other path under /mcp (for example /mcp/anything) and
+// every other method still go through the ordinary remote chain and still need the header.
 func thirdPartyRead(r *http.Request) bool {
 	switch r.URL.Path {
 	case "/.well-known/jwks.json":

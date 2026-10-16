@@ -3,11 +3,14 @@ package mcptransport
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/authissuer"
+	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/store"
@@ -228,5 +231,64 @@ func TestTransportViewSurvivesFirstTokenExpiryAndDiesWithTheAdoptedJTI(t *testin
 	fresh, _ := g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read")
 	if status, _ := g.call(t, fresh, id); status == http.StatusOK {
 		t.Fatal("the view survived the revocation of its adopted token's jti")
+	}
+}
+
+// remoteCall sends a request the way Tailscale Serve would: to the remote listener's handler, with the Host the hub
+// allows and no Tether protocol header.
+func (g *issuedRig) remoteCall(t *testing.T, remote http.Handler, token, session string) (int, string) {
+	t.Helper()
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`
+	if session != "" {
+		body = `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://tether.hub.example/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	if session != "" {
+		req.Header.Set("Mcp-Session-Id", session)
+	}
+	w := httptest.NewRecorder()
+	remote.ServeHTTP(w, req)
+	return w.Code, w.Header().Get("Mcp-Session-Id")
+}
+
+// CW-20261016-0160 H1 test (h), end to end: through the REMOTE listener's handler and the real MCP transport, a bound
+// agent token opens a session, a refreshed token continues it, and a change of authority, a revoked token or an ended
+// session is refused. The remote Host is not a local authority, so this also proves the transport honors the
+// listener's allow-list instead of its own.
+func TestRemoteMCPEndToEndRefreshContinuesSession(t *testing.T) {
+	g := newIssuedRig(t)
+	srv := &daemon.Server{
+		Config:   daemon.Config{IdentityMode: identity.Enforce, RemoteListener: daemon.RemoteListenerConfig{Enabled: true, ListenAddr: "tcp:127.0.0.1:7331", AllowedHosts: []string{"tether.hub.example"}}},
+		Identity: g.f.ids, Issuer: g.issuer, MCP: g.f.handler, RemoteMCPSessions: g.f.db,
+	}
+	t.Cleanup(srv.CloseIdentityAudit)
+	remote := srv.RemoteHandler("127.0.0.1:7331")
+
+	first, _ := g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read", "tether.operate")
+	status, id := g.remoteCall(t, remote, first, "")
+	if status != http.StatusOK || id == "" {
+		t.Fatalf("remote initialize with a bound agent token: %d session %q", status, id)
+	}
+	refreshed, _ := g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read", "tether.operate")
+	if status, _ := g.remoteCall(t, remote, refreshed, id); status != http.StatusOK {
+		t.Fatalf("(h) a refreshed token on the open remote session: %d", status)
+	}
+	narrowed, _ := g.mint(t, authissuer.TetherAudience, "s-rot", "tether.read")
+	if status, _ := g.remoteCall(t, remote, narrowed, id); status != http.StatusForbidden {
+		t.Fatalf("narrowed scopes on the open remote session: %d, want 403", status)
+	}
+	otherSession, _ := g.mint(t, authissuer.TetherAudience, "s-other", "tether.read", "tether.operate")
+	if status, _ := g.remoteCall(t, remote, otherSession, id); status != http.StatusForbidden {
+		t.Fatalf("another session's token on the open remote session: %d, want 403", status)
+	}
+	// Ending the session closes the door even for a token the deny-list has not caught up with.
+	if err := g.f.db.UpdateSessionState("s-rot", "completed", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := g.remoteCall(t, remote, refreshed, id); status != http.StatusUnauthorized {
+		t.Fatalf("token for an ended session: %d, want 401", status)
 	}
 }

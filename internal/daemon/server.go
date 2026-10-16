@@ -189,9 +189,14 @@ type Server struct {
 	Close func() error
 	// MCP is the injected daemon-owned Streamable HTTP/UDS gateway. Its
 	// lifecycle closes sessions/streams and upstreams before HTTP/store drain.
-	MCP         http.Handler
-	MCPShutdown func()
-	MCPDrain    func(context.Context)
+	MCP http.Handler
+	// RemoteMCPSessions looks up a worker session for the remote /mcp gate; it defaults to Service when that
+	// implements GetSession. Without a lookup, an issuer or an MCP handler, /mcp stays unavailable remotely.
+	RemoteMCPSessions sessionLookup
+	remoteMCPOnce     sync.Once
+	remoteMCP         *remoteMCP
+	MCPShutdown       func()
+	MCPDrain          func(context.Context)
 
 	// WakeSweeper is optional; when set, Run starts a periodic background
 	// pass (wakeSweepInterval) retrying wake attempts the delivery core
@@ -698,6 +703,10 @@ type Health struct {
 	// from a daemon that predates it.
 	Hardening *HealthHardening `json:"hardening,omitempty"`
 
+	// RemoteMCPDenials counts remote /mcp requests refused by the bound-agent-token gate, by reason
+	// (CW-20261016-0160 H1). Absent until the gate has refused something.
+	RemoteMCPDenials map[string]uint64 `json:"remote_mcp_denials,omitempty"`
+
 	// SandboxProtect is the daemon's own view of control-plane protection
 	// (CW-20261001-0142): decided from the daemon's environment, which `tether
 	// doctor` cannot see from its shell. Absent from an older daemon.
@@ -821,6 +830,7 @@ func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode,
 	if s.SandboxProtect != nil {
 		h.SandboxProtect = s.SandboxProtect()
 	}
+	h.RemoteMCPDenials = s.RemoteMCPDenials()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(h)
 }
