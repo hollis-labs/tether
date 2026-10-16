@@ -81,15 +81,11 @@ func (s *Spool) Append(_ context.Context, ev runtimeevents.Event) (runtimeevents
 		// A new session file: bound the directory once it exists, after this append has released its lock.
 		defer func() { _, _ = s.pruneToLimits(time.Now(), ev.SessionID) }()
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: name checked above, dir is ours
+	f, unlock, err := openLocked(path)
 	if err != nil {
-		return ev, fmt.Errorf("agentevents: open spool: %w", err)
+		return ev, err
 	}
 	defer func() { _ = f.Close() }()
-	unlock, err := lockFile(f)
-	if err != nil {
-		return ev, fmt.Errorf("agentevents: lock spool: %w", err)
-	}
 	defer unlock()
 	seqPath := filepath.Join(s.Dir, ev.SessionID+".seq")
 	last := lastSequence(seqPath, path)
@@ -182,9 +178,10 @@ func (s *Spool) pruneToLimits(now time.Time, keep string) (int, error) {
 	return s.prune(now, age, total, keep)
 }
 
-// lastSequence is the highest sequence the session has used. The sidecar is the fast path; when it is missing or
-// unreadable, or lower than the file it describes (it was lost, or the file was written by an older writer), the spool file
-// itself is the truth, so a damaged sidecar can never restart the sequence.
+// lastSequence is the highest sequence the session has used. The sidecar is the fast path; when it is missing, unreadable
+// or zero, the spool file itself is the truth, so a damaged sidecar can never restart the sequence. (Because the sequence is
+// written before the line and replaced by rename, a sidecar that is merely too low can only come from outside damage, which
+// is not worth a scan of the file on every append.)
 func lastSequence(seqPath, spoolPath string) uint64 {
 	var last uint64
 	if raw, err := os.ReadFile(seqPath); err == nil { //nolint:gosec // G304: built from the checked session id
@@ -272,7 +269,7 @@ func (s *Spool) Read(sessionID string) ([]runtimeevents.Event, error) {
 }
 
 // Prune removes session files not written for maxAge, then the oldest files until the spool is within maxBytes (a zero
-// limit is not applied). It returns how many sessions it removed. Run it from the daemon's housekeeping, never from a hook.
+// limit is not applied). It returns how many sessions it removed. Append runs it when a session file is first created; a daemon may run it as housekeeping too.
 func (s *Spool) Prune(now time.Time, maxAge time.Duration, maxBytes int64) (int, error) {
 	return s.prune(now, maxAge, maxBytes, "")
 }
@@ -351,4 +348,29 @@ func (s *Spool) removeSession(session string) (bool, error) {
 	_ = os.Remove(filepath.Join(s.Dir, session+".seq"))
 	_ = os.Remove(filepath.Join(s.Dir, session+".dropped"))
 	return true, nil
+}
+
+// openLocked opens the session file for appending and takes its lock. A prune can unlink the path between the open and the
+// lock (it try-locks, finds the file free, removes it); a writer that then got the lock would be appending to an unlinked
+// inode and its event would vanish. So after the lock the open file must still be the one the path names, else it reopens.
+func openLocked(path string) (*os.File, func(), error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: name checked by the caller, dir is ours
+		if err != nil {
+			return nil, nil, fmt.Errorf("agentevents: open spool: %w", err)
+		}
+		unlock, err := lockFile(f)
+		if err != nil {
+			_ = f.Close()
+			return nil, nil, fmt.Errorf("agentevents: lock spool: %w", err)
+		}
+		fi, ferr := f.Stat()
+		pi, perr := os.Stat(path)
+		if ferr == nil && perr == nil && os.SameFile(fi, pi) {
+			return f, unlock, nil
+		}
+		unlock()
+		_ = f.Close()
+	}
+	return nil, nil, errors.New("agentevents: spool file kept changing under the writer")
 }

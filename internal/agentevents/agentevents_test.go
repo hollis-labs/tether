@@ -324,3 +324,40 @@ func TestSpoolDirectoryIsBoundedWhenASessionStarts(t *testing.T) {
 		t.Fatalf("remaining spool files: %v", entries)
 	}
 }
+
+// A prune that removes the file between a writer's open and its lock must not swallow the writer's event: the writer
+// notices the path no longer names its file and reopens.
+func TestAppendReopensAFileUnlinkedUnderIt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sess-race.jsonl")
+	stale, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stale.Close() }()
+	if err := os.Remove(path); err != nil { // the prune
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil { // the next writer's file
+		t.Fatal(err)
+	}
+	f, unlock, err := openLocked(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	defer unlock()
+	fi, _ := f.Stat()
+	pi, _ := os.Stat(path)
+	if !os.SameFile(fi, pi) {
+		t.Fatal("openLocked returned a file the path no longer names")
+	}
+	// And through Append: the event lands in the file the path names.
+	r := newRecorder(t, dir, "sess-race2")
+	if _, err := r.Record(context.Background(), Observation{Kind: runtimeevents.KindSessionIdle, Channel: runtimeevents.ChannelHook, Tier: Exact}); err != nil {
+		t.Fatal(err)
+	}
+	if evs, _ := (&Spool{Dir: dir}).Read("sess-race2"); len(evs) != 1 {
+		t.Fatalf("events = %d", len(evs))
+	}
+}
