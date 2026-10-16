@@ -65,13 +65,22 @@ type internalLauncher interface {
 // service has to keep implementing it.
 var _ internalLauncher = (*app.Service)(nil)
 
-// launch starts the created session. A spawned member is bounded by its parent
-// session's grant; a root member (no parent) is internal and unattributed.
-func (s *Sessions) launch(ctx context.Context, sessionID, parent string) (*app.Launched, error) {
-	if il, ok := s.service.(internalLauncher); ok {
-		return il.LaunchInternal(ctx, sessionID, app.InternalLaunch{Kind: app.OriginTeam, OriginSessionID: parent})
+// launch starts the created session. It is bounded by the authority the team
+// session was first launched under (recorded per intent), and by its parent
+// session's grant when it has one. With neither, the launch is internal and
+// unattributed, which a global enforce flip refuses.
+func (s *Sessions) launch(ctx context.Context, intentKey, runID, sessionID, parent string) (*app.Launched, error) {
+	il, ok := s.service.(internalLauncher)
+	if !ok {
+		return s.service.LaunchSessionWithContext(ctx, sessionID)
 	}
-	return s.service.LaunchSessionWithContext(ctx, sessionID)
+	grant, err := s.launchGrant(ctx, intentKey)
+	if err != nil {
+		return nil, err
+	}
+	launched, err := il.LaunchInternal(ctx, sessionID, app.InternalLaunch{Kind: app.OriginTeam, OriginSessionID: parent, Grant: grant})
+	logRefusedLaunch(intentKey, runID, grant, parent, err)
+	return launched, err
 }
 
 func sessionKey(key string) string { return "team-port:" + key }
@@ -131,7 +140,7 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 	if err = s.enrollment.BindSession(ctx, in.IntentKey, in.Actor, launched.SessionID); err != nil {
 		return "", err
 	}
-	_, err = s.launch(ctx, launched.SessionID, in.ParentSession)
+	_, err = s.launch(ctx, in.IntentKey, in.Provision.RunID, launched.SessionID, in.ParentSession)
 	if err != nil {
 		return "", classifySession(err)
 	}

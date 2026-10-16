@@ -32,6 +32,17 @@ type InternalLaunch struct {
 	// has no origin session (it keeps the profile ceiling and is reported as
 	// internal_unattributed).
 	OriginSessionID string
+	// Grant is a recorded authority (a principal's scopes) that bounds the launch
+	// when there is no live origin session or verified caller, such as a team
+	// session recovered or reconciled long after the verb that formed it.
+	Grant *LaunchGrant
+}
+
+// LaunchGrant is the authority a launch was first made under, recorded so a
+// later launch of the same thing can be bounded by it.
+type LaunchGrant struct {
+	Principal string
+	Scopes    []string
 }
 
 // ErrLaunchRefused marks a launch the daemon refused because the authority it
@@ -121,6 +132,18 @@ func (s *Service) launchCeiling(ctx context.Context, granted []string) ([]string
 				}
 				scopes = narrowed
 			}
+		}
+	}
+	if internal && origin.Grant != nil {
+		bounded = true
+		if !slices.Contains(origin.Grant.Scopes, "*") {
+			var narrowed []string
+			for _, scope := range scopes {
+				if slices.Contains(origin.Grant.Scopes, scope) {
+					narrowed = append(narrowed, scope)
+				}
+			}
+			scopes = narrowed
 		}
 	}
 	switch {
