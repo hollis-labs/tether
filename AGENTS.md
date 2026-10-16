@@ -39,6 +39,15 @@ make -C apps/sysop all       # separate module; the root gate does not reach it
 `make check` is the gate CI runs. Run it before opening a pull request; a
 maintainer will review the PR.
 
+## Changelog
+
+Never edit `CHANGELOG.md` in a feature PR. Add `changes/<TASK-ID>-<slug>.md`
+with the bullet(s) for the entry (bullets only, no headings, each naming a task
+id); `changes/README.md` has the format and `scripts/changelog.sh check` the
+rules. CI warns when a PR edits `CHANGELOG.md` directly. The release owner runs
+`make changelog-assemble VERSION=X.Y.Z` in a `release/*` PR before tagging;
+`scripts/release.sh` refuses to run while fragments are waiting.
+
 ## Boundaries
 
 State lives under two roots, and the catalog decides which. `~/.tether/` holds

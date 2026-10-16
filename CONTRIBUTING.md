@@ -20,6 +20,11 @@ correct, minimal, well-tested Go that passes the full quality gate.
 3. **Keep commits small and coherent.** One logical change per commit.
 4. **Run `make check` locally** before opening a PR — it is the same gate CI runs.
 5. **Fast-forward merges** are preferred. Avoid merge commits when possible.
+6. **Changelog entries are fragments.** Do not edit `CHANGELOG.md` in a feature
+   PR; add `changes/<TASK-ID>-<slug>.md` holding the bullet(s) instead (see
+   [`changes/README.md`](changes/README.md)). Parallel PRs would otherwise
+   conflict on `CHANGELOG.md` while main moves during the CI gate. The release
+   owner assembles fragments in a `release/*` PR before tagging.
 
 ## Commit messages
 

@@ -1,4 +1,4 @@
-.PHONY: all build install go-install uninstall run sysop-build sysop-install sysop-check release-build release-install package-release test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean clean-coverage
+.PHONY: changelog-check changelog-assemble changelog-test all build install go-install uninstall run sysop-build sysop-install sysop-check release-build release-install package-release test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean clean-coverage
 
 # ---------------------------------------------------------------------------
 # Install / release metadata
@@ -144,7 +144,19 @@ tools-install:
 # Gates
 # ---------------------------------------------------------------------------
 
-check: fmt vet lint test-race vuln coverage-report sysop-check
+check: fmt vet lint changelog-test changelog-check test-race vuln coverage-report sysop-check
+
+# Changelog fragments (CW-20261016-0159): changes/README.md.
+changelog-check:
+	./scripts/changelog.sh check
+
+changelog-test:
+	./scripts/changelog_test.sh
+
+# Release owner only, in a release/* PR: make changelog-assemble VERSION=1.2.3 [DATE=2026-11-01]
+changelog-assemble:
+	@test -n "$(VERSION)" || { echo "changelog-assemble: VERSION is required (example: VERSION=1.2.3)" >&2; exit 1; }
+	./scripts/changelog.sh assemble "$(VERSION)" $(DATE)
 
 clean:
 	rm -rf bin dist
