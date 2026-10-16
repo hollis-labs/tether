@@ -9,13 +9,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-forums v0.2.1-0.20261013160606-670cbc335d52
 	github.com/hollis-labs/go-ssekit v0.2.0
-<<<<<<< HEAD
-=======
-	github.com/hollis-labs/libs/plugin-mcp v0.1.1
-	github.com/hollis-labs/libs/security/auth v0.1.0
-	github.com/hollis-labs/libs/security/secrets v0.1.0
-	github.com/hollis-labs/libs/util v0.2.0
->>>>>>> b6327d0 (build(auth): use published libs/security/{auth,secrets} v0.1.0, drop local replaces)
 	github.com/hollis-labs/substrate/harness v0.5.0
 	github.com/hollis-labs/substrate/llm-core v0.1.0
 	github.com/hollis-labs/substrate/mesh v0.4.0
@@ -79,17 +72,10 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
-<<<<<<< HEAD
-<<<<<<< HEAD
 	github.com/hollis-labs/libs/core/util v0.4.0
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0
+	github.com/hollis-labs/libs/security/auth v0.1.0
 	github.com/hollis-labs/libs/security/secrets v0.1.0
-=======
-	github.com/hollis-labs/go-secrets v0.0.0
-	github.com/hollis-labs/libs/security/auth v0.0.0
->>>>>>> 9d1801d (feat(identity): local middleware on go-auth with off semantics B; unified scope vocabulary)
-=======
->>>>>>> b6327d0 (build(auth): use published libs/security/{auth,secrets} v0.1.0, drop local replaces)
 	github.com/hollis-labs/substrate/agent v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
