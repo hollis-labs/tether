@@ -56,7 +56,7 @@ Three responsibilities of the worker:
 Transport: WebSocket (`gorilla/websocket`, already an indirect dep of go.mod, v1.5.3; promote with `go mod tidy`).
 Endpoint on the hub remote listener: `GET /worker/v1/connect`, bearer = worker device token, header
 `Tether-Protocol: 1` (required by `environment.ProtocolGate`). Public path through Caddy:
-`wss://tether.hub.nanite.cloud/worker/v1/connect` (tailnet only; the name already routes to the remote listener
+`wss://tether.example/worker/v1/connect` (tailnet only; the name already routes to the remote listener
 127.0.0.1:8948 and is in the daemon's `--allowed-host`/`--allowed-origin` lists). JSON text frames, one object per
 frame, `t` is the type. Ping every 15 s; hub marks a worker offline after 45 s of silence.
 
@@ -198,16 +198,19 @@ owning-environment on every session (also silences the foreign-session wake-swee
 Windows; distinct repo/binary hardening (CW-20261012-0017, OS parity -0016); retiring `tether env add` /
 `tether service` and the full-Tether worker; team-host binding to a worker.
 
-## 9. Operational facts (so nobody has to rediscover them)
+## 9. Deployment example
 
-- **Hub**: `100.74.49.44` (tailnet), user `chrispian`, host key `SHA256:bRUb1YRc6LI38gN9fEgkxvGi9YJHZRbRMA8/r/bZplU`.
+Addresses, hostnames and the host-key fingerprint below are placeholders.
+Substitute your deployment values and verify the host key through a trusted channel.
+
+- **Hub**: `192.0.2.10` (documentation-only address), user `operator`, host key `SHA256:<HOST_KEY_FINGERPRINT>`.
   Tether runs as the Cerberus resource `hub-tether` (`/var/lib/fabric/config/hub-fabric.cerberus.yaml`):
   `/var/lib/fabric/bin/tether --catalog /var/lib/fabric/tether/catalog serve --remote-listen tcp:127.0.0.1:8948
-  --allowed-host tether.hub.nanite.cloud --allowed-host tether.nanite.cloud --allowed-origin ...`.
+  --allowed-host tether.example --allowed-host sysop.example --allowed-origin ...`.
   Deploy a new hub binary: build linux/amd64, copy to `/var/lib/fabric/bin/tether`, then
   `cerberus resource reload hub-tether --ack` (**`apply` does not restart a running daemon; `reload` does**).
   Logs: `~/.cerberus/apps/hub-fabric/hub-tether/logs/stderr.log`. API name (device tokens, WebSocket):
-  `tether.hub.nanite.cloud`; GUI name (tailnet gate, Sysop): `tether.nanite.cloud`.
+  `tether.example`; GUI name (tailnet gate, Sysop): `sysop.example`.
 - **Hub config traps**: Cerberus `command:`/`env:` values must be quoted strings (unquoted numbers are silently
   dropped). The hub's `global.yaml` is the merged one (`ai:`, `teams`, identity `teams: enforce`); the operator
   token is agent-os's (`run/operator.token`), matched with the migrated DB.
@@ -245,7 +248,7 @@ no catalog and opens no Tether database. Its root defaults to `~/.tether-worker`
 
 ```sh
 # Claude performs Linux setup/deployment; the operator enrolls each Mac.
-tether-worker enroll --hub https://tether.hub.nanite.cloud --code CODE \
+tether-worker enroll --hub https://tether.example --code CODE \
   --label worker-1 --mcp-config /path/to/configured-hub-clients.json --install
 tether-worker run
 tether-worker status

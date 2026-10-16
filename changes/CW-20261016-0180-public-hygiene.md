@@ -1,0 +1,1 @@
+- Replace deployment-specific hostnames and addresses with documentation placeholders and reject private infrastructure identifiers in tracked text files during CI (CW-20261016-0180).

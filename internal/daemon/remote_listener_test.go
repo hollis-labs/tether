@@ -462,19 +462,19 @@ func TestRemoteListenerIssuerReadsNeedNoProtocolHeader(t *testing.T) {
 	}
 	// The production shape: the public Host the hub allows, no Tether-Protocol
 	// header (a go-auth verifier), the deny-list read with a maintain device.
-	s.Config.RemoteListener.AllowedHosts = []string{"localhost:9000", "tether.hub.nanite.cloud"}
+	s.Config.RemoteListener.AllowedHosts = []string{"localhost:9000", "tether.example"}
 	expires := time.Now().Add(time.Hour)
 	maintain, err := s.Identity.Mint(context.Background(), identity.Principal{ID: "remote-denylist-poller", Kind: "device", Scopes: []string{"maintain"}, ExpiresAt: &expires})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/.well-known/jwks.json", "/auth/denylist"} {
-		r := httptest.NewRequest("GET", "https://tether.hub.nanite.cloud"+path, nil)
+		r := httptest.NewRequest("GET", "https://tether.example"+path, nil)
 		r.Header.Set("Authorization", "Bearer "+maintain)
 		w := httptest.NewRecorder()
 		s.RemoteHandler("127.0.0.1:8948").ServeHTTP(w, r)
 		if w.Code != 200 {
-			t.Fatalf("GET %s with Host tether.hub.nanite.cloud and no protocol header returned %d: %s", path, w.Code, w.Body.String())
+			t.Fatalf("GET %s with Host tether.example and no protocol header returned %d: %s", path, w.Code, w.Body.String())
 		}
 	}
 	// A different Host is still refused, JWKS included.
