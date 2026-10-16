@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -329,5 +330,34 @@ func TestRetentionCurrentPIICapReachesExistingAuditRows(t *testing.T) {
 	row := rowByID(t, db, stored.Seq)
 	if row["payload_json"] != nil || row["payload_digest"] != "withheld" || row["retention_policy_id"] != original.ID() || row["retention_class"] != events.RetentionAudit {
 		t.Fatal("PII override lost audit provenance or emitted hash")
+	}
+}
+
+func TestRetentionHistoricalAuditPolicyCannotDriveAdmissionOrSweep(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	cfg := installTestRetention(t, db, "retention: {acknowledge_risk: true, classes: {audit: {full: 400d}}}", map[string]eventretention.Class{"session.state_changed": eventretention.Audit})
+	raw, err := cfg.EncodeSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := eventretention.RestoreSnapshot([]byte(strings.Replace(string(raw), `"full":34560000000000000`, `"full":86400000000000`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetEventRetentionAdmission(ctx, legacy, map[string]eventretention.Class{"session.state_changed": eventretention.Audit}); err == nil {
+		t.Fatal("historical below-floor config admitted")
+	}
+	e := fullEnvelope()
+	e.Envelope.Class.PII = false
+	stored, err := db.InsertEventEnvelope(ctx, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.TombstoneEventPayloads(ctx, legacy, time.Now().Add(2*eventretention.Day), 0, 100); err == nil {
+		t.Fatal("historical below-floor sweep allowed")
+	}
+	if row := rowByID(t, db, stored.Seq); row["payload_json"] == nil || row["retention_policy_id"] != cfg.ID() {
+		t.Fatal("rejected old config altered admission or payload")
 	}
 }

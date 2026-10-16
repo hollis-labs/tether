@@ -34,8 +34,9 @@ These are the defaults; omitted fields inherit them. `0` means forever, and
 from server-recorded admission, not cumulative tier durations. A day is 24 hours
 and a year 365 days; other positive Go durations are accepted. A class needs at
 least one rollup bucket so its rows can eventually be trimmed safely. Buckets
-must be positive and unique. Shortening retention is free, except that cutting
-audit's full/envelope horizon below 400 days needs acknowledgment. Extending the
+must be positive and unique. Shortening non-audit retention is free. Finite audit payload retention requires
+acknowledgment and must be at least 400 days; a longer envelope horizon cannot
+bypass that payload floor. The PII payload override still applies. Extending the
 PII payload cap also needs acknowledgment. Both return warnings even with the
 flag. Secrets cannot be configured for storage and secret records are rejected.
 
@@ -91,7 +92,8 @@ existing request-status transaction.
 
 `TombstoneEventPayloads` scans at most 1,000 published, classified payloads per
 transaction. Its caller must pass the current compiled configuration explicitly;
-an uninitialized configuration is refused. It verifies admission snapshot
+an uninitialized or restored historical configuration is refused. Historical
+admission snapshots remain decodable as audit evidence. It verifies admission snapshot
 integrity for audit provenance, resolves eligibility from the current policy,
 and clears only eligible payloads. Its conditional UPDATE repeats the pending/payload/policy
 guards. A failure rolls back the whole batch. The result is a per-sweep scan

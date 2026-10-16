@@ -17,6 +17,9 @@ import (
 // daemon/catalog caller invokes this yet; an empty mapping disables new class
 // admission but does not alter policies already referenced by events.
 func (s *Store) SetEventRetentionAdmission(ctx context.Context, cfg eventretention.Config, kinds map[string]eventretention.Class) error {
+	if err := cfg.ValidateForPass(); err != nil {
+		return err
+	}
 	encoded, err := cfg.EncodeSnapshot()
 	if err != nil {
 		return err
@@ -104,8 +107,8 @@ func (s *Store) TombstoneEventPayloads(ctx context.Context, current eventretenti
 	if now.IsZero() || after < 0 || limit <= 0 || limit > 1000 {
 		return EventTombstoneBatch{}, fmt.Errorf("retention: require now, nonnegative cursor and limit in [1,1000]")
 	}
-	if current.ID() == "" {
-		return EventTombstoneBatch{}, fmt.Errorf("retention: current policy required")
+	if err := current.ValidateForPass(); err != nil {
+		return EventTombstoneBatch{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

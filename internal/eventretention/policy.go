@@ -103,9 +103,10 @@ type rawConfig struct {
 // epoch. Admission snapshots remain immutable audit provenance; retention
 // decisions use the current Config for all classified rows on each pass.
 type Config struct {
-	rules  map[Class]Rule
-	piiCap Age
-	id     string
+	rules      map[Class]Rule
+	piiCap     Age
+	id         string
+	historical bool
 }
 
 // Policy is an immutable class snapshot from a Config epoch. Sweep callers
@@ -137,8 +138,9 @@ func (c Config) Snapshot(class Class) (Policy, error) {
 
 // Parse accepts the proposed retention block, not a whole live catalog. Nothing
 // calls this from catalog loading or the daemon yet. Unknown fields are errors.
-// Only extending the PII cap or reducing audit's raw retention below 400d needs
-// acknowledge_risk; warnings are returned even when the risk is acknowledged.
+// Extending the PII cap or choosing finite audit payload retention requires
+// acknowledge_risk. Audit payload retention has a hard 400d floor; the PII
+// payload override may still shorten it.
 func Parse(data []byte) (Config, []string, error) {
 	var raw rawConfig
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -150,11 +152,11 @@ func Parse(data []byte) (Config, []string, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return Config{}, nil, fmt.Errorf("retention: expected one YAML document")
 	}
-	return compile(raw)
+	return compile(raw, false)
 }
 
-func compile(raw rawConfig) (Config, []string, error) {
-	c := Config{piiCap: Age(30 * Day), rules: map[Class]Rule{
+func compile(raw rawConfig, historical bool) (Config, []string, error) {
+	c := Config{historical: historical, piiCap: Age(30 * Day), rules: map[Class]Rule{
 		Audit:    {Full: 0, Envelope: -1, Rollups: []RollupRule{{Age(Day), 0}}},
 		State:    {Full: Age(180 * Day), Envelope: Age(2 * Year), Rollups: []RollupRule{{Age(time.Hour), Age(2 * Year)}, {Age(Day), 0}}},
 		Activity: {Full: Age(30 * Day), Envelope: Age(180 * Day), Rollups: []RollupRule{{Age(time.Hour), Age(2 * Year)}, {Age(Day), 0}}},
@@ -205,12 +207,11 @@ func compile(raw rawConfig) (Config, []string, error) {
 		warnings = append(warnings, "retention.pii_cap exceeds the 30d payload cap")
 	}
 	audit := c.rules[Audit]
-	horizon := audit.Full
-	if audit.Full != 0 && audit.Envelope >= 0 {
-		horizon = audit.Envelope
+	if !historical && audit.Full > 0 && audit.Full < Age(400*Day) {
+		return Config{}, warnings, fmt.Errorf("retention.classes.audit.full: finite retention must be at least 400d")
 	}
-	if horizon != 0 && horizon < Age(400*Day) {
-		warnings = append(warnings, "retention.classes.audit cuts raw audit retention below 400d")
+	if audit.Full > 0 {
+		warnings = append(warnings, "retention.classes.audit.full makes audit payload retention finite")
 	}
 	if len(warnings) > 0 && !raw.Retention.AcknowledgeRisk {
 		return Config{}, warnings, fmt.Errorf("retention.acknowledge_risk required: %s", strings.Join(warnings, "; "))
@@ -225,4 +226,20 @@ func compile(raw rawConfig) (Config, []string, error) {
 	sum := sha256.Sum256(canonical)
 	c.id = hex.EncodeToString(sum[:])
 	return c, warnings, nil
+}
+
+// ValidateForPass requires a configuration parsed under the current rules.
+// Restored snapshots are audit evidence only; they cannot supply a current
+// acknowledgement or drive new admission or a retention pass.
+func (c Config) ValidateForPass() error {
+	if c.id == "" {
+		return fmt.Errorf("retention: current policy required")
+	}
+	if c.historical {
+		return fmt.Errorf("retention: historical snapshot is audit evidence, not a current policy")
+	}
+	if full := c.rules[Audit].Full; full > 0 && full < Age(400*Day) {
+		return fmt.Errorf("retention.classes.audit.full: finite retention must be at least 400d")
+	}
+	return nil
 }
