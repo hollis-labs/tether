@@ -17,8 +17,9 @@ This file was backfilled from the git history and is a good-faith summary, not a
 - Add the launch-time task stamp (CW-20261012-0062a): `POST /sessions` and `POST /sessions/bootstrap` accept
   `task_id` (the bare Torque id), stored on the session (migration 0079), planted as `TETHER_TASK_ID` for hub-local
   and Outpost launches (set last, so env overrides cannot spoof it), carried by resume and replacement, and added to
-  the caller attribution of a resolved session. Only the launcher may assert it (403 `task_id_not_permitted` for an
-  agent, session or unverified caller); it is set at creation and never rebound. See `docs/task-stamp.md`.
+  the caller attribution of a resolved session. Only the verified local operator may assert it; an agent or session
+  gets 403 `task_id_not_permitted`, any other caller has it dropped (launch proceeds, `identity_audit`
+  `task_id_dropped`); it is set at creation and never rebound. See `docs/task-stamp.md`.
 - Record an identity audit row for every session-bound token mint (CW-20261016-0089):
   `POST /auth/token` with `session_id` writes `identity_audit` with the minting
   parent (`principal_id`), `session_id`, scopes (`required_scope`) and

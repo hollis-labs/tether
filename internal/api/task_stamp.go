@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -14,36 +16,59 @@ import (
 // against Torque.
 var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-// taskStampLauncher reports whether the caller may assert a task id on a launch or a
-// bootstrap. Only a launcher may: a request with no principal (the local socket, trusted
-// as for the rest of the local API) or a verified principal that is not a session or an
-// agent (the operator, a Torque service or device credential). An agent, a session
-// credential or an unverified claim can never set it.
-func taskStampLauncher(r *http.Request) bool {
-	p, ok := identity.FromContext(r.Context())
-	if !ok {
-		return true
-	}
-	if p.Kind == "session" || p.Kind == "agent" || p.SessionID != "" {
-		return false
-	}
-	return p.Verified
-}
+// eventTaskIDDropped is the identity_audit event for a task_id a non-operator sent and
+// the launch discarded.
+const eventTaskIDDropped = "task_id_dropped"
 
-// checkTaskStamp validates a task id asserted on a request. An empty id is always fine.
-// A non-empty id from a non-launcher is refused with 403 task_id_not_permitted, never
-// silently dropped, so a misbehaving caller finds out; a malformed id is a 400.
-func checkTaskStamp(w http.ResponseWriter, r *http.Request, taskID string) bool {
+// taskStamp decides what a request's task_id does (architect ruling for tether#379):
+//
+//   - the verified local operator: accepted (400 if malformed);
+//   - an agent or a session credential: refused with 403 task_id_not_permitted;
+//   - any other caller (worker device, other service, unverified claim, no principal):
+//     the field is dropped, the request proceeds without a stamp, and the drop is
+//     recorded in identity_audit.
+//
+// The operator check is an explicit allow, not "anything that is not an agent", so a new
+// principal kind starts denied. It returns the task id to use ("" when none or dropped)
+// and false after writing an error response.
+//
+// TODO(CW-20261012-0062): add a Torque service principal after the issuer lands
+// (CW-20261016-0017) and allow it here; decision tether_task_id_stamp_and_usage_rows_2026_10_16.
+func (s *Server) taskStamp(w http.ResponseWriter, r *http.Request, taskID string) (string, bool) {
 	if taskID == "" {
-		return true
+		return "", true
 	}
-	if !taskStampLauncher(r) {
-		writeError(w, http.StatusForbidden, CodeForbidden, "task_id_not_permitted: only the launcher may assert a task id")
-		return false
+	p, ok := identity.FromContext(r.Context())
+	if ok && (p.Kind == "session" || p.Kind == "agent" || p.SessionID != "") {
+		writeError(w, http.StatusForbidden, CodeForbidden, "task_id_not_permitted: an agent or session may not assert a task id")
+		return "", false
+	}
+	if !ok || !identity.IsOperatorCredential(p) {
+		if ok {
+			s.auditTaskIDDropped(r, p)
+		}
+		return "", true
 	}
 	if !taskIDPattern.MatchString(taskID) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "task_id must be a bare task id (letters, digits, '.', '_' or '-', at most 64 characters)")
-		return false
+		return "", false
 	}
-	return true
+	return taskID, true
+}
+
+// auditTaskIDDropped records the dropped field with the caller's real authentication state.
+func (s *Server) auditTaskIDDropped(r *http.Request, p identity.Principal) {
+	if s.IdentityAudit == nil {
+		return
+	}
+	auth := "claimed"
+	if p.Verified {
+		auth = "verified"
+	}
+	family, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	_ = s.IdentityAudit(r.Context(), identity.Observation{
+		At: time.Now().UTC(), PrincipalID: p.ID, SessionID: p.SessionID,
+		Mode: s.IdentityMode, Authentication: auth,
+		Method: r.Method, Route: "/" + family, Event: eventTaskIDDropped,
+	})
 }

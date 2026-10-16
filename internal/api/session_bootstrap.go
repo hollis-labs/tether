@@ -98,9 +98,11 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "session_id is required")
 		return
 	}
-	if !checkTaskStamp(w, r, req.TaskID) {
+	taskID, taskOK := s.taskStamp(w, r, req.TaskID)
+	if !taskOK {
 		return
 	}
+	req.TaskID = taskID
 
 	created := false
 	if _, err := s.SessionBootstrap.GetSession(req.SessionID); err != nil {

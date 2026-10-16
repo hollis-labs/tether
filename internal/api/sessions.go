@@ -270,9 +270,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
 		return
 	}
-	if !checkTaskStamp(w, r, req.TaskID) {
+	taskID, taskOK := s.taskStamp(w, r, req.TaskID)
+	if !taskOK {
 		return
 	}
+	req.TaskID = taskID
 	idemPrincipal, keyErr := idempotencyPrincipal(r.Context())
 	if keyErr != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "verified device required")

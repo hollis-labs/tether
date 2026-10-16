@@ -8,9 +8,12 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
 - **Value.** The bare Torque id, for example `CW-20261016-0155`, never transformed. The URN form
   `msg://task/torque/<id>` is used only where a URN is needed. Accepted shape: letters, digits, `.`, `_`, `-`,
   starting with a letter or digit, at most 64 characters (400 otherwise). There is no existence check against Torque.
-- **Who may assert it.** Only the launcher: a request with no principal (the local socket), or a verified principal
-  that is not a session or an agent (the operator, a Torque service or device credential). An agent, a session
-  credential or an unverified claim gets `403 task_id_not_permitted`; it is refused, not silently dropped.
+- **Who may assert it.** Only the verified local operator (`identity.IsOperatorCredential`), as an explicit allow:
+  a new principal kind starts denied. An agent or a session credential that sends `task_id` gets
+  `403 task_id_not_permitted`. Any other caller (a worker device, another service, an operator-minted narrow token, an
+  unverified claim, no principal) has the field dropped: the launch still succeeds without a stamp and an
+  `identity_audit` row with event `task_id_dropped` records it. TODO: allow a Torque service principal here once the
+  issuer provides one (CW-20261016-0017; decision `tether_task_id_stamp_and_usage_rows_2026_10_16`).
 - **When.** At creation only. `POST /sessions` takes `task_id`; `POST /sessions/bootstrap` takes `task_id` and applies
   it only when the row is created. A later request, even from the launcher, never rebinds the session.
   Later claims about the task are Torque facts, not Tether state.
