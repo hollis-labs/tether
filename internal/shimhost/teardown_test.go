@@ -18,13 +18,29 @@ import (
 	"github.com/hollis-labs/libs/harness/core/shim"
 )
 
+// exitWait bounds how long a test waits for a host process to be gone. It is a failure ceiling, not the expectation: the wait
+// returns the moment the process exits. It has to cover StopGrace (1s in the kill-timeout test, during which the host ignores
+// SIGTERM) plus scheduling under a loaded CI runner, so one second was flaky by construction.
+const exitWait = 15 * time.Second
+
 func testHostHandle(t *testing.T, r Receipt) *processHandle {
 	t.Helper()
 	spec, err := Descriptor(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := Connect(context.Background(), r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", r.Journal, false)
+	// The host frees its single observer slot asynchronously after the previous client closed (placement and earlier calls
+	// each held it), so a refusal with observer_busy is retried until it clears; any other error is real.
+	deadline := time.Now().Add(exitWait)
+	var c *Client
+	for {
+		c, err = Connect(context.Background(), r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", r.Journal, false)
+		var fault *Failure
+		if err == nil || !errors.As(err, &fault) || fault.Code != "observer_busy" || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +73,7 @@ func TestStopRetiresCrashedHost(t *testing.T) {
 	if err := handle.signal(syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), exitWait)
 	defer cancel()
 	if err := handle.wait(ctx); err != nil {
 		t.Fatal(err)
@@ -89,7 +105,7 @@ func TestStopRetiresAfterKillTimeout(t *testing.T) {
 	if err := p.Stop(context.Background(), r); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), exitWait)
 	defer cancel()
 	if err := handle.wait(ctx); err != nil {
 		t.Fatal(err)
@@ -164,7 +180,7 @@ func TestSystemdCollectedUnitTeardown(t *testing.T) {
 				if err := handle.signal(syscall.SIGKILL); err != nil {
 					t.Fatal(err)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), exitWait)
 				err := handle.wait(ctx)
 				cancel()
 				if err != nil {
@@ -309,7 +325,7 @@ func TestPIDFDPeerExitRetiresPlacement(t *testing.T) {
 		if err := handle.signal(syscall.SIGKILL); err != nil {
 			return -1, err
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), exitWait)
 		defer cancel()
 		if err := handle.wait(ctx); err != nil {
 			return -1, err
