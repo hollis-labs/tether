@@ -3,6 +3,7 @@ package environmentstream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -26,6 +27,9 @@ type Server struct {
 	MaxCatchUp    int
 	PollInterval  time.Duration
 	WriteTimeout  time.Duration
+	// StoredIDs is nil until the coordinated ID activation. The default
+	// constructor and all production callers leave the legacy projection on.
+	StoredIDs *StoredIDProjection
 }
 
 func New(environmentID string, db *store.Store, bus events.Bus) *Server {
@@ -57,6 +61,26 @@ type Gap struct {
 	EarliestAvailable int64  `json:"earliest_available"`
 	HighWaterSeq      int64  `json:"high_water_seq"`
 	SnapshotRequired  bool   `json:"snapshot_required"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
+}
+
+func (s *Server) checkWindowIDs(window store.EnvironmentWindow, after int64) error {
+	if s.StoredIDs == nil || window.GapReason != "" {
+		return nil
+	}
+	var pending error
+	for _, e := range window.Events {
+		if e.Seq > after {
+			if err := s.StoredIDs.checkID(e); err != nil {
+				if errors.Is(err, ErrBackfillInProgress) {
+					pending = err
+					continue
+				}
+				return err
+			}
+		}
+	}
+	return pending
 }
 
 // Stream registers live delivery BEFORE reading the durable catch-up. It then
@@ -116,6 +140,20 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 		http.Error(w, "event tail unavailable", http.StatusInternalServerError)
 		return
 	}
+	// Validate the whole global window before session filtering or committing
+	// SSE headers. A filtered-out legacy row must not advance the resume cursor.
+	if err := s.checkWindowIDs(window, after); err != nil {
+		if errors.Is(err, ErrBackfillInProgress) {
+			w.Header().Set("Retry-After", "1")
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(Gap{EnvironmentID: s.EnvironmentID, Reason: ErrBackfillInProgress.Error(), EarliestAvailable: window.EarliestAvailable, HighWaterSeq: window.HighWater, RetryAfterSeconds: 1})
+		} else {
+			http.Error(w, "event_id_invariant", http.StatusInternalServerError)
+		}
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -136,11 +174,24 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 	gap := func(reason string, window store.EnvironmentWindow) {
 		// A gap never advances Last-Event-ID to the head: only a new snapshot
 		// authorizes discarding the missing history.
-		_ = emit("gap", after, Gap{s.EnvironmentID, reason, window.EarliestAvailable, window.HighWater, true})
+		g := Gap{EnvironmentID: s.EnvironmentID, Reason: reason, EarliestAvailable: window.EarliestAvailable, HighWaterSeq: window.HighWater, SnapshotRequired: true}
+		if reason == ErrBackfillInProgress.Error() {
+			g.SnapshotRequired = false
+			g.RetryAfterSeconds = 1
+		}
+		_ = emit("gap", after, g)
 	}
 	drain := func(window store.EnvironmentWindow) bool {
 		if window.GapReason != "" {
 			gap(window.GapReason, window)
+			return false
+		}
+		if err := s.checkWindowIDs(window, after); err != nil {
+			reason := "event_id_invariant"
+			if errors.Is(err, ErrBackfillInProgress) {
+				reason = ErrBackfillInProgress.Error()
+			}
+			gap(reason, window)
 			return false
 		}
 		for _, stored := range window.Events {
@@ -148,7 +199,11 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 				continue
 			}
 			if sessionID == "" || stored.SessionID == sessionID {
-				e, mappingErr := Map(s.EnvironmentID, stored)
+				mapEvent := Map
+				if s.StoredIDs != nil {
+					mapEvent = s.StoredIDs.MapStored
+				}
+				e, mappingErr := mapEvent(s.EnvironmentID, stored)
 				if mappingErr != nil {
 					gap("restart", window)
 					return false
