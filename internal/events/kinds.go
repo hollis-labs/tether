@@ -109,4 +109,8 @@ const (
 	// KindSessionHealthChanged reports a session health transition (schema
 	// session_health_changed@1, retention R-state): on change only, from != to.
 	KindSessionHealthChanged = "session.health_changed"
+
+	// KindSessionShimStatus reports the state of a session's detached shim host.
+	// Payload schema: {"state":"<string>","reason":"<string>", ...}
+	KindSessionShimStatus = "session.shim_status"
 )

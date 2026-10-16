@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/shimbridge"
 	"github.com/hollis-labs/tether/internal/shimcodex"
 	"github.com/hollis-labs/tether/internal/shimhost"
@@ -68,7 +69,7 @@ func (s *Service) shimDiagnostic(id string, r *shimhost.Receipt, state, reason s
 	}
 	log.Printf("session %q shim state=%s reason=%s key=%q backend=%q unit=%q socket=%q", id, status.State, status.Reason, status.Key, status.Backend, status.Unit, status.Socket)
 	s.shimDiagSeen.Store(id, state+"|"+reason)
-	publishSessionEvent(s.Bus, id, "", "session.shim_status", status)
+	publishSessionEvent(s.Bus, id, "", events.KindSessionShimStatus, status)
 }
 
 func (s *Service) retainShim(row store.SessionShimRow, receipt *shimhost.Receipt, reason string) {

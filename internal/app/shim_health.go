@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"github.com/hollis-labs/tether/internal/events"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/api"
@@ -52,7 +53,7 @@ func (s *Service) computeShimHealth(id string) *api.ShimHealthStatus {
 	}
 	// Only the newest shim_status matters, and it is one indexed lookup (idx_events_session_kind_at);
 	// QueryEvents would filter the whole session history for it.
-	if last, err := s.Store.LatestSessionEvent(context.Background(), id, "session.shim_status"); err == nil && last != nil {
+	if last, err := s.Store.LatestSessionEvent(context.Background(), id, events.KindSessionShimStatus); err == nil && last != nil {
 		var body shimStatus
 		if json.Unmarshal([]byte(last.PayloadJSON), &body) == nil {
 			status.Reason = body.Reason

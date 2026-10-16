@@ -88,3 +88,26 @@ func runStage(ctx context.Context, s Stage, e *Event) (err error) {
 }
 
 func defaultOnStageError(err *StageError) { log.Printf("%v", err) }
+
+// Observer sees every event after it is persisted and fanned out, outside the
+// bus lock, so it may publish follow-up events itself. It runs on the
+// publisher's goroutine: keep it quick, and treat the event as read-only. A
+// panic or slow observer never loses the event. Events written by PublishTx
+// reach observers only through the outbox drain's fan-out, which does not call
+// them; observers react to Publish.
+type Observer interface {
+	Observe(ctx context.Context, e Event)
+}
+
+func (b *memBus) observe(ctx context.Context, e Event) {
+	for _, o := range b.observers {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("events: observer %T panicked on %q: %v", o, e.Kind, r)
+				}
+			}()
+			o.Observe(ctx, e)
+		}()
+	}
+}
