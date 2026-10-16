@@ -112,7 +112,13 @@ old at once; no restart is needed. A failure leaves the old row and file valid.
 It also repairs a missing, loose or mismatched token file. The rotation is
 appended to `run/identity-flips.jsonl` with short hash prefixes only; nothing
 secret is printed. Afterwards restart long-lived readers (MCP proxies, scripts)
-and replace other copies of the old credential. Never remove principal records
+and replace other copies of the old credential. Issued tokens minted from the
+old credential remain valid until expiry (max 60 minutes): they are stateless
+JWTs whose `sub`/`par` is the operator id, which rotation does not change.
+Deny-list them if the rotation is for a compromise. A `run/operator.token.prev`
+file can only remain if the process crashed between the link and the commit; it
+holds the old (still valid until the next rotation) credential, so remove it
+after confirming the pair verifies. Never remove principal records
 or substitute an unrelated token as an implicit repair.
 
 ## Attribution and retention
