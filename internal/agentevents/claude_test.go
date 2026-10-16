@@ -29,7 +29,7 @@ func TestClaudeHookMapping(t *testing.T) {
 		"Notification-idle":        K(runtimeevents.KindSessionIdle),
 		"Notification-other":       nil,
 		"SubagentStart":            K(runtimeevents.KindAgentSubagentSpawn),
-		"SubagentStop":             K(KindAgentSubagentStop),
+		"SubagentStop":             K(runtimeevents.KindAgentSubagentStop),
 		"TeammateIdle":             nil,
 		"Stop":                     K(runtimeevents.KindTurnCompleted, runtimeevents.KindSessionIdle),
 		"SessionEnd":               K(runtimeevents.KindProcessExited),
@@ -157,7 +157,7 @@ func TestClaudeHookMappingOfRealCapturedPayloads(t *testing.T) {
 		"PreToolUse-agent":         {runtimeevents.KindAgentToolUse, "prompt-1", ""},
 		"SubagentStart":            {runtimeevents.KindAgentSubagentSpawn, "prompt-1", `{"agent_type":"Explore","subagent_id":"agent-1"}`},
 		"PreToolUse-bash-subagent": {runtimeevents.KindAgentToolUse, "prompt-1", ""},
-		"SubagentStop":             {KindAgentSubagentStop, "prompt-1", `{"agent_type":"Explore","outcome":"completed","subagent_id":"agent-1"}`},
+		"SubagentStop":             {runtimeevents.KindAgentSubagentStop, "prompt-1", `{"agent_type":"Explore","outcome":"completed","subagent_id":"agent-1"}`},
 		"Stop":                     {runtimeevents.KindTurnCompleted, "prompt-1", ""},
 		"SessionEnd":               {runtimeevents.KindProcessExited, "prompt-1", ""},
 	} {
