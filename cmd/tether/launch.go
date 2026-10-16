@@ -34,6 +34,7 @@ var (
 	launchIdemKey      string
 	launchReplace      bool
 	launchTorqueTasks  []string
+	launchTask         string
 	launchTorqueURL    string
 	launchTorqueDir    string
 )
@@ -78,7 +79,7 @@ var launchCmd = &cobra.Command{
 			idemKey = deriveLaunchIdempotencyKey(launchID, launchWorker, launchTorqueTasks)
 		}
 
-		taskID := launchTaskStamp(launchTorqueTasks)
+		taskID := launchTaskStamp(launchTask, launchTorqueTasks)
 		var res api.LaunchResponse
 		if taskID != "" || launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
@@ -149,6 +150,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
 	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are scoped to the authenticated caller); \"auto\" derives a stable key from the launch, worker and --torque-task ids")
 	launchCmd.Flags().BoolVar(&launchReplace, "replace", false, "with --idempotency-key: rebind the key to this launch when the session it was bound to has ended (a live session refuses)")
+	launchCmd.Flags().StringVar(&launchTask, "task", "", "stamp the session with this Torque task id (accepted only from the operator credential this CLI presents); defaults to the task given by a single --torque-task")
 	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
 	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990); sends TORQUE_API_TOKEN as a bearer token when set")
 	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")
@@ -178,11 +180,14 @@ func deriveLaunchIdempotencyKey(launchID, worker string, tasks []string) string 
 	return "launch-" + hex.EncodeToString(sum[:16])
 }
 
-// launchTaskStamp is the launch-time task stamp (CW-20261012-0062a) for `--torque-task`: the
-// operator launching for exactly one Torque task names it. With several tasks there is no
-// single task to stamp, so none is sent. The daemon accepts it only from the operator
-// credential this CLI presents.
-func launchTaskStamp(tasks []string) string {
+// launchTaskStamp is the launch-time task stamp (CW-20261012-0062a): an explicit --task wins;
+// otherwise the operator launching for exactly one Torque task (--torque-task) names it. With
+// several tasks there is no single task to stamp, so none is sent. The daemon accepts it only
+// from the operator credential this CLI presents.
+func launchTaskStamp(explicit string, tasks []string) string {
+	if t := strings.TrimSpace(explicit); t != "" {
+		return t
+	}
 	if len(tasks) == 1 {
 		return strings.TrimSpace(tasks[0])
 	}

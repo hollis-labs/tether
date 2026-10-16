@@ -30,7 +30,8 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
 
 ## Who sends it today
 
-- `tether launch --torque-task <id>` stamps that task when exactly one is given (several tasks: no single task, no stamp).
+- `tether launch --task <id>` stamps that task; without it, `--torque-task <id>` stamps its task when exactly one is given
+  (several tasks: no single task, no stamp). An explicit `--task` wins.
   The CLI presents `operator.token`, so the daemon accepts it.
 - The MCP `tether_session_create` tool deliberately has no `task_id`: agents are the usual MCP callers and would only be
   refused, so the stamp is set by the operator CLI (and later Torque's service principal), never through MCP.
