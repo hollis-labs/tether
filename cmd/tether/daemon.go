@@ -292,7 +292,7 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		defer closeTeams()
-		mcpHandler, err := buildDaemonMCP(ctx, svc, cfg, identities, teamOps)
+		mcpHandler, err := buildDaemonMCP(ctx, svc, cfg, identities, issuer, teamOps)
 		if err != nil {
 			_ = closeService()
 			return err

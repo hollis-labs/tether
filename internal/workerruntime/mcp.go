@@ -299,10 +299,10 @@ func (e *Executor) hubHTTPUnavailable(spec workerwire.LaunchSpec) string {
 		return "this worker cannot mint agent tokens"
 	case !hasToken:
 		return "the hub did not grant a session agent token"
-	case len(spec.EditableAgents) > 0:
-		// The editable_agents allowlist is enforced by a flag on the ssh-launched 'tether mcp'; the hub gateway does
-		// not carry it yet, so it would silently disappear. Refuse rather than widen.
-		return "the agent declares editable_agents, which /mcp does not enforce yet"
+	case !spec.MCPPolicy:
+		// The hub saves the session's MCP policy, editable_agents allowlist included, and enforces it on /mcp. A hub
+		// that did not (it predates this) leaves /mcp without a policy for the session and without the allowlist.
+		return "the hub did not save this session's MCP policy (an older hub)"
 	case (&HTTPRelay{URL: e.HubMCPURL}).validate() != nil:
 		return "the hub MCP url is not https"
 	}

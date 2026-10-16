@@ -167,8 +167,8 @@ The old entry (`ssh <hub> tether mcp --daemon-only`) has no session binding, no 
 **off by default** and only used when `"mcp_ssh_fallback": true` is set in the worker's `config.json` (or
 `TETHER_WORKER_MCP_SSH_FALLBACK=1`); every use is logged `DEGRADED`. Without it, a launch that cannot use `/mcp` fails
 with the reason instead of running unattributed: no hub MCP url, a worker that cannot mint tokens, no agent token granted,
-a non-https url, or an agent that declares `editable_agents` (the allowlist is a flag on the ssh-launched `tether mcp`
-and the hub gateway does not carry it yet). The fallback is for the rollout only and goes away once every worker is on
+a non-https url, or a hub that did not save the session's MCP policy (an older hub; the hub now saves it for every
+worker session, with the `editable_agents` allowlist, and enforces it on `/mcp`). The fallback is for the rollout only and goes away once every worker is on
 `/mcp`. The operator's own CLI keeps its ssh form.
 
 ## Status and removal

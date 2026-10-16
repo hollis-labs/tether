@@ -8,6 +8,10 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Worker sessions get a saved MCP policy (CW-20261016-0160 follow-up): `launchWorkerSession` saves the session's MCP authority
+  (servers, profile, tools, upstream ownership, extract_refs and the `editable_agents` allowlist) like a hub-local launch, so the
+  hub's `/mcp` can serve the session's agent token (without it `/mcp` refused every worker session). The launch frame carries
+  `mcp_policy`; a worker plants the `/mcp` relay only when it is set, and no longer refuses agents with `editable_agents`.
 - Serve `/mcp` on the remote listener to bound issuer agent tokens only (CW-20261016-0160 H1): a worker's agent can reach the hub's MCP
   gateway over HTTPS (Tailscale Serve) with its session's own token. The token must verify (signature, expiry, `aud=tether`, jti/sid
   deny-list) and its session must be live; everything else on `/mcp` and every other route behaves as before. Same saved policy,

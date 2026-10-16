@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
@@ -166,6 +167,12 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
 		return nil, fmt.Errorf("extract_refs requires the worker's claude MCP relay")
 	}
+	if err := s.saveWorkerMCPPolicy(ctx, row, p, spec.ExtractRefs); err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
+		return nil, fmt.Errorf("capture session MCP authority: %w", err)
+	}
+	spec.MCPPolicy = true
 	undoIdentity, err := s.prepareWorkerIdentity(ctx, row, p, &spec)
 	if err != nil {
 		exit := 1
@@ -235,4 +242,27 @@ func (s *Service) sendWorkerCommand(ctx context.Context, row *store.SessionRow, 
 	defer cancel()
 	_, err := s.Workers.Send(wait, row.WorkerID, workerwire.Frame{T: kind, CmdID: uuid.NewString(), Session: row.ID, Data: data})
 	return err
+}
+
+// saveWorkerMCPPolicy records a worker-placed session's MCP authority the way a hub-local launch does, so the hub's
+// /mcp gateway can serve the session's agent token with exactly this policy: the servers, profile and tool allowlist
+// from the plan, the upstream ownership, extract_refs, and the editable_agents allowlist. Before this a worker session
+// had no saved policy and /mcp refused it (CW-20261016-0160).
+func (s *Service) saveWorkerMCPPolicy(ctx context.Context, row *store.SessionRow, p *launch.Plan, extractRefs bool) error {
+	var cfg mcpgateway.Config
+	if s.cat() != nil {
+		cfg = s.cat().Global.MCP
+	}
+	ownership, err := s.mcpOwnership()
+	if err != nil {
+		return err
+	}
+	policy, err := sessionMCPPolicy(row.ID, row.LogicalAgentID, p, cfg)
+	if err != nil {
+		return err
+	}
+	policy.UpstreamOwnership = ownership
+	policy.ExtractRefs = extractRefs
+	policy.EditableAgents = s.launchEditableAgents(p)
+	return s.Store.SaveSessionMCPPolicy(ctx, policy.Seal())
 }

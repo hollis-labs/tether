@@ -80,6 +80,11 @@ type LaunchSpec struct {
 	// tether entry plus only these entries from its hub-mcp.json. Nil (a hub that predates the field)
 	// plants every imported entry; an empty non-nil list plants tether alone.
 	MCPServers []string `json:"mcp_servers"`
+	// MCPPolicy says the hub saved this session's MCP policy (servers, profile, tools, extract_refs and the
+	// editable_agents allowlist) before sending the launch, so the hub's /mcp gateway can serve the session and
+	// enforces that allowlist itself. A worker plants the /mcp relay only when it is set; a hub that predates it
+	// never sets it, and the worker then needs the degraded ssh fallback.
+	MCPPolicy bool `json:"mcp_policy,omitempty"`
 	// ResumeSessionID is the provider's own conversation id to continue (claude --resume). Set only for a
 	// hub-approved resume on the same worker that ran the source session.
 	ResumeSessionID string `json:"resume_session_id,omitempty"`
