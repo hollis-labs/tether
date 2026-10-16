@@ -39,6 +39,9 @@ type Event struct {
 	Scope          Scope
 	SessionID      string
 	LogicalAgentID string
-	Kind           string
-	PayloadJSON    string
+	// Envelope carries the persisted v1.1 blocks (scope dims, class, corr, actor,
+	// ...). Zero means none: nothing is stamped by the bus itself.
+	Envelope    Envelope
+	Kind        string
+	PayloadJSON string
 }
