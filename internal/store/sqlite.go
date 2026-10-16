@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
@@ -28,10 +29,13 @@ import (
 var ErrSessionNotFound = errors.New("session not found")
 
 type Store struct {
-	db            *sql.DB
-	stateDBPath   string
-	channelAuthMu sync.RWMutex
-	channelAuth   channels.Authorization
+	// eventsCommitted is called after a transaction that wrote outbox event rows
+	// commits (see events_outbox.go).
+	eventsCommitted atomic.Pointer[func()]
+	db              *sql.DB
+	stateDBPath     string
+	channelAuthMu   sync.RWMutex
+	channelAuth     channels.Authorization
 	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
 	// fan-out instance on every call within a process so Subscribe/Send
 	// cross-talk works. See messaging_store.go.

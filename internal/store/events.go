@@ -32,26 +32,25 @@ func (s *Store) InsertEvent(scope events.Scope, sessionID, kind, payloadJSON str
 }
 
 func (s *Store) InsertEventContext(ctx context.Context, scope events.Scope, sessionID, kind, payloadJSON string) (int64, time.Time, error) {
+	seq, at, _, err := s.InsertEventIDContext(ctx, scope, sessionID, kind, payloadJSON)
+	return seq, at, err
+}
+
+// InsertEventIDContext is InsertEventContext that also returns the D6 event id it
+// minted and persisted with the row (events.EventIDPersister).
+func (s *Store) InsertEventIDContext(ctx context.Context, scope events.Scope, sessionID, kind, payloadJSON string) (int64, time.Time, string, error) {
 	if scope == "" {
-		return 0, time.Time{}, fmt.Errorf("event scope required")
+		return 0, time.Time{}, "", fmt.Errorf("event scope required")
 	}
 	if kind == EnvironmentRequestKind {
 		return s.insertEnvironmentRequest(ctx, scope, sessionID, payloadJSON)
 	}
 	at := time.Now().UTC()
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO events (scope, session_id, at, kind, payload_json) VALUES (?, ?, ?, ?, ?)`,
-		scope, nullIfEmpty(sessionID), at.Format(time.RFC3339Nano),
-		kind, nullIfEmpty(payloadJSON),
-	)
+	seq, eventID, err := insertEventRow(ctx, s.db, scope, sessionID, kind, payloadJSON, at, "", false)
 	if err != nil {
-		return 0, time.Time{}, err
+		return 0, time.Time{}, "", err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, time.Time{}, err
-	}
-	return id, at, nil
+	return seq, at, eventID, nil
 }
 
 // DeleteEventsBefore preserves the bounded events-only seam and writes a
@@ -156,7 +155,7 @@ func (s *Store) EventsPageContext(ctx context.Context, f events.Filter, afterSeq
 		limit = 512
 	}
 	q := strings.Builder{}
-	q.WriteString(`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE id > ? AND id <= ?`)
+	q.WriteString(`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE id > ? AND id <= ?`)
 	args := []any{afterSeq, upToSeq}
 	if len(f.Scopes) > 0 {
 		q.WriteString(` AND scope IN (` + placeholders(len(f.Scopes)) + `)`)
@@ -181,7 +180,7 @@ func (s *Store) EventsPageContext(ctx context.Context, f events.Filter, afterSeq
 		return nil, err
 	}
 	defer rows.Close()
-	return scanEvents(rows)
+	return scanEventsWithID(rows)
 }
 
 func placeholders(n int) string {

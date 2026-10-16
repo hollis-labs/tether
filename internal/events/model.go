@@ -28,6 +28,10 @@ const (
 // is not persisted as a column in v0.0.2; emitters that want it to
 // survive replay should embed it in PayloadJSON.
 type Event struct {
+	// EventID is the producer-minted global id (D6: evt_ + 32 hex), assigned and
+	// persisted when the row is written. Empty on rows that predate it. It is the
+	// idempotency key for at-least-once fan-out.
+	EventID        string
 	Seq            int64
 	At             time.Time
 	Scope          Scope
