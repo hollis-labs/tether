@@ -34,7 +34,9 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 		return callcontext.Snapshot{}
 	}
 	out := callcontext.Snapshot{Verified: p.Verified, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind}
-	if p.Kind != "session" || p.SessionID == "" || sessions == nil {
+	// A session credential, or an issued session-bound agent token (TokenID +
+	// sid + matching subject; never Kind alone), selects the session row.
+	if (p.Kind != "session" && !identity.IsBoundAgentToken(p)) || p.SessionID == "" || sessions == nil {
 		return out
 	}
 	row, err := sessions.GetSession(p.SessionID)
@@ -42,7 +44,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 		return out
 	}
 	out.SessionResolved = true
-	out.SessionID, out.WorkstreamID = row.ID, row.WorkstreamID.String
+	out.SessionID, out.WorkstreamID, out.TaskID = row.ID, row.WorkstreamID.String, row.TaskID.String
 	out.LaunchID, out.ProjectID, out.LogicalAgentID = row.LaunchID, row.ProjectID, row.LogicalAgentID
 	if bindings != nil && row.LogicalAgentID != "" {
 		target := registry.LogicalAgentBindingTarget(row.LogicalAgentID)

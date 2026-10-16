@@ -14,6 +14,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
   log `stream.gap` frames instead of passing them on. `proxyevents.Forward` resumes from its
   cursor; the MCP proxy's `ToolCallEventStore` now starts at the live head (it is a ring of
   recent calls) instead of replaying the whole log into it.
+- The MCP gateway now binds an issued session-bound agent token (the `#365` JWTs: Kind
+  `agent` with a token id, a session id and that session's subject) to its session
+  (CW-20261016-0138, X3a): `CallerResolver` resolves it to the session's own server policy,
+  the caller-context snapshot and upstream attribution headers carry the session, and in
+  enforce mode `/mcp` and `/p/` admit it (no scope names the gateway). Binding keys on
+  `identity.IsBoundAgentToken`, never on Kind alone; an operator-minted narrow token still
+  gets nothing. No machine access for agent tokens yet.
 - `events.Bus.Subscribe` replay is now bounded and a slow consumer is told instead of
   silently lost (CW-20261016-0146, P3a): with the SQL store the replay is read in
   pages (default 512, filters pushed into SQL) by the subscriber's own goroutine, so a
@@ -34,6 +41,12 @@ This file was backfilled from the git history and is a good-faith summary, not a
   missing or malformed provider session, a non-claude provider, or a vanished workspace is refused with
   `launch_failed` `resume_unavailable: ...` and no fresh start. The hub opt-in (`WorkerResume`) is
   unchanged and still off; a worker swap is required.
+- Add the launch-time task stamp (CW-20261012-0062a): `POST /sessions` and `POST /sessions/bootstrap` accept
+  `task_id` (the bare Torque id), stored on the session (migration 0079), planted as `TETHER_TASK_ID` for hub-local
+  and Outpost launches (set last, so env overrides cannot spoof it), carried by resume and replacement, and added to
+  the caller attribution of a resolved session. Only the verified local operator may assert it; an agent or session
+  gets 403 `task_id_not_permitted`, any other caller has it dropped (launch proceeds, `identity_audit`
+  `task_id_dropped`); it is set at creation and never rebound. `tether launch --torque-task <id>` sends it (the MCP launch tool does not). See `docs/task-stamp.md`.
 - Record an identity audit row for every session-bound token mint (CW-20261016-0089):
   `POST /auth/token` with `session_id` writes `identity_audit` with the minting
   parent (`principal_id`), `session_id`, scopes (`required_scope`) and

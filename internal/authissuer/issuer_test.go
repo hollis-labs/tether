@@ -341,3 +341,26 @@ func TestOperatorMintFailsClosedWhenItCannotBeTracked(t *testing.T) {
 		t.Fatal("minted an untrackable operator token")
 	}
 }
+
+// identity.IsBoundAgentToken must recognize exactly what the issuer mints.
+func TestIssuedSessionTokenIsABoundAgentToken(t *testing.T) {
+	is, _ := newIssuer(t)
+	v, err := NewVerifier(fakeStored{map[string]identity.Principal{}}, is)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SessionPrincipalID("s7") != identity.SessionPrincipalIDPrefix+"s7" {
+		t.Fatal("SessionPrincipalID drifted from identity.SessionPrincipalIDPrefix")
+	}
+	operator := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	withSid, _ := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"tether.read"}, SessionID: "s7"})
+	noSid, _ := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"tether.read"}})
+	p, err := v.Verify(context.Background(), withSid.Token)
+	if err != nil || !identity.IsBoundAgentToken(p) {
+		t.Fatalf("minted session token is not a bound agent token: %+v %v", p, err)
+	}
+	q, err := v.Verify(context.Background(), noSid.Token)
+	if err != nil || identity.IsBoundAgentToken(q) {
+		t.Fatalf("operator-minted narrow token passed as a bound agent token: %+v %v", q, err)
+	}
+}

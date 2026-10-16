@@ -251,6 +251,7 @@ func TestLaunchSession_ExtractRefsRecordsAttribution(t *testing.T) {
 			if hasFlag != tc.wantFlag {
 				t.Errorf(".mcp.json --extract-refs = %v, want %v (args: %v)", hasFlag, tc.wantFlag, plantedArgs)
 			}
+			assertPlantedProxyCapture(t, db, plantedArgs, sessID, tc.extractRefs)
 		})
 	}
 }

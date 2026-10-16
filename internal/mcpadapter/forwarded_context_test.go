@@ -256,3 +256,37 @@ func TestDaemonServicePoliciesKeepCatalogSecretFreeAndRedact(t *testing.T) {
 		t.Fatal("unsafe service credential accepted")
 	}
 }
+
+// A session-bound agent token carries the session's attribution upstream like a
+// session credential; an operator-minted narrow token never does.
+func TestForwardedContextAdmitsBoundAgentTokenOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	origin, _ := url.Parse("https://upstream.example/mcp")
+	var seen http.Header
+	transport := &forwardedContextTransport{origin: origin, serviceToken: "upstream-service", base: contextRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		seen = req.Header.Clone()
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}")), Request: req}, nil
+	})}
+	build := func(p identity.Principal, snapKind string) context.Context {
+		ctx := identity.WithPrincipal(context.Background(), p)
+		return withForwardedToolCall(callcontext.WithSnapshot(ctx, callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: p.ID, PrincipalKind: snapKind, SessionID: "one", WorkstreamID: "w:one"}))
+	}
+	agent := identity.Principal{Verified: true, ID: identity.SessionPrincipalIDPrefix + "one", Kind: "agent", SessionID: "one", TokenID: "j"}
+	narrow := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", SessionID: "one", TokenID: "j"}
+	do := func(ctx context.Context) http.Header {
+		seen = nil
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://upstream.example/mcp", strings.NewReader("{}"))
+		resp, err := transport.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return seen
+	}
+	if h := do(build(agent, "agent")); h.Get("X-Tether-Session-Id") != "one" || h.Get("X-Tether-Workstream-Id") != "w:one" {
+		t.Fatalf("bound agent token attribution not forwarded: %v", h)
+	}
+	if h := do(build(narrow, "operator")); h.Get("X-Tether-Session-Id") != "" {
+		t.Fatalf("operator-minted narrow token forwarded session attribution: %v", h)
+	}
+}
