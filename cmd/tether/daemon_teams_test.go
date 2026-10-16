@@ -90,7 +90,7 @@ func (f *daemonTeamFixture) serve(t *testing.T, tcp bool) {
 		f.cfg.ListenAddr = "tcp:" + live.Listener.Addr().String()
 		f.server.Config = f.cfg
 	}
-	h, err := buildDaemonMCP(context.Background(), f.svc, f.cfg, f.ids, f.ops)
+	h, err := buildDaemonMCP(context.Background(), f.svc, f.cfg, f.ids, nil, f.ops)
 	teamRequire(t, err)
 	f.server.MCP = h
 	f.server.MCPShutdown = h.Close

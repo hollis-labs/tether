@@ -6,6 +6,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -15,13 +16,23 @@ import (
 	"github.com/hollis-labs/tether/internal/mcptransport"
 )
 
-func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, ids *identity.Store, teams api.TeamOps) (*mcptransport.Handler, error) {
+// buildDaemonMCP builds the daemon's MCP gateway. When the daemon runs a token issuer, the gateway verifies issued agent
+// JWTs as well as stored credentials (the composite verifier the rest of the daemon uses); with only the stored store a
+// bound agent token would be refused at /mcp whatever the listener allows.
+func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, ids *identity.Store, issuer *authissuer.Issuer, teams api.TeamOps) (*mcptransport.Handler, error) {
 	if !cfg.Modules.Enabled(environment.LocalMCP) || !svc.Catalog.Global.Daemon.MCPEndpoint.Enabled {
 		return nil, nil
 	}
 	var verifier identity.Verifier
 	if ids != nil {
 		verifier = ids
+		if issuer != nil {
+			composite, err := authissuer.NewVerifier(ids, issuer)
+			if err != nil {
+				return nil, err
+			}
+			verifier = composite
+		}
 	}
 	cache := &mcptransport.CatalogCache{Root: svc.CatalogRoot}
 	return mcptransport.NewHandler(ctx, mcptransport.HandlerConfig{
