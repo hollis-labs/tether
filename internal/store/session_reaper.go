@@ -178,7 +178,7 @@ func (s *Store) RecordReaperOrphan(ctx context.Context, id, reason string, obser
 	payload, _ := json.Marshal(map[string]string{"reason": reason, "stage": "outcome", "outcome": "orphaned"})
 	// The outcome event is an outbox row on this transaction: it commits with the
 	// orphaning, and is published only if that commit happens.
-	if _, _, err = insertEventRow(ctx, tx, events.ScopeSession, id, "session.reaper", string(payload), stamp, "", true); err != nil {
+	if _, _, err = insertEventRow(ctx, tx, events.ScopeSession, id, "session.reaper", string(payload), stamp, true); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -204,7 +204,7 @@ func (s *Store) RecordSessionActivity(ctx context.Context, id string, at time.Ti
 		return err
 	}
 	// Outbox row (published by the bus drainer), not a write around the bus.
-	_, _, err = insertEventRow(ctx, s.db, events.ScopeSession, id, "session.activity", string(payload), time.Now().UTC().Format(time.RFC3339Nano), "", true)
+	_, _, err = insertEventRow(ctx, s.db, events.ScopeSession, id, "session.activity", string(payload), time.Now().UTC().Format(time.RFC3339Nano), true)
 	if err == nil {
 		s.EventsCommitted()
 	}

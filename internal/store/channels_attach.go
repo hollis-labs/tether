@@ -123,7 +123,7 @@ func (s *Store) AttachChannelMessage(ctx context.Context, req channels.ExistingM
 	audit, _ := json.Marshal(map[string]string{"actor": req.Actor.URN(), "publisher": sender.URN(), "session_id": req.SessionID, "message_id": req.MessageID, "turn_id": current.Metadata["turn_id"], "channel": req.Channel})
 	// The audit event is an outbox row on this transaction: it commits with the
 	// attachment and is published after the commit.
-	if _, _, err := insertEventRow(ctx, tx, events.ScopeSession, req.SessionID, events.KindSessionTurnRouted, string(audit), time.Now().UTC().Format(time.RFC3339Nano), "", true); err != nil {
+	if _, _, err := insertEventRow(ctx, tx, events.ScopeSession, req.SessionID, events.KindSessionTurnRouted, string(audit), time.Now().UTC().Format(time.RFC3339Nano), true); err != nil {
 		return gomsg.Envelope{}, fmt.Errorf("audit channel attachment: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

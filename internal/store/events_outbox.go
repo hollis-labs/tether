@@ -49,8 +49,8 @@ type eventWriter interface {
 // id (minted unless eventID is given). pending marks it for the outbox drainer.
 // A repeat of an event id already stored writes nothing and returns the stored
 // row's sequence: retries are idempotent on the id.
-func insertEventRow(ctx context.Context, w eventWriter, scope events.Scope, sessionID, kind, payloadJSON string, at string, eventID string, pending bool) (int64, string, error) {
-	seq, id, _, err := insertEventRowExisting(ctx, w, scope, sessionID, kind, payloadJSON, at, eventID, pending)
+func insertEventRow(ctx context.Context, w eventWriter, scope events.Scope, sessionID, kind, payloadJSON string, at string, pending bool) (int64, string, error) {
+	seq, id, _, err := insertEventRowExisting(ctx, w, scope, sessionID, kind, payloadJSON, at, "", pending)
 	return seq, id, err
 }
 
