@@ -232,3 +232,24 @@ func TestCodexReplacementAccountingRequiresConsumedOldHolderReceipt(t *testing.T
 		t.Fatal("historical accounting drained or changed the retained journal")
 	}
 }
+
+func TestCodexReplacementAccountingRejectsUnknownDeliverySchema(t *testing.T) {
+	db := openEventsStore(t)
+	ctx := context.Background()
+	for _, version := range []int{0, 3, 999} {
+		if _, err := db.db.Exec(`UPDATE messaging_delivery_schema SET version=? WHERE component='delivery'`, version); err != nil {
+			t.Fatal(err)
+		}
+		_, err := accountingMessagingSnapshot(ctx, db.db, "s")
+		var refusal *CodexAccountingFailure
+		if !errors.As(err, &refusal) || refusal.Code != "messaging_unsupported" {
+			t.Fatalf("schema %d: got %v, want fail closed", version, err)
+		}
+	}
+	if _, err := db.db.Exec(`DELETE FROM messaging_delivery_schema WHERE component='delivery'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := accountingMessagingSnapshot(ctx, db.db, "s"); err == nil {
+		t.Fatal("missing delivery schema accepted")
+	}
+}
