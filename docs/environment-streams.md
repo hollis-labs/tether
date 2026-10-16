@@ -101,3 +101,31 @@ This storage change does not switch environment-stream projection or enable raw
 runtime ingress. Those follow-up changes consume the preserved metadata. Rollback
 uses the previous binary; leave additive columns in place (migrations are forward
 only).
+
+### Frozen legacy-ID storage
+
+Migration 0087 creates only the singleton `event_identity` metadata table. It
+creates no indexes, seeds no identity and backfills no events. The storage
+methods remain dormant until the coordinated startup and projection cutover.
+
+At that cutover, startup reads the environment UUID file and calls
+`SeedEventIdentity` before starting event producers. The first call freezes the
+UUID and the current maximum event sequence in one transaction; subsequent calls
+must supply the same UUID and cannot move the cutover. A mismatch refuses startup.
+The initial remaining-row count performs one scan; health reads thereafter use
+the stored counters.
+
+`BackfillEventIDs` changes at most 1,000 eligible rows per call, newest first. It
+fills only NULL IDs at or below the frozen cutover with the literal
+`<environment UUID>:<sequence>`. It never changes existing IDs, including IDs
+minted before cutover. The cursor and progress commit with each chunk; failures
+roll back the whole chunk and a restart resumes from the saved cursor. The caller
+records failed chunks separately, yields between chunks and controls cancellation.
+The backfill never drops an event. No background runner is enabled by this slice.
+
+Release coordination: startup seeding, complete ID minting, stored-ID wire
+projection and retryable handling of unfinished legacy rows must ship together.
+Approximately 281 already-minted rows in the observed hub database will change
+visible environment-stream ID once, from the previous computed `<env>:<seq>` to
+their already-stored `evt_` ID. Their stored IDs remain unchanged; consumers may
+observe those events again. All wire IDs must remain JSON strings.
