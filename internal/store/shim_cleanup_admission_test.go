@@ -279,7 +279,10 @@ func TestCleanupAdmissionFencesActualAlternateWriters(t *testing.T) {
 					return e
 				}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			// A ceiling, not an expectation: admissionReceipt and admissionCursor report any read error, a missed context
+			// deadline included, as a revision conflict (fail closed), so a budget a loaded runner can exceed shows up as a
+			// bogus "guarded audit changed".
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			conn, err := a.reserveAdmission(ctx)
 			if err != nil {
@@ -292,7 +295,7 @@ func TestCleanupAdmissionFencesActualAlternateWriters(t *testing.T) {
 			}
 			current, err := admissionReceipt(ctx, conn, attempt.Receipt.OperationID)
 			if err != nil || !sameCleanupReceipt(current, attempt.Receipt) {
-				t.Fatal("guarded audit changed")
+				t.Fatalf("guarded audit changed (read error: %v)", err)
 			}
 			cursor, err := admissionCursor(ctx, conn, attempt.Cursor.ID)
 			if err != nil || cursor.Revision != attempt.Cursor.Revision {
