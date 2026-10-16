@@ -29,8 +29,10 @@ const (
 // survive replay should embed it in PayloadJSON.
 type Event struct {
 	// EventID is the producer-minted global id (D6: evt_ + 32 hex), assigned and
-	// persisted when the row is written. Empty on rows that predate it. It is the
-	// idempotency key for at-least-once fan-out.
+	// persisted when the row is written. Empty on rows that predate it. Fan-out is
+	// at least once and carries the same EventID on a repeat. Until subscribers
+	// dedupe on it, Seq is the dedupe key (a paged subscriber already skips any
+	// Seq at or below its cursor; SubscribeLive consumers may see repeats).
 	EventID        string
 	Seq            int64
 	At             time.Time

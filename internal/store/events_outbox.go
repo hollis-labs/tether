@@ -50,6 +50,13 @@ type eventWriter interface {
 // A repeat of an event id already stored writes nothing and returns the stored
 // row's sequence: retries are idempotent on the id.
 func insertEventRow(ctx context.Context, w eventWriter, scope events.Scope, sessionID, kind, payloadJSON string, at string, eventID string, pending bool) (int64, string, error) {
+	seq, id, _, err := insertEventRowExisting(ctx, w, scope, sessionID, kind, payloadJSON, at, eventID, pending)
+	return seq, id, err
+}
+
+// insertEventRowExisting is insertEventRow that also reports whether the event id
+// was already stored (in which case nothing was written).
+func insertEventRowExisting(ctx context.Context, w eventWriter, scope events.Scope, sessionID, kind, payloadJSON string, at string, eventID string, pending bool) (int64, string, bool, error) {
 	if eventID == "" {
 		eventID = runtimeevents.NewEventID()
 	}
@@ -62,20 +69,20 @@ func insertEventRow(ctx context.Context, w eventWriter, scope events.Scope, sess
  ON CONFLICT(event_id) WHERE event_id IS NOT NULL DO NOTHING`,
 		scope, nullIfEmpty(sessionID), at, kind, nullIfEmpty(payloadJSON), eventID, pendingFlag)
 	if err != nil {
-		return 0, "", err
+		return 0, "", false, err
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		var seq int64
 		if err := w.QueryRowContext(ctx, `SELECT id FROM events WHERE event_id = ?`, eventID).Scan(&seq); err != nil {
-			return 0, "", fmt.Errorf("event %s already stored but unreadable: %w", eventID, err)
+			return 0, "", false, fmt.Errorf("event %s already stored but unreadable: %w", eventID, err)
 		}
-		return seq, eventID, nil
+		return seq, eventID, true, nil
 	}
 	seq, err := res.LastInsertId()
 	if err != nil {
-		return 0, "", err
+		return 0, "", false, err
 	}
-	return seq, eventID, nil
+	return seq, eventID, false, nil
 }
 
 // InsertEventTx implements events.TxPersister: it writes e as a pending row on
@@ -93,21 +100,37 @@ func (s *Store) InsertEventTx(ctx context.Context, tx events.Tx, e events.Event)
 		at = time.Now()
 	}
 	at = at.UTC()
-	seq, id, err := insertEventRow(ctx, tx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON, at.Format(time.RFC3339Nano), e.EventID, true)
+	seq, id, existing, err := insertEventRowExisting(ctx, tx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON, at.Format(time.RFC3339Nano), e.EventID, true)
 	if err != nil {
 		return events.Event{}, err
+	}
+	if existing {
+		// A repeat of an id already stored is that row, not what this caller sent.
+		rows, err := tx.QueryContext(ctx, `SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE id = ?`, seq)
+		if err != nil {
+			return events.Event{}, err
+		}
+		defer rows.Close()
+		stored, err := scanEventsWithID(rows)
+		if err != nil {
+			return events.Event{}, fmt.Errorf("event %s already stored but unreadable: %w", id, err)
+		}
+		if len(stored) != 1 {
+			return events.Event{}, fmt.Errorf("event %s already stored but unreadable", id)
+		}
+		return stored[0], nil
 	}
 	e.Seq, e.At, e.EventID = seq, at, id
 	return e, nil
 }
 
 // PendingEventsContext implements events.TxPersister.
-func (s *Store) PendingEventsContext(ctx context.Context, limit int) ([]events.Event, error) {
+func (s *Store) PendingEventsContext(ctx context.Context, beforeSeq int64, limit int) ([]events.Event, error) {
 	if limit <= 0 {
 		limit = 256
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE pending = 1 ORDER BY id ASC LIMIT ?`, limit)
+		`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE pending = 1 AND (? <= 0 OR id < ?) ORDER BY id ASC LIMIT ?`, beforeSeq, beforeSeq, limit)
 	if err != nil {
 		return nil, err
 	}

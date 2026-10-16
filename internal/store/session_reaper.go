@@ -133,7 +133,7 @@ func (s *Store) ReaperSessions(ctx context.Context) ([]ReaperSession, error) {
 // LatestSessionEvent returns the newest event of one kind for a session via idx_events_session_kind_at,
 // or nil when there is none. Unlike QueryEvents it never reads the session's other events.
 func (s *Store) LatestSessionEvent(ctx context.Context, sessionID, kind string) (*events.Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,scope,session_id,at,kind,payload_json FROM events WHERE session_id=? AND kind=? ORDER BY at DESC,id DESC LIMIT 1`, sessionID, kind)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,scope,session_id,at,kind,payload_json,event_id FROM events WHERE session_id=? AND kind=? ORDER BY at DESC,id DESC LIMIT 1`, sessionID, kind)
 	if err != nil {
 		return nil, err
 	}
