@@ -157,7 +157,7 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 		// (architect ruling tether_mcp_sdk_localhost_guard_disabled_2026_10_16): a local request is checked by
 		// h.authority below, a remote one only gets its remote provenance from daemon's remoteMCP.serveMCP after the same
 		// remoteAuthority Host/Origin check the listener ran. Tests that replace the SDK guard:
-		// TestLocalAuthorityReplacesSDKLocalhostGuard (here) and TestRemoteMCPMountRepeatsTheListenerAuthority (daemon).
+		// TestLocalAuthorityReplacesSDKLocalhostGuard and TestCrossOriginBrowserRequestIsRefused (here), TestRemoteMCPMountRepeatsTheListenerAuthority (daemon).
 		// Cross-origin protection stays on (http.NewCrossOriginProtection wraps the SDK handler below).
 		DisableLocalhostProtection: true,
 	})

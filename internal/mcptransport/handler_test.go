@@ -1184,3 +1184,21 @@ func TestLocalAuthorityReplacesSDKLocalhostGuard(t *testing.T) {
 		})
 	}
 }
+
+// The SDK's cross-origin protection stays on (http.NewCrossOriginProtection wraps the SDK handler in NewHandler): a browser
+// that marks a state-changing request cross-site is refused even with an otherwise valid token and local Host.
+func TestCrossOriginBrowserRequestIsRefused(t *testing.T) {
+	f := newTransportFixture(t, true, false)
+	alpha := f.token(t, "alpha", nil)
+	r := f.request(t, http.MethodPost, "/mcp", alpha, "", map[string][]string{"Host": {"localhost"}, "Sec-Fetch-Site": {"cross-site"}})
+	data, _ := io.ReadAll(r.Body)
+	closeResponse(r)
+	if r.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-site request: %d %s", r.StatusCode, data)
+	}
+	r = f.request(t, http.MethodPost, "/mcp", alpha, "", map[string][]string{"Host": {"localhost"}, "Sec-Fetch-Site": {"same-origin"}})
+	closeResponse(r)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("same-origin request: %d", r.StatusCode)
+	}
+}
