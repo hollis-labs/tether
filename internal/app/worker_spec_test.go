@@ -2,11 +2,33 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )
+
+func TestWorkerSpecCarriesExtractRefs(t *testing.T) {
+	s := &Service{Catalog: &config.Catalog{}}
+	spec, err := s.workerSpec(context.Background(), "worker-session", &launch.Plan{ProviderBrand: "claude", ExtractRefs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		ExtractRefs bool `json:"extract_refs"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if !wire.ExtractRefs {
+		t.Fatal("worker launch loses resolved extract_refs policy")
+	}
+}
 
 // A worker cannot use a path on the hub's machine, so the spec must carry something it can clone.
 func TestWorkerSpecWorkspaceFromRepoURL(t *testing.T) {

@@ -168,6 +168,9 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if spec.Provider == "" || strings.ContainsAny(spec.Provider, "/\\") {
 		return nil, fmt.Errorf("provider must be a bare command name, got %q", spec.Provider)
 	}
+	if spec.ExtractRefs && spec.Provider != "claude" {
+		return nil, fmt.Errorf("extract_refs requires the claude MCP relay")
+	}
 	binary, err := exec.LookPath(spec.Provider)
 	if err != nil {
 		return nil, err

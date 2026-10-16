@@ -137,10 +137,25 @@ func grantedOnly(config mcpConfig, granted []string) mcpConfig {
 // therefore never in any process argument or environment.
 func (e *Executor) plantHubMCP(cwd, credDir string, spec workerwire.LaunchSpec) error {
 	if spec.Credential == "" {
+		if spec.ExtractRefs {
+			return fmt.Errorf("extract_refs requires a session credential")
+		}
 		if len(spec.EditableAgents) > 0 {
 			return fmt.Errorf("editable_agents needs a session credential: the static MCP entry cannot carry the allowlist")
 		}
 		return e.plantMCP(cwd, spec.MCPServers)
+	}
+	// SSH joins argv into a remote shell command. Session ids are opaque tokens,
+	// not shell text; refuse malformed specs before planting or writing secrets.
+	if spec.Session == "" || strings.IndexFunc(spec.Session, func(r rune) bool {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return false
+		default:
+			return true
+		}
+	}) >= 0 {
+		return fmt.Errorf("MCP relay requires a shell-safe session id")
 	}
 	b, err := os.ReadFile(filepath.Join(e.Root, "hub-mcp.json"))
 	if err != nil {
@@ -166,6 +181,9 @@ func (e *Executor) plantHubMCP(cwd, credDir string, spec workerwire.LaunchSpec) 
 	for _, id := range spec.EditableAgents {
 		args = append(args, "--editable-agent", id)
 	}
+	// Last flag wins, including a stale session/extraction flag in the imported
+	// operator template. Explicit false preserves the hub's default-off policy.
+	args = append(args, "--session", spec.Session, fmt.Sprintf("--extract-refs=%t", spec.ExtractRefs))
 	entry.Args = append([]string{"mcp-relay", "--token-file", tokenFile, "--", entry.Command}, append(args, "--token-stdin")...)
 	entry.Command = e.Binary
 	config.Servers["tether"] = entry

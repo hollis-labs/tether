@@ -1,18 +1,117 @@
 package workerruntime
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/app/sessionrefs"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
 const testHubMCP = `{"mcpServers":{
  "torque":{"command":"x","args":[]},"tesseract":{"command":"x","args":[]},
  "tether":{"command":"ssh","args":["chrispian@hub","tether","mcp","--daemon-only","--token","static","--scopes","message.write,registry.write,groups.write"]}}}`
+
+func TestPlantHubMCPRefCapturePolicy(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			var spec workerwire.LaunchSpec
+			if err := json.Unmarshal([]byte(fmt.Sprintf(`{"session":"worker-session","credential":"test-credential","extract_refs":%t}`, enabled)), &spec); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _, _ := plantedConfig(t, spec)
+			args := strings.Join(cfg.Servers["tether"].Args, " ")
+			for _, flag := range []string{"--session worker-session", fmt.Sprintf("--extract-refs=%t", enabled)} {
+				if !strings.Contains(args, flag) {
+					t.Errorf("relay is missing %s", flag)
+				}
+			}
+			var sessionID string
+			var extract bool
+			planted := cfg.Servers["tether"].Args
+			for i, arg := range planted {
+				if arg == "--session" && i+1 < len(planted) {
+					sessionID = planted[i+1]
+				}
+				if strings.HasPrefix(arg, "--extract-refs=") {
+					extract = arg == "--extract-refs=true"
+				}
+			}
+			sink := &workerRefSink{}
+			capture := sessionrefs.New(extract, sessionID, nil, sink, nil)
+			capture.Record(context.Background(), sessionrefs.Observation{ToolName: "torque_task_get", Arguments: map[string]any{"id": "CW-20261012-0069"}, Failed: true})
+			if len(sink.refs) != 0 {
+				t.Fatal("failed tool call captured a ref")
+			}
+			capture.Record(context.Background(), sessionrefs.Observation{ToolName: "torque_task_get", Arguments: map[string]any{"id": "CW-20261012-0069"}})
+			if !enabled {
+				if len(sink.refs) != 0 {
+					t.Fatal("disabled relay captured refs")
+				}
+			} else if len(sink.refs) != 1 || sink.refs[0] != (workerRef{"worker-session", "torque_task", "CW-20261012-0069", "read", "proxy"}) {
+				t.Fatalf("Record output = %+v", sink.refs)
+			}
+		})
+	}
+}
+
+type workerRef struct{ session, kind, ref, relation, source string }
+type workerRefSink struct{ refs []workerRef }
+
+func (s *workerRefSink) AttachSessionRef(_ context.Context, session, kind, ref, _ string, relation, source, _ string) error {
+	s.refs = append(s.refs, workerRef{session, kind, ref, relation, source})
+	return nil
+}
+
+func TestPlantHubMCPRefCaptureRejectsUnboundOrUnsafeSession(t *testing.T) {
+	for _, spec := range []workerwire.LaunchSpec{
+		{Session: "s", ExtractRefs: true},
+		{Credential: "test", ExtractRefs: true},
+		{Session: "$(touch bad)", Credential: "test", ExtractRefs: true},
+	} {
+		e := NewExecutor(t.TempDir(), "/opt/tether-worker", nil)
+		if err := e.plantHubMCP(t.TempDir(), t.TempDir(), spec); err == nil {
+			t.Fatal("unsafe/unbound relay accepted")
+		}
+	}
+}
+
+func TestWorkerExtractRefsRejectsProviderWithoutRelay(t *testing.T) {
+	e := NewExecutor(t.TempDir(), "/opt/tether-worker", nil)
+	_, err := e.launch(context.Background(), workerwire.LaunchSpec{Session: "s", Provider: "codex", ExtractRefs: true})
+	if err == nil || !strings.Contains(err.Error(), "claude MCP relay") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPlantHubMCPRefCaptureOverridesStaleTemplate(t *testing.T) {
+	root, cwd := t.TempDir(), t.TempDir()
+	template := strings.Replace(testHubMCP, `"--daemon-only"`, `"--daemon-only","--session","stale","--extract-refs=true"`, 1)
+	if err := os.WriteFile(filepath.Join(root, "hub-mcp.json"), []byte(template), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e := NewExecutor(root, "/opt/tether-worker", nil)
+	if err := e.plantHubMCP(cwd, t.TempDir(), workerwire.LaunchSpec{Session: "current", Credential: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(cwd, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg mcpConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(cfg.Servers["tether"].Args, " ")
+	if !strings.HasSuffix(args, "--session current --extract-refs=false --token-stdin") {
+		t.Fatalf("resolved flags not last: %s", args)
+	}
+}
 
 func plantedConfig(t *testing.T, spec workerwire.LaunchSpec) (mcpConfig, string, string) {
 	t.Helper()

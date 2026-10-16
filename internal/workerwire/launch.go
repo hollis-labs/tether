@@ -17,6 +17,10 @@ type Workspace struct {
 // workers that advertise it, so older workers keep their static MCP entry.
 const FeatureSessionCred = "session-cred"
 
+// FeatureExtractRefs means the worker plants the hub's extraction policy and
+// canonical session id on its credential-bearing MCP relay.
+const FeatureExtractRefs = "extract-refs"
+
 // FeatureWorkerResume is advertised by a worker that honors
 // LaunchSpec.ResumeSessionID (provider-native resume in the same worker
 // workspace). The hub resumes on a worker only when it is advertised.
@@ -64,6 +68,9 @@ type LaunchSpec struct {
 	Credential string `json:"credential,omitempty"`
 	// MCPScopes are the scopes the credential carries; the planted tether MCP entry requests the same set.
 	MCPScopes []string `json:"mcp_scopes,omitempty"`
+	// ExtractRefs is the resolved hub policy, off by default. Enabling it requires
+	// FeatureExtractRefs and a session credential; old workers must not drop it.
+	ExtractRefs bool `json:"extract_refs,omitempty"`
 	// EditableAgents are the agent ids the session's tether_agent_create /
 	// tether_agent_edit may touch, planted as --editable-agent on the tether MCP
 	// entry. Empty means no per-agent restriction. Only sent to workers that
