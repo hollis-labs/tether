@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 
 var _ events.EnvelopePersister = (*Store)(nil)
 
-// envelopeColumns are the columns migration 0082 added, in the order
+// envelopeColumns are the metadata columns from migrations 0082 and 0086, in the order
 // envelopeValues returns their values.
 var envelopeColumns = []string{
 	"scope_environment_id", "scope_authority", "scope_worker_id", "scope_host", "scope_project_id",
@@ -28,6 +29,25 @@ var envelopeColumns = []string{
 	"actor_kind", "actor_urn", "actor_verified", "on_behalf_of",
 	"recorded_at", "epoch",
 	"retention_class", "retention_policy_id",
+	"schema_version",
+	"producer_app",
+	"subject",
+	"turn_id",
+	"parent_id",
+	"raw_offset",
+	"process_pid",
+	"process_provider",
+	"process_runtime",
+	"provider_session_id",
+	"source_channel",
+	"source_confidence",
+	"producer_sequence",
+	"producer_generation",
+	"traceparent",
+	"in_reply_to",
+	"actor_role",
+	"on_behalf_of_json",
+	"origin_at",
 }
 
 func nullIfZero(n int) any {
@@ -35,6 +55,20 @@ func nullIfZero(n int) any {
 		return nil
 	}
 	return n
+}
+
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func nullUint64(n uint64) any {
+	if n == 0 {
+		return nil
+	}
+	return strconv.FormatUint(n, 10)
 }
 
 // flag stores a boolean as 1, or NULL when false: NULL means "not marked".
@@ -65,6 +99,14 @@ func envelopeValues(e events.Event, recordedAt string) ([]any, error) {
 		}
 		labels = string(raw)
 	}
+	var delegation any
+	if len(env.Actor.OnBehalfOfChain) > 0 {
+		raw, err := json.Marshal(env.Actor.OnBehalfOfChain)
+		if err != nil {
+			return nil, err
+		}
+		delegation = string(raw)
+	}
 	return []any{
 		nullIfEmpty(d.EnvironmentID), nullIfEmpty(d.Authority), nullIfEmpty(d.WorkerID), nullIfEmpty(d.Host), nullIfEmpty(d.ProjectID),
 		nullIfEmpty(d.WorkstreamID), nullIfEmpty(d.EpicID), nullIfEmpty(d.SprintID), nullIfEmpty(d.PlanID), nullIfEmpty(d.PhaseID),
@@ -78,6 +120,25 @@ func envelopeValues(e events.Event, recordedAt string) ([]any, error) {
 		nullIfEmpty(env.Actor.Kind), nullIfEmpty(env.Actor.URN), nullIfEmpty(env.Actor.Verified), nullIfEmpty(env.Actor.OnBehalfOf),
 		recordedAt, nil,
 		nullIfEmpty(env.RetentionClass), nullIfEmpty(env.RetentionPolicyID),
+		nullIfEmpty(env.SchemaVersion),
+		nullIfEmpty(env.App),
+		nullIfEmpty(env.Subject),
+		nullIfEmpty(env.TurnID),
+		nullIfEmpty(env.ParentID),
+		env.RawOffset,
+		nullIfZero(env.Process.PID),
+		nullIfEmpty(env.Process.Provider),
+		nullIfEmpty(env.Process.Runtime),
+		nullIfEmpty(env.Process.ProviderSessionID),
+		nullIfEmpty(env.Source.Channel),
+		nullIfEmpty(env.Source.Confidence),
+		nullUint64(env.Sequence),
+		nullUint64(env.Generation),
+		nullIfEmpty(env.Corr.Traceparent),
+		nullIfEmpty(env.Corr.InReplyTo),
+		nullIfEmpty(env.Actor.Role),
+		delegation,
+		nullTime(env.OriginAt),
 	}, nil
 }
 
@@ -115,8 +176,19 @@ func insertEventEnvelopeRow(ctx context.Context, w eventWriter, e events.Event, 
 	if eventID == "" {
 		eventID = newEventID()
 	}
+	if !e.At.IsZero() {
+		at = e.At
+	}
+	logTime := time.Now().UTC()
+	e.Envelope.OriginAt = time.Time{}
+	// Bound producer clock skew without allowing future dates to evade the
+	// existing indexed at-based retention. Keep the original for projection.
+	if at.After(logTime.Add(5 * time.Minute)) {
+		e.Envelope.OriginAt = at.UTC()
+		at = logTime
+	}
 	stamp := at.UTC().Format(time.RFC3339Nano)
-	recorded := time.Now().UTC().Format(time.RFC3339Nano)
+	recorded := logTime.Format(time.RFC3339Nano)
 	values, err := envelopeValues(e, recorded)
 	if err != nil {
 		return events.Event{}, false, err
@@ -131,18 +203,26 @@ func insertEventEnvelopeRow(ctx context.Context, w eventWriter, e events.Event, 
 		return events.Event{}, false, err
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		var seq int64
-		if err := w.QueryRowContext(ctx, `SELECT id FROM events WHERE event_id = ?`, eventID).Scan(&seq); err != nil {
+		stored, err := scanEvent(w.QueryRowContext(ctx, `SELECT `+eventReadColumns+` FROM events WHERE event_id = ?`, eventID))
+		if err != nil {
 			return events.Event{}, false, fmt.Errorf("event %s already stored but unreadable: %w", eventID, err)
 		}
-		e.Seq, e.EventID = seq, eventID
-		return e, true, nil
+		return stored, true, nil
 	}
 	seq, err := res.LastInsertId()
 	if err != nil {
 		return events.Event{}, false, err
 	}
 	e.Seq, e.At, e.EventID = seq, at.UTC(), eventID
+	if !e.Envelope.OriginAt.IsZero() {
+		e.At = e.Envelope.OriginAt
+	}
+	e.Envelope.Epoch = 0
+	e.Envelope.PayloadDigest = ""
+	if e.Envelope.Dims.LogicalAgentID == "" {
+		e.Envelope.Dims.LogicalAgentID = e.LogicalAgentID
+	}
+	e.LogicalAgentID = e.Envelope.Dims.LogicalAgentID
 	if t, perr := time.Parse(time.RFC3339Nano, recorded); perr == nil {
 		e.Envelope.RecordedAt = t
 	}

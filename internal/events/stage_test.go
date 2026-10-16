@@ -172,3 +172,28 @@ func TestFailedStageCannotLeaveALabelMutationBehind(t *testing.T) {
 		})
 	}
 }
+
+func TestFailedStageCannotMutateDelegationOrRawOffset(t *testing.T) {
+	p := &envPersister{}
+	bad := StageFunc(func(_ context.Context, e *Event) error {
+		e.Envelope.Actor.OnBehalfOfChain[0] = "changed"
+		e.Envelope.Actor.OnBehalfOfChain = append(e.Envelope.Actor.OnBehalfOfChain, "appended")
+		*e.Envelope.RawOffset = 99
+		return errors.New("discard partial reference changes")
+	})
+	bus := NewBus(BusOptions{Persister: p, Stages: []Stage{bad}, OnStageError: func(*StageError) {}})
+	delegation := make([]string, 1, 4)
+	delegation[0] = "msg://user/owner"
+	offset := int64(7)
+	e := Event{Scope: ScopeSession, Kind: "k", Envelope: Envelope{Actor: Actor{OnBehalfOfChain: delegation}, RawOffset: &offset}}
+	if err := bus.Publish(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+	got := p.last().Envelope
+	if len(got.Actor.OnBehalfOfChain) != 1 || got.Actor.OnBehalfOfChain[0] != "msg://user/owner" || got.RawOffset == nil || *got.RawOffset != 7 {
+		t.Fatalf("failed stage leaked references: %+v", got)
+	}
+	if delegation[0] != "msg://user/owner" || delegation[:2][1] != "" || offset != 7 {
+		t.Fatalf("failed stage mutated producer references: %v %d", delegation[:2], offset)
+	}
+}

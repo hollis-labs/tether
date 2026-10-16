@@ -82,12 +82,12 @@ func (s *Store) ListEventsBySession(sessionID string, limit int, cursor int64) (
 	)
 	if cursor > 0 {
 		rows, err = s.db.Query(
-			`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE session_id=? AND id < ? ORDER BY id DESC LIMIT ?`,
+			`SELECT `+eventReadColumns+` FROM events WHERE session_id=? AND id < ? ORDER BY id DESC LIMIT ?`,
 			sessionID, cursor, limit,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?`,
+			`SELECT `+eventReadColumns+` FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?`,
 			sessionID, limit,
 		)
 	}
@@ -127,7 +127,7 @@ func (s *Store) EventsSince(sinceSeq int64) ([]events.Event, error) {
 
 func (s *Store) EventsSinceContext(ctx context.Context, sinceSeq int64) ([]events.Event, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE id > ? ORDER BY id ASC`,
+		`SELECT `+eventReadColumns+` FROM events WHERE id > ? ORDER BY id ASC`,
 		sinceSeq,
 	)
 	if err != nil {
@@ -155,7 +155,7 @@ func (s *Store) EventsPageContext(ctx context.Context, f events.Filter, afterSeq
 		limit = 512
 	}
 	q := strings.Builder{}
-	q.WriteString(`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE id > ? AND id <= ?`)
+	q.WriteString(`SELECT ` + eventReadColumns + ` FROM events WHERE id > ? AND id <= ?`)
 	args := []any{afterSeq, upToSeq}
 	if len(f.Scopes) > 0 {
 		q.WriteString(` AND scope IN (` + placeholders(len(f.Scopes)) + `)`)
@@ -199,7 +199,7 @@ func (s *Store) ListRecentEvents(limit int) ([]events.Event, error) {
 		limit = 1000
 	}
 	rows, err := s.db.Query(
-		`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events ORDER BY id DESC LIMIT ?`,
+		`SELECT `+eventReadColumns+` FROM events ORDER BY id DESC LIMIT ?`,
 		limit,
 	)
 	if err != nil {
@@ -220,7 +220,7 @@ func (s *Store) QueryEvents(f EventFilter) ([]events.Event, error) {
 		limit = 1000
 	}
 
-	query := `SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events`
+	query := `SELECT ` + eventReadColumns + ` FROM events`
 	var (
 		where []string
 		args  []any
@@ -268,8 +268,7 @@ func (s *Store) QueryEvents(f EventFilter) ([]events.Event, error) {
 	return scanEvents(rows)
 }
 
-// scanEvents scans the events columns "id, scope, session_id, at, kind,
-// payload_json, event_id" (event_id is NULL on rows that predate migration 0081).
+// scanEvents hydrates the full stored envelope selected by eventReadColumns.
 func scanEvents(rows *sql.Rows) ([]events.Event, error) {
 	return scanEventsWithID(rows)
 }

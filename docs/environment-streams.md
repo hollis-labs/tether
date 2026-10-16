@@ -80,3 +80,29 @@ disabled sessions have no snapshot and therefore no invented bounds. These
 are admission bounds, not continuously current ring positions or a guarantee
 against subsequent raw live subscriber drops. Legacy injected adapters without
 the callback retain their old stream behavior without fabricated metadata.
+
+### Durable producer metadata
+
+Migration 0086 completes the stored producer envelope: schema version, app,
+subject, turn and parent IDs, raw offset, process identity, source channel and
+confidence, producer sequence/generation, traceparent, reply correlation, actor
+role and delegation chain. These nullable columns have no indexes and require no
+backfill. Existing rows keep unknown metadata empty. Producer counters use decimal
+TEXT so the full unsigned 64-bit range survives SQLite storage; they are not
+stream cursors. A raw offset of zero remains distinct from an absent offset.
+
+The origin timestamp is preserved in `at`; `recorded_at` is stamped by the log.
+For origin times more than five minutes ahead of the log clock, `at` uses log time
+so indexed retention cannot be evaded, and `origin_at` preserves the actual
+producer timestamp. Event readers and live delivery return that true origin time;
+the clamp only affects the stored retention key. Producer-supplied origin metadata
+cannot override this value.
+`events.id` remains the ordering and replay cursor, including when events arrive
+with older origin timestamps. Replay, outbox, environment and session-history
+reads hydrate the same stored envelope, including a retention tombstone's
+`payload_digest`. Retried producer IDs return the original stored event.
+
+This storage change does not switch environment-stream projection or enable raw
+runtime ingress. Those follow-up changes consume the preserved metadata. Rollback
+uses the previous binary; leave additive columns in place (migrations are forward
+only).

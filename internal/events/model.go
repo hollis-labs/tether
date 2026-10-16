@@ -24,9 +24,8 @@ const (
 // monotonic stream id assigned by the persister (the events table's
 // AUTOINCREMENT primary key); it is 0 on events not yet persisted.
 // SessionID is empty for daemon/broker events (column is nullable).
-// LogicalAgentID is carried for observability on lifecycle events but
-// is not persisted as a column in v0.0.2; emitters that want it to
-// survive replay should embed it in PayloadJSON.
+// LogicalAgentID is persisted as the logical-agent scope dimension and
+// hydrated on replay. Envelope.Dims.LogicalAgentID takes precedence if supplied.
 type Event struct {
 	// EventID is the producer-minted global id (D6: evt_ + 32 hex), assigned and
 	// persisted when the row is written. Empty on rows that predate it. Fan-out is

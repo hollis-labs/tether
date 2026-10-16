@@ -51,6 +51,8 @@ type Class struct {
 type Corr struct {
 	TraceID        string
 	SpanID         string
+	Traceparent    string
+	InReplyTo      string
 	CausationID    string
 	CorrelationID  string
 	ThreadID       string
@@ -60,20 +62,53 @@ type Corr struct {
 
 // Actor says who caused the event.
 type Actor struct {
-	Kind       string
-	URN        string
-	Verified   string // token | claimed | none
-	OnBehalfOf string
+	Kind            string
+	URN             string
+	Verified        string // token | claimed | none
+	OnBehalfOf      string // legacy scalar delegation
+	Role            string
+	OnBehalfOfChain []string // v1.1 delegation chain
 }
 
-// Envelope carries the v1.1 blocks of an Event.
+// Process identifies the producer process when known.
+type Process struct {
+	PID               int
+	Provider          string
+	Runtime           string
+	ProviderSessionID string
+}
+
+// Source describes the observation channel and confidence supplied by the producer.
+type Source struct {
+	Channel    string
+	Confidence string
+}
+
+// Envelope carries the persisted producer metadata and v1.1 blocks of an Event.
 type Envelope struct {
-	Dims        ScopeDims
-	Class       Class
-	Corr        Corr
-	Actor       Actor
-	ContentType string
-	Truncated   bool
+	// OriginAt retains producer time only when excessive future skew requires
+	// a safe log-time value in the DB at column for indexed retention.
+	// Event.At still exposes the true origin. Assigned by storage.
+	OriginAt      time.Time
+	SchemaVersion string
+	App           string
+	Subject       string
+	TurnID        string
+	ParentID      string
+	RawOffset     *int64
+	Process       Process
+	Source        Source
+	// Sequence and Generation belong to the producer, never the durable cursor.
+	Sequence   uint64
+	Generation uint64
+	// PayloadDigest is assigned by retention, never accepted from a producer.
+	PayloadDigest string
+	Dims          ScopeDims
+	Class         Class
+	Corr          Corr
+	Actor         Actor
+	ContentType   string
+	Truncated     bool
 	// RecordedAt and Epoch are assigned by the log when the row is written; a
 	// producer-supplied value is ignored.
 	RecordedAt time.Time
