@@ -88,6 +88,10 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 		brand = "claude"
 	}
 	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, PermissionMode: p.PermissionMode, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}, MCPServers: append([]string{}, launch.EffectiveMCPServers(p.Env)...), ResumeSessionID: p.ResumeProviderSessionID}
+	spec.ExtractRefs = p.ExtractRefs
+	if !spec.ExtractRefs && s.cat() != nil {
+		spec.ExtractRefs = config.EffectiveExtractRefs(s.cat().Global, s.cat().Projects[p.ProjectID], s.cat().Launches[p.LaunchID])
+	}
 	// The project's git remote is what a worker can clone; RepoRoot is a path on the hub's machine. Prefer
 	// repo_url, then a URL-shaped repo_root, then a local checkout's origin (only exists when the hub has one).
 	if p.RepoURL != "" {
@@ -152,11 +156,27 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		}
 		spec.EditableAgents = slices.Clone(p.EditableAgents)
 	}
+	if spec.ExtractRefs && (s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureExtractRefs)) {
+		exit := 1
+		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
+		return nil, fmt.Errorf("extract_refs requires worker support; upgrade tether-worker")
+	}
+	if spec.ExtractRefs && spec.Provider != "claude" {
+		exit := 1
+		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
+		return nil, fmt.Errorf("extract_refs requires the worker's claude MCP relay")
+	}
 	undoIdentity, err := s.prepareWorkerIdentity(ctx, row, p, &spec)
 	if err != nil {
 		exit := 1
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
 		return nil, err
+	}
+	if spec.ExtractRefs && spec.Credential == "" {
+		undoIdentity()
+		exit := 1
+		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
+		return nil, fmt.Errorf("extract_refs requires a worker session credential")
 	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
@@ -193,6 +213,15 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	}
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err
+	}
+	if spec.Provider == "claude" && spec.Credential != "" && s.Workers.Supports(row.WorkerID, workerwire.FeatureExtractRefs) {
+		attribution := store.RefAttributionNone
+		if spec.ExtractRefs {
+			attribution = store.RefAttributionProxy
+		}
+		if err := s.Store.SetSessionRefAttribution(row.ID, attribution); err != nil {
+			log.Printf("worker session %s: could not save ref attribution", row.ID)
+		}
 	}
 	if s.Registry != nil && p.LogicalAgentID != "" {
 		if _, err := s.Registry.LeaseBinding(ctx, registry.LogicalAgentBindingTarget(p.LogicalAgentID), row.ID, row.WorkerID, row.ID, nil, registry.VisibilityTetherHosted, 0); err != nil {

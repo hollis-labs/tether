@@ -176,3 +176,23 @@ systemd-hosted provider survives restart. Those operator acceptance checks
 require a separately authorized owned account/window. No live agent-os unit,
 daemon, catalog, credentials or linger settings were changed by this source
 implementation.
+
+## Reference capture on worker sessions
+
+The hub sends the resolved `extract_refs` policy in `LaunchSpec`; it is off by
+default. Enabling it requires a worker advertising `extract-refs` and a session
+credential. The worker currently plants this relay for Claude only; other
+providers reject an enabled policy. Otherwise the hub refuses the launch instead of silently dropping
+capture. Older workers still accept default-off launches.
+
+The credential relay plants the canonical `--session` and an explicit
+`--extract-refs=true|false` after the imported template's flags. The hub records
+`ref_attribution` after a capable worker acknowledges launch; old workers retain
+unknown attribution. This records capture capability, not evidence that a call
+happened or that a stored source is authenticated. Calls through separate direct
+MCP entries still bypass the Tether gateway.
+
+Changing the catalog does not reconfigure already planted sessions. Enablement
+also depends on authenticated proxy provenance (CW-20261016-0157); propagation
+alone does not supply an issuer-minted proxy credential. Keep extraction off
+until that path is ready. No existing settings are changed by this support.
