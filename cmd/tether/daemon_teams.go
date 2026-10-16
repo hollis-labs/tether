@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/definitionresolve"
 	"github.com/hollis-labs/tether/internal/fabricstore"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/teamloop"
 	"github.com/hollis-labs/tether/internal/teamruntime"
@@ -70,15 +71,29 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 	if err != nil {
 		return nil, noop, err
 	}
-	host, err := teamhost.New(svc.Store.DB(), storage, teamhost.Ports{Enroller: enroller, Sessions: sessions, Messenger: messenger, Channels: teamruntime.Channels{}}, policy.HostOptions())
+	hostOptions := policy.HostOptions()
+	ports := teamhost.Ports{Enroller: enroller, Sessions: sessions, Messenger: messenger, Channels: teamruntime.Channels{}}
+	if policy.Adoption() {
+		// Opt-in only: without it no Adopter exists, Adopt is unavailable and
+		// the host can never reach the adopted-member path.
+		ports.Adopter = &teamruntime.RegistryAdopter{
+			Directory: enroller, Sessions: svc.Store, Owners: identity.NewStore(svc.Store.DB()), Notices: svc.Store,
+			Launches: hostOptions.AdoptableLaunches, Definitions: definitions, From: teamsvc.LocalOperator,
+		}
+	}
+	host, err := teamhost.New(svc.Store.DB(), storage, ports, hostOptions)
 	if err != nil {
 		return nil, noop, err
+	}
+	var adopter teamsvc.Adopter
+	if ports.Adopter != nil {
+		adopter = teamruntime.HostAdoptions{Host: host}
 	}
 	ops, err := teamsvc.New(teamsvc.Deps{
 		Principals: teamruntime.Principals{Mode: cfg.IdentityModeFor("teams"), Sessions: enroller},
 		Ceilings:   teamspolicy.Ceilings{Policy: policy}, Runs: host, Calls: host,
 		Definitions: storage, Roster: storage, Ledger: storage, Signals: storage,
-		Provisioner: host, Workflows: host, Triggers: host, Sender: host,
+		Provisioner: host, Adopter: adopter, Workflows: host, Triggers: host, Sender: host,
 		Routing: host, Trust: host, Approvals: host, Clock: host, IDs: host,
 		Defaults: teamsvc.ConservativePolicy().Limits,
 	})

@@ -245,6 +245,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/teams/dissolve", "/teams/dissolve", map[string]string{"POST": teamsScope}, "team-idempotency"),
 	routeScope("/teams/member_add", "/teams/member_add", map[string]string{"POST": teamsScope}, "team-idempotency"),
 	routeScope("/teams/member_remove", "/teams/member_remove", map[string]string{"POST": teamsScope}, "team-idempotency"),
+	routeScope("/teams/adopt", "/teams/adopt", map[string]string{"POST": teamsScope}, "team-idempotency"),
 	routeScope("/teams/assign", "/teams/assign", map[string]string{"POST": teamsScope}, "team-idempotency"),
 	routeScope("/teams/delegate", "/teams/delegate", map[string]string{"POST": teamsScope}, "team-idempotency"),
 	routeScope("/teams/address", "/teams/address", map[string]string{"POST": teamsScope}, "team-idempotency"),

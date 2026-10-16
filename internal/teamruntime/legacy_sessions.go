@@ -121,3 +121,44 @@ func (e *LegacyEnroller) ValidateRecovery(ctx context.Context, key string, actor
 	}
 	return nil
 }
+
+// AdoptionActor is what adoption needs to know about a registered actor.
+type AdoptionActor struct {
+	URN string
+	// ActiveAgent is true only for an active (not deprecated or merged) agent.
+	ActiveAgent bool
+}
+
+// AdoptionBinding is the actor's current registry binding as adoption reads it.
+type AdoptionBinding struct {
+	SessionID  string
+	Generation int64
+	// Live is true when the binding is unrevoked, unexpired and generation > 0.
+	Live bool
+}
+
+// AdoptionActor reads an actor's registration. A missing actor is ErrNotFound.
+func (e *LegacyEnroller) AdoptionActor(ctx context.Context, actor mesh.URN) (AdoptionActor, error) {
+	profile, err := e.registry.Lookup(ctx, string(actor))
+	if errors.Is(err, registry.ErrNotFound) {
+		return AdoptionActor{}, teams.ErrNotFound
+	}
+	if err != nil {
+		return AdoptionActor{}, err
+	}
+	return AdoptionActor{URN: profile.URN, ActiveAgent: profile.Kind == registry.KindAgent && profile.Status == registry.StatusActive}, nil
+}
+
+// AdoptionBinding reads an actor's current binding at now. No binding is a
+// zero value, not an error: the actor simply is not bound.
+func (e *LegacyEnroller) AdoptionBinding(ctx context.Context, actor mesh.URN, now time.Time) (AdoptionBinding, error) {
+	binding, err := e.registry.CurrentBinding(ctx, string(actor))
+	if errors.Is(err, registry.ErrBindingNotFound) {
+		return AdoptionBinding{}, nil
+	}
+	if err != nil {
+		return AdoptionBinding{}, err
+	}
+	live := binding.RevokedAt == nil && (binding.LeaseExpiresAt == nil || binding.LeaseExpiresAt.After(now)) && binding.Generation > 0
+	return AdoptionBinding{SessionID: binding.SessionID, Generation: binding.Generation, Live: live}, nil
+}

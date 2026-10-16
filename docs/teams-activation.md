@@ -106,6 +106,7 @@ coordinator slot (it provisions no member). Default off; read at daemon start.
 | `tether_team_form` | create a team run |
 | `tether_team_dissolve` | end the run (destructive) |
 | `tether_team_member_add` / `tether_team_member_remove` | change membership |
+| `tether_team_adopt` | adopt a running agent (needs `adoption: true`) |
 | `tether_team_assign` / `tether_team_delegate` | hand work to members |
 | `tether_team_address` | message a member or the team |
 | `tether_team_cancel` | cancel in-flight work (destructive) |
@@ -116,3 +117,58 @@ caller identity argument is accepted: the principal is the authenticated
 bearer's, and extra fields are rejected. Calls need the `team.write` scope.
 Launched sessions receive `team.write` in their minted credential only when
 teams are enabled, so they reach these tools through `tether mcp --forward-daemon`.
+
+## Adopting running agents
+
+Teams normally provision their own sessions. With `adoption: true` in
+`teams-policy.yaml` (default off, read at daemon start) the run owner can
+instead adopt an agent that is already running, together with its live session,
+without launching, enrolling or re-binding anything. Adoption never widens what
+Stage A allows.
+
+```
+tether team adopt --key adopt-1 --request '{"run_id":"...","slot":"workers",
+  "actor":"msg://agent/...","session_id":"...","binding_generation":3}'
+```
+
+The request names the actor, its session and the registry binding generation.
+The daemon verifies all three from its own records; a roster name or a claimed
+launch is never enough. Adoption is refused unless:
+
+- the actor is an active, registered agent with a live registry binding whose
+  session is the one named and whose generation is the one named;
+- that session is running and its own live credential names the forming
+  principal (the operator) as the one who launched it. Under identity `observe`
+  or `off` there is no credential, so nothing is adoptable;
+- the session's launch is in the policy allowlist, and its pin (the one the
+  policy binds to that launch) equals the seat's definition pin and loads;
+- the seat is a **pool** (or durable) slot of the run that already declares that
+  actor, has room (the owner's own seat counts), and the actor holds no other
+  active team seat. A fresh slot mints its own identity, so an existing actor
+  cannot fill one. A losing race is refused, never queued.
+
+With adoption on, the Stage A shape also admits empty pool seats: workers 0..2,
+reviewer 0..1, and a coordinator pool of 2 (the operator's owner seat plus one
+delegate). Pool seats must start empty (`min: 0`) and a formation may provision
+nothing at all. A pool must list at least as many identities as its maximum.
+The reviewer runtime rule still applies through the seats' definition pins.
+
+**The coordinator seat is the operator's, held by a delegate.** The operator
+stays the run owner. An adopted agent may sit in the coordinator slot only as a
+delegate: every grant in the team definition from that slot must be
+`may_message` or `may_assign`; a definition that grants `may_delegate`,
+`may_admin` or `may_spawn` from it is refused for adoption. Every identity in
+the coordinator pool gets exactly the slot's grants. A delegate cannot dissolve,
+remove members or adopt. To revoke the delegation, remove the member
+(`tether team member_remove`); the run, the operator and the other members are
+unaffected.
+
+**Leaving a team never stops an adopted agent.** Dissolve, member removal, run
+timeout and team failure terminate sessions the team *provisioned*. An adopted
+member is released instead: it is told once, its seat is freed, and its
+session, registry binding and registration are left exactly as they were. If a
+member's binding is later re-leased (a new generation), the membership is
+suspended (no messages) until the run owner re-adopts it explicitly.
+
+Adopted members are never spawn-capable, and adoption does not touch Torque
+claims or task assignment.

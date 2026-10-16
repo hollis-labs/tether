@@ -53,6 +53,9 @@ func (o clientTeamOps) AddMember(ctx context.Context, r teamsvc.AddMemberRequest
 func (o clientTeamOps) RemoveMember(ctx context.Context, r teamsvc.RemoveMemberRequest) (teamsvc.Result, error) {
 	return o.call(ctx, "member_remove", r.Key, api.TeamRequest{RunID: r.RunID, MemberID: r.MemberID})
 }
+func (o clientTeamOps) Adopt(ctx context.Context, r teamsvc.AdoptRequest) (teamsvc.Result, error) {
+	return o.call(ctx, "adopt", r.Key, api.TeamRequest{RunID: r.RunID, Slot: r.Slot, Actor: r.Actor, SessionID: r.SessionID, BindingGeneration: r.BindingGeneration})
+}
 func (o clientTeamOps) msg(ctx context.Context, verb string, r teamsvc.MessageRequest) (teamsvc.Result, error) {
 	return o.call(ctx, verb, r.Key, api.TeamRequest{RunID: r.RunID, Address: r.Address, Body: r.Body, Kind: r.Kind, History: r.History})
 }
