@@ -34,7 +34,8 @@ type sessionTurnOutput struct {
 	freshConversationPending bool
 	freshConversationTurn    string
 	lastActivity             time.Time
-	runtimeOrigin            *outputEventOrigin
+	runtimeOrigins           map[string]*outputEventOrigin
+	runtimeOriginOrder       []string
 	submissionGate           sync.Mutex
 	accepted                 bool
 	submissions              int
@@ -161,9 +162,25 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		if ev.TurnID != "" && (o.reducerTurnID == "" || ev.Kind == runtimeevents.KindTurnStarted || ev.TurnID == o.reducerTurnID) {
 			o.bindTurn(ev.TurnID)
 		}
-		if ev.TurnID == "" || ev.TurnID == o.reducerTurnID {
-			o.runtimeOrigin = combineOutputOrigin(o.runtimeOrigin, origin)
+		originID := ev.TurnID
+		if originID == "" {
+			if n := len(o.runtimeOriginOrder); n > 0 {
+				originID = o.runtimeOriginOrder[n-1]
+			} else {
+				originID = o.reducerTurnID
+			}
+			if originID == "" {
+				o.ensureTurn()
+				originID = o.turnID
+			}
 		}
+		if o.runtimeOrigins == nil {
+			o.runtimeOrigins = make(map[string]*outputEventOrigin)
+		}
+		if _, exists := o.runtimeOrigins[originID]; !exists {
+			o.runtimeOriginOrder = append(o.runtimeOriginOrder, originID)
+		}
+		o.runtimeOrigins[originID] = combineOutputOrigin(o.runtimeOrigins[originID], origin)
 	default:
 		// Process/session telemetry does not open a turn.
 	}
@@ -192,6 +209,8 @@ func (o *sessionTurnOutput) flush() {
 	}
 	// A process can end before its first reduced event.
 	o.settleTurn()
+	o.runtimeOrigins = nil
+	o.runtimeOriginOrder = nil
 	// The session is gone: queued replies hand off or become undeliverable.
 	o.service.notifyReplyIdle(o.row.ID)
 }
@@ -234,7 +253,7 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	job := &turnOutputWrite{origin: o.runtimeOrigin, storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID, freshConversation: o.freshConversationTurn != "" && o.freshConversationTurn == o.turnID}
+	job := &turnOutputWrite{origin: o.runtimeOrigins[result.TurnID], storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID, freshConversation: o.freshConversationTurn != "" && o.freshConversationTurn == o.turnID}
 	// Claim under the retry lock while committing the journal, so a replay
 	// sweep cannot race the synchronous publication of this same output.
 	r := &o.service.outputRetries
@@ -285,6 +304,7 @@ type turnOutputWrite struct {
 	origin             *outputEventOrigin
 	journalID          string
 	journaled          bool
+	journalClaimed     bool
 	textTruncated      bool
 	freshConversation  bool
 	providerResultID   string

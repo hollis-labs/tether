@@ -136,6 +136,13 @@ func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded 
 	id := output.TurnID
 	// Reducer completion is authoritative even when out-of-order output does
 	// not complete our current marker. Late frames for that turn stay closed.
+	delete(o.runtimeOrigins, id)
+	for i, originID := range o.runtimeOriginOrder {
+		if originID == id {
+			o.runtimeOriginOrder = append(o.runtimeOriginOrder[:i], o.runtimeOriginOrder[i+1:]...)
+			break
+		}
+	}
 	o.finishedTurns = append(o.finishedTurns, id)
 	if len(o.finishedTurns) > 64 {
 		o.finishedTurns = o.finishedTurns[len(o.finishedTurns)-64:]
@@ -227,7 +234,6 @@ func (o *sessionTurnOutput) settleTurn() {
 	o.submissions = 0
 	o.turnID = ""
 	o.reducerTurnID = ""
-	o.runtimeOrigin = nil
 	o.turnDone = nil
 }
 

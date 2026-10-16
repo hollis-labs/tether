@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,5 +91,29 @@ func TestTurnOutputRetryJournalRejectsInvalidPathsAndExcludesExpiredRecords(t *t
 	}
 	if published, err := db.HasPublishedTurnOutput(context.Background(), "none", second); err != nil || published {
 		t.Fatal("invented published output", err)
+	}
+}
+
+func TestExclusiveRetryPostLinkErrorsKeepClaim(t *testing.T) {
+	failure := errors.New("injected post-link failure")
+	for _, where := range []string{"remove", "sync"} {
+		t.Run(where, func(t *testing.T) {
+			remove := func(string) error {
+				if where == "remove" {
+					return failure
+				}
+				return nil
+			}
+			syncDir := func(string) error {
+				if where == "sync" {
+					return failure
+				}
+				return nil
+			}
+			err := finishOutputRetryClaim("scratch", "journal", true, remove, syncDir)
+			if !errors.Is(err, ErrOutputRetryClaimed) || !errors.Is(err, failure) || errors.Is(err, ErrDuplicateWithheldOutput) {
+				t.Fatalf("lost successful claim: %v", err)
+			}
+		})
 	}
 }

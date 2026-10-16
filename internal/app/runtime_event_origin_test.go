@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
 	"github.com/hollis-labs/libs/harness/core/adapters/turnoutput"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -209,4 +211,87 @@ func TestDerivedOutputIgnoresTelemetryOriginAndClearsTurnFloors(t *testing.T) {
 	if seen != 2 {
 		t.Fatalf("missing output: %d", seen)
 	}
+}
+
+func TestDerivedOverlappingTurnsKeepTheirOwnFloors(t *testing.T) {
+	for _, lateSecret := range []bool{false, true} {
+		for _, routed := range []bool{false, true} {
+			for _, finishBFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("late-secret=%t/routed=%t/B-first=%t", lateSecret, routed, finishBFirst), func(t *testing.T) {
+					var route *launchprofile.Route
+					if routed {
+						route = &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}
+					}
+					svc, output := outputHarness(t, route)
+					emit := func(turn, id string, kind runtimeevents.EventKind, sensitivity, text string) {
+						ev := nativeOriginExample()
+						ev.TurnID, ev.ID, ev.Kind = turn, id, kind
+						ev.Class = &runtimeevents.Class{Sensitivity: sensitivity}
+						ev.Payload = nil
+						if text != "" {
+							ev.Payload, _ = json.Marshal(map[string]string{"content": text, "phase": "final"})
+						}
+						output.observeRuntime(ev)
+					}
+					firstClass := "secret"
+					if lateSecret {
+						firstClass = "public"
+					}
+					emit("A", "A-start", runtimeevents.KindTurnStarted, firstClass, "")
+					if !lateSecret {
+						emit("A", "A-delta", runtimeevents.KindAgentDelta, "", "hidden-marker")
+					}
+					emit("B", "B-start", runtimeevents.KindTurnStarted, "public", "")
+					if lateSecret {
+						emit("A", "A-delta", runtimeevents.KindAgentDelta, "secret", "hidden-marker")
+					}
+					if !finishBFirst {
+						emit("A", "A-end", runtimeevents.KindTurnCompleted, "", "")
+					}
+					emit("B", "B-delta", runtimeevents.KindAgentDelta, "public", "visible-output")
+					emit("B", "B-end", runtimeevents.KindTurnCompleted, "", "")
+					if finishBFirst {
+						emit("A", "A-end", runtimeevents.KindTurnCompleted, "", "")
+					}
+					rows, err := svc.Store.EventsSince(0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					seen := map[string]bool{}
+					for _, e := range rows {
+						if e.Kind != events.KindSessionTurnOutput {
+							continue
+						}
+						var payload events.TurnOutputEvent
+						if err := json.Unmarshal([]byte(e.PayloadJSON), &payload); err != nil {
+							t.Fatal(err)
+						}
+						seen[payload.TurnID] = true
+						if e.Envelope.Corr.CausationID != payload.TurnID+"-end" {
+							t.Fatalf("wrong turn origin: %+v", e)
+						}
+						if payload.TurnID == "A" && (payload.Reason != "secret_withheld" || payload.Text != "" || strings.Contains(e.PayloadJSON, "hidden-marker")) {
+							t.Fatalf("secret leaked: %+v", payload)
+						}
+						if payload.TurnID == "B" && (payload.Reason != "" || e.Envelope.Class.Sensitivity != "public") {
+							t.Fatalf("public turn inherited secret floor: %+v", e)
+						}
+						if payload.MessageID != "" {
+							staged, err := svc.Store.StagedTurnOutput(context.Background(), payload.MessageID)
+							if err != nil || strings.Contains(string(staged.Payload), "hidden-marker") {
+								t.Fatalf("staged secret: %v", err)
+							}
+						}
+					}
+					if !seen["A"] || !seen["B"] {
+						t.Fatalf("missing outputs: %v", seen)
+					}
+					if len(output.runtimeOrigins) != 0 {
+						t.Fatal("completed origins retained")
+					}
+				})
+			}
+		}
+	}
+
 }

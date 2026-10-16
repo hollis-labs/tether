@@ -143,3 +143,19 @@ rekeying resumes before it can enter a retry worker. Unmarked historical records
 cannot be classified without detectors and keep their existing behavior.
 Detector-based redaction and raw-kind admission remain gated on the published,
 reviewed sanitizer and per-kind admission decisions.
+
+The native-secret output gate currently applies to callback-fed runtimeevents
+(the ACP ingress). Hosted Codex delivery and worker result frames do not carry a
+native envelope class, so this slice cannot infer a secret floor for them and
+does not claim to sanitize or withhold their unclassified output. The receipt
+and accounting support is defensive preparation for future classified ingress.
+
+The withholding notice's size is deliberately permitted metadata in
+`secret_turn_output_routing_2026_10_16`; the identity contains neither size nor
+content. Journal cleanup is defence in depth for explicitly marked records:
+main's older records had no Origin field, so unmarked historical bodies cannot
+be classified by this gate. For an old unrouted excerpt, size describes only
+the retained excerpt; it cannot reconstruct the full body size or authenticate
+a later full-body receipt. Duplicate-producer detection lasts while its journal
+or published event evidence is retained; it is not a permanent identity ledger
+after both have been purged.

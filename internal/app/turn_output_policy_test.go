@@ -321,3 +321,33 @@ func TestNativeSecretUpgradeDropsDuplicateAndRetiresHashName(t *testing.T) {
 		t.Fatalf("duplicate count=%d", got)
 	}
 }
+
+func TestNativeSecretClaimRetriesDurabilityWithoutReclaim(t *testing.T) {
+	svc, _ := outputHarness(t, nil)
+	row, err := svc.Store.GetSession("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := derivedRuntimeOrigin(nativeOriginExample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &turnOutputWrite{row: *row, origin: origin, result: turnoutput.Output{TurnID: "claimed", Kind: turnoutput.KindFinal, Text: "hidden-marker"}}
+	if err := job.journal(svc); err != nil {
+		t.Fatal(err)
+	}
+	// Model the writer after Link succeeded but cleanup/directory sync failed.
+	// The record is owned by this job, but persistence cannot proceed until sync.
+	job.journaled = false
+	job.journalClaimed = true
+	if err := job.journal(svc); err != nil {
+		t.Fatalf("own claim treated as duplicate: %v", err)
+	}
+	if !job.journaled || job.invariantFailed || svc.secretOutputDuplicate.Load() != 0 {
+		t.Fatal("durability retry reported duplicate producer")
+	}
+	duplicate := &turnOutputWrite{row: *row, origin: origin, result: turnoutput.Output{TurnID: "claimed", Kind: turnoutput.KindFinal, Text: "hidden-marker"}}
+	if err := duplicate.journal(svc); !errors.Is(err, store.ErrDuplicateWithheldOutput) {
+		t.Fatalf("second producer accepted: %v", err)
+	}
+}

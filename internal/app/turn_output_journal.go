@@ -45,6 +45,13 @@ func (w *turnOutputWrite) journal(s *Service) error {
 	if w.journaled {
 		return nil
 	}
+	if w.journalClaimed {
+		if err := s.Store.SyncTurnOutputRetry(w.journalID); err != nil {
+			return err
+		}
+		w.journaled = true
+		return nil
+	}
 	record := outputRetryRecord{Version: 1, WithheldReason: w.withheldReason, WithheldSize: w.withheldSize, Origin: w.origin, SessionID: w.row.ID, LogicalAgentID: w.row.LogicalAgentID,
 		ProjectID: w.row.ProjectID, ProviderResultID: w.providerResultID, Route: w.route, RouteUnread: w.routeUnread,
 		Result: w.result, TextTruncated: w.textTruncated, FreshConversation: w.freshConversation}
@@ -60,6 +67,8 @@ func (w *turnOutputWrite) journal(s *Service) error {
 	// continuity changes during replay. Those annotations cannot mint output.
 	id := w.journalID
 	if w.rewriteJournalFrom != "" {
+		s.withheldOutputMu.Lock()
+		defer s.withheldOutputMu.Unlock()
 		if err := s.Store.RewriteTurnOutputRetry(w.rewriteJournalFrom, id, data); err != nil {
 			return w.recordOutputInvariant(s, err)
 		}
@@ -78,6 +87,7 @@ func (w *turnOutputWrite) journal(s *Service) error {
 			return w.recordOutputInvariant(s, store.ErrDuplicateWithheldOutput)
 		}
 		if err := s.Store.WriteWithheldTurnOutputRetry(id, data); err != nil {
+			w.journalClaimed = errors.Is(err, store.ErrOutputRetryClaimed)
 			return w.recordOutputInvariant(s, err)
 		}
 	} else if err := s.Store.WriteTurnOutputRetry(id, data); err != nil {

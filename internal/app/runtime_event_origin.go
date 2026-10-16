@@ -71,7 +71,8 @@ func (origin *outputEventOrigin) apply(e events.Event) events.Event {
 
 // Output reduces several native inputs. A later terminal marker with no class
 // must not erase a sensitivity/PII floor observed on an earlier contributing
-// delta. settleTurn clears the accumulator before another turn starts.
+// delta. Origins are keyed by reducer turn ID until that turn completes;
+// binding another overlapping turn must not erase an earlier floor.
 func combineOutputOrigin(previous, next *outputEventOrigin) *outputEventOrigin {
 	if previous != nil && next != nil {
 		next.Envelope.Class.PII = next.Envelope.Class.PII || previous.Envelope.Class.PII

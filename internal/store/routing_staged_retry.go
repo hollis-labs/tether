@@ -55,6 +55,30 @@ func (s *Store) WriteTurnOutputRetry(id string, payload []byte) error {
 // ErrDuplicateWithheldOutput means two producer outputs claimed one turn identity.
 var ErrDuplicateWithheldOutput = errors.New("duplicate withheld turn output")
 
+// ErrOutputRetryClaimed accompanies a post-link error. The caller owns the
+// exclusive record and must retry its durability sync, not claim it again.
+var ErrOutputRetryClaimed = errors.New("turn output retry linked but not fully synced")
+
+// SyncTurnOutputRetry finishes a claimed record's durability after a post-link
+// failure. It never creates or replaces a producer record.
+func (s *Store) SyncTurnOutputRetry(id string) error {
+	if !validOutputRetryID(id) {
+		return errors.New("invalid turn output retry record")
+	}
+	dir, err := s.turnOutputRetryDir()
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(filepath.Join(dir, id+".json")) //nolint:gosec // Validated ID under the selected state DB journal.
+	if err != nil {
+		return err
+	}
+	if err := errors.Join(f.Sync(), f.Close()); err != nil {
+		return err
+	}
+	return syncOutputRetryDir(dir)
+}
+
 // WriteWithheldTurnOutputRetry refuses a second producer, even if its safe
 // notice happens to match. Replays use the already committed journal record.
 func (s *Store) WriteWithheldTurnOutputRetry(id string, payload []byte) error {
@@ -166,10 +190,17 @@ func (s *Store) writeTurnOutputRetry(id, newID string, payload []byte, replace, 
 			return ErrDuplicateWithheldOutput
 		}
 	}
-	if err := os.Remove(tmp); err != nil {
-		return err
+	return finishOutputRetryClaim(tmp, dir, exclusive, os.Remove, syncOutputRetryDir)
+}
+
+// The link is already visible here. Distinguish durability/cleanup failures
+// from a failed claim so an exclusive writer can safely retry its own record.
+func finishOutputRetryClaim(tmp, dir string, exclusive bool, remove func(string) error, syncDir func(string) error) error {
+	err := errors.Join(remove(tmp), syncDir(dir))
+	if err != nil && exclusive {
+		return errors.Join(ErrOutputRetryClaimed, err)
 	}
-	return syncOutputRetryDir(dir)
+	return err
 }
 
 func syncOutputRetryDir(dir string) error {

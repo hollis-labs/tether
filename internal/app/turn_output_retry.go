@@ -198,10 +198,13 @@ func (s *Service) rewriteSecretOutputRetries(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if _, err := readOutputRetry(s, id); err != nil && !errors.Is(err, os.ErrNotExist) && firstError == nil {
+			if _, err := readOutputRetry(s, id); err != nil && !errors.Is(err, os.ErrNotExist) {
 				// Preserve the error but keep scrubbing later records, including
 				// expired ones. One corrupt file must not strand other secrets.
-				firstError = err
+				log.Printf("turn output retry journal upgrade %q: %v", id, err)
+				if firstError == nil {
+					firstError = err
+				}
 			}
 			cursor = id
 		}
