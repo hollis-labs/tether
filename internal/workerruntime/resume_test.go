@@ -15,6 +15,12 @@ func TestWithResumeReplacesResumeLikeFlags(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %v, want %v", got, want)
 	}
+	// The equals forms carry the value in the same argument and must go too.
+	got = withResume([]string{"--resume=stale", "--model", "m", "--session-id=other", "-r=old", "--add-dir", "d"}, "abc-123")
+	want = []string{"--model", "m", "--add-dir", "d", "--resume", "abc-123"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("equals forms: args = %v, want %v", got, want)
+	}
 }
 
 // transcript writes a claude transcript for id whose first records carry cwd.
