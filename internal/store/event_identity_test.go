@@ -154,3 +154,30 @@ func TestFrozenEventIDRequiresSeedAndValidIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestFrozenEventIDStartupRefusesBadRollbackWrites(t *testing.T) {
+	db := openEventsStore(t)
+	ctx := context.Background()
+	insertLegacyIDFixture(t, db, 1)
+	before, err := db.SeedEventIdentity(ctx, frozenTestEnvironment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An unsupported old binary can append NULL after the frozen cutover.
+	insertLegacyIDFixture(t, db, 1)
+	if _, err := db.SeedEventIdentity(ctx, frozenTestEnvironment); !errors.Is(err, ErrEventIDsAfterCutover) {
+		t.Fatalf("bad rollback accepted: %v", err)
+	}
+	after, err := db.EventIdentityProgress(ctx)
+	if err != nil || after != before {
+		t.Fatalf("bad rollback moved the cutover: %+v %v", after, err)
+	}
+	// The repair never folds the invalid new row into the legacy namespace.
+	if _, err := db.BackfillEventIDs(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err := db.db.QueryRow(`SELECT COALESCE(event_id,'') FROM events WHERE id=2`).Scan(&id); err != nil || id != "" {
+		t.Fatalf("post-cutover row silently backfilled: %q %v", id, err)
+	}
+}
