@@ -98,9 +98,9 @@ func transcriptCwd(path string) (string, error) {
 	return "", errors.New("no cwd in transcript")
 }
 
-// withResume replaces any resume-like flags in the hub's args with
-// `--resume <id>`, so the hub's resolved args cannot start a different
-// conversation than the one the hub approved.
+// withResume replaces any resume-like flags in the hub's args (separate-value and
+// equals forms) with `--resume <id>`, so the hub's resolved args cannot start a
+// different conversation than the one the hub approved.
 func withResume(in []string, id string) []string {
 	var out []string
 	for i := 0; i < len(in); i++ {
@@ -109,6 +109,10 @@ func withResume(in []string, id string) []string {
 			i++
 		case "--continue", "-c", "--fork-session":
 		default:
+			// The equals forms carry their value in the same argument.
+			if strings.HasPrefix(in[i], "--resume=") || strings.HasPrefix(in[i], "--session-id=") || strings.HasPrefix(in[i], "-r=") {
+				continue
+			}
 			out = append(out, in[i])
 		}
 	}
