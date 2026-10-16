@@ -422,6 +422,14 @@ func (h *Host) end(ctx context.Context, m teams.Member, mode string) error {
 	return h.clean(ctx, req.IdempotencyKey, mode)
 }
 func (h *Host) clean(ctx context.Context, key, mode string) error {
+	// An adopted member's session, binding and registration are not ours.
+	adopted, err := h.isAdopted(ctx, key)
+	if err != nil {
+		return err
+	}
+	if adopted {
+		return h.cleanAdopted(ctx, key, mode)
+	}
 	// Keep enrollment and binding until Stop acknowledges that the session is
 	// gone. An uncertain Stop must never permit a second session for the actor.
 	if err := h.ports.Sessions.Stop(ctx, key); err != nil && !errors.Is(err, teams.ErrNotFound) && !errors.Is(err, ErrSessionGone) {

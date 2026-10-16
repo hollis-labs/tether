@@ -72,6 +72,9 @@ type Ports struct {
 	Enroller  Enroller
 	Messenger Messenger
 	Channels  Channels
+	// Adopter is optional. Without it Adopt is unavailable and any adopted
+	// member's cleanup fails closed instead of stopping its session.
+	Adopter Adopter
 }
 type TrustTier string
 
@@ -90,5 +93,8 @@ type Options struct {
 	// OwnerAgentTrust, when set, admits an agent (session) acting as a run owner
 	// at formation. Slot definitions are still held to their own pinned tiers.
 	OwnerAgentTrust TrustTier
-	Now             func() time.Time
+	// AdoptableLaunches allowlists the launches whose live sessions may be
+	// adopted, each with the one definition pin it must run. Omission denies.
+	AdoptableLaunches AdoptedLaunches
+	Now               func() time.Time
 }

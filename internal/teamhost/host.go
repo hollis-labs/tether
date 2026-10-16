@@ -23,6 +23,7 @@ type Host struct {
 	tiers      map[mesh.DefinitionRef]TrustTier
 	actors     map[mesh.URN]TrustTier
 	ownerAgent TrustTier
+	adoptable  AdoptedLaunches
 	now        func() time.Time
 }
 
@@ -46,12 +47,19 @@ func New(db *sql.DB, storage *teamstore.Store, ports Ports, options Options) (*H
 		}
 		actors[actor] = tier
 	}
+	adoptable := make(AdoptedLaunches, len(options.AdoptableLaunches))
+	for launch, pin := range options.AdoptableLaunches {
+		if launch == "" || pin.ID == "" || pin.Revision == "" || pin.Digest == "" {
+			return nil, errors.New("team host: adoptable launch needs an exact pin")
+		}
+		adoptable[launch] = pin
+	}
 	now := options.Now
 	if now == nil {
 		now = time.Now
 	}
 	storage.SetLaunchWriteHook(writeLaunchIntents)
-	return &Host{db: db, store: storage, ports: ports, tiers: tiers, actors: actors, ownerAgent: options.OwnerAgentTrust, now: now}, nil
+	return &Host{db: db, store: storage, ports: ports, tiers: tiers, actors: actors, ownerAgent: options.OwnerAgentTrust, adoptable: adoptable, now: now}, nil
 }
 func (h *Host) Now() time.Time { return h.now() }
 func (h *Host) NewID() string  { return uuid.NewString() }
