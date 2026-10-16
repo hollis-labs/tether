@@ -35,10 +35,11 @@ type Principal struct {
 	Display   string   `json:"display"`
 	Scopes    []string `json:"scopes"`
 	SessionID string   `json:"session_id,omitempty"`
-	// Audience, TokenID and Parent are set only for principals resolved from
-	// an issued JWT (authissuer): the aud and jti claims and the minting
-	// parent. A non-empty TokenID is how the daemon tells an issued token
-	// from a stored tth_ credential.
+	// Issuer, Audience, TokenID and Parent are set only for principals resolved
+	// from an issued JWT (authissuer): the iss and aud claims, the jti claim
+	// and the minting parent. A non-empty TokenID is how the daemon tells an
+	// issued token from a stored tth_ credential.
+	Issuer    string     `json:"issuer,omitempty"`
 	Audience  string     `json:"audience,omitempty"`
 	TokenID   string     `json:"token_id,omitempty"`
 	Parent    string     `json:"parent,omitempty"`

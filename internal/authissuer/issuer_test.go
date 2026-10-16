@@ -197,6 +197,9 @@ func TestLocalVerifierAcceptsIssuedAndStoredAndHonorsDenyList(t *testing.T) {
 	if err != nil || p.Kind != "agent" || p.SessionID != "s9" || p.TokenID == "" || !identity.ScopeGranted(p.Scopes, "read") || identity.ScopeGranted(p.Scopes, "operate") {
 		t.Fatalf("issued: %+v %v", p, err)
 	}
+	if p.Issuer != is.Name || p.Audience != TetherAudience || p.Parent != identity.OperatorID {
+		t.Fatalf("issued principal lacks its token authority (iss/aud/par): %+v", p)
+	}
 	// a token for another audience is not accepted by Tether's own API
 	other, _ := is.Exchange(operator, Request{Audience: "tesseract", Scopes: []string{"tesseract.read"}})
 	if _, err := v.Verify(ctx, other.Token); !errors.Is(err, identity.ErrInvalidToken) {

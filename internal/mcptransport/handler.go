@@ -188,6 +188,11 @@ func (h *Handler) admit(ctx context.Context, token string, s selectors) (admissi
 	return admission{caller: caller, options: opts, catalog: cat, fingerprint: key}, err
 }
 
+// maxAuthorizationHeader bounds the Authorization header. Stored credentials are short, but an issued
+// agent JWT (iss, sub, aud, scope, exp, iat, jti, kind, sid, par plus an EdDSA signature) is about 470
+// characters, so the old 256 cap refused every issued token before it was verified.
+const maxAuthorizationHeader = 4096
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	if h.closed {
@@ -221,7 +226,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values := r.Header.Values("Authorization")
-	if len(values) != 1 || len(values[0]) > 256 {
+	if len(values) != 1 || len(values[0]) > maxAuthorizationHeader {
 		transportError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}

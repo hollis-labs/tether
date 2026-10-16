@@ -57,13 +57,25 @@ func viewFingerprint(caller Caller, token string, opts mcpadapter.ProxyOptions) 
 	}
 	scopes := slices.Clone(caller.Principal.Scopes)
 	slices.Sort(scopes)
+	// A stored credential pins the credential itself (its token hash). An issued JWT is rotated in place
+	// every few minutes within one session, so it pins the authority the token carries instead: issuer,
+	// principal, kind, session, audience, minting parent, scopes, plus the resolved policy. The raw token,
+	// jti, iat, exp and kid are excluded on purpose (a refresh or a signing-key rotation must not end an
+	// open MCP session). Nothing here replaces per-request verification: every request still verifies the
+	// signature, expiry and the jti/sid deny-list before this is compared. Any change of authority,
+	// including narrowed scopes, yields a different fingerprint and a 403.
+	credential, tokenHash, issuer, audience, parent := "stored", identity.HashToken(token), "", "", ""
+	if caller.Principal.TokenID != "" {
+		credential, tokenHash = "issued", ""
+		issuer, audience, parent = caller.Principal.Issuer, caller.Principal.Audience, caller.Principal.Parent
+	}
 	// Selector source labels are presentation; resolved content is authority.
 	payload := struct {
-		PrincipalID, Kind, SessionID, TokenHash, PolicyDigest, MachineAccess string
-		Scopes                                                               []string
-		Profile                                                              *mcpgateway.Profile
-		Mode                                                                 mcpgateway.Mode
-	}{caller.Principal.ID, caller.Principal.Kind, caller.Principal.SessionID, identity.HashToken(token), caller.Policy.Digest, caller.MachineAccess, scopes, opts.Profile.Profile, mode.Mode}
+		Credential, PrincipalID, Kind, SessionID, TokenHash, Issuer, Audience, Parent, PolicyDigest, MachineAccess string
+		Scopes                                                                                                     []string
+		Profile                                                                                                    *mcpgateway.Profile
+		Mode                                                                                                       mcpgateway.Mode
+	}{credential, caller.Principal.ID, caller.Principal.Kind, caller.Principal.SessionID, tokenHash, issuer, audience, parent, caller.Policy.Digest, caller.MachineAccess, scopes, opts.Profile.Profile, mode.Mode}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
