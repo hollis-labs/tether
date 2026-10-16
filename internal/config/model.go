@@ -356,6 +356,13 @@ type Defaults struct {
 	// TETHER_LAUNCH_ENGINE env var overrides this. See app.LaunchEngine.
 	LaunchEngine string `yaml:"launch_engine"`
 
+	// WorkerResume opts in to resuming a worker-placed session on the same worker
+	// (catalog.defaults.worker_resume). Default false: resume of a worker-placed
+	// source is refused. Even when true the resume fails closed unless that worker
+	// is connected and advertises worker-resume (a worker swap is required first).
+	// Read per resume, so a catalog reload applies it without a daemon restart.
+	WorkerResume bool `yaml:"worker_resume"`
+
 	// LaunchHost selects direct execution (default) or opt-in shim hosting.
 	// TETHER_LAUNCH_HOST overrides this value for each launch.
 	LaunchHost string `yaml:"launch_host"`

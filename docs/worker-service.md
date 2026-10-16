@@ -130,11 +130,15 @@ alone is not a compatibility promise. Pairing remains separate work.
 A worker-placed session can be resumed on the same worker, with the provider's own
 conversation, instead of starting fresh. Two halves have to agree:
 
-- **Hub (opt-in, off by default).** `Service.WorkerResume` (#350) allows resume of a worker-placed source.
-  It fails closed unless that worker is connected and advertises `worker-resume`, the source is a claude
-  session, the request is not native-only, and a provider session id is recorded. The hub then sends the
-  new launch with `LaunchSpec.resume_session_id`. Nothing in this repo sets `WorkerResume` from
-  configuration yet, so it stays off.
+- **Hub (opt-in, off by default).** `catalog.defaults.worker_resume: true` (global config) allows resume of
+  a worker-placed source (#350). It fails closed unless that worker is connected and advertises
+  `worker-resume`, the source is a claude session, the request is not native-only, and a provider session
+  id is recorded. The hub then sends the new launch with `LaunchSpec.resume_session_id`. It is read on each
+  resume, so a catalog reload (`POST /catalog/reload`) applies it without a daemon restart. With it off (the
+  default) resume of a worker-placed source is refused exactly as before. `tether execution status` prints
+  `worker resume: on|off`, as does the `tether_execution_status` MCP tool (`worker_resume`). Enable it only
+  after the workers have been swapped to a version that advertises the feature; until then the hub still
+  refuses with a typed error.
 - **Worker (this version and later).** The worker advertises `worker-resume` in its hello and honors
   `resume_session_id`: it finds the claude transcript `<claude config dir>/projects/*/<id>.jsonl`
   (`CLAUDE_CONFIG_DIR`, else `~/.claude`), reads the directory the session ran in, and starts
