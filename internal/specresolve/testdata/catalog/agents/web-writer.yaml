@@ -1,6 +1,0 @@
-id: web-writer
-name: Web Writer
-roles: [writer]
-skills: []
-permissions:
-  network: true

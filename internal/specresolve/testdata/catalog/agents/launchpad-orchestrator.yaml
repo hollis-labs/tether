@@ -1,6 +1,0 @@
-id: launchpad-orchestrator
-name: Launchpad Orchestrator
-roles: [orchestrator]
-skills: []
-permissions:
-  network: true

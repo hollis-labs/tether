@@ -1,9 +1,0 @@
-id: torque-claude-tui
-project: tether
-agent: tether-engineer
-provider: claude-pty
-workspace:
-  mode: hybrid
-prompt:
-  include_project_boot: true
-  include_agent_boot: true

@@ -1,3 +1,0 @@
-id: clockwork
-transport: stdio
-command: /usr/local/bin/clockwork

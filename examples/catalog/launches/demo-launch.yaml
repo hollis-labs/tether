@@ -1,9 +1,0 @@
-id: demo-launch
-project: demo
-agent: demo-agent
-provider: claude-code
-workspace:
-  mode: worktree
-prompt:
-  include_project_boot: true
-  include_agent_boot: true

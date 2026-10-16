@@ -1,7 +1,0 @@
-id: demo-agent
-name: Demo Agent
-roles: [general]
-skills: []
-boot_fragments: []
-permissions:
-  network: true

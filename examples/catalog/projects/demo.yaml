@@ -1,9 +1,0 @@
-id: demo
-name: Demo Project
-repo_root: ~/Projects-apps/tether-v0-pack
-tracking_root: ~/tether/tracking/demo
-boot_fragments:
-  - boot/common.md
-workspace:
-  default_mode: worktree
-  session_root: ~/tether/workspaces/demo
