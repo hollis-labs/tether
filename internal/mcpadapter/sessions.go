@@ -73,7 +73,6 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 			gomcp.StringProp("worker", "Optional. Place the session on this connected outpost (label or id). Defaults to the launch's `worker:` when it declares one. Fails with worker_unavailable when the worker is not enrolled or offline.", false),
 			gomcp.BooleanProp("require_worker", "Optional. Refuse with worker_not_configured when no worker resolves (none passed and the launch declares no `worker:`) instead of running the session on the hub.", false),
 			gomcp.StringProp("idempotency_key", "Optional. Makes the create idempotent: a retry with the same key and the same request returns the session the first one created (replayed=true); the same key with a different request fails with idempotency_conflict. Keys are scoped to the authenticated caller, so another caller's identical key never collides with yours.", false),
-			gomcp.StringProp("task_id", "Optional. The Torque task this session is launched for (bare id, e.g. CW-20261016-0155). Honored only when the MCP server presents the operator credential; an agent session that sends it is refused (task_id_not_permitted).", false),
 			gomcp.StringProp("injection", "Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.", false),
 		),
 		Handler: a.handleSessionCreate,
@@ -284,7 +283,6 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 	idempotencyKey := str(args, "idempotency_key")
 	worker := str(args, "worker")
 	requireWorker := boolArg(args, "require_worker")
-	taskID := str(args, "task_id")
 	// A keyed request always takes the input path, where the key is recorded.
 	withInput := requireWorker || worker != "" || idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != ""
 
@@ -304,13 +302,10 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 			PromptAppend:    promptAppend,
 			Injection:       injection,
 			IdempotencyKey:  idempotencyKey,
-			TaskID:          taskID,
 		}
 		var res api.LaunchResponse
 		var err error
-		// A task stamp is a tier-2 field; the daemon decides who may assert it. The in-process
-		// path below has no caller identity to check, so it never carries one.
-		if withInput || taskID != "" {
+		if withInput {
 			res, err = a.client.CreateSessionWithInput(ctx, creq)
 		} else if bootPrompt != "" {
 			res, err = a.client.CreateSessionWithBootPrompt(ctx, launchID, bootPrompt)
