@@ -1,8 +1,8 @@
 # Dormant event retention primitives
 
 This package is preparation for D7 retention classes (CW-20261016-0146). It is
-not connected to catalog loading, SQLite, the daemon, or the current retention
-job. The hub keeps its existing 90-day sweep until the approved log cutover.
+not connected to catalog loading, the daemon, or the current retention job.
+The explicit store adapter is described below. The hub keeps its existing 90-day sweep until the approved log cutover.
 
 `Parse` accepts a standalone proposed block, with strict unknown-field checks:
 
@@ -75,3 +75,24 @@ commit rollups before head deletion, use bounded transactions, preserve legacy
 policy, and prevent the old age-only sweep from competing with class retention.
 The separate identity_audit table retains its 400-day floor. None of that wiring
 or a live retention-setting change is part of this package.
+
+## Persistence preparation
+
+The store adapter adds migration 0083 with immutable resolved policy snapshots
+and an explicitly activated kind-to-class catalog. `SetEventRetentionAdmission`
+replaces the catalog atomically; no daemon/catalog loader invokes it yet.
+Snapshots survive later policy changes. Unknown kinds have NULL class/policy,
+even if an event asserts them. The shared insert helper covers ordinary and
+transactional outbox writes, rejects secret/unknown sensitivities, and uses the
+caller's connection. Environment requests preserve their envelope through their
+existing request-status transaction.
+
+`TombstoneEventPayloads` scans at most 1,000 published, classified payloads per
+transaction, restores and verifies each admission snapshot, and clears only
+eligible payloads. Its conditional UPDATE repeats the pending/payload/policy
+guards. A failure rolls back the whole batch. The result is a per-sweep scan
+cursor, not a trim checkpoint: a later sweep starts again at zero to reconsider
+younger or formerly pending rows. It changes neither row IDs nor envelope
+metadata. There is no scheduler, row deletion, aggregate persistence or cutover
+in this slice. Deployment/activation still requires disabling the competing
+age-only event sweep and preserving the separate identity audit floor.

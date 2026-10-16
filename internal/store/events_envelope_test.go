@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/eventretention"
 	"github.com/hollis-labs/tether/internal/events"
 )
 
@@ -58,6 +59,7 @@ func fullEnvelope() events.Event {
 
 func TestPublishPersistsTheEnvelopeAndTheLogAssignsRecordedAt(t *testing.T) {
 	db := openEventsStore(t)
+	cfg := installTestRetention(t, db, "", map[string]eventretention.Class{"session.state_changed": eventretention.State})
 	bus := newOutboxBus(t, db)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -81,7 +83,7 @@ func TestPublishPersistsTheEnvelopeAndTheLogAssignsRecordedAt(t *testing.T) {
 		"labels_json": `["a","b"]`, "content_type": "application/json",
 		"trace_id": "t", "span_id": "sp", "causation_id": "c", "correlation_id": "co", "thread_id": "th", "idempotency_key": "ik",
 		"actor_kind": "agent", "actor_urn": "msg://agent/x", "actor_verified": "token", "on_behalf_of": "msg://user/me",
-		"retention_class": "R-state", "retention_policy_id": "pol-abc",
+		"retention_class": "R-state", "retention_policy_id": cfg.ID(),
 		"scope": events.ScopeSession, "kind": "session.state_changed", "session_id": "s1",
 	}
 	for col, w := range want {
@@ -147,6 +149,7 @@ func TestPlainPublishLeavesTheEnvelopeNullButPersistsLogicalAgentID(t *testing.T
 
 func TestPublishTxPersistsTheEnvelopeToo(t *testing.T) {
 	db := openEventsStore(t)
+	installTestRetention(t, db, "", map[string]eventretention.Class{"session.state_changed": eventretention.State})
 	bus := newOutboxBus(t, db)
 	ctx := context.Background()
 	tx, err := db.db.BeginTx(ctx, nil)
