@@ -109,27 +109,36 @@ produce one, and `coverage.note` says so in prose when the answer is zero.
 Capture is opt-in (`launch.mcp.extract_refs`, then project, then the global
 `catalog.defaults.extract_refs`, default false). Existing planted sessions do
 not change when the catalog does. Capability is separate from authenticated
-provenance: extraction enablement waits for CW-20261016-0157 step 3.
+provenance: enabling extraction alone does not route traffic through the hub.
 
 Hub-local legacy planting uses `--session` and `--extract-refs`; daemon-owned
 MCP uses saved session policy. Supported successful calls pass through
 `sessionrefs.Service.Record`; failed calls produce no ref and retries deduplicate.
 Capture stores identifiers, not raw arguments or results. Historical
 `proxy_events` fingerprints do not contain the identifiers needed for backfill.
-Worker/outpost and externally started paths need their own session/policy
-propagation; the global setting alone does not establish coverage.
+The worker relay currently runs SSH to `tether mcp --daemon-only`, which owns
+legacy upstream connections and bypasses the hub-owned `/mcp` handler. Its HTTP
+ref writes receive `session`, never `proxy`. Calls through the hub handler (including thin `--forward-daemon` clients) can
+produce trusted proxy refs. Worker forwarding is a
+separate prerequisite for enabling extraction fleet-wide; it is not changed here.
+The global setting alone does not establish coverage.
 
 The daemon derives ref `source` from verified identity: `session` for a session
 or bound agent credential, `operator` for the actual operator credential, and
 unattributed `api` for other legacy HTTP callers. Caller source fields are
-ignored; asserting `proxy` currently returns 403 `source_asserted` and increments
+ignored; asserting `proxy` always returns 403 `source_asserted` and increments
 `tether.refs.source_asserted` (no request data in metric labels).
 
 Migration 0080 downgrades old `proxy` assertions to **`proxy_claimed`**, which is
 untrusted and cannot trigger the store's proxy upgrade rule. It preserves row
 IDs, refs, timestamps, relations and parents. `agent` is also a legacy assertion.
-`proxy` is reserved for the future issuer-minted proxy credential; no HTTP caller
-currently derives it. None of these labels validates the referenced object.
+`proxy` means the hub captured an identifier from successful traffic it forwarded.
+The internal capture sink pins the session to the verified credential and uses
+the saved extraction policy. Failed calls produce no refs; retries deduplicate.
+There is no proxy token or proxy scope, and no HTTP caller can derive this source.
+This is provenance, not truth: tool-call arguments remain agent-authored. Calls
+that bypass the hub produce no proxy refs. None of these labels validates the
+referenced object.
 The migration is forward-only; do not run an older binary against the expanded
 source vocabulary.
 

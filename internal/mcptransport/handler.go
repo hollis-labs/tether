@@ -410,8 +410,11 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 	if h.cfg.TeamsEnabled && api.HasTeamOps(h.cfg.Teams) {
 		adapter.SetTeams(h.cfg.Teams)
 	}
-	if dc != nil {
-		adapter.SetRefAttacher(daemonRefAttacher{client: dc})
+	p := a.caller.Principal
+	if p.Verified && (p.Kind == "session" || identity.IsBoundAgentToken(p)) &&
+		p.SessionID != "" && p.SessionID == a.caller.Policy.SessionID &&
+		h.cfg.Service != nil && h.cfg.Service.Store != nil {
+		adapter.SetRefAttacher(hubRefAttacher{sessionID: p.SessionID, store: h.cfg.Service.Store})
 	}
 	a.options.Publisher = h.cfg.Publisher
 	if h.cfg.Service != nil && h.cfg.Service.Store != nil {

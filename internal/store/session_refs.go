@@ -64,8 +64,9 @@ const (
 // migration 0024. No source validates an identifier, and an absent ref is never
 // evidence that a session did nothing.
 const (
-	// SourceProxy is reserved for verified proxy credentials. HTTP callers
-	// cannot assert it. Historical assertions were downgraded by migration 0080.
+	// SourceProxy records traffic observed by the hub-owned MCP handler.
+	// Arguments remain agent-authored; this is provenance, not truth. HTTP
+	// callers cannot assert it. Migration 0080 downgraded historical assertions.
 	SourceProxy = "proxy"
 	// SourceProxyClaimed is a historical, unverified assertion, never observed evidence.
 	SourceProxyClaimed = "proxy_claimed"
