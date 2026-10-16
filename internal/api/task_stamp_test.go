@@ -79,7 +79,7 @@ func TestTaskStampPolicy(t *testing.T) {
 		{"unknown future kind", &identity.Principal{Verified: true, ID: "x", Kind: "brand-new-kind"}, http.StatusOK, false, true},
 		{"operator-minted narrow token", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", TokenID: "jti-1"}, http.StatusOK, false, true},
 		{"unverified operator claim", &identity.Principal{Verified: false, ID: identity.OperatorID, Kind: "operator"}, http.StatusOK, false, true},
-		{"no principal", nil, http.StatusOK, false, true},
+		{"no principal", nil, http.StatusOK, false, false}, // dropped silently: anonymous traffic never writes audit rows
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, db, audited := bootstrapAsAudited(t, tc.p)
@@ -103,12 +103,9 @@ func TestTaskStampPolicy(t *testing.T) {
 			for _, o := range *audited {
 				if o.Event == eventTaskIDDropped {
 					dropped++
-					wantID, wantAuth := "", "none"
-					if tc.p != nil {
-						wantID, wantAuth = tc.p.ID, map[bool]string{true: "verified", false: "claimed"}[tc.p.Verified]
-					}
-					if o.PrincipalID != wantID || o.Authentication != wantAuth {
-						t.Fatalf("audit row = %+v, want principal %q authentication %q", o, wantID, wantAuth)
+					wantAuth := map[bool]string{true: "verified", false: "claimed"}[tc.p.Verified]
+					if o.PrincipalID != tc.p.ID || o.Authentication != wantAuth {
+						t.Fatalf("audit row = %+v, want principal %q authentication %q", o, tc.p.ID, wantAuth)
 					}
 				}
 			}

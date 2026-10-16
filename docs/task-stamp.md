@@ -11,8 +11,10 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
 - **Who may assert it.** Only the verified local operator (`identity.IsOperatorCredential`), as an explicit allow:
   a new principal kind starts denied. An agent or a session credential that sends `task_id` gets
   `403 task_id_not_permitted`. Any other caller (a worker device, another service, an operator-minted narrow token, an
-  unverified claim, no principal) has the field dropped: the launch still succeeds without a stamp and an
-  `identity_audit` row with event `task_id_dropped` records it. TODO: allow a Torque service principal here once the
+  unverified claim, no principal) has the field dropped: the launch still succeeds without a stamp and, for an identified
+  caller, an `identity_audit` row with event `task_id_dropped` records it. A request with no principal is dropped silently
+  on purpose: `identity/guard.go` forbids anonymous traffic from touching the database (and in enforce mode it never gets
+  here). TODO: allow a Torque service principal here once the
   issuer provides one (CW-20261016-0017; decision `tether_task_id_stamp_and_usage_rows_2026_10_16`).
 - **When.** At creation only. `POST /sessions` takes `task_id`; `POST /sessions/bootstrap` takes `task_id` and applies
   it only when the row is created. A later request, even from the launcher, never rebinds the session.
