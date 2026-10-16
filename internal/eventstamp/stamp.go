@@ -92,7 +92,7 @@ func stampSession(ctx context.Context, e *events.Event) {
 // session or any unverified caller gets none either: "claimed" cannot name an
 // actor URN without guessing one.
 func stampActor(ctx context.Context, e *events.Event) {
-	if e.Envelope.Actor != (events.Actor{}) {
+	if actorSet(e.Envelope.Actor) {
 		return
 	}
 	p, ok := identity.FromContext(ctx)
@@ -120,3 +120,8 @@ func stampCorr(ctx context.Context, e *events.Event) {
 	set(&e.Envelope.Corr.TraceID, sc.TraceID().String())
 	set(&e.Envelope.Corr.SpanID, sc.SpanID().String())
 }
+
+// actorSet reports whether a producer already named an actor. It checks the
+// scalar fields rather than comparing the struct, so it keeps compiling if
+// Actor ever gains a slice field (a delegation chain).
+func actorSet(a events.Actor) bool { return a.Kind != "" || a.URN != "" || a.Verified != "" }

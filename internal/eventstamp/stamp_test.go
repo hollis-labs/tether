@@ -76,7 +76,7 @@ func TestUnresolvedOrUnmanagedCallerStampsNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := stamp(ctx, t, s, events.Event{Scope: events.ScopeSession, SessionID: "s1", Kind: "k"})
-			if got.Envelope.Dims != (events.ScopeDims{}) || got.Envelope.Actor != (events.Actor{}) {
+			if got.Envelope.Dims != (events.ScopeDims{}) || actorSet(got.Envelope.Actor) {
 				t.Fatalf("stamped without proof: %+v", got.Envelope)
 			}
 		})
@@ -109,14 +109,14 @@ func TestActorFollowsVerifiedFactsNotKind(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := stamp(tc.ctx, t, s, events.Event{Scope: events.ScopeSession, SessionID: "s1", Kind: "k"})
-			if got.Envelope.Actor != tc.want {
+			if !sameActor(got.Envelope.Actor, tc.want) {
 				t.Fatalf("actor %+v, want %+v", got.Envelope.Actor, tc.want)
 			}
 		})
 	}
 	noAgent := resolved
 	noAgent.AgentURN = ""
-	if got := stamp(sessionCtx(noAgent, sessionPrincipal), t, s, events.Event{SessionID: "s1"}); got.Envelope.Actor != (events.Actor{}) {
+	if got := stamp(sessionCtx(noAgent, sessionPrincipal), t, s, events.Event{SessionID: "s1"}); actorSet(got.Envelope.Actor) {
 		t.Fatalf("actor invented without a confirmed agent address: %+v", got.Envelope.Actor)
 	}
 }
@@ -206,4 +206,10 @@ func TestStampedValuesReachTheStoredRow(t *testing.T) {
 	if tick.env.String != "env-1" || tick.agent.Valid || tick.project.Valid || tick.task.Valid || tick.actorKind.Valid || tick.actorURN.Valid || tick.verified.Valid {
 		t.Fatalf("stored daemon event carries more than the process: %+v", tick)
 	}
+}
+
+// sameActor compares the fields the stamp stage sets, so the test survives
+// events.Actor gaining non-comparable fields.
+func sameActor(a, b events.Actor) bool {
+	return a.Kind == b.Kind && a.URN == b.URN && a.Verified == b.Verified && a.OnBehalfOf == b.OnBehalfOf
 }
