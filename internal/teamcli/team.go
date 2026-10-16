@@ -37,7 +37,7 @@ func NewCommand(factory func() (*client.Client, error), enabled bool) *cobra.Com
 			req, err := api.DecodeTeamRequest(verb, key, reader)
 			if err != nil {
 				status, detail := api.TeamError(err)
-				return &client.TeamError{Code: detail.Code, Status: status}
+				return &client.TeamError{Code: detail.Code, Status: status, Detail: detail.Message}
 			}
 			c, err := factory()
 			if err != nil {

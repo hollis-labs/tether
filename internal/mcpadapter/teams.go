@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
+	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/teamsvc"
 )
@@ -20,13 +22,17 @@ func (a *Adapter) registerTeamTools(s *gomcp.Server) {
 		return
 	}
 	for _, verb := range api.TeamVerbs() {
+		description := "Team " + verb + " through the authenticated daemon service. Requires a caller-scoped idempotency key; retries retain the original result. No asserted caller identity is accepted."
+		if verb == "form" {
+			description += " request.team is a versioned definition with id, name, version, slots, phases, authority, routing and policy; coordinator/member roster shortcuts are not supported. Stage A uses coordinator/workers/reviewer slots and operator-approved definition pins."
+		}
 		behavior := Writes()
 		if verb == "dissolve" || verb == "member_remove" || verb == "cancel" {
 			behavior = Destroys("Ends team members and releases their resources")
 		}
 		a.addTool(s, gomcp.Tool{
 			Name:        "tether_team_" + verb,
-			Description: "Team " + verb + " through the authenticated daemon service. Requires a caller-scoped idempotency key; retries retain the original result. No asserted caller identity is accepted.",
+			Description: description,
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"key", "request"}, "properties": map[string]any{
 				"key":          map[string]any{"type": "string", "minLength": 1, "maxLength": teamsvc.MaxKeyBytes, "description": "Caller-scoped idempotency key"},
 				"request":      teamRequestSchema(verb),
@@ -42,8 +48,16 @@ func teamRequestSchema(verb string) map[string]any {
 	fields, required := api.TeamRequestFields(verb), api.TeamRequiredFields(verb)
 	properties := map[string]any{}
 	for _, field := range fields {
+		if field == "team" {
+			properties[field] = teamInputSchema[teams.Team]()
+			continue
+		}
+		if field == "launch" {
+			properties[field] = teamInputSchema[api.TeamLaunchRequest]()
+			continue
+		}
 		kind := "string"
-		if field == "team" || field == "launch" || field == "limits" {
+		if field == "limits" {
 			kind = "object"
 		}
 		if field == "cascade" {
@@ -63,6 +77,35 @@ func teamRequestSchema(verb string) map[string]any {
 		properties[field] = prop
 	}
 	return map[string]any{"type": "object", "additionalProperties": false, "properties": properties, "required": required}
+}
+
+// Describe nested fields from their wire types. Leave required/zero-value
+// semantics to the shared decoder and service, as for HTTP and CLI callers.
+func teamInputSchema[T any]() *jsonschema.Schema {
+	schema, err := jsonschema.For[T](nil)
+	if err != nil {
+		panic(err) // These fixed request types must remain representable as JSON.
+	}
+	var describe func(*jsonschema.Schema)
+	describe = func(s *jsonschema.Schema) {
+		if s == nil {
+			return
+		}
+		s.Required = nil
+		if s.Type == "array" || s.Type == "object" {
+			s.Types, s.Type = []string{s.Type, "null"}, ""
+		}
+		for _, child := range s.Properties {
+			describe(child)
+		}
+		for _, child := range s.Defs {
+			describe(child)
+		}
+		describe(s.Items)
+		describe(s.AdditionalProperties)
+	}
+	describe(schema)
+	return schema
 }
 
 func (a *Adapter) handleTeam(ctx context.Context, verb string, args map[string]any) (any, error) {

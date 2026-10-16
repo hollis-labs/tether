@@ -81,7 +81,7 @@ func HasTeamOps(ops TeamOps) bool {
 // ValidateTeamKey applies one byte-bound, whitespace and control-character rule.
 func ValidateTeamKey(key string) error {
 	if key == "" || len(key) > teamsvc.MaxKeyBytes || strings.TrimSpace(key) != key || !utf8.ValidString(key) || strings.ContainsFunc(key, unicode.IsControl) {
-		return teamsvc.ErrInvalidRequest
+		return invalidTeamField("key", "must be nonempty, at most 256 bytes, without surrounding whitespace or control characters")
 	}
 	return nil
 }
@@ -129,16 +129,19 @@ func TeamRequiredFields(verb string) []string {
 // DecodeTeamRequest bounds and strictly decodes one transport request.
 func DecodeTeamRequest(verb, key string, r io.Reader) (TeamRequest, error) {
 	var req TeamRequest
-	if ValidateTeamKey(key) != nil || TeamRequestFields(verb) == nil {
-		return req, teamsvc.ErrInvalidRequest
+	if err := ValidateTeamKey(key); err != nil {
+		return req, err
+	}
+	if TeamRequestFields(verb) == nil {
+		return req, invalidTeamField("verb", "unknown team operation")
 	}
 	b, err := io.ReadAll(io.LimitReader(r, teamsvc.MaxRequestBytes+1))
 	if err != nil || len(b) > teamsvc.MaxRequestBytes || !bytes.HasPrefix(bytes.TrimSpace(b), []byte("{")) {
-		return req, teamsvc.ErrInvalidRequest
+		return req, invalidTeamField("request", "must be a JSON object within the request size limit")
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(b, &fields) != nil {
-		return req, teamsvc.ErrInvalidRequest
+		return req, invalidTeamField("request", "must contain one valid JSON object")
 	}
 	for field := range fields {
 		allowed := false
@@ -149,32 +152,39 @@ func DecodeTeamRequest(verb, key string, r io.Reader) (TeamRequest, error) {
 			}
 		}
 		if !allowed {
-			return req, teamsvc.ErrInvalidRequest
+			return req, invalidTeamField(field, "unknown field for this team operation")
 		}
 	}
 	for _, field := range TeamRequiredFields(verb) {
 		value, exists := fields[field]
 		if !exists {
-			return req, teamsvc.ErrInvalidRequest
+			return req, invalidTeamField(field, "is required")
 		}
 		if field == "team" {
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-				return req, teamsvc.ErrInvalidRequest
+				return req, invalidTeamField(field, "must be a non-null object")
 			}
 			continue
 		}
 		var text string
 		if json.Unmarshal(value, &text) != nil || text == "" {
-			return req, teamsvc.ErrInvalidRequest
+			return req, invalidTeamField(field, "must be a nonempty string")
 		}
+	}
+	if err := checkTeamFields(b, reflect.TypeFor[TeamRequest](), ""); err != nil {
+		return req, err
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	if d.Decode(&req) != nil {
-		return req, teamsvc.ErrInvalidRequest
+	if err := d.Decode(&req); err != nil {
+		var typeError *json.UnmarshalTypeError
+		if errors.As(err, &typeError) && typeError.Field != "" {
+			return req, invalidTeamField(typeError.Field, "has an invalid type")
+		}
+		return req, invalidTeamField("request", "cannot decode team arguments")
 	}
 	if d.Decode(new(any)) != io.EOF {
-		return req, teamsvc.ErrInvalidRequest
+		return req, invalidTeamField("request", "must contain exactly one JSON object")
 	}
 	return req, nil
 }
@@ -234,7 +244,8 @@ func teamMessage(key string, r TeamRequest) teamsvc.MessageRequest {
 // maxInternalCause bounds the cause text echoed to the local operator.
 const maxInternalCause = 300
 
-// TeamError hides causes and gives all surfaces identical stable classifications.
+// TeamError hides host causes while sharing stable classifications and safe
+// request-field diagnostics across all surfaces.
 func TeamError(err error) (int, ErrorDetail) {
 	status, code := http.StatusInternalServerError, CodeInternalError
 	switch {
@@ -251,7 +262,12 @@ func TeamError(err error) (int, ErrorDetail) {
 	case errors.Is(err, teamsvc.ErrInvalidRequest):
 		status, code = 400, CodeInvalidRequest
 	}
-	return status, ErrorDetail{Code: code, Message: code}
+	detail := ErrorDetail{Code: code, Message: code}
+	var fieldError *teamFieldError
+	if status == http.StatusBadRequest && errors.As(err, &fieldError) {
+		detail.Message = code + ": " + fieldError.Error()
+	}
+	return status, detail
 }
 
 // TeamErrorFor is TeamError plus diagnostics for the verified local operator:
@@ -261,6 +277,10 @@ func TeamError(err error) (int, ErrorDetail) {
 func TeamErrorFor(ctx context.Context, err error) (int, ErrorDetail) {
 	status, detail := TeamError(err)
 	if err == nil {
+		return status, detail
+	}
+	var fieldError *teamFieldError
+	if errors.As(err, &fieldError) {
 		return status, detail
 	}
 	if caller, ok := identity.FromContext(ctx); ok && caller.Verified && identity.IsOperatorCredential(caller) && identity.LocalConnection(ctx) {

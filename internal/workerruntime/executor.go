@@ -68,6 +68,8 @@ type Executor struct {
 	Spawn    func(string) (*exec.Cmd, error)
 	// Tokens, when set, lets the executor keep per-session agent token files.
 	Tokens *TokenMinter
+	// ClaudeDir overrides claude's config directory (default CLAUDE_CONFIG_DIR, then ~/.claude); tests set it.
+	ClaudeDir string
 }
 
 func NewExecutor(root, binary string, send func(workerwire.Frame) error) *Executor {
@@ -99,7 +101,11 @@ func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 		if err != nil {
 			return err
 		}
-		return e.Send(workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: s.PID, Workspace: s.Workspace, Sandboxed: s.Sandboxed})
+		// follow() sets PID from the shim.started event under s.mu, possibly before this returns.
+		s.mu.Lock()
+		pid := s.PID
+		s.mu.Unlock()
+		return e.Send(workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: pid, Workspace: s.Workspace, Sandboxed: s.Sandboxed})
 	case "stop":
 		s := e.get(f.Session)
 		if s == nil {
@@ -175,12 +181,26 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			return nil, err
 		}
 	}
+	// A resume continues the provider's own conversation in the directory it ran in. Resolve and refuse
+	// before anything is created, so a failed resume leaves no workspace behind.
+	var resumeCwd string
+	if spec.ResumeSessionID != "" {
+		if spec.Provider != "claude" {
+			return nil, resumeUnavailable("resume is supported for claude only, not %q", spec.Provider)
+		}
+		resumeCwd, err = e.resolveResumeCwd(spec.Env, spec.ResumeSessionID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ws, err := workspace.Create(filepath.Join(e.Root, "workspaces"), spec.Session, &launch.Plan{BootPrompt: spec.BootPrompt})
 	if err != nil {
 		return nil, err
 	}
 	cwd := filepath.Join(ws.Root, "workroot")
-	if spec.Workspace.Kind == "git" {
+	if resumeCwd != "" {
+		cwd = resumeCwd
+	} else if spec.Workspace.Kind == "git" {
 		if spec.Workspace.URL == "" {
 			return nil, fmt.Errorf("git workspace URL required")
 		}
@@ -200,7 +220,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			return nil, err
 		}
 	}
-	if spec.Workspace.Subdir != "" {
+	if spec.Workspace.Subdir != "" && resumeCwd == "" {
 		clean := filepath.Clean(spec.Workspace.Subdir)
 		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
 			return nil, fmt.Errorf("invalid workspace subdir")
@@ -222,6 +242,9 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}
 	args := append([]string(nil), spec.Args...)
+	if spec.ResumeSessionID != "" {
+		args = withResume(args, spec.ResumeSessionID)
+	}
 	if spec.Provider == "claude" {
 		if err := e.plantHubMCP(cwd, filepath.Join(ws.Root, "mcp-cred"), spec); err != nil {
 			return nil, err
