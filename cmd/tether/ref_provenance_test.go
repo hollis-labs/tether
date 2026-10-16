@@ -18,6 +18,8 @@ import (
 
 type refTestLaunchService struct{ api.LaunchService }
 
+// Legacy --daemon-only capture (including the worker SSH route) uses this
+// HTTP sink. Even successful capture cannot manufacture hub-observed proxy refs.
 func TestRefAttacherDerivesSourceFromSessionBearer(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "refs.db"))
 	if err != nil {

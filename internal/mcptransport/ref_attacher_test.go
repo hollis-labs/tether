@@ -2,34 +2,41 @@ package mcptransport
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
-	"github.com/hollis-labs/tether/internal/api"
-	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
-func TestDaemonRefAttacherLeavesProvenanceToDaemon(t *testing.T) {
-	var got map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Error(err)
+type capturedRefStore struct{ rows []store.SessionRefRow }
+
+func (s *capturedRefStore) AttachSessionRef(row store.SessionRefRow) (store.AttachRefResult, error) {
+	s.rows = append(s.rows, row)
+	return store.AttachRefResult{Inserted: true}, nil
+}
+
+func TestHubRefAttacherPinsSessionAndSource(t *testing.T) {
+	s := &capturedRefStore{}
+	sink := hubRefAttacher{sessionID: "verified-session", store: s}
+	for _, id := range []string{"", "forged-session"} {
+		if err := sink.AttachSessionRef(context.Background(), id, "torque_task", "CW-20261016-0157", "uri", "read", "proxy", "parent"); err == nil {
+			t.Fatal("accepted mismatched session")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(api.SessionRefAttachResponse{Inserted: true})
-	}))
-	defer server.Close()
-	dc := client.New("tcp:"+strings.TrimPrefix(server.URL, "http://"), client.WithToken(""))
-	if err := (daemonRefAttacher{client: dc}).AttachSessionRef(context.Background(), "s", "torque_task", "CW-1", "uri", "read", "proxy", "parent"); err != nil {
+	}
+	if len(s.rows) != 0 {
+		t.Fatal("mismatched session reached store")
+	}
+	if err := sink.AttachSessionRef(context.Background(), "verified-session", "torque_task", "CW-20261016-0157", "uri", "read", "operator", "parent"); err != nil {
 		t.Fatal(err)
 	}
-	if _, asserted := got["source"]; asserted {
-		t.Fatal("transport sent caller-asserted source")
+	if len(s.rows) != 1 || s.rows[0].SessionID != "verified-session" || s.rows[0].Source != store.SourceProxy || s.rows[0].ParentItemID != "parent" {
+		t.Fatalf("capture = %+v", s.rows)
 	}
-	if got["ref_id"] != "CW-1" || got["parent_item_id"] != "parent" {
-		t.Fatalf("capture payload changed: %v", got)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sink.AttachSessionRef(ctx, "verified-session", "torque_task", "CW-20261016-0158", "", "read", "proxy", ""); err == nil {
+		t.Fatal("accepted canceled call")
+	}
+	if len(s.rows) != 1 {
+		t.Fatal("canceled call reached store")
 	}
 }

@@ -551,6 +551,9 @@ func TestTransportUpstreamProcess(t *testing.T) {
 		}
 	}
 	s.RegisterTool(gomcp.Tool{Name: "app_echo", Description: "Read-only echo", InputSchema: gomcp.InputSchema(gomcp.StringProp("message", "message", false)), ReadOnlyHint: true, Handler: func(ctx context.Context, args map[string]any) (any, error) {
+		if args["message"] == "CW-20261016-9999" {
+			return nil, errors.New("fixture tool failure")
+		}
 		return map[string]any{"pid": os.Getpid(), "message": args["message"], "context": ctx.Value(forwardedContextKey{})}, nil
 	}})
 	s.RegisterTool(gomcp.Tool{Name: "app_slow", Description: "Slow fixture", InputSchema: gomcp.InputSchema(), ReadOnlyHint: true, Handler: func(ctx context.Context, _ map[string]any) (any, error) {
