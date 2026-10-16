@@ -23,11 +23,12 @@ import (
 	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/spf13/cobra"
 
+	secrets "github.com/hollis-labs/libs/security/secrets"
+	"github.com/hollis-labs/libs/security/secrets/redact"
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/a2aadapter"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
-	"github.com/hollis-labs/tether/internal/apikeyhelper"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
@@ -49,12 +50,11 @@ import (
 	llmopenai "github.com/hollis-labs/tether/internal/llm/openai"
 	llmopenaicompat "github.com/hollis-labs/tether/internal/llm/openaicompat"
 	"github.com/hollis-labs/tether/internal/llm/router"
-	"github.com/hollis-labs/tether/internal/llm/secrets"
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
-	"github.com/hollis-labs/tether/internal/redact"
+	"github.com/hollis-labs/tether/internal/secretsetup"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -452,12 +452,6 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 	if err != nil || !profile.Enabled(environment.LLMGateway) {
 		return nil
 	}
-	helperPath := apikeyhelper.ResolvePath()
-	if helperPath == "" {
-		log.Printf("ai gateway disabled: tether-apikey-helper not found")
-		return nil
-	}
-
 	catalog := modelcatalog.New()
 	if err := catalog.Refresh(ctx); err != nil {
 		log.Printf("ai gateway disabled: refresh model catalog: %v", err)
@@ -469,10 +463,9 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		return nil
 	}
 
-	secretResolver := secrets.NewResolver(
-		secrets.WithDefaultHelperPath(helperPath),
-		secrets.WithNamedHelperResolver(apikeyhelper.ResolveNamedPath),
-	)
+	// keychain:// resolves in-process through go-secrets (shared service, the
+	// old "tether" entries read through); helper:// runs the named helper.
+	secretResolver := secretsetup.New()
 
 	// Every provider credential resolved below is remembered here, so an
 	// audit row's error text can be scrubbed of it (CW-20260930-0009).
@@ -820,7 +813,11 @@ func modelCatalogProviderID(providerType string) string {
 func resolveAISecret(ctx context.Context, resolver *secrets.Resolver, ref string) (string, error) {
 	resolveCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	return resolver.Resolve(resolveCtx, ref)
+	res, err := resolver.Resolve(resolveCtx, ref)
+	if err != nil {
+		return "", err
+	}
+	return res.Secret.Reveal(), nil
 }
 
 func effectiveAIDefaultPolicy(global, provider config.AIPolicyConfig) (*bool, *bool, *bool) {

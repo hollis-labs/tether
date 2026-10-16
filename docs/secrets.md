@@ -3,8 +3,8 @@
 MCP catalog entries may name a secret instead of containing one. `args:`, `env:`,
 `token:` and `url:` all accept:
 
-    keychain://<authority>/<path>       → tether-apikey-helper → macOS `security` CLI
-    helper://<helper>/<path>            → the named helper binary
+    keychain://<authority>/<path>       → OS credential store, in-process via go-secrets
+    helper://<helper>/<path>            → `<helper> resolve keychain://<path>` (bare name on PATH)
     file:///<absolute path>             → a private file (see below)
     file://~/<path under home>          → the same, relative to your home
 
@@ -14,14 +14,18 @@ listing therefore shows `keychain://openai/work`, not the key. An unresolvable
 reference fails the load rather than spawning an upstream with a blank credential.
 
 - `internal/config/mcp_server.go` — expansion and resolution
-- `internal/llm/secrets` — the reference resolver
-- `cmd/tether-apikey-helper` — keychain access, service `tether`,
-  account `provider-api-key:<authority>/<path>`
+- `internal/secretsetup` — Tether's configuration of the one go-secrets resolver
+  (github.com/hollis-labs/libs/security/secrets); there is no resolver of Tether's own
+- `cmd/tether-apikey-helper` — thin front for go-secrets: `resolve`, `set`, `delete`
 
-Note `tether-apikey-helper` prefers a conventional env var (`OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`) over the keychain. Callers that pass a service environment
-through to it must strip reference-valued variables first, or the helper echoes
-the reference back as the secret.
+Entries live in the shared keychain service `hollis-labs`, account
+`<authority>/<path>`. Entries written by earlier Tether versions (service
+`tether`, account `provider-api-key:<authority>/<path>`) are still read.
+A conventional env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`TETHER_APIKEY_<AUTHORITY>_<PATH>`) is now a fallback used only when the keychain
+has no entry or is unavailable; it no longer wins over the keychain. On a
+headless Linux host there is no keychain: use `file://<ns>/<key>` through
+go-secrets' `secrets set`, or the env fallback.
 
 ## A credential in a private file
 
@@ -144,14 +148,14 @@ To confirm a value without printing it, compare digests:
     printf '%s' "$(tether-apikey-helper resolve keychain://openai/work)" \
       | shasum -a 256 | cut -c1-12
 
-### Interop note
+`set` accepts the secret on stdin only, on every platform; a secret passed as an
+argument is refused. (Before this change the macOS path ran
+`security add-generic-password -w <secret>`, which exposed it in argv.) Writes
+go through go-keyring, which feeds `security -i` over stdin. `delete` removes
+both the shared and the legacy entry.
 
-`zalando/go-keyring` stores macOS keychain values as
-`go-keyring-base64:<base64>` and strips that marker in its own reader. This
-helper reads through the `security` CLI, which has no such contract, so it
-implements the same decode (`decodeKeyringValue`). Entries written by either
-tool are therefore readable by both. Without it, a go-keyring-written entry
-reads back as the marker string — credential-shaped, and wrong.
+resolve/set errors are typed (`secret_not_found`, `secret_denied`,
+`secret_unavailable`, ...); the helper exits 2 for not found and 3 for denied.
 
 `tether doctor` checks catalog-authored `file://` credentials for enabled MCP
 servers before a proxy is started. It uses the spawn-time file checks, reports

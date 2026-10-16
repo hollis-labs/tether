@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/tether/internal/credfile"
-	"github.com/hollis-labs/tether/internal/llm/secrets"
+	secrets "github.com/hollis-labs/libs/security/secrets"
+	"github.com/hollis-labs/libs/security/secrets/credfile"
+	"github.com/hollis-labs/tether/internal/secretsetup"
 	"gopkg.in/yaml.v3"
 )
 
@@ -142,17 +143,15 @@ func envRefValues(s string) []string {
 	return values
 }
 
-// secretRefTimeout bounds one helper invocation. Resolution shells out to
-// tether-apikey-helper, which on macOS may block on a keychain ACL prompt.
+// secretRefTimeout bounds one resolution. A keychain read may block on an OS
+// ACL prompt, and helper:// refs run a program.
 const secretRefTimeout = 15 * time.Second
 
-// secretRefResolver is the resolution surface used by resolveSecretRef.
-// Package-level so tests can substitute a stub without touching the keychain.
-type secretRefResolver interface {
-	Resolve(ctx context.Context, ref string) (string, error)
-}
-
-var secretResolver secretRefResolver = secrets.NewResolver()
+// secretResolver is Tether's go-secrets resolver. Package-level so tests can
+// substitute a resolver over a fake store or backend without touching the
+// keychain. Resolution errors are *secrets.Error values (stable Kind, Code and
+// Guidance) and are wrapped, not flattened, so callers can use errors.Is.
+var secretResolver *secrets.Resolver = secretsetup.New()
 
 // isSecretRef reports whether s carries a scheme that resolveSecretRef should
 // hand to the resolver. Anything else is a literal and is passed through, so a
@@ -232,11 +231,11 @@ func resolveSecretRef(ctx context.Context, field, s string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, secretRefTimeout)
 	defer cancel()
-	value, err := secretResolver.Resolve(ctx, s)
+	res, err := secretResolver.Resolve(ctx, s)
 	if err != nil {
 		return "", fmt.Errorf("%s: resolve %s: %w", field, s, err)
 	}
-	return value, nil
+	return res.Secret.Reveal(), nil
 }
 
 // resolveEntrySecrets resolves secret references in every field that can carry

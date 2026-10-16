@@ -8,9 +8,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/hollis-labs/libs/security/secrets/redact"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/redact"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )

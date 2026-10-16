@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/budget"
+	"github.com/hollis-labs/libs/security/secrets/redact"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
-	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/telemetry"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
