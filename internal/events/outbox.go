@@ -13,6 +13,7 @@ import (
 type Tx interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 // EventIDPersister is a Persister that mints and persists a D6 event id when it
@@ -28,8 +29,9 @@ type TxPersister interface {
 	// caller supplied one. A repeat of an EventID already stored returns the
 	// stored row and writes nothing (idempotent retry).
 	InsertEventTx(ctx context.Context, tx Tx, e Event) (Event, error)
-	// PendingEventsContext returns committed pending rows in ascending Seq.
-	PendingEventsContext(ctx context.Context, limit int) ([]Event, error)
+	// PendingEventsContext returns committed pending rows in ascending Seq; with
+	// beforeSeq > 0 only those with Seq < beforeSeq.
+	PendingEventsContext(ctx context.Context, beforeSeq int64, limit int) ([]Event, error)
 	// MarkPublishedContext clears pending for the given sequences.
 	MarkPublishedContext(ctx context.Context, seqs []int64) error
 }
@@ -117,26 +119,32 @@ func (b *memBus) drainOnce(ctx context.Context) {
 		return
 	}
 	defer b.unlock()
-	if err := b.drainLocked(ctx); err != nil && ctx.Err() == nil {
+	if err := b.drainLocked(ctx, 0); err != nil && ctx.Err() == nil {
 		log.Printf("events: outbox drain: %v", err)
 	}
 }
 
-// drainLocked fans out every committed pending row, oldest first, then marks
-// them published. The bus lock is held, so any event the caller publishes next
-// has a higher Seq and is delivered after them. A crash between fan-out and
-// mark repeats the fan-out on restart (at least once; EventID dedupes).
-func (b *memBus) drainLocked(ctx context.Context) error {
+// drainLocked fans out the committed pending rows (those with Seq < beforeSeq
+// when it is > 0, else all), oldest first, then marks them published. The bus
+// lock is held, so an event the caller publishes next is delivered after them.
+// A crash between fan-out and mark repeats the fan-out on restart (at least
+// once). A full drain clears the dirty flag BEFORE it looks, so a PublishTx that
+// lands after the look sets it again instead of being lost; on an error it stays
+// set.
+func (b *memBus) drainLocked(ctx context.Context, beforeSeq int64) error {
 	if b.txp == nil {
 		return nil
 	}
+	if beforeSeq <= 0 {
+		b.dirty.Store(false)
+	}
 	for {
-		rows, err := b.txp.PendingEventsContext(ctx, outboxBatch)
+		rows, err := b.txp.PendingEventsContext(ctx, beforeSeq, outboxBatch)
 		if err != nil {
+			b.dirty.Store(true)
 			return err
 		}
 		if len(rows) == 0 {
-			b.dirty.Store(false)
 			return nil
 		}
 		seqs := make([]int64, 0, len(rows))
@@ -145,10 +153,10 @@ func (b *memBus) drainLocked(ctx context.Context) error {
 			seqs = append(seqs, e.Seq)
 		}
 		if err := b.txp.MarkPublishedContext(ctx, seqs); err != nil {
+			b.dirty.Store(true)
 			return err
 		}
 		if len(rows) < outboxBatch {
-			b.dirty.Store(false)
 			return nil
 		}
 	}

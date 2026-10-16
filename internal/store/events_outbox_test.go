@@ -404,3 +404,138 @@ func TestPublishTxRefusesTheEnvironmentRequestKind(t *testing.T) {
 		t.Fatalf("empty scope: %v", err)
 	}
 }
+
+// The hole in "drain first": a publisher takes the bus lock, sees nothing dirty
+// and blocks on the connection a caller's transaction holds; the transaction then
+// writes an outbox row and commits. The publisher's own insert gets the higher
+// Seq, yet the committed row must still reach a cursor subscriber first (a paged
+// subscriber advances past every Seq it sees and would drop the lower one).
+func TestPublishStartedBeforePublishTxStillDeliversInSeqOrder(t *testing.T) {
+	db := openEventsStore(t)
+	bus := newOutboxBus(t, db)
+	ctx := context.Background()
+	// no StartOutbox: ordering must come from Publish itself
+	sub, unsub, err := bus.Subscribe(ctx, events.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
+	// get past the startup drain so the dirty flag is clean when Publish looks
+	if err := bus.Publish(ctx, events.Event{Scope: events.ScopeDaemon, Kind: "warmup"}); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, sub, 1, 5*time.Second)
+
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubDone := make(chan error, 1)
+	go func() {
+		pubDone <- bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: "s", Kind: "later"})
+	}()
+	time.Sleep(150 * time.Millisecond) // Publish holds the bus lock, saw nothing dirty, waits for the connection
+	stored, err := bus.PublishTx(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: "s", Kind: "session.reaper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-pubDone; err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, sub, 2, 5*time.Second)
+	if got[0].Kind != "session.reaper" || got[0].Seq != stored.Seq || got[1].Kind != "later" || got[0].Seq >= got[1].Seq {
+		t.Fatalf("delivered %+v then %+v (outbox row seq %d)", got[0], got[1], stored.Seq)
+	}
+	expectNone(t, sub, 300*time.Millisecond)
+	if pendingCount(t, db) != 0 {
+		t.Fatal("outbox row still pending")
+	}
+}
+
+// Rows a crashed process left pending are not overtaken by the first Publish of
+// the next process, even before StartOutbox runs.
+func TestFirstPublishAfterRestartDeliversLeftoverRowsFirst(t *testing.T) {
+	db := openEventsStore(t)
+	ctx := context.Background()
+	first := newOutboxBus(t, db)
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := first.PublishTx(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: "s", Kind: "session.reaper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	second := newOutboxBus(t, db) // restarted; StartOutbox not called yet
+	live, unsub, err := second.(events.LiveSubscriber).SubscribeLive(ctx, events.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
+	if err := second.Publish(ctx, events.Event{Scope: events.ScopeDaemon, Kind: "normal"}); err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, live, 2, 5*time.Second)
+	if got[0].Seq != stored.Seq || got[1].Kind != "normal" || got[0].Seq >= got[1].Seq {
+		t.Fatalf("order: %+v", got)
+	}
+}
+
+// A repeat PublishTx hands back the stored row, not what the second caller sent.
+func TestRepeatPublishTxReturnsTheStoredRow(t *testing.T) {
+	db := openEventsStore(t)
+	bus := newOutboxBus(t, db)
+	ctx := context.Background()
+	id := "evt_" + strings.Repeat("b", 32)
+	write := func(payload string, at time.Time) events.Event {
+		tx, err := db.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, err := bus.PublishTx(ctx, tx, events.Event{EventID: id, At: at, Scope: events.ScopeSession, SessionID: "s", Kind: "session.reaper", PayloadJSON: payload})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	first := write(`{"n":1}`, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	second := write(`{"n":2}`, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+	if second.Seq != first.Seq || second.PayloadJSON != `{"n":1}` || !second.At.Equal(first.At) {
+		t.Fatalf("repeat returned %+v, want the stored row %+v", second, first)
+	}
+}
+
+// Every read path carries the event id (replays and queries included).
+func TestStoredEventsAreReadBackWithTheirEventID(t *testing.T) {
+	db := openEventsStore(t)
+	ctx := context.Background()
+	_, _, id, err := db.InsertEventIDContext(ctx, events.ScopeSession, "s", "k", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	since, err := db.EventsSinceContext(ctx, 0)
+	if err != nil || len(since) != 1 || since[0].EventID != id {
+		t.Fatalf("EventsSinceContext: %+v %v", since, err)
+	}
+	bySession, err := db.ListEventsBySession("s", 10, 0)
+	if err != nil || len(bySession) != 1 || bySession[0].EventID != id {
+		t.Fatalf("ListEventsBySession: %+v %v", bySession, err)
+	}
+	recent, err := db.ListRecentEvents(10)
+	if err != nil || len(recent) != 1 || recent[0].EventID != id {
+		t.Fatalf("ListRecentEvents: %+v %v", recent, err)
+	}
+	queried, err := db.QueryEvents(EventFilter{SessionID: "s"})
+	if err != nil || len(queried) != 1 || queried[0].EventID != id {
+		t.Fatalf("QueryEvents: %+v %v", queried, err)
+	}
+}
