@@ -989,7 +989,8 @@ engine's session host) can rely on, and what it cannot:
   Health and `tether_session_health` also expose `last_activity_at` (UTC
   RFC3339 timestamp), `pending_approval` and `pending_question` when observed.
   Missing fields mean unknown; `false` means the corresponding observed
-  requests have resolved. Activity uses runtime/turn and tool-call evidence,
+  requests have resolved. If observation reads fail, live health remains
+  available with those optional fields omitted. Activity uses runtime/turn and tool-call evidence,
   excluding bookkeeping and synthetic heartbeat timestamps. Pending flags
   reuse the durable request reducer, including concurrent requests and stale
   replay handling; they do not grant permission or answer questions. Health

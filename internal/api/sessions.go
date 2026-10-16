@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -230,8 +231,8 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, r *http.Request, id 
 		var err error
 		observations, err = reporter.SessionHealthObservations(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, CodeInternalError, "session health observations unavailable")
-			return
+			slog.Warn("session health observations unavailable", "session_id", id)
+			observations = SessionHealthObservations{}
 		}
 	}
 	var stall *StallStatus

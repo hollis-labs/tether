@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
@@ -631,7 +632,8 @@ func (a *Adapter) handleSessionHealth(ctx context.Context, args map[string]any) 
 	caps := result.Caps
 	observations, err := a.svc.SessionHealthObservations(ctx, id)
 	if err != nil {
-		return nil, toolError("internal_error", "session health observations unavailable")
+		slog.Warn("session health observations unavailable", "session_id", id)
+		observations = api.SessionHealthObservations{}
 	}
 	return toolJSON(sessionHealthData(id, result.Health.Alive, result.Health.PID, result.Health.State.String(), result.Health.TurnID, result.ProviderID, result.ProviderKind, api.CapabilitiesDTO{
 		PTY:               caps.PTY,

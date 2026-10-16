@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -35,6 +36,7 @@ type daemonOnlyService struct {
 	db                *store.Store
 	health            api.RuntimeHealthResult
 	healthOK          bool
+	observationError  error
 }
 
 func (s *daemonOnlyService) ListSessions(o store.ListSessionsOptions) ([]store.SessionRow, error) {
@@ -49,6 +51,10 @@ func (s *daemonOnlyService) RuntimeHealth(string) (api.RuntimeHealthResult, bool
 }
 
 func (s *daemonOnlyService) SessionHealthObservations(ctx context.Context, id string) (api.SessionHealthObservations, error) {
+	if s.observationError != nil {
+		at, pending := time.Now(), true
+		return api.SessionHealthObservations{LastActivityAt: &at, PendingApproval: &pending, PendingQuestion: &pending}, s.observationError
+	}
 	return (&app.Service{Store: s.db}).SessionHealthObservations(ctx, id)
 }
 
@@ -228,6 +234,34 @@ func TestDaemonOnly_SessionHealthPreservesObservations(t *testing.T) {
 	body := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_session_health", map[string]any{"session_id": "sess-1"}))
 	if body["last_activity_at"] != at || body["pending_approval"] != true || body["pending_question"] != false {
 		t.Fatalf("MCP observations: %+v", body)
+	}
+}
+
+func TestDaemonOnly_SessionHealthObservationFailureKeepsLiveHealth(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	f.service.healthOK = true
+	f.service.health.Health.Alive = true
+	f.service.health.Health.PID = 4242
+	f.service.observationError = errors.New("private observation failure")
+	recorder := httptest.NewRecorder()
+	api.NewHandler(api.Deps{Service: f.service}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/sessions/sess-1/health", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("health status=%d body=%s", recorder.Code, recorder.Body)
+	}
+	var httpBody map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &httpBody); err != nil {
+		t.Fatal(err)
+	}
+	mcpBody := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_session_health", map[string]any{"session_id": "sess-1"}))
+	for surface, body := range map[string]map[string]any{"HTTP": httpBody, "MCP": mcpBody} {
+		if body["alive"] != true || body["pid"] != float64(4242) {
+			t.Fatalf("%s lost live health: %+v", surface, body)
+		}
+		for _, field := range []string{"last_activity_at", "pending_approval", "pending_question"} {
+			if _, exists := body[field]; exists {
+				t.Errorf("%s exposed unavailable observation %s", surface, field)
+			}
+		}
 	}
 }
 
