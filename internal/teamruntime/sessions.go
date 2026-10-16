@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/teamhost"
@@ -165,7 +166,7 @@ func (s *Sessions) cleanup(ctx context.Context, key string) error {
 }
 
 func classifySession(err error) error {
-	if errors.Is(err, store.ErrIdempotencyConflict) || errors.Is(err, store.ErrSessionNotFound) || errors.Is(err, session.ErrNotCreated) {
+	if errors.Is(err, launch.ErrLaunchProjectRootMissing) || errors.Is(err, store.ErrIdempotencyConflict) || errors.Is(err, store.ErrSessionNotFound) || errors.Is(err, session.ErrNotCreated) {
 		return fmt.Errorf("%w: %w: %w", teams.ErrProvisionFailed, teamhost.ErrPermanent, err)
 	}
 	return err

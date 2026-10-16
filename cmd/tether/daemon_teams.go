@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -87,10 +88,15 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 	complete = true
 	svc.BootTeamRecovery = host.RecoverSessions
 	stopLoop := teamloop.Start(context.Background(), teamloop.Config{
-		Interval:  teamLoopInterval(),
-		Flush:     host.FlushMessages,
-		Reconcile: teamruntime.Reconciler{Enroller: enroller, Sessions: sessions, Messenger: messenger}.Reconcile,
-		Logf:      log.Printf,
+		Interval: teamLoopInterval(),
+		Flush:    host.FlushMessages,
+		Reconcile: func(ctx context.Context, limit int) error {
+			// Tombstone expired formations before port recovery can retry them.
+			expired := host.ReconcileExpiredFormations(ctx, limit)
+			ports := (teamruntime.Reconciler{Enroller: enroller, Sessions: sessions, Messenger: messenger}).Reconcile(ctx, limit)
+			return errors.Join(expired, ports)
+		},
+		Logf: log.Printf,
 	})
 	return ops, func() { stopLoop(); closeContent() }, nil
 }

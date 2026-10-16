@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/teamhost"
@@ -21,6 +23,10 @@ type Reconciler struct {
 }
 
 func (r Reconciler) Reconcile(ctx context.Context, limit int) error {
+	return r.reconcile(ctx, limit, time.Now())
+}
+
+func (r Reconciler) reconcile(ctx context.Context, limit int, now time.Time) error {
 	if r.Enroller == nil || r.Sessions == nil || r.Messenger == nil || limit < 1 {
 		return errors.New("team port recovery: adapters and positive limit required")
 	}
@@ -78,6 +84,15 @@ func (r Reconciler) Reconcile(ctx context.Context, limit int) error {
 				entry.end = tombstone
 			}
 		}
+		mode := fmt.Sprintf("%s/%t", entry.end, entry.binding)
+		ready, retryErr := receipts.store.RecoveryReady(ctx, entry.kind, entry.key, mode, now)
+		if retryErr != nil {
+			failures = append(failures, retryErr)
+			continue
+		}
+		if !ready {
+			continue
+		}
 		switch entry.kind {
 		case "session":
 			if entry.end != "" {
@@ -112,7 +127,7 @@ func (r Reconciler) Reconcile(ctx context.Context, limit int) error {
 		if errors.Is(err, teams.ErrProvisionFailed) || errors.Is(err, teamhost.ErrInvalidRequest) || errors.Is(err, teamhost.ErrSessionGone) {
 			err = errors.Join(err, receipts.failed(ctx, entry.kind, entry.key))
 		}
-		failures = append(failures, err)
+		failures = append(failures, receipts.store.FinishRecovery(ctx, entry.kind, entry.key, mode, now, err))
 	}
 	return errors.Join(failures...)
 }

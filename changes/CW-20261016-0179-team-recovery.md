@@ -1,0 +1,1 @@
+- CW-20261016-0179: Back off persistent team port failures, log only changed errors, classify protected project-root refusals as terminal, and clean expired uncommitted formations through leased, journaled keyed cleanup.
