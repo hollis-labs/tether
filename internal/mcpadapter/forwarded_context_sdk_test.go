@@ -158,13 +158,19 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 	mu.Lock()
 	defer mu.Unlock()
 	actors := 0
-	initializes := 0
+	// A connection announces itself with server/discover (the SDK's SEP-2575 probe), then with initialize unless the probe
+	// settled the protocol; which of the two the SDK sends varies run to run. Either way one connection sends at most one of
+	// each, so seeing two of either kind means the client reconnected.
+	initializes, discovers := 0, 0
 	for _, request := range seen {
 		if request.auth != "Bearer upstream-sdk-service" {
 			t.Fatal("SDK request lacked service authentication")
 		}
-		if request.method == "initialize" {
+		switch request.method {
+		case "initialize":
 			initializes++
+		case "server/discover":
+			discovers++
 		}
 		if request.actor != "" {
 			if request.method != "tools/call" || request.actor != "session:"+request.session || request.session != request.expected {
@@ -173,7 +179,7 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 			actors++
 		}
 	}
-	if actors != 14 || initializes < 2 {
-		t.Fatalf("did not exercise attributed concurrent calls and reconnect: actors=%d initializes=%d", actors, initializes)
+	if actors != 14 || max(initializes, discovers) < 2 {
+		t.Fatalf("did not exercise attributed concurrent calls and reconnect: actors=%d initializes=%d discovers=%d", actors, initializes, discovers)
 	}
 }
