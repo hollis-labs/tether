@@ -1,0 +1,77 @@
+# Dormant event retention primitives
+
+This package is preparation for D7 retention classes (CW-20261016-0146). It is
+not connected to catalog loading, SQLite, the daemon, or the current retention
+job. The hub keeps its existing 90-day sweep until the approved log cutover.
+
+`Parse` accepts a standalone proposed block, with strict unknown-field checks:
+
+```yaml
+retention:
+  pii_cap: 30d
+  acknowledge_risk: false
+  classes:
+    audit:
+      full: 0
+      envelope: none
+      rollups: [{bucket: 1d, keep: 0}]
+    state:
+      full: 180d
+      envelope: 2y
+      rollups: [{bucket: 1h, keep: 2y}, {bucket: 1d, keep: 0}]
+    activity:
+      full: 30d
+      envelope: 180d
+      rollups: [{bucket: 1h, keep: 2y}, {bucket: 1d, keep: 0}]
+    debug:
+      full: 7d
+      envelope: none
+      rollups: [{bucket: 1h, keep: 90d}]
+```
+
+These are the defaults; omitted fields inherit them. `0` means forever, and
+`none` disables only an envelope tier. Full/envelope are absolute age horizons
+from server-recorded admission, not cumulative tier durations. A day is 24 hours
+and a year 365 days; other positive Go durations are accepted. A class needs at
+least one rollup bucket so its rows can eventually be trimmed safely. Buckets
+must be positive and unique. Shortening retention is free, except that cutting
+audit's full/envelope horizon below 400 days needs acknowledgment. Extending the
+PII payload cap also needs acknowledgment. Both return warnings even with the
+flag. Secrets cannot be configured for storage and secret records are rejected.
+
+A compiled configuration is immutable and has a content-derived epoch ID.
+`Snapshot` captures a class policy for an admitted event. Later configurations
+never modify that snapshot. The persistence adapter must store the epoch and
+policy at admission, rather than applying current settings to old rows.
+
+`Plan` determines payload removal and trim eligibility. PII caps only payload
+age: an audit event still keeps its envelope forever by default. `Tombstone`
+removes exact stored payload bytes and returns `sha256:<64 lowercase hex>`, or
+`withheld` for PII (the amended digest ruling). It must only be called for an
+eligible, present payload; nil means already absent and returns no new digest.
+The adapter changes only payload and digest, preserving envelope, cursor, scope,
+correlation, class, payload_schema, content_type and truncated. Tether's column
+is the source of truth pending the additive wire field; the later mesh adapter
+uses JSON null, while runtimeevents omits the payload.
+
+`RollupBatch` returns deltas and a cursor checkpoint for an ordered stream. The
+adapter must commit both in one transaction, then resume strictly after that
+checkpoint; replaying committed cursors is a no-op. Buckets are UTC, half-open
+intervals. Counts use class and PII status only, with first/last cursor. Epochs
+stay separate so a new keep duration cannot shorten an older bucket. Rollup
+expiry is measured from bucket end; zero keep never expires. Each configured
+bucket is counted directly, avoiding double-counting hourly and daily totals.
+
+`HeadTrim` requires rows from the actual log head in ascending cursor order,
+never a prefiltered set of old rows. It stops at the first retained, pending,
+legacy/unclassified or unrolled row, including an audit-forever barrier. It
+cannot delete holes later in the stream. Numeric cursor gaps are allowed and
+IDs are never reassigned. Pending outbox rows are also excluded from payload
+removal and rollups.
+
+Production integration must stack after X1a/X1c and consume persisted v1.1
+class/sensitivity and recorded time. It must preserve unpublished outbox rows,
+commit rollups before head deletion, use bounded transactions, preserve legacy
+policy, and prevent the old age-only sweep from competing with class retention.
+The separate identity_audit table retains its 400-day floor. None of that wiring
+or a live retention-setting change is part of this package.
