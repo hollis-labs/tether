@@ -452,12 +452,12 @@ func TestRefusedTeamLaunchIsLoggedWithItsReason(t *testing.T) {
 	orig := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(orig) })
-	logRefusedLaunch("intent-1", nil, "", fmt.Errorf("%w: identity is enforce", app.ErrLaunchRefused))
-	if !strings.Contains(logs.String(), "intent-1") || !strings.Contains(logs.String(), "no recorded launch grant") {
+	logRefusedLaunch("intent-1", "run-7", nil, "", fmt.Errorf("%w: identity is enforce", app.ErrLaunchRefused))
+	if !strings.Contains(logs.String(), "intent-1") || !strings.Contains(logs.String(), "run-7") || !strings.Contains(logs.String(), "no recorded launch grant") || !strings.Contains(logs.String(), "re-form or dissolve") {
 		t.Fatalf("log: %q", logs.String())
 	}
 	logs.Reset()
-	logRefusedLaunch("intent-2", nil, "", errors.New("something else"))
+	logRefusedLaunch("intent-2", "run-8", nil, "", errors.New("something else"))
 	if logs.Len() != 0 {
 		t.Fatalf("an unrelated error was logged as a refusal: %q", logs.String())
 	}

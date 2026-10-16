@@ -49,16 +49,17 @@ func (s *Sessions) launchGrant(ctx context.Context, intentKey string) (*app.Laun
 	return &app.LaunchGrant{Principal: principal, Scopes: scopes}, nil
 }
 
-// logRefusedLaunch says why a team launch was refused, so a recovery that
-// stops under enforce is explained in the log.
-func logRefusedLaunch(intentKey string, grant *app.LaunchGrant, parent string, err error) {
+// logRefusedLaunch says why a team launch was refused, naming the intent and the
+// team run, so an operator whose recovery stopped under enforce knows what to
+// re-form or dissolve.
+func logRefusedLaunch(intentKey, runID string, grant *app.LaunchGrant, parent string, err error) {
 	if !errors.Is(err, app.ErrLaunchRefused) {
 		return
 	}
 	switch {
 	case grant == nil && parent == "":
-		log.Printf("team launch %q refused: no recorded launch grant and no parent session to bound it (formed before grants were recorded?): %v", intentKey, err)
+		log.Printf("team launch %q (team run %q) refused: no recorded launch grant and no parent session to bound it (formed before grants were recorded): re-form or dissolve this team: %v", intentKey, runID, err)
 	default:
-		log.Printf("team launch %q refused: %v", intentKey, err)
+		log.Printf("team launch %q (team run %q) refused: %v", intentKey, runID, err)
 	}
 }

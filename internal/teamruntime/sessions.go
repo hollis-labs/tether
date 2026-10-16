@@ -69,7 +69,7 @@ var _ internalLauncher = (*app.Service)(nil)
 // session was first launched under (recorded per intent), and by its parent
 // session's grant when it has one. With neither, the launch is internal and
 // unattributed, which a global enforce flip refuses.
-func (s *Sessions) launch(ctx context.Context, intentKey, sessionID, parent string) (*app.Launched, error) {
+func (s *Sessions) launch(ctx context.Context, intentKey, runID, sessionID, parent string) (*app.Launched, error) {
 	il, ok := s.service.(internalLauncher)
 	if !ok {
 		return s.service.LaunchSessionWithContext(ctx, sessionID)
@@ -79,7 +79,7 @@ func (s *Sessions) launch(ctx context.Context, intentKey, sessionID, parent stri
 		return nil, err
 	}
 	launched, err := il.LaunchInternal(ctx, sessionID, app.InternalLaunch{Kind: app.OriginTeam, OriginSessionID: parent, Grant: grant})
-	logRefusedLaunch(intentKey, grant, parent, err)
+	logRefusedLaunch(intentKey, runID, grant, parent, err)
 	return launched, err
 }
 
@@ -140,7 +140,7 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 	if err = s.enrollment.BindSession(ctx, in.IntentKey, in.Actor, launched.SessionID); err != nil {
 		return "", err
 	}
-	_, err = s.launch(ctx, in.IntentKey, launched.SessionID, in.ParentSession)
+	_, err = s.launch(ctx, in.IntentKey, in.Provision.RunID, launched.SessionID, in.ParentSession)
 	if err != nil {
 		return "", classifySession(err)
 	}

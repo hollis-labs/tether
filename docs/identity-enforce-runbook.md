@@ -264,8 +264,12 @@ SELECT COUNT(*) FROM team_port_intents i
 ```
 
 A non-zero count means that many live root team sessions would not survive a
-recovery under global enforce. Dissolve and re-form those teams (the new
-formation records the grant), or flip only after they are gone.
+recovery under global enforce. **A non-zero count blocks the global flip**, the
+same as `tether identity unbounded --check` does: re-form those teams (the new
+formation records a real grant) or dissolve the dead ones until the count reads
+0. Do not backfill a wildcard grant for old teams; that would hand every legacy
+team unbounded scope. After a flip, a refused recovery logs its reason, the
+intent key and the team run id, which tells the operator what to re-form.
 
 ## 5. Declared fail mode per enforcement point
 
