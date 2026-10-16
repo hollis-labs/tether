@@ -1,15 +1,6 @@
 package api
 
-// session_refs_test.go — CW-20260912-0060 / CW-20260912-0061.
-//
-// The behavior under test is mostly an absence: this endpoint applies NO
-// guard to `source`, including source=proxy. It used to reject that value, and
-// the rejection was wrong for two independent reasons documented at the call
-// site — it could not detect impersonation under ADR 0045, and it blocked the
-// only caller that had a legitimate claim to it, since `tether mcp --proxy` is a
-// separate process that reaches the store through this route.
-//
-// An absence is exactly what regresses silently, so it is asserted.
+// Session reference provenance is derived at the authenticated HTTP boundary.
 
 // NOTE ON THE Deps: every handler below needs Service, not just SessionRefs.
 // /sessions/{id}/refs is a sub-action of the /sessions/ route, and
@@ -55,25 +46,21 @@ func postRef(t *testing.T, h http.Handler, body string) (*http.Response, *record
 	return rec.Result(), nil
 }
 
-// The proxy must be able to record what it observed. It writes through this
-// endpoint because it runs in a separate process from the daemon and cannot
-// reach the store directly.
-func TestAttachSessionRef_AcceptsSourceProxy(t *testing.T) {
+func TestAttachSessionRef_RejectsAssertedProxy(t *testing.T) {
 	refs := &recordingRefStore{}
 	h := NewHandler(Deps{Service: &fakeLaunchService{}, SessionRefs: refs})
-
-	resp, _ := postRef(t, h, `{"kind":"torque_task","ref_id":"CW-1","relation":"read","source":"proxy"}`)
+	resp, _ := postRef(t, h, `{"kind":"torque_task","ref_id":"CW-1","source":"proxy"}`)
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200: the proxy cannot record observations if this endpoint rejects them", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden || len(refs.got) != 0 {
+		t.Fatalf("status=%d writes=%d", resp.StatusCode, len(refs.got))
 	}
-	if len(refs.got) != 1 {
-		t.Fatalf("store saw %d writes, want 1", len(refs.got))
+	var out struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
-	if refs.got[0].Source != store.SourceProxy {
-		t.Errorf("persisted source = %q, want %q — the value must reach the store unaltered, or the provenance it records is fiction",
-			refs.got[0].Source, store.SourceProxy)
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Error.Code != "source_asserted" {
+		t.Fatalf("error=%+v decode=%v", out, err)
 	}
 }
 
@@ -94,17 +81,15 @@ func TestAttachSessionRef_DefaultsToAPI(t *testing.T) {
 	}
 }
 
-// The vocabulary is still closed. Relaxing the proxy guard is not a decision
-// to accept anything — an unknown source is rejected by the store, and the
-// handler surfaces that rather than swallowing it.
-func TestAttachSessionRef_RejectsUnknownSource(t *testing.T) {
+// A caller cannot choose any source; unknown fields are ignored as provenance.
+func TestAttachSessionRef_IgnoresAuthoredSource(t *testing.T) {
 	h := NewHandler(Deps{Service: &fakeLaunchService{}, SessionRefs: realRefStore(t)})
 
 	resp, _ := postRef(t, h, `{"kind":"torque_task","ref_id":"CW-1","source":"vibes"}`)
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 for an unknown source", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 with derived source", resp.StatusCode)
 	}
 }
 
@@ -149,8 +134,8 @@ func TestAttachSessionRef_ResponseReportsInserted(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !out.Inserted || out.Ref.Source != store.SourceAgent {
-		t.Errorf("response = %+v, want inserted with source=agent", out)
+	if !out.Inserted || out.Ref.Source != store.SourceAPI {
+		t.Errorf("response = %+v, want inserted with source=api", out)
 	}
 }
 
@@ -158,7 +143,7 @@ func TestAttachSessionRef_PreservesParentItemID(t *testing.T) {
 	refs := &recordingRefStore{}
 	h := NewHandler(Deps{Service: &fakeLaunchService{}, SessionRefs: refs})
 
-	resp, _ := postRef(t, h, `{"kind":"tesseract_revision","ref_id":"01M2REV1","parent_item_id":"01M2ITEM1","source":"proxy"}`)
+	resp, _ := postRef(t, h, `{"kind":"tesseract_revision","ref_id":"01M2REV1","parent_item_id":"01M2ITEM1","source":"agent"}`)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {

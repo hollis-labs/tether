@@ -43,18 +43,16 @@ func (a *Adapter) registerSessionRefTools(s *gomcp.Server) {
 		Description: "List what a session touched, or -- with workstream_id instead -- everything " +
 			"every session in a workstream touched. The workstream form is the one that " +
 			"survives a compaction, since a compaction creates a new session row.\n\n" +
-			"Reading `source`: 'proxy' means the proxy OBSERVED this session make this " +
-			"call, which the calling agent cannot fabricate. It does NOT mean the " +
-			"identifier was validated -- nothing checks that the id refers to anything. " +
-			"And absence is not evidence: direct MCP children, HTTP callers and the CLI " +
-			"all bypass the proxy, so a session that did real work through those paths " +
-			"produces no proxy-observed refs. That is normal, not suspicious.",
+			"Reading `source`: session/operator identifies the verified credential that wrote the ref. " +
+			"proxy is reserved for a verified proxy credential; historical proxy_claimed is untrusted. " +
+			"api is unattributed capture and agent is a legacy assertion. None validates the identifier. " +
+			"Absence is not evidence: direct MCP children, HTTP callers and the CLI can bypass capture.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "List one session's refs. Provide this or workstream_id.", false),
 			gomcp.StringProp("workstream_id", "List the whole workstream roll-up. Provide this or session_id.", false),
 			gomcp.StringProp("kind", "Filter by kind.", false),
 			gomcp.StringProp("relation", "Filter by relation.", false),
-			gomcp.StringProp("source", "Filter by source: proxy, api or agent.", false),
+			gomcp.StringProp("source", "Filter by source: session, operator, proxy, proxy_claimed, api or agent.", false),
 		),
 		Handler: a.handleSessionRefs,
 	}, Reads("store.ListSessionRefs / ListWorkstreamRefs: SELECT"))
@@ -78,15 +76,12 @@ func (a *Adapter) handleWorkstreamAttach(ctx context.Context, args map[string]an
 	if err := a.workstreamClientReady(); err != nil {
 		return nil, err
 	}
-	// source is not exposed as a parameter: an agent calling this tool IS the
-	// asserting party, so the honest value is "agent" and letting the caller
-	// name it would erase the only distinction the column carries.
+	// The daemon derives source from the verified credential.
 	out, err := a.client.AttachSessionRef(ctx, sessionID, api.SessionRefAttachRequest{
 		Kind:         kind,
 		RefID:        refID,
 		URI:          str(args, "uri"),
 		Relation:     str(args, "relation"),
-		Source:       "agent",
 		ParentItemID: str(args, "parent_item_id"),
 	})
 	if err != nil {

@@ -121,7 +121,7 @@ func init() {
 	refListCmd.Flags().StringVar(&refWorkstream, "workstream", "", "list the workstream roll-up instead of one session")
 	refListCmd.Flags().StringVar(&refKindFilter, "kind", "", "filter by kind")
 	refListCmd.Flags().StringVar(&refRelation, "relation", "", "filter by relation")
-	refListCmd.Flags().StringVar(&refSourceFilter, "source", "", "filter by source: proxy, api or agent")
+	refListCmd.Flags().StringVar(&refSourceFilter, "source", "", "filter by source: session, operator, proxy, proxy_claimed, api or agent")
 	refListCmd.Flags().BoolVar(&refJSON, "json", false, "print JSON")
 
 	refsCmd.AddCommand(refAttachCmd, refListCmd)

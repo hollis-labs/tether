@@ -31,7 +31,7 @@ func (s *recordRows) ListWorkstreamRefs(id string, f store.ListSessionRefsOption
 	return s.rows, s.err
 }
 
-func TestRecordsAttachPreservesDefaultsAndAuthoredSource(t *testing.T) {
+func TestRecordsAttachPersistsBoundarySource(t *testing.T) {
 	for _, source := range []string{"", "agent", "proxy"} {
 		rows := &recordRows{result: store.AttachRefResult{Inserted: true, Upgraded: true}}
 		out, err := NewRecords(rows).Attach("own", SessionRefAttachRequest{Kind: "tesseract_revision", RefID: "revision", URI: "uri", ParentItemID: "item", Source: source})

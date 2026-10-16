@@ -60,14 +60,18 @@ const (
 	RelationReferenced = "referenced"
 )
 
-// Ref sources. See migration 0024 for the full statement — in particular that
-// SourceProxy means OBSERVED, not validated, and that the absence of a
-// proxy-sourced ref is never evidence of anything.
+// Ref sources. Migration 0080 supersedes the caller-asserted provenance in
+// migration 0024. No source validates an identifier, and an absent ref is never
+// evidence that a session did nothing.
 const (
-	// SourceProxy — the tether proxy saw this session make this call carrying
-	// this identifier. Not forgeable by the calling agent; not validated
-	// either.
+	// SourceProxy is reserved for verified proxy credentials. HTTP callers
+	// cannot assert it. Historical assertions were downgraded by migration 0080.
 	SourceProxy = "proxy"
+	// SourceProxyClaimed is a historical, unverified assertion, never observed evidence.
+	SourceProxyClaimed = "proxy_claimed"
+	// SourceSession and SourceOperator are derived from verified credentials.
+	SourceSession  = "session"
+	SourceOperator = "operator"
 	// SourceAPI — recorded through Tether's own HTTP surface.
 	SourceAPI = "api"
 	// SourceAgent — an agent asserted it.
@@ -81,6 +85,7 @@ var validRelations = map[string]bool{
 
 var validSources = map[string]bool{
 	SourceProxy: true, SourceAPI: true, SourceAgent: true,
+	SourceProxyClaimed: true, SourceSession: true, SourceOperator: true,
 }
 
 // SessionRefRow mirrors the session_refs table.
@@ -142,8 +147,8 @@ type AttachRefResult struct {
 //
 // The upgrade is monotonic and one-way:
 //
-//   - only `proxy` upgrades. `api` and `agent` are both assertions and neither
-//     is stronger, so they never overwrite each other or anything else.
+//   - only trusted `proxy` upgrades. Other sources, including historical
+//     `proxy_claimed`, never overwrite one another or enter that upgrade path.
 //   - `proxy` is terminal; nothing downgrades it.
 //   - ONLY source changes. `at` keeps the first timestamp, because that is
 //     when it happened.
@@ -182,7 +187,7 @@ func (s *Store) AttachSessionRef(ref SessionRefRow) (AttachRefResult, error) {
 		ref.Source = SourceAgent
 	}
 	if !validSources[ref.Source] {
-		return AttachRefResult{}, fmt.Errorf("attach session ref: invalid source %q (want proxy, api or agent)", ref.Source)
+		return AttachRefResult{}, fmt.Errorf("attach session ref: invalid source %q", ref.Source)
 	}
 	if ref.At == "" {
 		ref.At = time.Now().UTC().Format(time.RFC3339)
