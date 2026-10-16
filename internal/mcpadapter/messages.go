@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 

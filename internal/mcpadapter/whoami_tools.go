@@ -10,7 +10,7 @@ import (
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/registry"
 
-	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 )
 
 // registerWhoamiTools wires tether_whoami onto s. Read-only; no scope

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/teamsvc"
 )

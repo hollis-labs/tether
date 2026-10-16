@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	f "github.com/hollis-labs/go-forums"
-	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 )
 
 func (a *Adapter) registerForumTools(s *gomcp.Server) {

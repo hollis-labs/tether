@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
 	"github.com/hollis-labs/substrate/harness/runner"

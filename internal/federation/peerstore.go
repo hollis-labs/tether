@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/go-ssekit"
-	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
+	otelprop "github.com/hollis-labs/libs/core/util/otel/propagation"
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"

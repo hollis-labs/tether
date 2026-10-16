@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	hotel "github.com/hollis-labs/libs/util/otel"
-	"github.com/hollis-labs/libs/util/otel/genai"
+	hotel "github.com/hollis-labs/libs/core/util/otel"
+	"github.com/hollis-labs/libs/core/util/otel/genai"
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/llm"

@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hollis-labs/libs/util/apppaths"
+	"github.com/hollis-labs/libs/core/util/apppaths"
 	"github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/config"
 )
