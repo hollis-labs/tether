@@ -19,12 +19,28 @@ type ProtocolError struct {
 	UpdateHint       string `json:"update_hint"`
 }
 
+// thirdPartyRead reports the reads that non-Tether verifiers perform with a
+// plain HTTP client and a bearer only (go-auth fetches the issuer's JWKS and
+// polls its deny-list): they cannot send the Tether-Protocol header, so the
+// gate must not demand it. Both stay behind their own authentication, and
+// every other issuer route (notably POST /auth/token) still needs the header.
+func thirdPartyRead(r *http.Request) bool {
+	switch r.URL.Path {
+	case "/.well-known/jwks.json":
+		return r.Method == http.MethodGet || r.Method == http.MethodHead
+	case "/auth/denylist":
+		return r.Method == http.MethodGet
+	}
+	return false
+}
+
 // ProtocolGate keeps legacy local callers compatible when require=false.
 // Remote listeners and new versioned stream routes use require=true. Health
-// and descriptor remain bootstrap-readable regardless of a client's version.
+// and descriptor remain bootstrap-readable regardless of a client's version,
+// as are the issuer reads in thirdPartyRead.
 func ProtocolGate(require bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || r.URL.Path == DescriptorPath {
+		if r.URL.Path == "/health" || r.URL.Path == DescriptorPath || thirdPartyRead(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

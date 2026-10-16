@@ -146,6 +146,8 @@ func TestProtocolGate(t *testing.T) {
 		{"malformed-query", "/sessions?protocol=1;protocol=2", "", false, 409},
 		{"health", "/health", "2", true, 204},
 		{"descriptor", DescriptorPath, "2", true, 204},
+		{"jwks-no-header", "/.well-known/jwks.json", "", true, 204},
+		{"denylist-read-no-header", "/auth/denylist", "", true, 204},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
@@ -199,6 +201,26 @@ func TestProtocol1WireConformance(t *testing.T) {
 			if !found {
 				t.Fatalf("protocol1 %s removed/renamed without bump", name)
 			}
+		}
+	}
+}
+
+// Only the issuer reads that third-party verifiers perform skip the gate.
+func TestProtocolGateIssuerExemptionsAreExact(t *testing.T) {
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/.well-known/jwks.json"},
+		{http.MethodPost, "/auth/denylist"},
+		{http.MethodDelete, "/auth/denylist"},
+		{http.MethodPost, "/auth/token"},
+		{http.MethodGet, "/auth/token"},
+		{http.MethodGet, "/auth/denylist/x"},
+		{http.MethodGet, "/.well-known/jwks.json/x"},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		w := httptest.NewRecorder()
+		ProtocolGate(true, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })).ServeHTTP(w, r)
+		if w.Code != 409 {
+			t.Errorf("%s %s without the protocol header returned %d, want 409", tc.method, tc.path, w.Code)
 		}
 	}
 }

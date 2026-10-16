@@ -8,6 +8,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Fix the issuer on the remote listener (CW-20261016-0017): the protocol gate no longer
+  demands `Tether-Protocol` on `GET /.well-known/jwks.json` and `GET /auth/denylist`
+  (non-Tether verifiers fetch and poll these with a bearer only), and the outpost
+  agent-token minter now sends the header on `POST /auth/token`, which it
+  previously omitted and so was refused 409 by a real hub.
 - Add `tether identity rotate-operator --evidence TEXT` (CW-20261002-0003): atomically
   revokes the operator credential, mints a new one and swaps `run/operator.token`
   (temp + rename; the old pair stays valid if anything fails). Works against a

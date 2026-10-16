@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/libs/security/secrets/tokenfile"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/authissuer"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
@@ -56,7 +57,11 @@ func TestAgentTokenFileRefreshedCallsProtectedAppAndRevokes(t *testing.T) {
 	for _, p := range []string{api.TokenPath, api.DenyListPath, api.JWKSPath} {
 		mux.Handle(p, api.NewTokenIssuerHandler(issuer))
 	}
-	hub := httptest.NewServer(identity.Middleware(identity.Enforce, verifier, nil, mux))
+	// The hub's remote listener runs the protocol gate with require=true: the
+	// outpost minter is a Tether client and must send the header, while the
+	// go-auth verifier (JWKS fetch, deny-list poll) is a plain HTTP client and
+	// must not need it.
+	hub := httptest.NewServer(environment.ProtocolGate(true, identity.Middleware(identity.Enforce, verifier, nil, mux)))
 	defer hub.Close()
 
 	// The protected app: go-auth JWT verifier against the hub, deny-list poll at 100ms.
