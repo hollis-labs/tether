@@ -1,8 +1,8 @@
 # Tether scope vocabulary (issued tokens)
 
 Tokens issued by Tether (`POST /auth/token`, audience `tether`) carry scopes in
-one namespace, `tether.<verb>`. The six device scopes plus `worker` map 1:1; five
-legacy worker/MCP child scopes and two more are carved out as narrow scopes.
+one namespace, `tether.<verb>`. Device capabilities map 1:1; legacy worker/MCP child scopes and event
+publication are carved out as narrow scopes.
 
 | Canonical | Legacy name | Covers | Held implicitly by |
 | --- | --- | --- | --- |
@@ -17,6 +17,7 @@ legacy worker/MCP child scopes and two more are carved out as narrow scopes.
 | `tether.groups` | `groups.write` | group create/delete/members/leave/post/read | `tether.operate` |
 | `tether.teams` | `team.write` | team verbs | `tether.operate` |
 | `tether.ai` | `ai.invoke` | AI chat, stream, embeddings, decide | `tether.operate` |
+| `tether.events` | events | event publication | `tether.operate`, `tether.worker` |
 | `tether.registry` | `registry.write` | registry and scoped-binding writes | `tether.maintain`, `tether.admin` |
 | `tether.catalog` | `catalog.write` | catalog file writes (tools, session callers) | `tether.maintain`, `tether.admin` |
 
@@ -33,6 +34,10 @@ Rules:
   issued token carry the canonical set. `DefaultMCPScopes` (message.write,
   registry.write, groups.write) therefore yields `tether.messages`,
   `tether.registry`, `tether.groups` and nothing broader.
+- Event publication is grantable to service principals and worker devices. It
+  grants no event reads: those still require `tether.read`. Admin alone cannot
+  publish. Agent session tokens do not receive `tether.events` by default; an
+  explicit launch grant may request it.
 - Session input/resize need terminal-grade authority: they accept
   `tether.terminal` or `tether.sessions` (what `session.write` always covered). A
   device with `operate` alone still cannot input, as before.

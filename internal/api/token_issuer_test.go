@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -184,6 +185,9 @@ func TestDefaultAgentScopesAreNarrow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if identity.ScopeGranted(tok.Scopes, identity.ScopeEvents) {
+		t.Fatal("default agent gained event publication")
+	}
 	for _, s := range tok.Scopes {
 		switch s {
 		case "tether.operate", "tether.maintain", "tether.admin", "tether.terminal":
@@ -273,5 +277,47 @@ func TestNarrowScopesReachOnlyTheirOwnRoutes(t *testing.T) {
 				t.Errorf("tether.%s reached %s %s (needs %q)", scope, r[0], r[1], need)
 			}
 		}
+	}
+}
+
+func TestEventsScopeMintingAndReadsRemainIndependent(t *testing.T) {
+	is, h := issuerFixture(t, identity.Enforce)
+	for _, tc := range []struct {
+		name, kind, grant string
+		allowed           bool
+	}{
+		{"service explicit", "service", "tether.events", true},
+		{"service operate", "service", "tether.operate", true},
+		{"worker", "device", "worker", true},
+		{"worker canonical", "device", "tether.worker", true},
+		{"admin", "service", "tether.admin", false},
+		{"read", "device", "read", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := identity.Principal{Verified: true, ID: "event-publisher", Kind: tc.kind, Scopes: []string{tc.grant}}
+			token, err := is.Exchange(parent, authissuer.Request{Audience: "tether", Scopes: []string{"events"}})
+			if !tc.allowed {
+				if !errors.Is(err, authissuer.ErrForbidden) {
+					t.Fatalf("wanted forbidden, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if token.Kind != tc.kind || len(token.Scopes) != 1 || token.Scopes[0] != "tether.events" {
+				t.Fatalf("minted kind=%s scopes=%v", token.Kind, token.Scopes)
+			}
+			if got := call(h, "GET", "/sessions/s1/events", token.Token, "").Code; got != http.StatusForbidden {
+				t.Fatalf("publication token read events: %d", got)
+			}
+		})
+	}
+	code, read := mint(t, h, "tth_read", `{"audience":"tether","scopes":["read"]}`)
+	if code != http.StatusOK || call(h, "GET", "/sessions/s1/events", read.Token, "").Code != http.StatusNoContent {
+		t.Fatal("read token lost event read access")
+	}
+	if !launchprofile.ValidMCPScope("tether.events") {
+		t.Fatal("explicit event grant rejected by launch profile")
 	}
 }
