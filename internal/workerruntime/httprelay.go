@@ -107,15 +107,37 @@ func (r *HTTPRelay) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) 
 	defer cancel()
 	sc := bufio.NewScanner(stdin)
 	sc.Buffer(make([]byte, 0, 64<<10), maxRelayLine)
+	var initDone chan struct{} // closed when the latest initialize has been answered
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
 		if len(line) == 0 {
 			continue
 		}
 		msg := append([]byte(nil), line...)
+		// The agent's lines are forwarded concurrently, but anything it sends after an initialize must not overtake it:
+		// the hub refuses a POST without a session id that is not an initialize (400 mcp_initialize_required), and the
+		// session id exists only once the initialize response arrived. Lines are read in order here, so the gate is set
+		// before any later line is dispatched.
+		wait := initDone
+		var done chan struct{}
+		if isInitialize(msg) {
+			done = make(chan struct{})
+			initDone = done
+			wait = nil
+		}
 		r.wg.Add(1)
 		go func() {
 			defer r.wg.Done()
+			if done != nil {
+				defer close(done)
+			}
+			if wait != nil {
+				select {
+				case <-wait:
+				case <-ctx.Done():
+					return
+				}
+			}
 			r.forward(ctx, msg)
 		}()
 	}
@@ -154,6 +176,17 @@ func requestID(msg []byte) rpcID {
 	return m.ID
 }
 
+// methodName is the JSON-RPC method of msg for a log line ("-" when there is none); a method name is not secret.
+func methodName(msg []byte) string {
+	var m struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal(msg, &m) != nil || m.Method == "" || len(m.Method) > 64 {
+		return "-"
+	}
+	return m.Method
+}
+
 func isInitialize(msg []byte) bool {
 	var m struct {
 		Method string `json:"method"`
@@ -185,6 +218,7 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 			break
 		}
 	}
+	r.logf("hub refused %s (status %d%s)", methodName(msg), lastStatus, codeSuffix(lastCode))
 	r.fail(id, fmt.Sprintf("hub refused the request (status %d%s)", lastStatus, codeSuffix(lastCode)))
 }
 
