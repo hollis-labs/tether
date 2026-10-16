@@ -4,7 +4,7 @@ go 1.26.9
 
 require (
 	github.com/hollis-labs/libs/llm/core v0.2.0
-	github.com/hollis-labs/libs/mesh/core v0.4.0
+	github.com/hollis-labs/libs/mesh/core v0.6.0
 	github.com/hollis-labs/tether v0.0.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -13,7 +13,7 @@ require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/hollis-labs/libs/core/forums v0.3.0 // indirect
-	github.com/hollis-labs/libs/harness/core v0.10.0 // indirect
+	github.com/hollis-labs/libs/harness/core v0.11.0 // indirect
 	github.com/hollis-labs/libs/security/auth v0.1.0 // indirect
 	github.com/hollis-labs/libs/security/policy v0.1.0 // indirect
 	github.com/hollis-labs/libs/security/secrets v0.1.0 // indirect
