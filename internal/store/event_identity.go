@@ -12,6 +12,7 @@ import (
 var (
 	ErrEventIdentityMismatch = errors.New("event log environment identity differs from persisted identity")
 	ErrEventIdentityUnseeded = errors.New("event log environment identity is not seeded")
+	ErrEventIDsAfterCutover  = errors.New("event log contains NULL event IDs above the frozen cutover; restore a supported rollback build")
 )
 
 // EventIdentityProgress is durable backfill progress. Dropped is always zero:
@@ -55,6 +56,13 @@ func (s *Store) SeedEventIdentity(ctx context.Context, environmentID string) (Ev
 	if err == nil {
 		if p.EnvironmentID != environmentID {
 			return EventIdentityProgress{}, ErrEventIdentityMismatch
+		}
+		var invalid bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE id>? AND event_id IS NULL)`, p.Cutover).Scan(&invalid); err != nil {
+			return EventIdentityProgress{}, err
+		}
+		if invalid {
+			return EventIdentityProgress{}, ErrEventIDsAfterCutover
 		}
 		return p, tx.Commit()
 	}
