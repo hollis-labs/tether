@@ -1,0 +1,1 @@
+- Prepare event retention classes (CW-20261016-0146) with dormant configuration validation, immutable policy epochs, bounded head-trim planning, checkpointed rollup deltas and payload tombstone primitives. PII tombstones use `withheld`; non-PII digests hash exact stored bytes. The active retention job is unchanged.
