@@ -354,3 +354,77 @@ func TestHTTPRelayRefusesUnsafeEndpointsAndTokenFiles(t *testing.T) {
 		t.Fatalf("loose-mode token file: err = %v", err)
 	}
 }
+
+// A redirect is never followed: Go would keep the Authorization header on a same-hostname redirect, including an
+// https to http downgrade. The relay fails the request and the redirect target never sees a credential, even when the
+// caller injects a client whose own policy would follow it.
+func TestHTTPRelayNeverFollowsRedirectsOrLeaksTheBearer(t *testing.T) {
+	var targetHits, targetAuth atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			targetAuth.Add(1)
+		}
+	}))
+	t.Cleanup(target.Close)
+	hub := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/mcp", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(hub.Close)
+	file := filepath.Join(t.TempDir(), "token")
+	if err := tokenfile.Write(file, tokenOne); err != nil {
+		t.Fatal(err)
+	}
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	stderr := &bytes.Buffer{}
+	// hub.Client() trusts the test certificate and has Go's default redirect policy.
+	relay := &HTTPRelay{URL: hub.URL, TokenFile: file, Client: hub.Client(), Stderr: stderr}
+	done := make(chan error, 1)
+	go func() { err := relay.Run(context.Background(), inR, outW); _ = outW.Close(); done <- err }()
+	reply := bufio.NewScanner(outR)
+	if _, err := io.WriteString(inW, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	scanned := make(chan bool, 1)
+	go func() { scanned <- reply.Scan() }()
+	select {
+	case ok := <-scanned:
+		if !ok {
+			t.Fatal("no reply")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("no reply in 5s (a followed redirect leaves the request unanswered); target hits %d, with credential %d", targetHits.Load(), targetAuth.Load())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(reply.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	errObj, _ := m["error"].(map[string]any)
+	msg, _ := errObj["message"].(string)
+	if m["id"] != float64(1) || !strings.Contains(msg, "307") || !strings.Contains(msg, "redirect_refused") {
+		t.Fatalf("redirect reply = %v", m)
+	}
+	_ = inW.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if targetHits.Load() != 0 || targetAuth.Load() != 0 {
+		t.Fatalf("the redirect target was reached (%d hits, %d with a credential)", targetHits.Load(), targetAuth.Load())
+	}
+	if strings.Contains(stderr.String(), tokenOne) || strings.Contains(msg, tokenOne) {
+		t.Fatal("the token leaked into a diagnostic")
+	}
+}
+
+// The default client carries the same policy.
+func TestHTTPRelayDefaultClientRefusesRedirects(t *testing.T) {
+	c := (&HTTPRelay{}).client()
+	if c.CheckRedirect == nil || c.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+		t.Fatal("the default client would follow redirects")
+	}
+	injected := (&HTTPRelay{Client: &http.Client{}}).client()
+	if injected.CheckRedirect == nil || injected.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+		t.Fatal("an injected client would follow redirects")
+	}
+}

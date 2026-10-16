@@ -73,11 +73,19 @@ func (r *HTTPRelay) validate() error {
 	return ErrRelayURL
 }
 
+// noRedirect makes a 30x a refused request. An MCP endpoint has no business redirecting, and Go's client
+// keeps the Authorization header on a redirect that stays on the same hostname, including an https to http
+// downgrade, which would send the bearer in cleartext.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 func (r *HTTPRelay) client() *http.Client {
 	if r.Client != nil {
-		return r.Client
+		// Never follow redirects, whatever client was injected; copy so the caller's is untouched.
+		c := *r.Client
+		c.CheckRedirect = noRedirect
+		return &c
 	}
-	return &http.Client{Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: 60 * time.Second, TLSHandshakeTimeout: 15 * time.Second}}
+	return &http.Client{CheckRedirect: noRedirect, Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: 60 * time.Second, TLSHandshakeTimeout: 15 * time.Second}}
 }
 
 func (r *HTTPRelay) logf(format string, args ...any) {
@@ -219,8 +227,13 @@ func (r *HTTPRelay) post(ctx context.Context, msg []byte, token string) (int, st
 	if resp.StatusCode == http.StatusUnauthorized {
 		return resp.StatusCode, hubErrorCode(resp.Body), true
 	}
-	if resp.StatusCode >= 400 {
-		return resp.StatusCode, hubErrorCode(resp.Body), false
+	if resp.StatusCode >= 300 {
+		// Includes a refused redirect (ErrUseLastResponse hands us the 30x): report it, never follow it.
+		code := hubErrorCode(resp.Body)
+		if resp.StatusCode < 400 {
+			code = "redirect_refused"
+		}
+		return resp.StatusCode, code, false
 	}
 	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
 		r.mu.Lock()
