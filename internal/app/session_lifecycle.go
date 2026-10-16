@@ -134,7 +134,24 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	if err := s.applyAgentOps(plan, in); err != nil {
 		return nil, err
 	}
+	stampTaskID(plan, in.TaskID)
 	return plan, nil
+}
+
+// stampTaskID records the launcher-asserted task id on the plan and in the agent's
+// environment. It runs after every catalog, agent and override env merge so none of
+// them can set or spoof TETHER_TASK_ID: the variable is overwritten with the stamp, or
+// removed when the launcher named no task.
+func stampTaskID(plan *launch.Plan, taskID string) {
+	plan.TaskID = taskID
+	if taskID == "" {
+		delete(plan.Env, TaskIDEnv)
+		return
+	}
+	if plan.Env == nil {
+		plan.Env = map[string]string{}
+	}
+	plan.Env[TaskIDEnv] = taskID
 }
 
 func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIdempotency) (launched *Launched, err error) {
@@ -198,6 +215,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		ProviderKind:   providerKind,
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
+		TaskID:         nullableTaskID(plan.TaskID),
 	}
 	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {
 		return nil, err
