@@ -182,7 +182,7 @@ func identityFlipCmd() *cobra.Command {
 	cmd.Flags().StringVar(&to, "to", "", "off, observe or enforce")
 	cmd.Flags().StringVar(&by, "by", "", "label recorded as who flipped (default: OS user; not authenticated)")
 	cmd.Flags().StringVar(&evidence, "evidence", "", "review evidence and GO reference (required)")
-	cmd.Flags().BoolVar(&revokeAnonymous, "revoke-anonymous", false, "when switching to enforce, revoke the live session credentials that were launched with no bounding authority instead of refusing")
+	cmd.Flags().BoolVar(&revokeAnonymous, "revoke-anonymous", false, "when switching to enforce, revoke the live session credentials launched with no bounding authority instead of refusing (it re-queries at that moment, so it can also hit one created after the list was printed)")
 	_ = cmd.MarkFlagRequired("to")
 	return cmd
 }
@@ -286,7 +286,7 @@ func identityRollbackCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&toObserve, "observe", false, "break-glass: set to an explicit observe regardless of history")
 	cmd.Flags().StringVar(&by, "by", "", "label recorded as who rolled back (not authenticated)")
 	cmd.Flags().StringVar(&evidence, "evidence", "", "reason for the rollback")
-	cmd.Flags().BoolVar(&revokeAnonymous, "revoke-anonymous", false, "when a rollback restores enforce, revoke the unbounded session credentials instead of refusing")
+	cmd.Flags().BoolVar(&revokeAnonymous, "revoke-anonymous", false, "when a rollback restores enforce, revoke the live unbounded session credentials instead of refusing (re-queried at that moment)")
 	return cmd
 }
 
