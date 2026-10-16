@@ -86,6 +86,10 @@ type Source struct {
 
 // Envelope carries the persisted producer metadata and v1.1 blocks of an Event.
 type Envelope struct {
+	// OriginAt retains producer time only when excessive future skew requires
+	// a safe log-time value in the DB at column for indexed retention.
+	// Event.At still exposes the true origin. Assigned by storage.
+	OriginAt      time.Time
 	SchemaVersion string
 	App           string
 	Subject       string

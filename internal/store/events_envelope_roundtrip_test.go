@@ -159,3 +159,41 @@ func TestEnvelopeBusReplayMatchesLive(t *testing.T) {
 		t.Fatalf("replay differs from live:\nlive %+v\nreplay %+v", published, recovered)
 	}
 }
+
+func TestFutureOriginCannotEvadeIndexedRetention(t *testing.T) {
+	db := openEventsStore(t)
+	ctx := context.Background()
+	e := completeEnvelope()
+	e.At = time.Now().UTC().AddDate(10, 0, 0)
+	e.Envelope.OriginAt = time.Now().AddDate(100, 0, 0) // cannot forge the preserved value
+	stored, err := db.InsertEventEnvelope(ctx, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Envelope.OriginAt.Equal(e.At) || !stored.At.Equal(e.At) {
+		t.Fatalf("future origin was not preserved/clamped: %+v", stored)
+	}
+	var retentionTime string
+	if err := db.db.QueryRow(`SELECT at FROM events WHERE id=?`, stored.Seq).Scan(&retentionTime); err != nil {
+		t.Fatal(err)
+	}
+	if retentionTime != stored.Envelope.RecordedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("retention time was not clamped: %s", retentionTime)
+	}
+	duplicate := e
+	duplicate.At = time.Now()
+	duplicate.PayloadJSON = `{"changed":true}`
+	repeated, err := db.InsertEventEnvelope(ctx, duplicate)
+	if err != nil || !reflect.DeepEqual(repeated, stored) {
+		t.Fatalf("duplicate replaced original future time: %+v %v", repeated, err)
+	}
+	rows, err := db.EventsSince(0)
+	if err != nil || len(rows) != 1 || !reflect.DeepEqual(rows[0], stored) {
+		t.Fatalf("future origin roundtrip: %+v %v", rows, err)
+	}
+	// Eligible after the log's retention age, well before the claimed origin.
+	batch, err := db.DeleteEventHistoryBefore(ctx, "events", stored.Envelope.RecordedAt.Add(time.Second), 10)
+	if err != nil || batch.Removed != 1 {
+		t.Fatalf("future origin escaped retention: %+v %v", batch, err)
+	}
+}
