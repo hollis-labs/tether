@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"github.com/hollis-labs/tether/internal/launch"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -132,5 +133,58 @@ func TestOnlyDaemonCompositionCanSetALaunchOrigin(t *testing.T) {
 	}
 	if _, err := os.ReadDir("../api"); err != nil {
 		t.Fatalf("boundary test is not looking at the api package: %v", err)
+	}
+}
+
+// For the same origin, the worker path is never broader than the hub path, and
+// neither exceeds the origin's grant (architect: ruling item 4). Scopes that
+// both profiles name must come out the same on both.
+func TestWorkerPathIsNeverBroaderThanTheHubPathForTheSameOrigin(t *testing.T) {
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	common := "message.write" // in both workerScopes (hub) and DefaultMCPScopes (worker)
+	if !slices.Contains(workerScopes, common) || !slices.Contains(launchprofile.DefaultMCPScopes, common) {
+		t.Fatalf("test assumes %q is in both profiles", common)
+	}
+	for name, grant := range map[string][]string{
+		"origin holds the common scope":   {common},
+		"origin holds an unrelated one":   {"unrelated.scope"},
+		"origin holds a wildcard":         {"*"},
+		"origin holds two profile scopes": {common, "registry.write"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			origin := "origin-" + strings.ReplaceAll(name, " ", "-")
+			mintSessionWithScopes(t, r.svc, r.ids, origin, false, grant...)
+			ctx := withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: origin})
+
+			// Hub-local path.
+			hubID := "hub-" + origin
+			if err := r.svc.Store.CreateSession(store.SessionRow{ID: hubID, LaunchID: "pm", ProjectID: "tether", ProviderID: "claude", ProviderKind: "cli", State: "created"}, &launch.Plan{LaunchID: "pm", ProjectID: "tether", ProviderID: "claude"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.svc.mintSessionCredential(ctx, hubID); err != nil {
+				t.Fatal(err)
+			}
+			hub := r.storedScopes(hubID)
+
+			// Worker path.
+			spec, err := r.launchAs(ctx, "worker-"+origin, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker := r.storedScopes("worker-" + origin)
+			if !slices.Equal(spec.MCPScopes, worker) {
+				t.Fatalf("worker spec %v and credential %v disagree", spec.MCPScopes, worker)
+			}
+			if !slices.Contains(grant, "*") {
+				for _, scope := range append(slices.Clone(hub), worker...) {
+					if !slices.Contains(grant, scope) {
+						t.Fatalf("scope %q exceeds the origin's grant %v (hub %v, worker %v)", scope, grant, hub, worker)
+					}
+				}
+			}
+			if slices.Contains(hub, common) != slices.Contains(worker, common) {
+				t.Fatalf("hub %v and worker %v disagree about the shared scope %q for the same origin", hub, worker, common)
+			}
+		})
 	}
 }
