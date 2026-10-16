@@ -133,7 +133,7 @@ func NewBus(opts BusOptions) Bus {
 	if opts.OutboxSweep <= 0 {
 		opts.OutboxSweep = defaultOutboxGap
 	}
-	return &memBus{
+	b := &memBus{
 		paged:          paged,
 		txp:            txp,
 		idp:            idp,
@@ -147,6 +147,10 @@ func NewBus(opts BusOptions) Bus {
 		subs:           make(map[int64]*subscriber),
 		mu:             make(chan struct{}, 1),
 	}
+	// Rows a crashed process left pending can be overtaken before StartOutbox
+	// runs: start dirty so the first Publish drains them.
+	b.dirty.Store(txp != nil)
+	return b
 }
 
 // Publish persists the event, assigns its Seq/At, and fans out to
@@ -171,11 +175,13 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	}
 	defer b.unlock()
 
-	// Rows committed on a caller's transaction have lower Seq than this event:
-	// deliver them first, so live subscribers see Seq in order.
+	// Rows committed on a caller's transaction have lower Seq than this event and
+	// must be delivered first, or a cursor subscriber (which advances past every
+	// Seq it sees) would drop them for good. Drain them before the insert when the
+	// outbox is dirty, so a failure stops here with nothing persisted...
 	if b.dirty.Load() {
-		if err := b.drainLocked(ctx); err != nil {
-			log.Printf("events: outbox drain before publish: %v", err)
+		if err := b.drainLocked(ctx, 0); err != nil {
+			return err
 		}
 	}
 
@@ -198,6 +204,14 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 	e.Seq = seq
 	e.At = at
 	b.published.Store(seq)
+	// ...and again after it, unconditionally: this insert may have waited for the
+	// connection while a caller's transaction wrote and committed a pending row
+	// with a lower Seq than ours (the dirty check above ran before that). The probe
+	// reads a partial index that is empty unless something is pending. If it fails
+	// the event is persisted but is not fanned out above a pending row.
+	if err := b.drainLocked(ctx, seq); err != nil {
+		return err
+	}
 	b.fanout(e)
 	return nil
 }

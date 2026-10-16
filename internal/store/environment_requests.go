@@ -42,7 +42,7 @@ func (s *Store) insertEnvironmentRequest(ctx context.Context, scope, sessionID, 
 		}
 	}
 	at := time.Now().UTC()
-	seq, eventID, err := insertEventRow(ctx, tx, scope, sessionID, EnvironmentRequestKind, payload, at, "", false)
+	seq, eventID, err := insertEventRow(ctx, tx, scope, sessionID, EnvironmentRequestKind, payload, at.Format(time.RFC3339Nano), false)
 	if err != nil {
 		return 0, time.Time{}, "", err
 	}

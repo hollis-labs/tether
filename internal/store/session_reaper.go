@@ -133,7 +133,7 @@ func (s *Store) ReaperSessions(ctx context.Context) ([]ReaperSession, error) {
 // LatestSessionEvent returns the newest event of one kind for a session via idx_events_session_kind_at,
 // or nil when there is none. Unlike QueryEvents it never reads the session's other events.
 func (s *Store) LatestSessionEvent(ctx context.Context, sessionID, kind string) (*events.Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,scope,session_id,at,kind,payload_json FROM events WHERE session_id=? AND kind=? ORDER BY at DESC,id DESC LIMIT 1`, sessionID, kind)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,scope,session_id,at,kind,payload_json,event_id FROM events WHERE session_id=? AND kind=? ORDER BY at DESC,id DESC LIMIT 1`, sessionID, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -176,10 +176,16 @@ func (s *Store) RecordReaperOrphan(ctx context.Context, id, reason string, obser
 		}
 	}
 	payload, _ := json.Marshal(map[string]string{"reason": reason, "stage": "outcome", "outcome": "orphaned"})
-	if _, err = tx.ExecContext(ctx, `INSERT INTO events(scope,session_id,at,kind,payload_json) VALUES(?,?,?,?,?)`, events.ScopeSession, id, stamp, "session.reaper", string(payload)); err != nil {
+	// The outcome event is an outbox row on this transaction: it commits with the
+	// orphaning, and is published only if that commit happens.
+	if _, _, err = insertEventRow(ctx, tx, events.ScopeSession, id, "session.reaper", string(payload), stamp, true); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	s.EventsCommitted()
+	return true, nil
 }
 
 // SessionLeaseExpired ignores superseded/revoked generations and treats a live
@@ -197,6 +203,10 @@ func (s *Store) RecordSessionActivity(ctx context.Context, id string, at time.Ti
 	if err != nil {
 		return err
 	}
-	_, _, err = s.InsertEventContext(ctx, events.ScopeSession, id, "session.activity", string(payload))
+	// Outbox row (published by the bus drainer), not a write around the bus.
+	_, _, err = insertEventRow(ctx, s.db, events.ScopeSession, id, "session.activity", string(payload), time.Now().UTC().Format(time.RFC3339Nano), true)
+	if err == nil {
+		s.EventsCommitted()
+	}
 	return err
 }

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
@@ -383,7 +384,9 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 		Replaces   string `json:"replaces"`
 		Actor      string `json:"actor"`
 	}{in.DestinationID, id, f.ActorURI})
-	if _, err = q.ExecContext(ctx, `INSERT INTO events(scope,session_id,at,kind,payload_json) VALUES('session',?,?,'session.replaced_by',?)`, id, now, string(lineage)); err != nil {
+	// An outbox row on the caller's transaction. The caller must call
+	// Store.EventsCommitted once that transaction commits.
+	if _, _, err = insertEventRow(ctx, q, events.ScopeSession, id, "session.replaced_by", string(lineage), now, true); err != nil {
 		return result, err
 	}
 	return result, ctx.Err()

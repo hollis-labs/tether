@@ -46,7 +46,7 @@ func (s *Store) InsertEventIDContext(ctx context.Context, scope events.Scope, se
 		return s.insertEnvironmentRequest(ctx, scope, sessionID, payloadJSON)
 	}
 	at := time.Now().UTC()
-	seq, eventID, err := insertEventRow(ctx, s.db, scope, sessionID, kind, payloadJSON, at, "", false)
+	seq, eventID, err := insertEventRow(ctx, s.db, scope, sessionID, kind, payloadJSON, at.Format(time.RFC3339Nano), false)
 	if err != nil {
 		return 0, time.Time{}, "", err
 	}
@@ -82,12 +82,12 @@ func (s *Store) ListEventsBySession(sessionID string, limit int, cursor int64) (
 	)
 	if cursor > 0 {
 		rows, err = s.db.Query(
-			`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE session_id=? AND id < ? ORDER BY id DESC LIMIT ?`,
+			`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE session_id=? AND id < ? ORDER BY id DESC LIMIT ?`,
 			sessionID, cursor, limit,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?`,
+			`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?`,
 			sessionID, limit,
 		)
 	}
@@ -127,7 +127,7 @@ func (s *Store) EventsSince(sinceSeq int64) ([]events.Event, error) {
 
 func (s *Store) EventsSinceContext(ctx context.Context, sinceSeq int64) ([]events.Event, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE id > ? ORDER BY id ASC`,
+		`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events WHERE id > ? ORDER BY id ASC`,
 		sinceSeq,
 	)
 	if err != nil {
@@ -199,7 +199,7 @@ func (s *Store) ListRecentEvents(limit int) ([]events.Event, error) {
 		limit = 1000
 	}
 	rows, err := s.db.Query(
-		`SELECT id, scope, session_id, at, kind, payload_json FROM events ORDER BY id DESC LIMIT ?`,
+		`SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events ORDER BY id DESC LIMIT ?`,
 		limit,
 	)
 	if err != nil {
@@ -220,7 +220,7 @@ func (s *Store) QueryEvents(f EventFilter) ([]events.Event, error) {
 		limit = 1000
 	}
 
-	query := `SELECT id, scope, session_id, at, kind, payload_json FROM events`
+	query := `SELECT id, scope, session_id, at, kind, payload_json, event_id FROM events`
 	var (
 		where []string
 		args  []any
@@ -268,43 +268,10 @@ func (s *Store) QueryEvents(f EventFilter) ([]events.Event, error) {
 	return scanEvents(rows)
 }
 
-// scanEvents is shared by EventsSince + ListEventsBySession. Row shape
-// is identical; only ORDER BY differs.
+// scanEvents scans the events columns "id, scope, session_id, at, kind,
+// payload_json, event_id" (event_id is NULL on rows that predate migration 0081).
 func scanEvents(rows *sql.Rows) ([]events.Event, error) {
-	var out []events.Event
-	for rows.Next() {
-		var (
-			id          int64
-			scope       string
-			sessionID   *string
-			atStr       string
-			kind        string
-			payloadJSON *string
-		)
-		if err := rows.Scan(&id, &scope, &sessionID, &atStr, &kind, &payloadJSON); err != nil {
-			return nil, err
-		}
-		at, perr := time.Parse(time.RFC3339Nano, atStr)
-		if perr != nil {
-			// Fall back to RFC3339 in case earlier rows were written at
-			// second precision (pre-InsertEvent v0.0.2 shape).
-			at, _ = time.Parse(time.RFC3339, atStr)
-		}
-		ev := events.Event{
-			Seq:   id,
-			At:    at,
-			Scope: scope,
-			Kind:  kind,
-		}
-		if sessionID != nil {
-			ev.SessionID = *sessionID
-		}
-		if payloadJSON != nil {
-			ev.PayloadJSON = *payloadJSON
-		}
-		out = append(out, ev)
-	}
-	return out, rows.Err()
+	return scanEventsWithID(rows)
 }
 
 // HasPublishedProviderResult checks the full durable session history. Comparing
