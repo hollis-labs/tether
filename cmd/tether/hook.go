@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
@@ -45,8 +46,9 @@ func newHookCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := recordClaudeHook(c.Context(), c.InOrStdin(), session, spool); err != nil {
-				fmt.Fprintf(c.ErrOrStderr(), "tether hook: %v\n", err)
+			if class := recordClaudeHook(c.Context(), c.InOrStdin(), session, spool); class != "" {
+				// A class only: an error's text can carry a path or part of a payload, and this line may reach a log.
+				fmt.Fprintf(c.ErrOrStderr(), "tether hook: %s\n", class)
 			}
 			return nil // observe-only and fail-open: never a non-zero exit
 		},
@@ -54,26 +56,49 @@ func newHookCommand() *cobra.Command {
 	return cmd
 }
 
-func recordClaudeHook(ctx context.Context, in io.Reader, session, spool string) error {
+// hookWriteBudget caps the whole record (read, map, lock, append): a hook runs inside the agent's tool loop, so a stuck spool
+// lock or a slow disk must cost it at most this, then the hook gives up and exits 0 (architect ruling
+// agent_hook_spool_location_and_trust_2026_10_16: ~200 ms).
+const hookWriteBudget = 200 * time.Millisecond
+
+// recordClaudeHook returns "" on success or when there is nothing to do, else a short error class (no paths, no content).
+func recordClaudeHook(ctx context.Context, in io.Reader, session, spool string) string {
 	if session == "" || spool == "" {
-		return nil // not a managed session; nothing to record
+		return "" // not a managed session; nothing to record
 	}
-	payload, err := io.ReadAll(io.LimitReader(in, maxHookPayload))
-	if err != nil {
-		return fmt.Errorf("read payload: %w", err)
-	}
-	obs, err := agentevents.ClaudeHook(payload)
-	if err != nil {
-		return err
-	}
-	if len(obs) == 0 {
-		return nil
+	if !filepath.IsAbs(spool) {
+		return "spool_not_absolute" // a planted command must not write relative to the agent's cwd
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, hookWriteBudget)
 	defer cancel()
+	done := make(chan string, 1)
+	go func() { done <- recordClaudePayload(ctx, in, session, spool) }()
+	select {
+	case class := <-done:
+		return class
+	case <-ctx.Done():
+		return "timeout" // the process exits right after; an append still in flight is abandoned
+	}
+}
+
+func recordClaudePayload(ctx context.Context, in io.Reader, session, spool string) string {
+	payload, err := io.ReadAll(io.LimitReader(in, maxHookPayload+1))
+	if err != nil {
+		return "read_failed"
+	}
+	if len(payload) > maxHookPayload {
+		return "payload_too_large" // truncated JSON would not parse; say so instead of dropping the event silently
+	}
+	obs, err := agentevents.ClaudeHook(payload)
+	if err != nil {
+		return "payload_invalid"
+	}
+	if len(obs) == 0 {
+		return ""
+	}
 	rec := &agentevents.Recorder{
 		App:       "tether",
 		SessionID: session,
@@ -82,11 +107,11 @@ func recordClaudeHook(ctx context.Context, in io.Reader, session, spool string) 
 			PID: os.Getppid(), Provider: "claude", Runtime: "hooks", ProviderSessionID: agentevents.ClaudeSessionID(payload),
 		},
 	}
-	var firstErr error
+	class := ""
 	for _, o := range obs {
-		if _, err := rec.Record(ctx, o); err != nil && firstErr == nil {
-			firstErr = err
+		if _, err := rec.Record(ctx, o); err != nil && class == "" {
+			class = "record_failed"
 		}
 	}
-	return firstErr
+	return class
 }

@@ -82,6 +82,7 @@ func TestHookClaudeFailsOpenOnEverything(t *testing.T) {
 		"unknown event":                    {`{"hook_event_name":"FutureEvent"}`, []string{"claude", "--session", "s", "--spool", spool}},
 		"unsafe session id":                {good, []string{"claude", "--session", "../x", "--spool", spool}},
 		"unwritable spool":                 {good, []string{"claude", "--session", "s", "--spool", filepath.Join(unwritable, "deeper")}},
+		"relative spool":                   {good, []string{"claude", "--session", "s", "--spool", "events"}},
 	} {
 		stdout, _, err := runHook(t, c.stdin, c.args...)
 		if err != nil || stdout != "" {
@@ -110,5 +111,25 @@ func TestHookClaudeWritesNoContent(t *testing.T) {
 	info, _ := os.Stat(filepath.Join(spool, "s.jsonl"))
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("spool file mode %v", info.Mode().Perm())
+	}
+}
+
+// stderr carries a class and nothing else: no path, no payload text, no error text.
+func TestHookClaudeStderrIsAClassOnly(t *testing.T) {
+	spool := t.TempDir()
+	unwritable := filepath.Join(t.TempDir(), "ro-secret-dir")
+	if err := os.Mkdir(unwritable, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, stdin, spool, want string }{
+		{"invalid", "not json with a secret-token inside", spool, "payload_invalid"},
+		{"too large", strings.Repeat("x", maxHookPayload+10), spool, "payload_too_large"},
+		{"relative", hookFixture(t, "PreToolUse-read"), "events", "spool_not_absolute"},
+		{"unwritable", hookFixture(t, "PreToolUse-read"), filepath.Join(unwritable, "deeper"), "record_failed"},
+	} {
+		_, stderr, err := runHook(t, c.stdin, "claude", "--session", "s", "--spool", c.spool)
+		if err != nil || strings.TrimSpace(stderr) != "tether hook: "+c.want {
+			t.Fatalf("%s: err=%v stderr=%q, want exactly the class %q", c.name, err, stderr, c.want)
+		}
 	}
 }
