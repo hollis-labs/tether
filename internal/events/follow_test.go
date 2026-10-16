@@ -131,3 +131,47 @@ func TestFollow_StopsWhenTheContextIsDone(t *testing.T) {
 		t.Fatal("Follow did not return after the context was canceled")
 	}
 }
+
+// fakeLiveBus hands out closed live channels (an immediate eviction) before a
+// working one, and fails the test if anything subscribes with replay.
+type fakeLiveBus struct {
+	Bus
+	t      *testing.T
+	closed int
+	live   chan Event
+	calls  int
+}
+
+func (b *fakeLiveBus) Subscribe(context.Context, Filter) (<-chan Event, func(), error) {
+	b.t.Error("a live-only follower fell back to a replaying Subscribe")
+	return nil, func() {}, context.Canceled
+}
+
+func (b *fakeLiveBus) SubscribeLive(context.Context, Filter) (<-chan Event, func(), error) {
+	b.calls++
+	if b.calls <= b.closed {
+		c := make(chan Event)
+		close(c)
+		return c, func() {}, nil
+	}
+	return b.live, func() {}, nil
+}
+
+// A live-only follower evicted before its first event stays live-only: it must
+// not fall back to Subscribe from sequence 0.
+func TestFollow_LiveOnlyEvictedBeforeItsFirstEventDoesNotReplayHistory(t *testing.T) {
+	fastBackoff(t)
+	bus := &fakeLiveBus{t: t, closed: 2, live: make(chan Event, 1)}
+	bus.live <- Event{Seq: 9, Kind: "k"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &collector{}
+	FollowAsync(ctx, bus, Filter{}, FollowOptions{LiveOnly: true}, c.handle)
+	got := c.wait(t, 1)
+	if got[0] != 9 {
+		t.Fatalf("got %v", got)
+	}
+	if bus.calls != 3 {
+		t.Fatalf("SubscribeLive called %d times, want 3 (two evictions then the live channel)", bus.calls)
+	}
+}

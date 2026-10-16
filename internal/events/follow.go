@@ -71,7 +71,11 @@ func Follow(ctx context.Context, bus Bus, f Filter, opts FollowOptions, handle f
 		} else {
 			ch, cancel, err = bus.Subscribe(ctx, sub)
 		}
-		liveFirst = false
+		// Stay live-only until an event has arrived: a follower evicted before
+		// its first event has no cursor to resume from, and re-subscribing
+		// from Filter.SinceSeq (0) would replay the whole log, the cost
+		// LiveOnly exists to avoid.
+		liveFirst = liveFirst && cursor == f.SinceSeq
 		if opts.Ready != nil {
 			opts.Ready()
 			opts.Ready = nil
