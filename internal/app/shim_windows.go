@@ -23,7 +23,7 @@ func (s *Service) settleShimBridgeExit(string) {}
 
 func (s *Service) prepareShimStart(_ context.Context, _ *launch.Plan, req agentsessions.StartRequest) (agentsessions.StartRequest, error) {
 	if s.LaunchHost() == HostShim {
-		publishSessionEvent(s.Bus, req.ID, "", "session.shim_status", map[string]string{"state": "direct_fallback", "reason": "unsupported"})
+		publishSessionEvent(s.Bus, req.ID, "", events.KindSessionShimStatus, map[string]string{"state": "direct_fallback", "reason": "unsupported"})
 	}
 	return req, nil
 }

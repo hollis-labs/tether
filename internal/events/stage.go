@@ -102,7 +102,11 @@ type Observer interface {
 func (b *memBus) observe(ctx context.Context, e Event) {
 	for _, o := range b.observers {
 		func() {
-			defer func() { _ = recover() }()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("events: observer %T panicked on %q: %v", o, e.Kind, r)
+				}
+			}()
 			o.Observe(ctx, e)
 		}()
 	}

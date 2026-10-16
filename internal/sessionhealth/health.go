@@ -17,7 +17,10 @@
 //	session.shim_status detached/outcome_unknown  any but unhealthy -> unhealthy [shim_outcome_unknown]
 //
 // unhealthy is terminal: nothing leaves it. A completed or killed session (a
-// requested, clean end) changes nothing. The tracker is in memory. After a
+// requested, clean end) changes nothing. The tracker forgets a session when it
+// ends, including a failed or orphaned end, so a late signal for an ended
+// session (a stray turn output, a recovery event) starts again from unknown and
+// carries tracker_restart. The tracker is in memory. After a
 // restart the first transition it makes for a session starts from unknown, and
 // when that first signal is not the session starting it carries the extra
 // reason tracker_restart so a consumer does not read it as a fresh change.
@@ -83,6 +86,11 @@ type Payload struct {
 
 // Tracker is the observer. The zero value is not usable; use New.
 type Tracker struct {
+	// pubMu orders emissions: a transition is computed and published under it, so
+	// two signals for one session reach the bus in the order they were applied
+	// (their from/to chain is never reversed by sequence). Health events are
+	// rare, so one lock for all sessions costs nothing.
+	pubMu  sync.Mutex
 	mu     sync.Mutex
 	states map[string]string
 	pub    events.Publisher
@@ -113,6 +121,8 @@ func (t *Tracker) Observe(ctx context.Context, e events.Event) {
 	if sig == sigNone && !terminal {
 		return
 	}
+	t.pubMu.Lock()
+	defer t.pubMu.Unlock()
 	var out *Payload
 	t.mu.Lock()
 	if sig != sigNone {
@@ -226,7 +236,7 @@ func classify(e events.Event) (sig signal, terminal bool) {
 		if json.Unmarshal([]byte(e.PayloadJSON), &p) == nil && p.Kind == turnOutputFinal {
 			return sigTurnOutput, false
 		}
-	case "session.shim_status":
+	case events.KindSessionShimStatus:
 		var p struct {
 			State  string `json:"state"`
 			Reason string `json:"reason"`

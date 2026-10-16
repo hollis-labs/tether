@@ -3,6 +3,7 @@ package sessionhealth
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -248,5 +249,111 @@ func TestTransitionTableHasNoSelfTransitionAndOnlyClosedReasons(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Concurrent signals for one session are applied and published in one order,
+// so the from/to chain read back by sequence is contiguous.
+func TestConcurrentSignalsKeepAContiguousChainBySequence(t *testing.T) {
+	r := newRig(t)
+	r.state("c", "running")
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				r.stalled("c")
+			} else {
+				r.turn("c", "final")
+			}
+		}()
+	}
+	wg.Wait()
+	rows, err := r.db.DB().Query(`SELECT payload_json FROM events WHERE kind=? AND session_id='c' ORDER BY id`, events.KindSessionHealthChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	prev := ""
+	n := 0
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var p Payload
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			t.Fatal(err)
+		}
+		if prev != "" && p.From != prev {
+			t.Fatalf("transition %d starts from %q but the previous one ended at %q", n, p.From, prev)
+		}
+		prev = p.To
+		n++
+	}
+	if n < 2 {
+		t.Fatalf("only %d transitions; the test did not exercise ordering", n)
+	}
+}
+
+// slowFirst delays the second publish so a later signal, applied right after,
+// would overtake it if emissions were not ordered.
+type slowFirst struct {
+	events.Publisher
+	mu sync.Mutex
+	n  int
+}
+
+func (s *slowFirst) Publish(ctx context.Context, e events.Event) error {
+	s.mu.Lock()
+	s.n++
+	first := s.n == 2
+	s.mu.Unlock()
+	if first {
+		time.Sleep(150 * time.Millisecond)
+	}
+	return s.Publisher.Publish(ctx, e)
+}
+
+func TestASlowPublishCannotBeOvertakenBySeq(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	tr := New()
+	bus := events.NewBus(events.BusOptions{Persister: db, Observers: []events.Observer{tr}})
+	tr.SetPublisher(&slowFirst{Publisher: bus})
+	pub := func(kind, payload string) {
+		_ = bus.Publish(context.Background(), events.Event{Scope: events.ScopeSession, SessionID: "o", Kind: kind, PayloadJSON: payload})
+	}
+	pub(events.KindSessionStateChanged, `{"to":"running"}`) // healthy (slow publish)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); pub(events.KindSessionStalled, `{}`) }()
+	time.Sleep(30 * time.Millisecond)
+	go func() { defer wg.Done(); pub(events.KindSessionTurnOutput, `{"kind":"final"}`) }()
+	wg.Wait()
+	rows, err := db.DB().Query(`SELECT payload_json FROM events WHERE kind=? ORDER BY id`, events.KindSessionHealthChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	prev := ""
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var p Payload
+		_ = json.Unmarshal([]byte(raw), &p)
+		if prev != "" && p.From != prev {
+			t.Fatalf("by seq the chain breaks: %q then from %q", prev, p.From)
+		}
+		prev = p.To
+	}
+	if prev != "healthy" {
+		t.Fatalf("final state %q, want healthy after stall then recovery", prev)
 	}
 }
