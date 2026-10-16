@@ -386,7 +386,7 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	}{in.DestinationID, id, f.ActorURI})
 	// An outbox row on the caller's transaction. The caller must call
 	// Store.EventsCommitted once that transaction commits.
-	if _, _, err = insertEventRow(ctx, q, events.ScopeSession, id, "session.replaced_by", string(lineage), now, "", true); err != nil {
+	if _, _, err = insertEventRow(ctx, q, events.ScopeSession, id, "session.replaced_by", string(lineage), now, true); err != nil {
 		return result, err
 	}
 	return result, ctx.Err()
