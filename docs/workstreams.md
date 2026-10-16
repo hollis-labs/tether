@@ -98,25 +98,36 @@ session in the span carries `ref_attribution`:
 
 | value | meaning |
 |---|---|
-| `proxy` | planted with `--session` **and** `--extract-refs`. Can produce observed refs. |
-| `none` | planted with `--session`, extraction off. Cannot. |
+| `proxy` | proxy has session identity and extraction enabled, through planted flags or saved daemon policy. Can produce observed refs. |
+| `none` | proxy has session identity, extraction off. Cannot. |
 | `unlaunched` | nothing was planted for this session — the `POST /sessions/bootstrap` path. No proxy carries its id. |
-| `unknown` | the row predates the stamp. **Not** a synonym for `none`. |
+| `unknown` | no reliable stamp was recorded, including rows predating the stamp. **Not** a synonym for `none`. |
 
 `coverage.proxy_attributable` counts how many sessions in the span could
 produce one, and `coverage.note` says so in prose when the answer is zero.
 
-> **Today that answer is always zero.** `TetherMCPPlant` does not emit
-> `--extract-refs` and there is no config seam that would make it
-> (`CW-20260912-0112`). So `ref_attribution` reads `none` for every launched
-> session and `source=proxy` is unreachable by construction. A uniform column
-> here is a fact about configuration and not a finding.
+Extraction is opt-in. `catalog.defaults.extract_refs` sets the fleet default;
+project and launch `mcp.extract_refs` override it, with the launch taking
+precedence. The default is false. Hub-local legacy proxy planting emits
+`--session` and `--extract-refs` together when enabled; daemon-owned MCP uses
+the saved session policy instead. Successful supported tool calls then pass
+through `sessionrefs.Service.Record` and persist identifier refs with
+`source=proxy`. Failed calls produce no ref, and retries are idempotent.
+
+Enabling the default affects launches that resolve or rebuild their policy;
+it does not reconfigure an already-running proxy or reconstruct historical
+refs. It adds identifier correlation metadata and per-call writes, without
+storing raw arguments or results. `proxy_events` contains schema fingerprints,
+not the identifier values needed for backfill. Worker/outpost and externally
+started paths require their own session/policy propagation; do not infer
+capture coverage from the global setting alone. A `none` or `unknown` stamp
+still makes an empty ref list inconclusive.
 
 `source` itself means **observed, not validated** (migration 0024). The proxy
-records what it saw; it does not check that the identifier refers to anything,
-and under ADR 0045 the daemon cannot distinguish the real proxy from any other
-same-host caller. Treat it as provenance — who asserted this — never as
-authentication.
+records what it saw; it does not check that the identifier refers to anything.
+The HTTP attachment API accepts caller-supplied source values. Treat the source
+as provenance — who asserted this — never as authentication or proof that the
+caller owns the referenced object.
 
 ## Truncation
 
