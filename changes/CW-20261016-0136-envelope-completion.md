@@ -1,0 +1,1 @@
+- CW-20261016-0136: Preserve producer metadata and origin timestamps in event storage and hydrate the complete envelope on replay, outbox, environment, and session reads. Migration 0086 adds nullable columns without indexes or backfill; durable sequence IDs still order the stream.
