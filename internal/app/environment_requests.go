@@ -16,9 +16,9 @@ import (
 // recordEnvironmentRequest runs only after observeRuntime's policy checks,
 // before taking its observer mutex. Payload intentionally excludes params,
 // answers, reasons, tool contents, or any credential/configuration material.
-func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event) {
+func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event, origin *outputEventOrigin) {
 	if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
-		o.recordEndedTurnRequests(ev)
+		o.recordEndedTurnRequests(ev, origin)
 		return
 	}
 	if ev.Kind != runtimeevents.KindAgentPermissionRequested && ev.Kind != runtimeevents.KindAgentPermissionResolved {
@@ -60,7 +60,7 @@ func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err = o.service.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: o.row.ID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)}); err != nil {
+	if err = o.service.Bus.Publish(ctx, origin.apply(events.Event{Scope: events.ScopeSession, SessionID: o.row.ID, LogicalAgentID: o.row.LogicalAgentID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)})); err != nil {
 		log.Printf("environment request status for session %s unavailable: %v", o.row.ID, err)
 	}
 }
@@ -88,7 +88,7 @@ func scalarRequestID(raw json.RawMessage) string {
 
 // A real terminal turn event closes only requests from that exact turn. A
 // detached/orphaned lifecycle event never calls this path.
-func (o *sessionTurnOutput) recordEndedTurnRequests(ev runtimeevents.Event) {
+func (o *sessionTurnOutput) recordEndedTurnRequests(ev runtimeevents.Event, origin *outputEventOrigin) {
 	if o.service.Bus == nil || ev.TurnID == "" || ev.Sequence == 0 {
 		return
 	}
@@ -109,7 +109,7 @@ func (o *sessionTurnOutput) recordEndedTurnRequests(ev runtimeevents.Event) {
 		if err != nil {
 			return
 		}
-		if err = o.service.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: o.row.ID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)}); err != nil {
+		if err = o.service.Bus.Publish(ctx, origin.apply(events.Event{Scope: events.ScopeSession, SessionID: o.row.ID, LogicalAgentID: o.row.LogicalAgentID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)})); err != nil {
 			log.Printf("terminal request status for session %s unavailable: %v", o.row.ID, err)
 		}
 	}

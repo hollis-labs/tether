@@ -189,6 +189,10 @@ type Service struct {
 	// warned about, so a launch does not repeat the warning every time.
 	protectionWarned sync.Map
 
+	secretOutputWithheld  atomic.Uint64
+	secretOutputDuplicate atomic.Uint64
+	withheldOutputMu      sync.Mutex
+
 	// outboxStop stops the events outbox drainer started by StartEventsOutbox.
 	outboxMu   sync.Mutex
 	outboxStop func()

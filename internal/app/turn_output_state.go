@@ -227,6 +227,7 @@ func (o *sessionTurnOutput) settleTurn() {
 	o.submissions = 0
 	o.turnID = ""
 	o.reducerTurnID = ""
+	o.runtimeOrigin = nil
 	o.turnDone = nil
 }
 

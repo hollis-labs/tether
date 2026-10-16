@@ -724,6 +724,7 @@ type Health struct {
 
 // HealthHardening is the launch-hardening state in GET /health.
 type HealthHardening struct {
+	TurnOutput          map[string]uint64 `json:"turn_output,omitempty"`
 	MCPUpstreamSessions map[string]int    `json:"mcp_upstream_sessions,omitempty"`
 	MCPRecorder         map[string]uint64 `json:"mcp_recorder,omitempty"`
 	// ClaudeStrictMCP is whether Claude agents load only the MCP servers
