@@ -76,10 +76,11 @@ func ClaudeHook(payload []byte) ([]Observation, error) {
 	case "SubagentStart":
 		return []Observation{hook(runtimeevents.KindAgentSubagentSpawn, map[string]any{"subagent_id": p.AgentID, "agent_type": p.AgentType})}, nil
 	case "SubagentStop":
-		// The hook fires when the subagent finishes; it does not say how, so the outcome is "completed" (a failed or
+		// agent.subagent_stop (architect ruling agent_adapter_event_kinds_2026_10_16; harness/core v0.12.0 registers it): payload subagent_id
+		// and outcome required, agent_type optional. The hook fires when the subagent finishes; it does not say how, so the outcome is "completed" (a failed or
 		// canceled ending needs a vendor signal this hook does not carry). The adapter that holds the session sets ParentID to
 		// the matching agent.subagent_spawn event.
-		return []Observation{hook(KindAgentSubagentStop, map[string]any{"subagent_id": p.AgentID, "outcome": "completed", "agent_type": p.AgentType})}, nil
+		return []Observation{hook(runtimeevents.KindAgentSubagentStop, map[string]any{"subagent_id": p.AgentID, "outcome": "completed", "agent_type": p.AgentType})}, nil
 	case "Stop":
 		return []Observation{hook(runtimeevents.KindTurnCompleted, nil), hook(runtimeevents.KindSessionIdle, nil)}, nil
 	case "SessionEnd":
@@ -87,11 +88,6 @@ func ClaudeHook(payload []byte) ([]Observation, error) {
 	}
 	return nil, nil
 }
-
-// KindAgentSubagentStop says a subagent ended (architect ruling agent_adapter_event_kinds_2026_10_16). Payload: subagent_id and
-// outcome (values as in the ruling) required, agent_type, parent_tool_use_id and duration_ms optional; ParentID is the
-// matching agent.subagent_spawn event. It is registered in harness/core v0.12.0; until Tether depends on that, it is declared here.
-const KindAgentSubagentStop runtimeevents.EventKind = "agent.subagent_stop"
 
 func omitEmpty(m map[string]any) map[string]any {
 	for k, v := range m {
