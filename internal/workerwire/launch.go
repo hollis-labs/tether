@@ -39,6 +39,9 @@ const FeatureEditableAgents = "editable-agents"
 // LaunchSpec.AgentTokens only to workers that advertise it.
 const FeatureAgentToken = "agent-token"
 
+// FeatureProviderProcess supports native Codex/AGY launch projection and framed turns.
+const FeatureProviderProcess = "provider-process"
+
 // AgentTokenSpec is one token the outpost keeps for a session: audience (one
 // app) and the scopes the launch policy grants.
 type AgentTokenSpec struct {
@@ -50,6 +53,9 @@ type LaunchSpec struct {
 	Session  string `json:"session"`
 	Actor    string `json:"actor"`
 	Provider string `json:"provider"`
+	// Command is the catalog executable name. Absolute hub paths are never
+	// portable; a worker's provider_commands override supplies its local path.
+	Command string `json:"command,omitempty"`
 	// PermissionMode is the resolved agent permission posture ("bypass" or "default"). A worker has no
 	// human to answer tool-permission prompts, so "bypass" must reach the provider as its own flag.
 	PermissionMode string                     `json:"permission_mode,omitempty"`

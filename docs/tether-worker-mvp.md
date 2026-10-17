@@ -100,10 +100,10 @@ from it on the hub; the worker never reads the hub catalog. Replace these machin
 
 | In the plan today | In the spec |
 |---|---|
-| `Command` (likely absolute provider path) | `provider` name (`claude`), worker resolves it locally on PATH |
+| `Command` (likely absolute provider path) | provider identity plus executable basename; worker `provider_commands` takes precedence, then the catalog name, then native adapter detection |
 | `RepoRoot`, `WorkRoot`, `WriteHome`, `WorktreeBase`, `NativeStateRoot` | `workspace:{kind: scratch|git, url, ref, subdir}`; the worker materializes under its own root (`internal/workspace`) |
 | `BootProfileFile`, `Shared.MCPFile/BootFile/TransientFile` (paths) | inline `boot_files:{rel_path: content}` |
-| MCP config built at launch time (`TetherMCPPlant`, `prepareSharedLaunch`, `session_lifecycle.go:~335-400`) | MVP: the worker plants hub MCP clients itself from `~/.tether-worker/hub-mcp.json` using the logic of `scripts/wire-hub-mcp.py` (torque, tesseract, tether daemon-only over ssh). No local Tether authority is ever created. |
+| MCP config built at launch time | Each launch plants a session-bound HTTP relay to the hub's `/mcp`, which enforces the saved catalog policy. Claude uses `.mcp.json`; Codex and AGY use the shared native provider planter. `hub-mcp.json` is optional on HTTP launches and remains the explicit SSH fallback template. |
 | `SandboxProfile` name; body from `Catalog.AgentSandbox` | `sandbox:{profile, body}` inline; MVP: use it if bwrap/sandbox-exec is usable, else run unsandboxed and report `sandboxed:false` in `launched` |
 | session credential minted by `mintSessionCredential` | not needed in MVP (agents reach the hub through the planted MCP entries) |
 
@@ -149,6 +149,35 @@ Not touched: federation, `team_host_*`, the directory/connection modules, placem
 ## 6. Worker: `cmd/tether-worker`
 
 Subcommands: `enroll --hub URL --code CODE --label NAME`, `run`, `status`, `version`.
+
+Worker execution settings live in `config.json`, under the selected `--root`.
+Enrollment detects provider installations and records their paths, preserving
+existing declarations. Override them with `--path`, `--provider-command
+antigravity=/absolute/path/to/agy` and `--workspace-root`. For example:
+
+```json
+{
+  "hub": "https://tether.example",
+  "label": "worker-one",
+  "path": "/home/operator/.local/bin:/usr/local/bin:/usr/bin:/bin",
+  "provider_commands": {"claude": "claude", "codex": "codex", "antigravity": "agy"},
+  "workspace_root": "/home/operator/worker-workspaces"
+}
+```
+
+All paths describe this worker. Restart the outpost after editing these settings;
+neither systemd nor launchd needs a PATH drop-in. Catalog projects should declare
+`repo_url` so workers clone a portable repository reference. Launches create their
+own workspace and native MCP configuration. The hub's saved session policy
+determines available MCP tools and is re-resolved for each launch. An HTTP launch
+does not require a populated `hub-mcp.json`; imported extra entries remain
+allowlisted compatibility overrides. SSH fallback is opt-in via
+`mcp_ssh_fallback` and still requires its validated template.
+
+Codex and AGY require workers advertising `provider-process`. Their native
+protocol bridge stays under the shim, so reconnecting the outpost preserves the
+running provider conversation. Codex uses the same captured native `auth.json`
+link as hub-local launches; provider credentials stay on the worker.
 
 - **Enroll**: `POST {hub}/auth/pair/exchange` with `{code}` and header `Tether-Protocol: 1`
   (`internal/api/device_auth.go:105`); the client side exists only as the unexported `exchange()` in

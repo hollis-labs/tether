@@ -90,6 +90,9 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	}
 	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, PermissionMode: p.PermissionMode, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}, MCPServers: append([]string{}, launch.EffectiveMCPServers(p.Env)...), ResumeSessionID: p.ResumeProviderSessionID}
 	spec.ExtractRefs = p.ExtractRefs
+	if p.Command != "" {
+		spec.Command = filepath.Base(p.Command)
+	}
 	if !spec.ExtractRefs && s.cat() != nil {
 		spec.ExtractRefs = config.EffectiveExtractRefs(s.cat().Global, s.cat().Projects[p.ProjectID], s.cat().Launches[p.LaunchID])
 	}
@@ -171,6 +174,11 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		exit := 1
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
 		return nil, fmt.Errorf("capture session MCP authority: %w", err)
+	}
+	if (spec.Provider == "codex" || spec.Provider == "antigravity") && (s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureProviderProcess)) {
+		exit := 1
+		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
+		return nil, fmt.Errorf("worker does not support native %s turns; upgrade tether-worker", spec.Provider)
 	}
 	spec.MCPPolicy = true
 	undoIdentity, err := s.prepareWorkerIdentity(ctx, row, p, &spec)

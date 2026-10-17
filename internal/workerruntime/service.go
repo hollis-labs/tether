@@ -12,13 +12,13 @@ import (
 	"strings"
 )
 
-func ServiceDefinition(platform, binary, root, path string) (string, error) {
+func ServiceDefinition(platform, binary, root, _ string) (string, error) {
 	switch platform {
 	case "linux":
 		quote := func(s string) string {
 			return "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%").Replace(s) + "\""
 		}
-		return "[Unit]\nDescription=Tether thin execution outpost\nAfter=network-online.target\n[Service]\nExecStart=" + quote(binary) + " --root " + quote(root) + " run\nEnvironment=" + quote("PATH="+path) + "\nRestart=always\nRestartSec=2\nKillMode=process\n[Install]\nWantedBy=default.target\n", nil
+		return "[Unit]\nDescription=Tether thin execution outpost\nAfter=network-online.target\n[Service]\nExecStart=" + quote(binary) + " --root " + quote(root) + " run\nRestart=always\nRestartSec=2\nKillMode=process\n[Install]\nWantedBy=default.target\n", nil
 	case "darwin":
 		esc := html.EscapeString
 		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -27,10 +27,9 @@ func ServiceDefinition(platform, binary, root, path string) (string, error) {
 <key>Label</key><string>dev.tether.worker</string>
 <key>ProgramArguments</key><array><string>%s</string><string>--root</string><string>%s</string><string>run</string></array>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-<key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string></dict>
 <key>StandardOutPath</key><string>%s</string><key>StandardErrorPath</key><string>%s</string>
 </dict></plist>
-`, esc(binary), esc(root), esc(path), esc(filepath.Join(root, "worker.log")), esc(filepath.Join(root, "worker.log"))), nil
+`, esc(binary), esc(root), esc(filepath.Join(root, "worker.log")), esc(filepath.Join(root, "worker.log"))), nil
 	default:
 		return "", fmt.Errorf("service install unsupported on %s", platform)
 	}
@@ -40,7 +39,11 @@ func InstallService(ctx context.Context, root, binary string) error {
 	if err != nil {
 		return err
 	}
-	definition, err := ServiceDefinition(runtime.GOOS, binary, root, os.Getenv("PATH"))
+	cfg, err := Load(root)
+	if err != nil {
+		return err
+	}
+	definition, err := ServiceDefinition(runtime.GOOS, binary, root, cfg.Path)
 	if err != nil {
 		return err
 	}

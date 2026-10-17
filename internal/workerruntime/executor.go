@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
 	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	"github.com/hollis-labs/libs/harness/core/sandbox"
 	"github.com/hollis-labs/libs/harness/core/shim"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/libs/security/secrets/redact"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/provider"
@@ -60,6 +62,7 @@ type execution struct {
 	secrets    []string
 }
 type Executor struct {
+	Config   Config
 	Root     string
 	Binary   string
 	Send     func(workerwire.Frame) error
@@ -174,10 +177,30 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if spec.Provider == "" || strings.ContainsAny(spec.Provider, "/\\") {
 		return nil, fmt.Errorf("provider must be a bare command name, got %q", spec.Provider)
 	}
+	if strings.ContainsAny(spec.Command, "/\\") {
+		return nil, fmt.Errorf("catalog command must be a bare command name; declare worker paths in provider_commands")
+	}
 	if spec.ExtractRefs && spec.Provider != "claude" {
 		return nil, fmt.Errorf("extract_refs requires the claude MCP relay")
 	}
-	binary, err := exec.LookPath(spec.Provider)
+	command := e.Config.ProviderCommands[spec.Provider]
+	if command == "" {
+		command = spec.Command
+	}
+	if command == "" {
+		mode, _, ok := config.RuntimeMode(spec.RuntimeKind)
+		if !ok {
+			mode = runtimes.ModeSubprocessPerTurn
+		}
+		adapter, adapterErr := gop.NewAdapter(runtimes.ID(spec.Provider), mode)
+		if adapterErr == nil {
+			command, _ = adapter.Detect()
+		}
+		if command == "" {
+			command = spec.Provider
+		}
+	}
+	binary, err := exec.LookPath(command)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +225,11 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			return nil, err
 		}
 	}
-	ws, err := workspace.Create(filepath.Join(e.Root, "workspaces"), spec.Session, &launch.Plan{BootPrompt: spec.BootPrompt})
+	workspaceRoot := e.Config.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = filepath.Join(e.Root, "workspaces")
+	}
+	ws, err := workspace.Create(workspaceRoot, spec.Session, &launch.Plan{BootPrompt: spec.BootPrompt})
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +290,20 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	cmd := exec.Command(binary, args...) //nolint:gosec // G204: binary is the provider resolved on this worker's PATH; args come from the authenticated hub's launch spec
 	cmd.Dir = cwd
 	cmd.Env = provider.BuildEnv("merge", nil, nil, spec.Env, os.Environ())
+	if spec.Provider == "codex" || spec.Provider == "antigravity" {
+		prepared, err := e.prepareProvider(ctx, spec, binary, cwd, ws.Root)
+		if err != nil {
+			return nil, err
+		}
+		args, err := providerProcessArgs(ws.Root, spec, prepared)
+		if err != nil {
+			return nil, err
+		}
+		cmd = exec.Command(e.Binary, args...) //nolint:gosec // G204: worker executable and private prepared-launch path, no shell.
+		cmd.Dir = prepared.Workdir
+		cmd.Env = provider.BuildEnv("merge", nil, nil, spec.Env, os.Environ())
+		cmd.Env = provider.BuildEnv("merge", nil, nil, prepared.Env, cmd.Env)
+	}
 	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+spec.Actor)
 	// Per-session issued tokens: 0600 files outside the checkout, refreshed in
 	// place; the child gets only their paths.
@@ -355,7 +396,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			spec.BootPrompt += "\n\nYou run on a Tether execution outpost. Your canonical hub session is " + spec.Session + " and hub agent address is " + spec.Actor + ". The planted torque, tesseract and tether MCP clients go to the hub. For self-discovery call tether_whoami with as set to that hub agent address. Do not start a local Tether daemon or create a local authority."
 		}
 		data := []byte(spec.BootPrompt + "\n")
-		if spec.Provider == "claude" {
+		if spec.Provider == "claude" || spec.Provider == "codex" || spec.Provider == "antigravity" {
 			data, _ = json.Marshal(map[string]any{"type": "user", "message": map[string]string{"role": "user", "content": spec.BootPrompt}})
 			data = append(data, '\n')
 		}
@@ -475,10 +516,7 @@ func (e *Executor) follow(s *execution) {
 							}
 							line := s.Carry[:at]
 							s.Carry = s.Carry[at+1:]
-							var result struct {
-								Type string `json:"type"`
-							}
-							if s.Provider != "claude" || json.Unmarshal(line, &result) == nil && result.Type == "result" {
+							if workerTurnComplete(s.Provider, line) {
 								s.State = "idle"
 								_ = e.Send(workerwire.Frame{T: "state", Session: s.ID, State: "idle"})
 							}

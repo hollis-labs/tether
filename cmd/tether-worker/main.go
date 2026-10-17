@@ -3,20 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/hollis-labs/libs/harness/core/shim"
-	"github.com/hollis-labs/tether/internal/outpostmail"
 	"github.com/hollis-labs/tether/internal/workerruntime"
-	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/spf13/cobra"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
-	"time"
 )
 
 var version = "dev"
@@ -27,6 +21,12 @@ func main() {
 	cmd := &cobra.Command{Use: "tether-worker", Short: "Thin execution outpost for the Tether hub"}
 	cmd.PersistentFlags().StringVar(&root, "root", root, "worker state root")
 	cmd.AddCommand(mailCommand(&root))
+	var providerConfig string
+	providerCmd := &cobra.Command{Use: "provider-process", Hidden: true, RunE: func(c *cobra.Command, _ []string) error {
+		return workerruntime.RunProviderProcess(c.Context(), providerConfig, os.Stdin, os.Stdout, os.Stderr)
+	}}
+	providerCmd.Flags().StringVar(&providerConfig, "config", "", "private prepared provider configuration")
+	cmd.AddCommand(providerCmd)
 	var descriptor string
 	shimCmd := &cobra.Command{Use: "shim-host", Hidden: true, RunE: func(c *cobra.Command, _ []string) error {
 		spec, err := shim.ReadLaunch(descriptor)
@@ -57,6 +57,8 @@ func main() {
 	httpRelayCmd.Flags().StringVar(&httpToken, "token-file", "", "0600 file holding the session's current issuer token (re-read for every request)")
 	cmd.AddCommand(httpRelayCmd)
 	var hub, code, label, mcpSource string
+	var workerPath, workspaceRoot string
+	var providerCommands map[string]string
 	var install bool
 	var mailSocket string
 	var mailUIDs []int
@@ -70,9 +72,21 @@ func main() {
 			return err
 		}
 		cfg.MailSocket = mailSocket
+		if c.Flags().Changed("path") {
+			cfg.Path = workerPath
+		}
+		if c.Flags().Changed("workspace-root") {
+			cfg.WorkspaceRoot = workspaceRoot
+		}
+		if c.Flags().Changed("provider-command") {
+			cfg.ProviderCommands = providerCommands
+		}
 		cfg.MailUIDs = mailUIDs
 		if mailGID >= 0 {
 			cfg.MailGID = &mailGID
+		}
+		if err = cfg.Validate(); err != nil {
+			return err
 		}
 		if err = workerruntime.SaveJSON(filepath.Join(root, "config.json"), cfg); err != nil {
 			return err
@@ -95,6 +109,9 @@ func main() {
 		return nil
 	}}
 	enroll.Flags().StringVar(&hub, "hub", "", "hub HTTP(S) URL")
+	enroll.Flags().StringVar(&workerPath, "path", "", "worker executable search PATH, saved in config.json")
+	enroll.Flags().StringVar(&workspaceRoot, "workspace-root", "", "absolute worker workspace root")
+	enroll.Flags().StringToStringVar(&providerCommands, "provider-command", nil, "worker provider command overrides (brand=command)")
 	enroll.Flags().StringVar(&code, "code", "", "one-time worker pairing code")
 	enroll.Flags().StringVar(&label, "label", "", "worker label")
 	enroll.Flags().StringVar(&mcpSource, "mcp-config", "", "existing JSON with configured hub torque/tesseract/tether clients")
@@ -104,77 +121,13 @@ func main() {
 	enroll.Flags().IntVar(&mailGID, "mail-gid", -1, "socket group id (must be one of outpost user's groups)")
 	cmd.AddCommand(enroll)
 	cmd.AddCommand(&cobra.Command{Use: "run", RunE: func(c *cobra.Command, _ []string) error {
-		cfg, err := workerruntime.Load(root)
+		runtime, err := workerruntime.NewRuntime(root, version)
 		if err != nil {
 			return err
 		}
-		w := &workerruntime.Worker{Root: root, Config: cfg, Version: version}
-		binary, err := os.Executable()
-		if err != nil {
-			return err
-		}
-		executor := workerruntime.NewExecutor(root, binary, w.Send)
-		executor.Tokens = &workerruntime.TokenMinter{Hub: cfg.Hub, DeviceTokenFile: filepath.Join(root, "device.token")}
-		executor.HubMCPURL = strings.TrimRight(cfg.Hub, "/") + "/mcp"
-		executor.AllowSSHFallback = cfg.MCPSSHFallback || os.Getenv("TETHER_WORKER_MCP_SSH_FALLBACK") == "1"
-		if err := executor.Restore(); err != nil {
-			return err
-		}
-		w.Inventory = executor.Inventory
-		w.Hosts = executor.ScanHosts
-		mail := &outpostmail.Server{Socket: cfg.MailSocket, State: filepath.Join(root, "mail.json"), AllowedUIDs: cfg.MailUIDs, GID: -1}
-		if mail.Socket == "" {
-			mail.Socket = filepath.Join(root, "run", "mail.sock")
-		}
-		if cfg.MailGID != nil {
-			mail.GID = *cfg.MailGID
-		}
-		mail.Bind = func(ctx context.Context, b workerwire.Binding) (workerwire.Binding, error) {
-			wait, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			r, err := w.Request(wait, workerwire.Frame{T: "bind", CmdID: uuid.NewString(), Binding: &b})
-			if err != nil {
-				if errors.Is(err, workerruntime.ErrHubDisconnected) || errors.Is(err, context.DeadlineExceeded) {
-					return b, outpostmail.ErrHubOffline
-				}
-				return b, err
-			}
-			if r.Binding == nil {
-				return b, fmt.Errorf("missing bind acknowledgement")
-			}
-			return *r.Binding, nil
-		}
-		mail.Unbind = func(ctx context.Context, b workerwire.Binding) error {
-			wait, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			_, err := w.Request(wait, workerwire.Frame{T: "unbind", CmdID: uuid.NewString(), Binding: &b})
-			return err
-		}
-		w.Bindings = mail.Inventory
-		w.Command = func(ctx context.Context, f workerwire.Frame) error {
-			if f.T == "welcome" {
-				mail.Welcome(f.Bindings)
-			}
-			if f.T == "deliver" {
-				wait, cancel := context.WithTimeout(ctx, 12*time.Second)
-				defer cancel()
-				err := mail.Deliver(wait, f)
-				r := workerwire.Frame{T: "deliver_ack", CmdID: f.CmdID}
-				if err != nil {
-					r.Error = err.Error()
-				}
-				return w.Send(r)
-			}
-			return executor.Command(ctx, f)
-		}
-		ctx, cancel := context.WithCancel(c.Context())
-		defer cancel()
-		done := make(chan error, 2)
-		go func() { done <- mail.Serve(ctx) }()
-		go executor.ReapLoop(ctx, workerruntime.HostReapInterval, workerruntime.OrphanGrace)
-		go func() { done <- w.Run(ctx) }()
-		return <-done
+		return runtime.Run(c.Context(), nil)
 	}})
+	cmd.AddCommand(pluginCommand())
 	cmd.AddCommand(&cobra.Command{Use: "status", RunE: func(c *cobra.Command, _ []string) error {
 		cfg, err := workerruntime.Load(root)
 		if err != nil {
