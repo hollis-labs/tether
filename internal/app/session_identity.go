@@ -75,6 +75,9 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	if err != nil {
 		return "", err
 	}
+	if err = s.refuseUnboundedWhenEnforced(attribution); err != nil {
+		return "", err
+	}
 	p.Scopes, p.LaunchAttribution = ceiling, string(attribution)
 	if replacement {
 		if !slices.Contains(floor.Scopes, "*") {
