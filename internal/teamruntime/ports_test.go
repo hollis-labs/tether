@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/hollis-labs/tether/internal/identity"
+	"log"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -392,5 +397,151 @@ func TestTeamMemberLaunchIsBoundedByItsParentSession(t *testing.T) {
 	check(t, err)
 	if len(effects.origin) != 1 || effects.origin[0] != (app.InternalLaunch{Kind: app.OriginTeam, OriginSessionID: "the-parent"}) {
 		t.Fatalf("launch origin %+v", effects.origin)
+	}
+}
+
+func operatorAs(scopes ...string) context.Context {
+	return identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: scopes})
+}
+
+// The launch under a verified caller records its grant (first write wins);
+// recovery and reconcile launches, which have no caller, reuse it.
+func TestTeamLaunchGrantIsRecordedOnceAndReusedWithoutACaller(t *testing.T) {
+	db, s, reg := dbFixture(t, filepath.Join(t.TempDir(), "db"))
+	e := enroller(t, db, s, reg)
+	req := fresh("granted")
+	actor, err := e.Ensure(ctx, req)
+	check(t, err)
+	check(t, e.AcquireBinding(ctx, "granted", actor.Actor))
+	// The principal that forms the team holds a live operator credential.
+	_, err = identity.NewStore(db.DB()).Mint(ctx, identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+	check(t, err)
+	effects := &internalEffects{sessionEffects: &sessionEffects{db: db}}
+	port, err := NewSessions(db, s, effects, e)
+	check(t, err)
+	in := teamhost.SessionRequest{IntentKey: "granted", Actor: actor.Actor, Provision: req.Provision}
+	// First launch, under the verb's verified caller.
+	if _, err = port.Launch(operatorAs("message.write", "registry.write"), in); err != nil {
+		t.Fatal(err)
+	}
+	if len(effects.origin) != 1 || effects.origin[0].Grant == nil || effects.origin[0].Grant.Principal != identity.OperatorID || !slices.Equal(effects.origin[0].Grant.Scopes, []string{"message.write", "registry.write"}) {
+		t.Fatalf("first launch origin: %+v", effects.origin)
+	}
+	// Recovery: no caller. The recorded grant is what bounds it.
+	got, err := port.launchGrant(ctx, "granted")
+	if err != nil || got == nil || got.Principal != identity.OperatorID || !slices.Equal(got.Scopes, []string{"message.write", "registry.write"}) {
+		t.Fatalf("grant without a caller: %+v %v", got, err)
+	}
+	// First write wins: a later caller with other scopes does not replace it.
+	other := identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "msg://agent/other/x", Kind: "agent", Scopes: []string{"*"}})
+	got, err = port.launchGrant(other, "granted")
+	if err != nil || got.Principal != identity.OperatorID || slices.Contains(got.Scopes, "*") {
+		t.Fatalf("the recorded grant was replaced: %+v %v", got, err)
+	}
+	// An intent with neither a caller nor a record has no grant.
+	if got, err = port.launchGrant(ctx, "never-launched"); err != nil || got != nil {
+		t.Fatalf("grant for an unknown intent: %+v %v", got, err)
+	}
+	// An unverified caller records nothing.
+	unverified := identity.WithPrincipal(ctx, identity.Principal{Verified: false, ID: "msg://agent/claimed/x", Kind: "agent", Scopes: []string{"*"}})
+	if got, err = port.launchGrant(unverified, "claimed-only"); err != nil || got != nil {
+		t.Fatalf("an unverified caller recorded a grant: %+v %v", got, err)
+	}
+}
+
+// Releasing a refused launch explains itself in the log.
+func TestRefusedTeamLaunchIsLoggedWithItsReason(t *testing.T) {
+	var logs strings.Builder
+	orig := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(orig) })
+	logRefusedLaunch("intent-1", "run-7", nil, "", fmt.Errorf("%w: identity is enforce", app.ErrLaunchRefused))
+	if !strings.Contains(logs.String(), "intent-1") || !strings.Contains(logs.String(), "run-7") || !strings.Contains(logs.String(), "no recorded launch grant") || !strings.Contains(logs.String(), "re-form or dissolve") {
+		t.Fatalf("log: %q", logs.String())
+	}
+	logs.Reset()
+	logRefusedLaunch("intent-2", "run-8", nil, "", errors.New("something else"))
+	if logs.Len() != 0 {
+		t.Fatalf("an unrelated error was logged as a refusal: %q", logs.String())
+	}
+}
+
+// The runbook's read-only pre-flip check, run against the real schema: it counts
+// root team sessions that would be refused as unattributed under global enforce.
+func TestRunbookCheckCountsRecoveryEligibleTeamSessionsWithNoGrant(t *testing.T) {
+	db, s, reg := dbFixture(t, filepath.Join(t.TempDir(), "db"))
+	_, _ = s, reg
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := db.DB().Exec(q, a...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	intent := func(key, parent, ended string) {
+		exec(`INSERT INTO team_port_intents(port_kind,intent_key,request,state,ended) VALUES('session',?,?,'done',?)`, key, `{"IntentKey":"`+key+`","ParentSession":"`+parent+`"}`, ended)
+	}
+	intent("root-no-grant", "", "")
+	intent("root-granted", "", "")
+	exec(`INSERT INTO team_launch_grants(intent_key,principal_id,scopes_json,recorded_at) VALUES('root-granted','msg://user/local/operator','["*"]','now')`)
+	intent("spawned", "parent-session", "") // bounded by its parent's grant, not counted
+	intent("root-ended", "", "stop")        // stopped, not recovery-eligible
+	var n int
+	if err := db.DB().QueryRow(runbookNoGrantCheck).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("check counted %d (%v), want 1", n, err)
+	}
+}
+
+// runbookNoGrantCheck is the query printed in docs/identity-enforce-runbook.md.
+const runbookNoGrantCheck = `SELECT COUNT(*) FROM team_port_intents i
+ WHERE i.port_kind = 'session' AND i.ended = '' AND i.state IN ('pending','done')
+   AND COALESCE(json_extract(i.request, '$.ParentSession'), '') = ''
+   AND NOT EXISTS (SELECT 1 FROM team_launch_grants g WHERE g.intent_key = i.intent_key)`
+
+// The grant is only as good as the principal that held it: once that principal
+// is revoked (or expired) the teams it formed stop recovering with its scopes.
+func TestRecordedGrantIsVoidOnceItsPrincipalIsRevokedOrExpired(t *testing.T) {
+	for name, end := range map[string]func(t *testing.T, db *store.Store){
+		"revoked": func(t *testing.T, db *store.Store) {
+			check(t, identity.NewStore(db.DB()).Revoke(ctx, identity.OperatorID))
+		},
+		"expired": func(t *testing.T, db *store.Store) {
+			if _, err := db.DB().Exec(`UPDATE principals SET expires_at=? WHERE principal_id=?`, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), identity.OperatorID); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, s, reg := dbFixture(t, filepath.Join(t.TempDir(), "db"))
+			e := enroller(t, db, s, reg)
+			req := fresh("void")
+			actor, err := e.Ensure(ctx, req)
+			check(t, err)
+			check(t, e.AcquireBinding(ctx, "void", actor.Actor))
+			_, err = identity.NewStore(db.DB()).Mint(ctx, identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+			check(t, err)
+			effects := &internalEffects{sessionEffects: &sessionEffects{db: db}}
+			port, err := NewSessions(db, s, effects, e)
+			check(t, err)
+			in := teamhost.SessionRequest{IntentKey: "void", Actor: actor.Actor, Provision: req.Provision}
+			// Recorded while the principal is live (the first launch is made to fail).
+			if _, err = port.launchGrant(operatorAs("*"), "void"); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := port.launchGrant(ctx, "void"); err != nil || got == nil {
+				t.Fatalf("grant while live: %+v %v", got, err)
+			}
+			end(t, db)
+			got, err := port.launchGrant(ctx, "void")
+			if !errors.Is(err, app.ErrLaunchRefused) || got != nil {
+				t.Fatalf("grant of an %s principal: %+v %v; want a refusal", name, got, err)
+			}
+			// And the recovery launch itself is refused before anything starts.
+			if _, err = port.Launch(ctx, in); !errors.Is(err, app.ErrLaunchRefused) {
+				t.Fatalf("recovery launch after the principal was %s: %v", name, err)
+			}
+			if len(effects.origin) != 0 {
+				t.Fatalf("a launch started with a void grant: %+v", effects.origin)
+			}
+		})
 	}
 }

@@ -240,6 +240,41 @@ new traffic.
   `tether identity unbounded --check`, re-flip with `--revoke-anonymous` if it is
   non-zero.**
 
+### Team recovery launches under a global enforce flip (CW-20261016-0233)
+
+A team session is launched inside the verb that formed the team, with a verified
+caller, and Tether now records that caller's scopes for the intent
+(`team_launch_grants`, first write wins). Recovery and reconcile launches have no
+caller; they reuse the recorded grant, so they are bounded by it and attributed
+`origin`. A spawned member is also bounded by its parent session's grant.
+
+A recorded grant is only as good as the principal that held it: if that principal
+is revoked (or every credential of it expired), its teams stop recovering and the
+launch is refused with a logged reason, instead of outliving the revocation.
+
+A root team session whose intent has **no** recorded grant (formed before grants
+were recorded) has nothing to bound it. Under `identity.mode: enforce` its
+recovery launch is refused as `internal_unattributed` (logged:
+`team launch "<key>" refused: no recorded launch grant ...`) and recovery of that
+team stops. A single point such as `teams: enforce` does not trigger this, which
+is why it works today. **Before a global flip, run this read-only check against
+the state database and expect 0:**
+
+```
+SELECT COUNT(*) FROM team_port_intents i
+ WHERE i.port_kind = 'session' AND i.ended = '' AND i.state IN ('pending','done')
+   AND COALESCE(json_extract(i.request, '$.ParentSession'), '') = ''
+   AND NOT EXISTS (SELECT 1 FROM team_launch_grants g WHERE g.intent_key = i.intent_key);
+```
+
+A non-zero count means that many live root team sessions would not survive a
+recovery under global enforce. **A non-zero count blocks the global flip**, the
+same as `tether identity unbounded --check` does: re-form those teams (the new
+formation records a real grant) or dissolve the dead ones until the count reads
+0. Do not backfill a wildcard grant for old teams; that would hand every legacy
+team unbounded scope. After a flip, a refused recovery logs its reason, the
+intent key and the team run id, which tells the operator what to re-form.
+
 ## 5. Declared fail mode per enforcement point
 
 "Fail-open" = the request proceeds on identity-system failure; "fail-closed" =

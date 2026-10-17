@@ -394,3 +394,36 @@ func (s *Store) RevokeUnbounded(ctx context.Context) (int, error) {
 	}
 	return len(list), nil
 }
+
+// PrincipalLive reports whether a principal id still has a credential that is
+// unrevoked and unexpired. Rotating a credential leaves the id live (the new row
+// is live); revoking every credential of an id, or letting them all expire,
+// ends it.
+func (s *Store) PrincipalLive(ctx context.Context, id string) (bool, error) {
+	if s == nil || s.db == nil || id == "" {
+		return false, fmt.Errorf("identity store unavailable")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT expires_at FROM principals WHERE principal_id = ? AND revoked_at IS NULL`, id)
+	if err != nil {
+		return false, fmt.Errorf("lookup principal: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	now := time.Now()
+	for rows.Next() {
+		var expires sql.NullString
+		if err = rows.Scan(&expires); err != nil {
+			return false, fmt.Errorf("lookup principal: %w", err)
+		}
+		if !expires.Valid {
+			return true, nil
+		}
+		at, perr := time.Parse(time.RFC3339Nano, expires.String)
+		if perr != nil {
+			continue // an unparsable expiry is not treated as live
+		}
+		if at.After(now) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
