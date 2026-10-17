@@ -65,6 +65,9 @@ func (e *Executor) resolveResumeCwd(env map[string]string, id string) (string, e
 		return "", resumeUnavailable("provider session %s has no recorded workspace: %v", id, err)
 	}
 	wsRoot := filepath.Join(e.Root, "workspaces")
+	if e.Config.WorkspaceRoot != "" {
+		wsRoot = e.Config.WorkspaceRoot
+	}
 	rel, err := filepath.Rel(wsRoot, cwd)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", resumeUnavailable("workspace of provider session %s is outside this worker's workspaces", id)

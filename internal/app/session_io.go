@@ -62,7 +62,7 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 			return err
 		}
 		data := []byte(text + "\n")
-		if plan.ProviderBrand == "claude" || plan.ProviderBrand == "claude-code" {
+		if plan.ProviderBrand == "claude" || plan.ProviderBrand == "claude-code" || plan.ProviderBrand == "codex" || plan.ProviderBrand == "antigravity" {
 			data, err = frameUserMessage(text)
 			if err != nil {
 				return err

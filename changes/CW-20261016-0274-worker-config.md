@@ -1,0 +1,2 @@
+- CW-20261016-0274: Resolve worker executables, PATH and workspace roots from worker configuration; enrollment preserves local declarations and records detected providers, while service units read execution settings through the worker configuration.
+- CW-20261016-0274: Plant per-session MCP configuration through the hub gateway without requiring an SSH template; use native launch projection and turn protocols for Codex and AGY on workers.
