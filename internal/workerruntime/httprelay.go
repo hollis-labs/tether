@@ -45,7 +45,7 @@ type HTTPRelay struct {
 	streamWG sync.WaitGroup // the standalone server-to-agent stream
 	getOnce  sync.Once
 
-	reinitMu   sync.Mutex // serialises replacing an evicted hub session
+	reinitMu   sync.Mutex // serializes replacing an evicted hub session
 	reinitSeq  int        // numbers the relay-internal initialize ids
 	streamMu   sync.Mutex // guards streamLive
 	streamLive bool       // a standalone stream goroutine is running
