@@ -165,3 +165,38 @@ and PII floors apply to every open origin and the next turn; an untagged
 TurnStarted creates no origin identity. Tracking is bounded to 64 origins.
 Eviction carries classification floors forward, so ambiguity can withhold more
 output but never silently downgrade it.
+
+### Frozen legacy-ID storage
+
+Migration 0087 creates only the singleton `event_identity` metadata table. It
+creates no indexes, seeds no identity and backfills no events. The storage
+methods remain dormant until the coordinated startup and projection cutover.
+
+At that cutover, startup reads the environment UUID file and calls
+`SeedEventIdentity` before starting event producers. The first call freezes the
+UUID and the current maximum event sequence in one transaction; subsequent calls
+must supply the same UUID and cannot move the cutover. A mismatch refuses startup.
+The initial remaining-row count performs one scan; health reads thereafter use
+the stored counters.
+
+`BackfillEventIDs` changes at most 1,000 eligible rows per call, newest first. It
+fills only NULL IDs at or below the frozen cutover with the literal
+`<environment UUID>:<sequence>`. It never changes existing IDs, including IDs
+minted before cutover. The cursor and progress commit with each chunk; failures
+roll back the whole chunk and a restart resumes from the saved cursor. The caller
+records failed chunks separately, yields between chunks and controls cancellation.
+The backfill never drops an event. No background runner is enabled by this slice.
+
+Release coordination: startup seeding, complete ID minting, stored-ID wire
+projection and retryable handling of unfinished legacy rows must ship together.
+Approximately 281 already-minted rows in the observed hub database will change
+visible environment-stream ID once, from the previous computed `<env>:<seq>` to
+their already-stored `evt_` ID. Their stored IDs remain unchanged; consumers may
+observe those events again. All wire IDs must remain JSON strings.
+
+The activation rollout has two releases. Release N runs complete ID minting with
+no seed or Map switch; the coordinator first verifies that no new NULL IDs appear
+on the hub. Release N+1 activates X1d and may roll back only to release N, never a
+build with partial ID minting. On restart, the identity seed refuses any NULL ID
+above the frozen cutover instead of moving the cutover or silently repairing it.
+A matching database snapshot restore is the last resort.

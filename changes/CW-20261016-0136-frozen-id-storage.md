@@ -1,0 +1,1 @@
+- CW-20261016-0136: Add dormant storage for a frozen event-log environment identity and cutover, with bounded newest-first legacy-ID backfill and durable restart progress. Existing IDs are never rewritten; startup and stream cutover wiring follow separately.
