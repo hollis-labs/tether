@@ -129,7 +129,7 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		scopes = slices.Clone(launchprofile.DefaultMCPScopes)
 	}
 	// A worker session may not hold more than the principal that launched it.
-	scopes, _, err := s.launchCeiling(ctx, scopes)
+	scopes, attribution, err := s.launchCeiling(ctx, scopes)
 	if err != nil {
 		revokeBinding()
 		return undo, err
@@ -139,7 +139,7 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 	// CreatedBy records who launched the session, as the hub-local path does
 	// (mintSessionCredential). Without it every worker-hosted session credential
 	// had created_by='' and could never be shown to belong to its launcher.
-	pr := identity.Principal{ID: self, Kind: "session", SessionID: row.ID, Display: "Session " + row.ID, Scopes: scopes, ExpiresAt: &expires, Addresses: []string{self}, CreatedBy: launcherID(ctx)}
+	pr := identity.Principal{ID: self, Kind: "session", SessionID: row.ID, Display: "Session " + row.ID, Scopes: scopes, ExpiresAt: &expires, Addresses: []string{self}, CreatedBy: launcherID(ctx), LaunchAttribution: string(attribution)}
 	if row.LogicalAgentID != "" {
 		agent := registry.LogicalAgentBindingTarget(row.LogicalAgentID)
 		if addr, err := messaging.ParseURN(agent); err == nil && addr.URN() == agent {
@@ -154,6 +154,7 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		revokeBinding()
 		return undo, fmt.Errorf("mint worker session credential: %w", err)
 	}
+	s.auditLaunchAttribution(ctx, row.ID, mode, attribution)
 	spec.Credential, spec.MCPScopes = token, scopes
 	revokeGrant := s.grantAgentTokens(ctx, row, spec, scopes)
 	return func() {

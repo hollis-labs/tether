@@ -32,7 +32,7 @@ import (
 
 func newIdentityCommand() *cobra.Command {
 	root := &cobra.Command{Use: "identity", Short: "Show, flip and roll back identity enforcement modes"}
-	root.AddCommand(identityModeCmd(), identityFlipCmd(), identityRollbackCmd(), identityRotateOperatorCmd())
+	root.AddCommand(identityModeCmd(), identityFlipCmd(), identityRollbackCmd(), identityRotateOperatorCmd(), identityUnboundedCmd())
 	return root
 }
 

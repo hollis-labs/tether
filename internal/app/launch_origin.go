@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -131,5 +132,35 @@ func (s *Service) launchCeiling(ctx context.Context, granted []string) ([]string
 		return scopes, AttributionInternalUnattributed, nil
 	default:
 		return scopes, AttributionAnonymous, nil
+	}
+}
+
+// Audit event names for a launch that nothing bounded.
+const (
+	AuditAnonymousLaunch        = "anonymous_launch"
+	AuditInternalUnattributedLn = "internal_unattributed"
+)
+
+// auditLaunchAttribution writes one identity_audit row for a session credential
+// born without a bounding authority, so each one is counted and findable
+// (anonymous_launch, or internal_unattributed). Launches a principal or an
+// origin session bounded write nothing. A failure to audit is logged, not fatal:
+// the credential itself carries the attribution that the enforce-flip guard reads.
+func (s *Service) auditLaunchAttribution(ctx context.Context, sessionID, mode string, a Attribution) {
+	var event string
+	switch a {
+	case AttributionAnonymous:
+		event = AuditAnonymousLaunch
+	case AttributionInternalUnattributed:
+		event = AuditInternalUnattributedLn
+	default:
+		return
+	}
+	err := identity.NewStore(s.Store.DB()).RecordObservation(ctx, identity.Observation{
+		At: time.Now().UTC(), PrincipalID: "msg://session/local/" + sessionID, SessionID: sessionID,
+		Mode: identity.Mode(mode), Authentication: "none", Method: "LAUNCH", Route: "launch", Event: event,
+	})
+	if err != nil {
+		log.Printf("identity: %s audit for session %s could not be persisted", event, sessionID)
 	}
 }
