@@ -39,6 +39,41 @@ type fakeHub struct {
 	refuseCode   string
 	// initDelay holds the initialize response, as a busy hub would.
 	initDelay time.Duration
+	// gen counts evictions: the live session is "sess-<gen+1>", and any older id is unknown to the hub.
+	gen atomic.Int32
+	// gone makes the hub forget every session, even one it just issued.
+	gone atomic.Bool
+}
+
+// sess is the one session id the hub currently knows.
+func (h *fakeHub) sess() string { return fmt.Sprintf("sess-%d", h.gen.Load()+1) }
+
+// evict drops the live session the way the real hub does after an agent's view sits idle.
+func (h *fakeHub) evict() { h.gen.Add(1) }
+
+// count is how many POSTs carried this JSON-RPC method.
+func (h *fakeHub) count(method string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, m := range h.methods {
+		if m == method {
+			n++
+		}
+	}
+	return n
+}
+
+// waitCount blocks until the hub has seen at least want POSTs of the method.
+func (h *fakeHub) waitCount(t *testing.T, method string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for h.count(method) < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("hub saw %d %s requests, want at least %d", h.count(method), method, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (h *fakeHub) accepts(token string) bool {
@@ -62,7 +97,7 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deletes.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodGet:
-		if r.Header.Get("Mcp-Session-Id") != "sess-1" {
+		if r.Header.Get("Mcp-Session-Id") != h.sess() {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -87,14 +122,19 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, `{"error":{"code":"mcp_initialize_required"}}`)
 			return
 		}
+		if sid := r.Header.Get("Mcp-Session-Id"); m.Method != "initialize" && sid != "" && (sid != h.sess() || h.gone.Load()) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":{"code":"mcp_session_not_found"}}`)
+			return
+		}
 		switch m.Method {
 		case "initialize":
 			time.Sleep(h.initDelay)
-			w.Header().Set("Mcp-Session-Id", "sess-1")
+			w.Header().Set("Mcp-Session-Id", h.sess())
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"hub","version":"1"}}}`, m.ID)
 		case "tools/list":
-			if r.Header.Get("Mcp-Session-Id") != "sess-1" || r.Header.Get("MCP-Protocol-Version") != "2025-03-26" {
+			if r.Header.Get("Mcp-Session-Id") != h.sess() || r.Header.Get("MCP-Protocol-Version") != "2025-03-26" {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -465,4 +505,108 @@ func TestHTTPRelayDoesNotLetLaterMessagesOvertakeInitialize(t *testing.T) {
 	if strings.Contains(g.stderr.String(), "refused") {
 		t.Fatalf("a message was refused: %s", g.stderr.String())
 	}
+}
+
+// recvReply is the next response (a message with an id), skipping server notifications such as the standalone
+// stream's tools/list_changed. A relay-internal handshake reply leaking to the agent would arrive here with its own
+// id and fail the caller's id check.
+func (g *relayRig) recvReply() map[string]any {
+	g.t.Helper()
+	for i := 0; i < 20; i++ {
+		m := g.recv()
+		if _, isReply := m["id"]; isReply {
+			return m
+		}
+	}
+	g.t.Fatal("no response from the relay")
+	return nil
+}
+
+// The hub drops an agent's session after two idle minutes. The relay must start a replacement on its own and
+// retry, and the agent must never see the replacement handshake (CW-20261017-0036).
+func TestHTTPRelayStartsAReplacementSessionWhenTheHubEvictsIt(t *testing.T) {
+	hub := &fakeHub{}
+	g := newRelayRig(t, hub, nil)
+	g.handshake()
+	hub.waitCount(t, "notifications/initialized", 1) // the handshake's last line is still in flight when handshake returns
+	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	if m := g.recvReply(); m["id"] != float64(2) || m["result"] == nil {
+		t.Fatalf("first tools/list = %v", m)
+	}
+
+	hub.evict()
+	g.send(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
+	// The very next message must be the answer to id 3: a leaked internal initialize reply or an error would arrive first.
+	if m := g.recvReply(); m["id"] != float64(3) || m["result"] == nil || m["error"] != nil {
+		t.Fatalf("tools/list after eviction = %v", m)
+	}
+	if got := hub.count("initialize"); got != 2 {
+		t.Fatalf("hub saw %d initialize requests, want 2 (the agent's and one replacement)", got)
+	}
+	if got := hub.count("notifications/initialized"); got != 2 {
+		t.Fatalf("hub saw %d notifications/initialized, want 2", got)
+	}
+
+	// The replacement session keeps working without another handshake.
+	g.send(`{"jsonrpc":"2.0","id":4,"method":"tools/list"}`)
+	if m := g.recvReply(); m["id"] != float64(4) || m["result"] == nil {
+		t.Fatalf("tools/list on the replacement session = %v", m)
+	}
+	if got := hub.count("initialize"); got != 2 {
+		t.Fatalf("a healthy replacement session was replaced again (%d initialize requests)", got)
+	}
+	if strings.Contains(g.stderr.String(), tokenOne) {
+		t.Fatalf("relay diagnostics leaked the token: %q", g.stderr.String())
+	}
+	g.finish()
+}
+
+// Several requests in flight when the session is evicted share one replacement.
+func TestHTTPRelayReplacesAnEvictedSessionOnceForConcurrentRequests(t *testing.T) {
+	hub := &fakeHub{}
+	g := newRelayRig(t, hub, nil)
+	g.handshake()
+	hub.waitCount(t, "notifications/initialized", 1) // the handshake's last line is still in flight when handshake returns
+	hub.evict()
+	const n = 5
+	for id := 10; id < 10+n; id++ {
+		g.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/list"}`, id))
+	}
+	seen := map[float64]bool{}
+	for i := 0; i < n; i++ {
+		m := g.recvReply()
+		id, _ := m["id"].(float64)
+		if m["result"] == nil || m["error"] != nil {
+			t.Fatalf("request %v failed after eviction: %v", m["id"], m)
+		}
+		seen[id] = true
+	}
+	if len(seen) != n {
+		t.Fatalf("answered ids = %v, want %d distinct", seen, n)
+	}
+	if got := hub.count("initialize"); got != 2 {
+		t.Fatalf("hub saw %d initialize requests, want 2: concurrent requests must share one replacement", got)
+	}
+	g.finish()
+}
+
+// A hub that keeps answering 404 gets exactly one replacement attempt per request, then the refusal is reported.
+func TestHTTPRelayDoesNotLoopWhenTheHubKeepsForgettingTheSession(t *testing.T) {
+	hub := &fakeHub{}
+	g := newRelayRig(t, hub, nil)
+	g.handshake()
+	hub.waitCount(t, "notifications/initialized", 1) // the handshake's last line is still in flight when handshake returns
+	hub.gone.Store(true)
+	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	m := g.recvReply()
+	if m["id"] != float64(2) || m["error"] == nil {
+		t.Fatalf("reply = %v, want an error for id 2", m)
+	}
+	if msg := fmt.Sprint(m["error"]); !strings.Contains(msg, "mcp_session_not_found") {
+		t.Fatalf("error = %s, want it to name mcp_session_not_found", msg)
+	}
+	if got := hub.count("initialize"); got != 2 {
+		t.Fatalf("relay sent %d initialize requests, want exactly one replacement attempt", got)
+	}
+	g.finish()
 }
