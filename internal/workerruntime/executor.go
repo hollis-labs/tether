@@ -286,6 +286,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			return nil, err
 		}
 		args = claudeArgs(args, spec.PermissionMode, filepath.Join(cwd, ".mcp.json"))
+		args = append(args, e.agentHookArgs(ws.Root, spec)...)
 	}
 	cmd := exec.Command(binary, args...) //nolint:gosec // G204: binary is the provider resolved on this worker's PATH; args come from the authenticated hub's launch spec
 	cmd.Dir = cwd

@@ -56,6 +56,7 @@ func main() {
 	httpRelayCmd.Flags().StringVar(&httpURL, "url", "", "hub streamable-HTTP MCP endpoint (https)")
 	httpRelayCmd.Flags().StringVar(&httpToken, "token-file", "", "0600 file holding the session's current issuer token (re-read for every request)")
 	cmd.AddCommand(httpRelayCmd)
+	cmd.AddCommand(newHookCommand())
 	var hub, code, label, mcpSource string
 	var workerPath, workspaceRoot string
 	var providerCommands map[string]string
