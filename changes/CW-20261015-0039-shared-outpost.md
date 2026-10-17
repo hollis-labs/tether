@@ -1,0 +1,1 @@
+- CW-20261015-0039: Run the existing worker and local mail runtime as an Outpost subprocess plugin, preserving enrollment, provider configuration, session shims, and mail registrations across the shared-host migration.

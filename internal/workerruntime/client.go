@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/tether/internal/devicepair"
 	"github.com/hollis-labs/tether/internal/environment/report"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"log"
 	"net/http"
@@ -24,12 +25,17 @@ import (
 )
 
 type Config struct {
-	MailSocket string `json:"mail_socket,omitempty"`
-	MailGID    *int   `json:"mail_gid,omitempty"`
-	MailUIDs   []int  `json:"mail_uids,omitempty"`
-	Hub        string `json:"hub"`
-	Label      string `json:"label"`
-	WorkerID   string `json:"worker_id,omitempty"`
+	// Machine-local execution settings. The catalog describes providers and
+	// policy; these values describe where this worker installs and runs them.
+	Path             string            `json:"path,omitempty"`
+	ProviderCommands map[string]string `json:"provider_commands,omitempty"`
+	WorkspaceRoot    string            `json:"workspace_root,omitempty"`
+	MailSocket       string            `json:"mail_socket,omitempty"`
+	MailGID          *int              `json:"mail_gid,omitempty"`
+	MailUIDs         []int             `json:"mail_uids,omitempty"`
+	Hub              string            `json:"hub"`
+	Label            string            `json:"label"`
+	WorkerID         string            `json:"worker_id,omitempty"`
 	// MCPSSHFallback keeps the degraded 'ssh <hub> tether mcp --daemon-only' MCP entry available for launches that
 	// cannot use the hub's /mcp (CW-20261016-0160). Off by default; remove once every worker uses /mcp.
 	MCPSSHFallback bool `json:"mcp_ssh_fallback,omitempty"`
@@ -70,7 +76,22 @@ func Load(root string) (Config, error) {
 		return cfg, err
 	}
 	err = json.Unmarshal(b, &cfg)
+	if err == nil {
+		err = cfg.Validate()
+	}
 	return cfg, err
+}
+
+func (c Config) Validate() error {
+	if c.WorkspaceRoot != "" && !filepath.IsAbs(c.WorkspaceRoot) {
+		return fmt.Errorf("workspace_root must be an absolute worker path")
+	}
+	for brand, command := range c.ProviderCommands {
+		if brand == "" || strings.ContainsAny(brand, "/\\") || command == "" || (strings.ContainsAny(command, "/\\") && !filepath.IsAbs(command)) {
+			return fmt.Errorf("provider_commands requires provider names and bare commands or absolute worker paths")
+		}
+	}
+	return nil
 }
 func Enroll(ctx context.Context, root, hub, code, label string) error {
 	u, err := url.Parse(hub)
@@ -90,7 +111,33 @@ func Enroll(ctx context.Context, root, hub, code, label string) error {
 	if err = os.WriteFile(filepath.Join(root, "device.token"), []byte(result.Token+"\n"), 0600); err != nil {
 		return err
 	}
-	if err = SaveJSON(filepath.Join(root, "config.json"), Config{Hub: strings.TrimRight(hub, "/"), Label: label}); err != nil {
+	cfg, loadErr := Load(root)
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		return loadErr
+	}
+	cfg.Hub, cfg.Label = strings.TrimRight(hub, "/"), label
+	if cfg.Path == "" {
+		cfg.Path = os.Getenv("PATH")
+	}
+	if cfg.ProviderCommands == nil {
+		cfg.ProviderCommands = map[string]string{}
+	}
+	for _, detected := range setup.DetectProviders() {
+		if detected.Found && cfg.ProviderCommands[detected.Brand] == "" {
+			cfg.ProviderCommands[detected.Brand] = detected.Path
+			// Detection knows platform install locations; the service consumes
+			// the resulting worker declaration instead of guessing directories.
+			dir := filepath.Dir(detected.Path)
+			found := false
+			for _, entry := range filepath.SplitList(cfg.Path) {
+				found = found || entry == dir
+			}
+			if !found {
+				cfg.Path = dir + string(os.PathListSeparator) + cfg.Path
+			}
+		}
+	}
+	if err = SaveJSON(filepath.Join(root, "config.json"), cfg); err != nil {
 		return err
 	}
 	path := filepath.Join(root, "hub-mcp.json")
@@ -153,8 +200,10 @@ func (w *Worker) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go w.keepDeviceCredential(ctx)
-	if err := ValidateHubMCPFile(w.Root); err != nil {
-		log.Printf("WARN worker: launches will fail until this is fixed: %v", err)
+	if w.Config.MCPSSHFallback {
+		if err := ValidateHubMCPFile(w.Root); err != nil {
+			log.Printf("WARN worker: SSH fallback unavailable: %v", err)
+		}
 	}
 	w.pendingMu.Lock()
 	if w.pending == nil {
@@ -255,7 +304,7 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 	if w.Bindings != nil {
 		bindings = w.Bindings()
 	}
-	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts}); err != nil {
+	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureProviderProcess}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts}); err != nil {
 		return err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))

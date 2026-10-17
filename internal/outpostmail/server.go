@@ -83,6 +83,8 @@ func (t *transport) send(r Reply) error {
 }
 
 type Server struct {
+	// Ready runs once the socket is accepting registrations.
+	Ready         func()
 	delivery      sync.Mutex
 	Socket, State string
 	GID           int
@@ -197,6 +199,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, func() { _ = l.Close() })
 	defer stop()
 	go s.sweep(ctx)
+	if s.Ready != nil {
+		s.Ready()
+	}
 	for {
 		c, err := l.AcceptUnix()
 		if err != nil {
