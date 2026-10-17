@@ -35,14 +35,20 @@ type HTTPRelay struct {
 	// Stderr receives one-line diagnostics. Never a token.
 	Stderr io.Writer
 
-	mu       sync.Mutex // guards session, protocol, wg ordering of the first request
+	mu       sync.Mutex // guards session, protocol, initMsg, wg ordering of the first request
 	session  string
 	protocol string
+	initMsg  []byte // the agent's latest initialize request, replayed to start a replacement hub session
 	outMu    sync.Mutex
 	out      io.Writer
 	wg       sync.WaitGroup // in-flight forwards
 	streamWG sync.WaitGroup // the standalone server-to-agent stream
 	getOnce  sync.Once
+
+	reinitMu   sync.Mutex // serialises replacing an evicted hub session
+	reinitSeq  int        // numbers the relay-internal initialize ids
+	streamMu   sync.Mutex // guards streamLive
+	streamLive bool       // a standalone stream goroutine is running
 }
 
 const (
@@ -197,19 +203,34 @@ func isInitialize(msg []byte) bool {
 // forward POSTs one message and writes whatever comes back to the agent.
 func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 	id := requestID(msg)
+	if isInitialize(msg) {
+		r.rememberInitialize(msg)
+	}
 	var lastStatus int
 	var lastCode string
+	reinitialized := false
 	for attempt := 0; attempt <= relayRetries; attempt++ {
 		token, err := tokenfile.Read(r.TokenFile)
 		if err != nil {
 			r.fail(id, "session credential unavailable")
 			return
 		}
+		used := r.sessionID()
 		status, code, retry := r.post(ctx, msg, token)
 		if status == 0 && code == "" {
 			return // delivered
 		}
 		lastStatus, lastCode = status, code
+		// The hub forgets an agent's session after two idle minutes (and on restart). A client that gets 404 for its
+		// session must start a new one, so do that once, invisibly, and send the same request again.
+		if status == http.StatusNotFound && code == "mcp_session_not_found" && used != "" && !reinitialized && !isInitialize(msg) {
+			reinitialized = true
+			if r.reinitialize(ctx, used) {
+				attempt-- // the replacement session does not use up the token-rotation retry
+				continue
+			}
+			break
+		}
 		if !retry {
 			break
 		}
@@ -227,6 +248,157 @@ func codeSuffix(code string) string {
 		return ""
 	}
 	return ", " + code
+}
+
+func (r *HTTPRelay) sessionID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.session
+}
+
+// rememberInitialize keeps the agent's own initialize so a replacement hub session can be started with the same
+// protocol version and capabilities the agent negotiated.
+func (r *HTTPRelay) rememberInitialize(msg []byte) {
+	r.mu.Lock()
+	r.initMsg = append([]byte(nil), msg...)
+	r.mu.Unlock()
+}
+
+// reinitialize replaces a hub session the hub no longer knows. stale is the session id the failed request carried;
+// when another request already replaced it there is nothing left to do. The agent's initialize is replayed under a
+// relay-internal id and notifications/initialized completes the handshake, so neither exchange reaches the agent,
+// which keeps believing in the one session it started. It returns true when requests can be sent again.
+func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
+	r.reinitMu.Lock()
+	defer r.reinitMu.Unlock()
+	r.mu.Lock()
+	current, init := r.session, append([]byte(nil), r.initMsg...)
+	r.mu.Unlock()
+	if current != stale {
+		return true // another request already started the replacement
+	}
+	if len(init) == 0 {
+		return false // the agent never initialized through this relay; nothing to replay
+	}
+	token, err := tokenfile.Read(r.TokenFile)
+	if err != nil {
+		return false
+	}
+	r.reinitSeq++
+	body, err := withRequestID(init, fmt.Sprintf("relay-reinit-%d", r.reinitSeq))
+	if err != nil {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := r.client().Do(req)
+	if err != nil {
+		if ctx.Err() == nil {
+			r.logf("could not start a replacement hub session: %s", sanitizeNetErr(err))
+		}
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		r.logf("could not start a replacement hub session (status %d%s)", resp.StatusCode, codeSuffix(hubErrorCode(resp.Body)))
+		return false
+	}
+	sid := resp.Header.Get("Mcp-Session-Id")
+	if sid == "" {
+		r.logf("could not start a replacement hub session (no session id)")
+		return false
+	}
+	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, maxRelayLine+1))
+	if rerr != nil || len(raw) > maxRelayLine {
+		return false
+	}
+	protocol := protocolFromInitializeBody(resp.Header.Get("Content-Type"), raw)
+	r.mu.Lock()
+	r.session = sid
+	if protocol != "" {
+		r.protocol = protocol
+	}
+	r.mu.Unlock()
+	r.completeHandshake(ctx)
+	r.restartStandaloneStream(ctx)
+	r.logf("hub session expired; started a new one")
+	return true
+}
+
+// completeHandshake sends notifications/initialized on the replacement session. A failure here is logged only: the
+// next real request will surface it.
+func (r *HTTPRelay) completeHandshake(ctx context.Context) {
+	token, err := tokenfile.Read(r.TokenFile)
+	if err != nil {
+		return
+	}
+	r.mu.Lock()
+	session, protocol := r.session, r.protocol
+	r.mu.Unlock()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Mcp-Session-Id", session)
+	if protocol != "" {
+		req.Header.Set("MCP-Protocol-Version", protocol)
+	}
+	resp, err := r.client().Do(req)
+	if err != nil {
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 300 {
+		r.logf("replacement hub session refused notifications/initialized (status %d)", resp.StatusCode)
+	}
+}
+
+// withRequestID returns a copy of a JSON-RPC request with its id replaced.
+func withRequestID(msg []byte, id string) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(msg, &fields); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(id)
+	if err != nil {
+		return nil, err
+	}
+	fields["id"] = raw
+	return json.Marshal(fields)
+}
+
+// protocolFromInitializeBody reads the negotiated protocol version out of an initialize response, which the hub
+// may deliver as plain JSON or as one SSE event.
+func protocolFromInitializeBody(contentType string, body []byte) string {
+	payload := bytes.TrimSpace(body)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "text/event-stream") {
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.HasPrefix(line, "data:") {
+				if candidate := bytes.TrimSpace([]byte(strings.TrimPrefix(line, "data:"))); json.Valid(candidate) {
+					payload = candidate
+					break
+				}
+			}
+		}
+	}
+	var out struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(payload, &out) != nil {
+		return ""
+	}
+	return out.Result.ProtocolVersion
 }
 
 // post sends msg. It returns (0, "", false) when the exchange completed; otherwise the failing HTTP status, the
@@ -428,13 +600,32 @@ func sanitizeNetErr(err error) string {
 // startStandaloneStream opens the optional server-to-agent GET stream once a session exists. A hub that does
 // not offer one (405) simply ends it.
 func (r *HTTPRelay) startStandaloneStream(ctx context.Context) {
-	r.getOnce.Do(func() {
-		r.streamWG.Add(1)
-		go func() {
-			defer r.streamWG.Done()
-			r.standalone(ctx)
+	r.getOnce.Do(func() { r.launchStandalone(ctx) })
+}
+
+// restartStandaloneStream reopens the stream on a replacement session when the old one has already ended.
+func (r *HTTPRelay) restartStandaloneStream(ctx context.Context) {
+	r.launchStandalone(ctx)
+}
+
+func (r *HTTPRelay) launchStandalone(ctx context.Context) {
+	r.streamMu.Lock()
+	if r.streamLive {
+		r.streamMu.Unlock()
+		return
+	}
+	r.streamLive = true
+	r.streamMu.Unlock()
+	r.streamWG.Add(1)
+	go func() {
+		defer r.streamWG.Done()
+		defer func() {
+			r.streamMu.Lock()
+			r.streamLive = false
+			r.streamMu.Unlock()
 		}()
-	})
+		r.standalone(ctx)
+	}()
 }
 
 func (r *HTTPRelay) standalone(ctx context.Context) {
@@ -465,6 +656,9 @@ func (r *HTTPRelay) standalone(ctx context.Context) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusNotFound && r.sessionID() != session {
+				continue // the session was replaced while this request was in flight: reconnect on the new one
+			}
 			return // 405 (no standalone stream), 401, 403, 404: not worth looping on
 		}
 		r.readSSE(resp.Body)
