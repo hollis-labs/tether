@@ -71,11 +71,11 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	if parent, ok := identity.FromContext(ctx); ok {
 		p.CreatedBy = parent.ID
 	}
-	ceiling, _, err := s.launchCeiling(ctx, granted)
+	ceiling, attribution, err := s.launchCeiling(ctx, granted)
 	if err != nil {
 		return "", err
 	}
-	p.Scopes = ceiling
+	p.Scopes, p.LaunchAttribution = ceiling, string(attribution)
 	if replacement {
 		if !slices.Contains(floor.Scopes, "*") {
 			p.Scopes = slices.DeleteFunc(p.Scopes, func(scope string) bool { return !slices.Contains(floor.Scopes, scope) })
@@ -113,6 +113,7 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 		}
 		return "", fmt.Errorf("mint session credential: %w", err)
 	}
+	s.auditLaunchAttribution(ctx, sessionID, mode, attribution)
 	return token, nil
 }
 

@@ -258,3 +258,85 @@ func TestAnOriginThatNeverHadACredentialKeepsTheProfileCeilingAndSaysSo(t *testi
 		t.Fatalf("no log line for the unbounded fallback: %q", logs.String())
 	}
 }
+
+func (r *identityRig) attributionOf(id string) string {
+	r.t.Helper()
+	var a string
+	if err := r.db.DB().QueryRow(`SELECT launch_attribution FROM principals WHERE kind='session' AND session_id=? AND revoked_at IS NULL`, id).Scan(&a); err != nil {
+		r.t.Fatal(err)
+	}
+	return a
+}
+
+func (r *identityRig) auditEvents(id string) []string {
+	r.t.Helper()
+	rows, err := r.db.DB().Query(`SELECT event FROM identity_audit WHERE session_id=? AND event<>'' ORDER BY id`, id)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var e string
+		if err = rows.Scan(&e); err != nil {
+			r.t.Fatal(err)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// Every credential records what vouched for its scopes; an unbounded one also
+// writes exactly one audit row, and a bounded one writes none.
+func TestWorkerLaunchRecordsAttributionAndAuditsOnlyUnboundedOnes(t *testing.T) {
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	mintSessionWithScopes(t, r.svc, r.ids, "an-origin", false, "message.write")
+	operator := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+	for id, tc := range map[string]struct {
+		ctx       context.Context
+		attrib    string
+		wantAudit []string
+	}{
+		"by-principal":  {operator, "principal", nil},
+		"by-origin":     {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, OriginSessionID: "an-origin"}), "origin", nil},
+		"unattributed":  {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam}), "internal_unattributed", []string{"internal_unattributed"}},
+		"anonymous-ext": {context.Background(), "anonymous_external", []string{"anonymous_launch"}},
+	} {
+		if _, err := r.launchAs(tc.ctx, id, ""); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if got := r.attributionOf(id); got != tc.attrib {
+			t.Errorf("%s: attribution %q, want %q", id, got, tc.attrib)
+		}
+		if got := r.auditEvents(id); !slices.Equal(got, tc.wantAudit) {
+			t.Errorf("%s: audit events %v, want %v", id, got, tc.wantAudit)
+		}
+	}
+}
+
+// The hub-local path records and audits the same way.
+func TestHubLocalLaunchRecordsAttributionAndAudits(t *testing.T) {
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	for id, tc := range map[string]struct {
+		ctx       context.Context
+		attrib    string
+		wantAudit []string
+	}{
+		"hub-anon":        {context.Background(), "anonymous_external", []string{"anonymous_launch"}},
+		"hub-unattrib":    {withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginResume}), "internal_unattributed", []string{"internal_unattributed"}},
+		"hub-by-launcher": {identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}), "principal", nil},
+	} {
+		if err := r.svc.Store.CreateSession(store.SessionRow{ID: id, LaunchID: "pm", ProjectID: "tether", ProviderID: "claude", ProviderKind: "cli", State: "created"}, &launch.Plan{LaunchID: "pm", ProjectID: "tether", ProviderID: "claude"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.svc.mintSessionCredential(tc.ctx, id); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if got := r.attributionOf(id); got != tc.attrib {
+			t.Errorf("%s: attribution %q, want %q", id, got, tc.attrib)
+		}
+		if got := r.auditEvents(id); !slices.Equal(got, tc.wantAudit) {
+			t.Errorf("%s: audit events %v, want %v", id, got, tc.wantAudit)
+		}
+	}
+}
