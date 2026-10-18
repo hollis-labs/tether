@@ -222,15 +222,23 @@ new traffic.
 - A launch can land between the guard's scan and the flip. After applying an
   enforce flip the command scans once more and revokes any such straggler, and
   when there are any it appends a `stragglers` record (with the count) to the
-  flip log. The daemon keeps its old mode until it restarts, so launches in the
-  gap before the restart can still create unbounded credentials: after the
-  restart run `tether identity unbounded --check`, which exits non-zero while any
-  stand, and re-run the flip with `--revoke-anonymous` if it lists some. The
-  required sequence is therefore: **flip, restart the daemon, run
-  `tether identity unbounded --check`, and re-flip with `--revoke-anonymous` if
-  it is non-zero.** A daemon-side rule that refuses these launches as soon as the
-  persisted mode is enforce (CW-20261016-0231) must land before the first real
-  enforce flip on any environment.
+  flip log.
+- **Daemon-side rule (CW-20261016-0231).** A running daemon applies a flipped
+  mode only at restart, but its launch path re-reads the persisted `identity`
+  block of `global.yaml` (cached for about 3 seconds; the mode it started with counts too) whenever it decides a
+  launch that nothing bounds. Once it is persisted as `enforce` the daemon
+  refuses that launch (`ErrLaunchRefused`) immediately, without a restart:
+  an `anonymous_external` launch when `identity.mode` or `points.local_api` is
+  `enforce`, and an `internal_unattributed` launch when `identity.mode` is
+  `enforce` (a single point such as `teams` does not trigger it). If
+  `global.yaml` cannot be read at that moment the launch is refused. Launches
+  a principal or an origin session bounded never read it and are unaffected.
+  This closes the flip-to-restart gap; as belt and braces, still run
+  `tether identity unbounded --check` after the restart (it exits non-zero while
+  any unbounded credential stands) and re-flip with `--revoke-anonymous` if it
+  lists some. The required sequence is: **flip, restart the daemon, run
+  `tether identity unbounded --check`, re-flip with `--revoke-anonymous` if it is
+  non-zero.**
 
 ## 5. Declared fail mode per enforcement point
 

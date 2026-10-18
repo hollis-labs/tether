@@ -896,3 +896,29 @@ func TestLoadLaunchWorker(t *testing.T) {
 		t.Fatalf("whitespace worker accepted: %v", err)
 	}
 }
+
+func TestLoadIdentityReadsOnlyTheIdentityBlockAsItIsOnDiskNow(t *testing.T) {
+	root := t.TempDir()
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, "global.yaml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("daemon:\n  listen_addr: unix:/tmp/x.sock\nidentity:\n  mode: observe\n  points:\n    teams: enforce\n")
+	got, err := LoadIdentity(root)
+	if err != nil || got.EffectiveMode() != "observe" || got.ModeFor("teams") != "enforce" || got.ModeFor("local_api") != "observe" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	write("identity:\n  mode: enforce\n") // a flip is visible on the next read
+	if got, _ = LoadIdentity(root); got.EffectiveMode() != "enforce" {
+		t.Fatalf("flip not seen: %+v", got)
+	}
+	if _, err = LoadIdentity(filepath.Join(root, "missing")); err == nil {
+		t.Fatal("a missing catalog read as a mode")
+	}
+	write("identity: [broken")
+	if _, err = LoadIdentity(root); err == nil {
+		t.Fatal("a garbled catalog read as a mode")
+	}
+}
