@@ -25,7 +25,6 @@ package mcpadapter
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -34,6 +33,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -41,7 +42,6 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 // newRegistryAdapter builds an Adapter wired with a live registry.Service
@@ -60,14 +60,7 @@ func newRegistryAdapter(t *testing.T, opts ...registry.ServiceOption) (*Adapter,
 
 func newRegistryAdapterWithScopes(t *testing.T, scopes []string, opts ...registry.ServiceOption) (*Adapter, *registry.Service) {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage, opts...)
 

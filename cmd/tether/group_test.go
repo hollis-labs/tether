@@ -7,17 +7,17 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 
 	"net/http/httptest"
 )
@@ -36,14 +36,7 @@ func newGroupFixture(t *testing.T) *groupFixture {
 	t.Helper()
 	t.Cleanup(resetRegistryFlags)
 	t.Cleanup(resetGroupFlags)
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage)
 	h := api.NewHandler(api.Deps{Registry: svc, Groups: svc})

@@ -9,10 +9,11 @@ package mcpadapter
 
 import (
 	"context"
-	"database/sql"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,19 +22,11 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 func newGroupAdapter(t *testing.T) *Adapter {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage)
 

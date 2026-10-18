@@ -10,26 +10,19 @@ package client
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 func newBindingsTestClient(t *testing.T) (*BindingsClient, *registry.Service) {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	svc := registry.NewService(registry.NewStorage(db))
 
 	srv := httptest.NewServer(api.NewHandler(api.Deps{Registry: svc}))

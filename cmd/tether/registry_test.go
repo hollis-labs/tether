@@ -23,7 +23,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -32,12 +31,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 
 	"net/http"
 	"net/http/httptest"
@@ -60,14 +60,7 @@ type fixture struct {
 func newFixture(t *testing.T, opts ...registry.ServiceOption) *fixture {
 	t.Helper()
 	t.Cleanup(resetRegistryFlags)
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage, opts...)
 	h := api.NewHandler(api.Deps{Registry: svc})
@@ -682,14 +675,7 @@ func newBootstrapFixture(t *testing.T) (*fixture, string) {
 		t.Fatalf("write tether.yaml: %v", err)
 	}
 
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage)
 	h := api.NewHandler(api.Deps{

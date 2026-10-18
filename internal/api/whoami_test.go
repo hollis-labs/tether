@@ -7,7 +7,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,20 +14,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 func newWhoamiServer(t *testing.T) (*httptest.Server, *registry.Service) {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	svc := registry.NewService(registry.NewStorage(db))
 	srv := httptest.NewServer(NewHandler(Deps{Registry: svc, Groups: svc}))
 	t.Cleanup(srv.Close)
@@ -50,14 +43,7 @@ func (registryWithFailingExternalIDs) LookupExternalIDsForURN(context.Context, s
 }
 
 func TestWhoami_ExternalIDLookupError_Returns500NotSilentlySwallowed(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	svc := registry.NewService(registry.NewStorage(db))
 	wrapped := registryWithFailingExternalIDs{svc}
 	srv := httptest.NewServer(NewHandler(Deps{Registry: wrapped, Groups: svc}))

@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 func TestProfile_DerivedVsAuthored(t *testing.T) {
@@ -310,10 +311,7 @@ func TestService_Merge_CorrelationFields(t *testing.T) {
 
 func TestBackfillFieldMetadata(t *testing.T) {
 	ctx := context.Background()
-	db := openInMemory(t)
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage)
 
@@ -398,10 +396,7 @@ func TestService_Sync_NeverTouchesAuthoredFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileResolver: %v", err)
 	}
-	db := openInMemory(t)
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage, registry.WithResolver(resolver))
 	ctx := context.Background()
@@ -526,10 +521,7 @@ func TestService_Sync_ResolverFailureLeavesLastGood(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileResolver: %v", err)
 	}
-	db := openInMemory(t)
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage, registry.WithResolver(resolver))
 	ctx := context.Background()
