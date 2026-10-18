@@ -469,7 +469,7 @@ func TestHandleListSessions_NextCursor_WhenFull(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
 		t.Fatal(err)
 	}
-	if res.NextCursor != "2026-04-19T08:00:00Z" {
+	if res.NextCursor != store.SessionCursor("2026-04-19T08:00:00Z", "c") {
 		t.Errorf("NextCursor = %q, want last row's created_at", res.NextCursor)
 	}
 }
@@ -992,5 +992,33 @@ func TestHandleRetireShim(t *testing.T) {
 	newTestHandler(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/sessions/s1/retire-shim", nil))
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("refusal status = %d", rr.Code)
+	}
+}
+
+func TestHandleListSessions_InvalidCursor(t *testing.T) {
+	for _, cursor := range []string{"garbage", "v1.invalid", "v2.invalid"} {
+		t.Run(cursor, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			newTestHandler(&fakeLaunchService{}).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/sessions?cursor="+cursor, nil))
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d", rr.Code)
+			}
+		})
+	}
+}
+
+func TestHandleListSessions_ClampedLimitCursor(t *testing.T) {
+	rows := make([]store.SessionRow, 1000)
+	for i := range rows {
+		rows[i] = store.SessionRow{ID: "s", CreatedAt: "2026-04-19T10:00:00Z"}
+	}
+	rr := httptest.NewRecorder()
+	newTestHandler(&fakeLaunchService{listRes: rows}).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/sessions?limit=1001", nil))
+	var res ListSessionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res.NextCursor == "" {
+		t.Fatal("clamped full page lost continuation")
 	}
 }

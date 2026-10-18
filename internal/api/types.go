@@ -345,7 +345,8 @@ type ResizeRequest struct {
 type ListSessionsResponse struct {
 	Sessions []SessionDTO `json:"sessions"`
 	// NextCursor is set when the returned page hit the limit, indicating
-	// more rows may exist older than this point. Empty when the caller
+	// more rows may exist after this opaque created_at+id position.
+	// The listing is a live scan, not a snapshot. Empty when the caller
 	// has reached the end (or the query was unfiltered and under limit).
 	NextCursor string `json:"next_cursor,omitempty"`
 }

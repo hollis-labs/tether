@@ -402,8 +402,9 @@ func (s *Store) SetSessionProcessStart(id string, pid int, startedAt string) err
 // optional — the zero value matches the legacy "return every row,
 // newest first" behavior.
 //
-// Cursor is an RFC3339 timestamp; the query returns rows strictly
-// older than it. State, when non-empty, restricts to a single session
+// Cursor is an opaque created_at+id continuation token (legacy RFC3339
+// timestamps remain supported). The query returns rows strictly after it
+// in descending created_at, id order. State restricts to a single session
 // state ('created', 'launching', 'running', 'completed', 'failed',
 // 'killed', 'ready', 'detached', 'orphaned'). GroupID, when non-empty,
 // restricts to sessions in the named session group. Limit caps the page size; 0 falls back to the
@@ -446,7 +447,16 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		args = append(args, v)
 	}
 	if opts.Cursor != "" {
-		add("created_at < ?", opts.Cursor)
+		createdAt, id, err := ParseSessionCursor(opts.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		if id == "" {
+			add("created_at < ?", createdAt)
+		} else {
+			add("(created_at, id) < (?, ?)", createdAt)
+			args = append(args, id)
+		}
 	}
 	if opts.State != "" {
 		add("state = ?", opts.State)
@@ -458,7 +468,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("launch_id = ?", opts.LaunchID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id FROM sessions` + where + ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)

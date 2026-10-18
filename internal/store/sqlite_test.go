@@ -336,3 +336,55 @@ func TestGetLaunchPlan_Missing(t *testing.T) {
 		t.Errorf("err = %v, want sql.ErrNoRows", err)
 	}
 }
+
+func TestListSessions_CompositeCursor(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stamp := "2026-04-19T10:00:00Z"
+	seed := func(id, at string) {
+		t.Helper()
+		_, err := db.db.Exec(`INSERT INTO sessions (id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at) VALUES (?, 'l', 'p', 'a', 'pv', '/tmp/ws', 'running', ?, ?)`, id, at, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		seed(id, stamp)
+	}
+	first, err := db.ListSessions(ListSessionsOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 2 || first[0].ID != "e" || first[1].ID != "d" {
+		t.Fatalf("first page: %+v", first)
+	}
+	cursor := SessionCursor(first[1].CreatedAt, first[1].ID)
+	// Insert ahead of the cursor: a live scan must neither repeat rows nor
+	// skip any existing equal-timestamp rows when a new head appears.
+	seed("z", "2026-04-19T11:00:00Z")
+	got := ""
+	for {
+		rows, err := db.ListSessions(ListSessionsOptions{Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for _, row := range rows {
+			got += row.ID
+		}
+		last := rows[len(rows)-1]
+		cursor = SessionCursor(last.CreatedAt, last.ID)
+	}
+	if got != "cba" {
+		t.Fatalf("continuation = %q, want cba", got)
+	}
+	fresh, err := db.ListSessions(ListSessionsOptions{Limit: 1})
+	if err != nil || len(fresh) != 1 || fresh[0].ID != "z" {
+		t.Fatalf("fresh scan: %+v, %v", fresh, err)
+	}
+}
