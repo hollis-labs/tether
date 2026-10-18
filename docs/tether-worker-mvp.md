@@ -306,3 +306,45 @@ The smokes use disposable stores and real detached shim processes. S5 waits
 the existing 30-second offline delivery retry backoff. S6 checks MCP/service
 definitions and builds darwin/linux for amd64/arm64; it does not substitute
 for real Claude/MCP/reply acceptance on worker-1, agent-os and macbook-1.
+
+## Manual-agent activity relay
+
+The worker reads pulse v1 hook files from the same OS account as the agents.
+It checks each PID and process start time locally, then sends a complete
+`activity-v1` batch every five seconds over the existing authenticated worker
+WebSocket. Both peers must advertise the feature. Hooks keep writing local
+files; they need no network credentials. `tether-worker activity` prints the
+same observation once without connecting to the hub.
+
+The default source is `~/.local/state/tether-pulse/<short-hostname>/`.
+`TETHER_PULSE_DIR`, `XDG_STATE_HOME`, and `TETHER_PULSE_MACHINE` follow the hook
+path conventions. Outpost plugin environments are exact: put any override in
+the Tether plugin's environment as well as the hooks' environment.
+
+`GET /workers/activity` requires `read` scope on the remote listener and the
+`Tether-Protocol: 1` header. It relays the latest complete batch per connected
+worker, with machine identity assigned by the authenticated hub connection.
+Workers without a batch are reported explicitly. The observability collector
+owns merging these reports into its `/agents` response.
+
+The transported fields are provider/session identity, PID, state, activity
+and tool timestamps, tool name and completion, and confidence. Command targets,
+prompt text, paths and inferred task IDs stay in the local pulse files. Multiple
+provider sessions sharing a PID remain separate. A live shared process does not
+prove a particular thread is still open: hook observations older than five
+minutes become stale/unknown. Process verification uses `ps` on Linux and macOS;
+macOS deployment still needs a smoke test on an actual machine.
+
+This path samples the latest hook state. It does not recover intermediate hook
+transitions or provide a durable activity history. A reconnect resends current
+state. Scan errors retain the previous hub batch until it becomes stale; they
+do not send an empty success. Invalid activity frames do not interrupt managed
+session execution.
+
+Roll out the hub first, then each Outpost Tether plugin, then the collector.
+Preserve the previous binaries and plugin inventories for rollback. Verify a
+manual prompt/tool/stop on each machine through `tether-worker activity`,
+`/workers/activity`, the collector's `/agents`, and the authenticated consumer
+route. Restart Outpost through its supervisor with process-only termination so
+existing shim sessions survive. Rolling back either peer disables the feature
+through negotiation without changing managed-session protocol behavior.

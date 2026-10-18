@@ -80,6 +80,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/forums/", "/forums/posts/{id}/clone", map[string]string{"POST": operateScope}),
 	routeScope("GET /worker/v1/connect", "/worker/v1/connect", map[string]string{"GET": identity.ScopeWorker}),
 	routeScope("GET /workers", "/workers", map[string]string{"GET": readScope}),
+	routeScope("GET /workers/activity", "/workers/activity", map[string]string{"GET": readScope}),
 	routeScope("POST /workers/reap", "/workers/reap", map[string]string{"POST": adminScope}),
 	routeScope("POST /workers/grants", "/workers/grants", map[string]string{"POST": adminScope}),
 	routeScope("/health", "/health", map[string]string{"GET": publicScope, "HEAD": publicScope}),

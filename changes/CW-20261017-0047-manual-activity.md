@@ -1,0 +1,1 @@
+- Relay local manual-agent pulse observations through the authenticated worker channel, with source process verification and machine-scoped session identity; expose read-scoped `/workers/activity` and a `tether-worker activity` diagnostic command (CW-20261017-0047).

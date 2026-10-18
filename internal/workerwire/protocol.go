@@ -37,6 +37,7 @@ type Cursor struct {
 	FromSeq int64  `json:"from_seq"`
 }
 type Frame struct {
+	Activity  *Activity       `json:"activity,omitempty"`
 	Features  []string        `json:"features,omitempty"`
 	Bindings  []Binding       `json:"bindings,omitempty"`
 	Binding   *Binding        `json:"binding,omitempty"`

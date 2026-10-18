@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/tether/internal/outpostmail"
+	"github.com/hollis-labs/tether/internal/pulse"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
@@ -27,7 +28,7 @@ func NewRuntime(root, version string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Worker{Root: root, Config: cfg, Version: version}
+	w := &Worker{Root: root, Config: cfg, Version: version, Activity: pulse.New().Scan}
 	if cfg.Path != "" {
 		if err := os.Setenv("PATH", cfg.Path); err != nil {
 			return nil, err

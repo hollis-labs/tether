@@ -163,6 +163,7 @@ type Worker struct {
 	Inventory func() []workerwire.Session
 	Hosts     func() []workerwire.Host
 	Command   func(context.Context, workerwire.Frame) error
+	Activity  func(context.Context, time.Time) (*workerwire.Activity, error)
 	OnConnect func()
 	Bindings  func() []workerwire.Binding
 	pendingMu sync.Mutex
@@ -253,6 +254,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 func (w *Worker) connect(ctx context.Context, welcomed func()) error {
+	ctx, cancelActivity := context.WithCancel(ctx)
+	defer cancelActivity()
 	token, err := identity.ReadTokenFile(filepath.Join(w.Root, "device.token"))
 	if err != nil {
 		return err
@@ -304,7 +307,7 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 	if w.Bindings != nil {
 		bindings = w.Bindings()
 	}
-	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts}); err != nil {
+	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts}); err != nil {
 		return err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
@@ -335,6 +338,9 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 			w.mu.Lock()
 			w.ready = true
 			w.mu.Unlock()
+			if hasFeature(f.Features, workerwire.FeatureActivity) && w.Activity != nil {
+				go w.activityLoop(ctx)
+			}
 			w.Config.WorkerID = f.WorkerID
 			_ = SaveJSON(filepath.Join(w.Root, "config.json"), w.Config)
 			if w.OnConnect != nil {
