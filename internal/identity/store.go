@@ -367,16 +367,30 @@ func (s *Store) UnboundedSessions(ctx context.Context) ([]UnboundedSession, erro
 }
 
 // RevokeUnbounded revokes the credentials UnboundedSessions lists and returns
-// how many it revoked. It is the explicit step behind switching to enforce.
+// how many it revoked. It is the explicit step behind switching to enforce, and
+// it is all or nothing: the list is revoked in one transaction, so an error
+// leaves every credential as it was and the count is never partial.
 func (s *Store) RevokeUnbounded(ctx context.Context) (int, error) {
 	list, err := s.UnboundedSessions(ctx)
 	if err != nil {
 		return 0, err
 	}
+	if len(list) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("revoke unbounded session credentials: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	at := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, u := range list {
-		if err = s.RevokeSession(ctx, u.SessionID); err != nil {
-			return 0, err
+		if _, err = tx.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE kind = 'session' AND session_id = ?`, at, u.SessionID); err != nil {
+			return 0, fmt.Errorf("revoke unbounded session credential %s (nothing was revoked): %w", u.SessionID, err)
 		}
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, fmt.Errorf("revoke unbounded session credentials (nothing was revoked): %w", err)
 	}
 	return len(list), nil
 }

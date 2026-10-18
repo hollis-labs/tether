@@ -144,13 +144,14 @@ func identityModeCmd() *cobra.Command {
 
 func identityFlipCmd() *cobra.Command {
 	var point, to, by, evidence string
-	var global bool
+	var global, revokeAnonymous bool
 	cmd := &cobra.Command{
-		Use:   "flip (--point NAME | --global) --to MODE --evidence TEXT",
+		Use:   "flip (--point NAME | --global) --to MODE --evidence TEXT [--revoke-anonymous]",
 		Short: "Set the identity mode of one enforcement point or globally, with an audit record",
 		Long: "Edits identity.mode (--global) or identity.points.NAME in global.yaml and appends a hash-chained record to run/identity-flips.jsonl.\n" +
 			"Points: " + strings.Join(config.IdentityPoints, ", ") + ". Restart the daemon to apply. --evidence is required (task ids, owner GO reference, review output path).\n" +
-			"--by is an unauthenticated label. Refuses inside a Tether-launched session.",
+			"--by is an unauthenticated label. Refuses inside a Tether-launched session.\n" +
+			"Switching anything to enforce is refused while live session credentials exist that were launched with no bounding authority (see `tether identity unbounded`); --revoke-anonymous revokes exactly that list first.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := refuseInsideSession(); err != nil {
@@ -169,7 +170,7 @@ func identityFlipCmd() *cobra.Command {
 			if mode == "" || mode.Validate() != nil {
 				return fmt.Errorf("invalid --to %q (want off, observe or enforce)", to)
 			}
-			rec, err := applyModeChange(config.Expand(catalogPath), "flip", point, string(mode), by, evidence)
+			rec, err := flipMode(cmd.Context(), cmd.OutOrStdout(), config.Expand(catalogPath), point, mode, by, evidence, revokeAnonymous)
 			if err != nil {
 				return err
 			}
@@ -181,15 +182,45 @@ func identityFlipCmd() *cobra.Command {
 	cmd.Flags().StringVar(&to, "to", "", "off, observe or enforce")
 	cmd.Flags().StringVar(&by, "by", "", "label recorded as who flipped (default: OS user; not authenticated)")
 	cmd.Flags().StringVar(&evidence, "evidence", "", "review evidence and GO reference (required)")
+	cmd.Flags().BoolVar(&revokeAnonymous, "revoke-anonymous", false, "when switching to enforce, revoke the live session credentials launched with no bounding authority instead of refusing (it re-queries at that moment, so it can also hit one created after the list was printed)")
 	_ = cmd.MarkFlagRequired("to")
 	return cmd
 }
 
+// flipMode is the flip verb's body: a switch to enforce first passes the
+// unbounded-credential guard, and a revocation it performs is recorded in the
+// flip's evidence.
+func flipMode(ctx context.Context, w io.Writer, catalogRoot, point string, mode identity.Mode, by, evidence string, revokeAnonymous bool) (*flipRecord, error) {
+	if mode == identity.Enforce {
+		n, err := enforceGuard(ctx, w, catalogRoot, revokeAnonymous)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			evidence = fmt.Sprintf("%s (revoked %d unbounded session credentials)", evidence, n)
+		}
+	}
+	if afterGuardForTest != nil {
+		afterGuardForTest()
+	}
+	rec, err := applyModeChange(catalogRoot, "flip", point, string(mode), by, evidence)
+	if err != nil {
+		return nil, err
+	}
+	if mode == identity.Enforce {
+		// A launch can land between the guard's scan and the flip: sweep once more.
+		if err := sweepStragglers(ctx, w, catalogRoot, point, by); err != nil {
+			return rec, err
+		}
+	}
+	return rec, nil
+}
+
 func identityRollbackCmd() *cobra.Command {
 	var point, by, evidence string
-	var toObserve bool
+	var toObserve, revokeAnonymous bool
 	cmd := &cobra.Command{
-		Use:   "rollback [--point NAME] [--observe]",
+		Use:   "rollback [--point NAME] [--observe] [--revoke-anonymous]",
 		Short: "Undo flips: restore each target to its recorded prior state (value and whether an override existed)",
 		Long: "Replays the verified flip log and undoes, newest first, every flip not yet rolled back (all targets, or --point only), restoring the prior value and removing overrides that did not exist. Targets with nothing pending are untouched.\n" +
 			"--observe is the break-glass form: it sets the target (or the global mode and every point) to an explicit observe regardless of history, which also weakens points that were enforcing before the flip log began.\n" +
@@ -221,7 +252,17 @@ func identityRollbackCmd() *cobra.Command {
 				case toObserve:
 					rec, err = applyModeChange(root, "reset", t, string(identity.Observe), by, evidence)
 				case len(pending[t]) > 0:
-					rec, err = applyModeChange(root, "rollback", t, pending[t][len(pending[t])-1].Prior, by, evidence)
+					prior := pending[t][len(pending[t])-1].Prior
+					if prior == string(identity.Enforce) {
+						// Restoring enforce is a switch to enforce like any other.
+						if _, err = enforceGuard(cmd.Context(), cmd.OutOrStdout(), root, revokeAnonymous); err != nil {
+							return err
+						}
+					}
+					rec, err = applyModeChange(root, "rollback", t, prior, by, evidence)
+					if err == nil && prior == string(identity.Enforce) {
+						err = sweepStragglers(cmd.Context(), cmd.OutOrStdout(), root, t, by)
+					}
 				}
 				if err != nil {
 					return err
@@ -245,6 +286,7 @@ func identityRollbackCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&toObserve, "observe", false, "break-glass: set to an explicit observe regardless of history")
 	cmd.Flags().StringVar(&by, "by", "", "label recorded as who rolled back (not authenticated)")
 	cmd.Flags().StringVar(&evidence, "evidence", "", "reason for the rollback")
+	cmd.Flags().BoolVar(&revokeAnonymous, "revoke-anonymous", false, "when a rollback restores enforce, revoke the live unbounded session credentials instead of refusing (re-queried at that moment)")
 	return cmd
 }
 
