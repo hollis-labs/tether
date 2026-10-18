@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -234,5 +235,60 @@ func TestNoGlobalYamlFallsBackToTheStartMode(t *testing.T) {
 	r.svc.Catalog.Global.Identity.Mode = "enforce"
 	if _, err := r.launchAs(context.Background(), "enforce-start", ""); !errors.Is(err, ErrLaunchRefused) {
 		t.Fatalf("enforce at start was loosened by a missing global.yaml: %v", err)
+	}
+}
+
+// The point of recording a team's launch grant: under GLOBAL enforce a recovery
+// launch that carries the recorded grant succeeds and is attributed to it, while
+// one with no grant and no origin is refused with a logged reason.
+func TestRecoveryLaunchUnderGlobalEnforceNeedsARecordedGrant(t *testing.T) {
+	r := newEnforceRig(t, "identity:\n  mode: enforce\n")
+	one := "message.write"
+	grant := &LaunchGrant{Principal: identity.OperatorID, Scopes: []string{one}}
+	spec, err := r.launchAs(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, Grant: grant}), "recovered", "")
+	if err != nil {
+		t.Fatalf("recovery launch with a recorded grant under global enforce: %v", err)
+	}
+	if !slices.Equal(spec.MCPScopes, []string{one}) || !slices.Equal(r.storedScopes("recovered"), []string{one}) {
+		t.Fatalf("scopes %v / %v, want only %q", spec.MCPScopes, r.storedScopes("recovered"), one)
+	}
+	if got := r.attributionOf("recovered"); got != "origin" {
+		t.Fatalf("attribution %q, want origin", got)
+	}
+	if got := r.auditEvents("recovered"); len(got) != 0 {
+		t.Fatalf("a bounded recovery launch was audited as unbounded: %v", got)
+	}
+	// A wildcard grant (the operator formed the team) keeps the profile's scopes.
+	wild := &LaunchGrant{Principal: identity.OperatorID, Scopes: []string{"*"}}
+	spec, err = r.launchAs(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, Grant: wild}), "recovered-wild", "")
+	if err != nil || len(spec.MCPScopes) == 0 {
+		t.Fatalf("wildcard grant: %v %v", spec.MCPScopes, err)
+	}
+	// No grant, no origin session, no caller: refused.
+	_, err = r.launchAs(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam}), "no-grant", "")
+	if !errors.Is(err, ErrLaunchRefused) || r.credentials("no-grant") != 0 {
+		t.Fatalf("recovery launch without any grant under global enforce: %v", err)
+	}
+}
+
+func TestLaunchGrantBoundsLikeAnOriginSessionAndComposesWithIt(t *testing.T) {
+	svc, ids := ceilingService(t)
+	mintSessionWithScopes(t, svc, ids, "parent", false, "a", "b", "c")
+	granted := []string{"a", "b", "c", "d"}
+	for name, tc := range map[string]struct {
+		o    InternalLaunch
+		want []string
+	}{
+		"grant only":                 {InternalLaunch{Kind: OriginTeam, Grant: &LaunchGrant{Scopes: []string{"b", "d"}}}, []string{"b", "d"}},
+		"wildcard grant":             {InternalLaunch{Kind: OriginTeam, Grant: &LaunchGrant{Scopes: []string{"*"}}}, granted},
+		"empty grant bounds to none": {InternalLaunch{Kind: OriginTeam, Grant: &LaunchGrant{Scopes: nil}}, nil},
+		"grant and parent compose":   {InternalLaunch{Kind: OriginTeam, OriginSessionID: "parent", Grant: &LaunchGrant{Scopes: []string{"b", "c", "d"}}}, []string{"b", "c"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, attribution, err := svc.launchCeiling(withLaunchOrigin(context.Background(), tc.o), granted)
+			if err != nil || !slices.Equal(got, tc.want) || attribution != AttributionOrigin {
+				t.Fatalf("got %v / %s / %v, want %v / origin", got, attribution, err, tc.want)
+			}
+		})
 	}
 }

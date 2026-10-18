@@ -413,3 +413,55 @@ func TestRevokeUnboundedIsAllOrNothing(t *testing.T) {
 		t.Fatalf("revoked %d (%v), want 3", n, err)
 	}
 }
+
+func TestPrincipalLiveFollowsRevocationAndExpiryAcrossRotation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ids, db := identityStore(t)
+	ctx := context.Background()
+	live := func(id string) bool {
+		t.Helper()
+		ok, err := ids.PrincipalLive(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if live("msg://user/local/nobody") {
+		t.Fatal("an unknown principal is live")
+	}
+	if _, err := ids.Mint(ctx, identity.Principal{ID: "msg://service/test/svc", Kind: "service", Scopes: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !live("msg://service/test/svc") {
+		t.Fatal("a freshly minted principal is not live")
+	}
+	// Another credential of the same id keeps it live when the first is revoked.
+	if _, err := ids.Mint(ctx, identity.Principal{ID: "msg://service/test/svc", Kind: "service", Scopes: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`UPDATE principals SET revoked_at=? WHERE principal_id='msg://service/test/svc' AND rowid=(SELECT MIN(rowid) FROM principals WHERE principal_id='msg://service/test/svc')`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if !live("msg://service/test/svc") {
+		t.Fatal("rotation ended the principal")
+	}
+	if err := ids.Revoke(ctx, "msg://service/test/svc"); err != nil {
+		t.Fatal(err)
+	}
+	if live("msg://service/test/svc") {
+		t.Fatal("a revoked principal is live")
+	}
+	future := time.Now().Add(time.Hour)
+	if _, err := ids.Mint(ctx, identity.Principal{ID: "msg://service/test/exp", Kind: "service", ExpiresAt: &future}); err != nil {
+		t.Fatal(err)
+	}
+	if !live("msg://service/test/exp") {
+		t.Fatal("an unexpired principal is not live")
+	}
+	if _, err := db.DB().Exec(`UPDATE principals SET expires_at=? WHERE principal_id='msg://service/test/exp'`, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if live("msg://service/test/exp") {
+		t.Fatal("an expired principal is live")
+	}
+}
