@@ -552,6 +552,7 @@ func (s *Server) handler(remote bool) http.Handler {
 	if s.Workers != nil {
 		router.HandleFunc("GET /worker/v1/connect", s.Workers.Connect)
 		router.HandleFunc("GET /workers", s.Workers.ListHTTP)
+		router.HandleFunc("GET /workers/activity", s.Workers.ActivityHTTP)
 		router.HandleFunc("POST /workers/grants", s.Workers.GrantsHTTP)
 		router.HandleFunc("POST /workers/reap", s.Workers.ReapHTTP)
 	}

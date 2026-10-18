@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -41,15 +42,17 @@ type Record struct {
 	Orphaned int `json:"orphaned_hosts"`
 }
 type connection struct {
-	features  []string
-	ws        *websocket.Conn
-	write     sync.Mutex
-	pendingMu sync.Mutex
-	pending   map[string]chan workerwire.Frame
-	inventory map[string]workerwire.Session
-	hosts     []workerwire.Host
-	replaying map[string]bool
-	done      chan struct{}
+	activity         *workerwire.Activity
+	activityReceived time.Time
+	features         []string
+	ws               *websocket.Conn
+	write            sync.Mutex
+	pendingMu        sync.Mutex
+	pending          map[string]chan workerwire.Frame
+	inventory        map[string]workerwire.Session
+	hosts            []workerwire.Host
+	replaying        map[string]bool
+	done             chan struct{}
 }
 
 func (c *connection) send(f workerwire.Frame) error {
@@ -205,6 +208,9 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	if feature(hello.Features, "bind") && feature(hello.Features, "deliver") {
 		welcome.Features = []string{"bind", "deliver"}
 	}
+	if feature(hello.Features, workerwire.FeatureActivity) {
+		welcome.Features = append(welcome.Features, workerwire.FeatureActivity)
+	}
 	for _, b := range hello.Bindings {
 		bound, err := h.bind(r.Context(), id, c, b)
 		if err != nil {
@@ -264,6 +270,14 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 			}
 			if c.send(response) != nil {
 				return
+			}
+			continue
+		}
+		if f.T == "activity" {
+			if feature(c.features, workerwire.FeatureActivity) {
+				if err := h.receiveActivity(id, c, f.Activity, time.Now()); err != nil {
+					log.Printf("worker activity rejected: %v", err)
+				}
 			}
 			continue
 		}
