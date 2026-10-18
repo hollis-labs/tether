@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,7 +31,26 @@ type Scanner struct {
 	Starts     func(context.Context) (map[int]string, error)
 }
 
-func New() *Scanner {
+// labelPattern is what a worker label must look like to be used as a directory name.
+var labelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// machineName is the directory the hooks write under: TETHER_PULSE_MACHINE, else the
+// worker's own label (the name the hub reports, and the one the hooks read from the same
+// worker config), else the short hostname. Without the label step, a Codex or Agy session
+// started where the variable is not exported writes under the hostname, which this worker
+// never scans, so its activity never reaches the hub.
+func machineName(env, label, host string) string {
+	if env != "" {
+		return env
+	}
+	if labelPattern.MatchString(label) {
+		return label
+	}
+	return strings.SplitN(host, ".", 2)[0]
+}
+
+// New scans the pulse directory of the machine the worker calls label ("" if unknown).
+func New(label string) *Scanner {
 	home, _ := os.UserHomeDir()
 	root := os.Getenv("TETHER_PULSE_DIR")
 	if root == "" {
@@ -40,12 +60,8 @@ func New() *Scanner {
 		}
 		root = filepath.Join(base, "tether-pulse")
 	}
-	machine := os.Getenv("TETHER_PULSE_MACHINE")
-	if machine == "" {
-		machine, _ = os.Hostname()
-		machine = strings.SplitN(machine, ".", 2)[0]
-	}
-	return &Scanner{Directory: filepath.Join(root, machine), Starts: processStarts}
+	host, _ := os.Hostname()
+	return &Scanner{Directory: filepath.Join(root, machineName(os.Getenv("TETHER_PULSE_MACHINE"), label, host)), Starts: processStarts}
 }
 
 type action struct {

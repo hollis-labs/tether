@@ -20,7 +20,7 @@ func main() {
 	root := filepath.Join(home, ".tether-worker")
 	cmd := &cobra.Command{Use: "tether-worker", Short: "Thin execution outpost for the Tether hub"}
 	cmd.PersistentFlags().StringVar(&root, "root", root, "worker state root")
-	cmd.AddCommand(mailCommand(&root), activityCommand())
+	cmd.AddCommand(mailCommand(&root), activityCommand(&root))
 	var providerConfig string
 	providerCmd := &cobra.Command{Use: "provider-process", Hidden: true, RunE: func(c *cobra.Command, _ []string) error {
 		return workerruntime.RunProviderProcess(c.Context(), providerConfig, os.Stdin, os.Stdout, os.Stderr)
