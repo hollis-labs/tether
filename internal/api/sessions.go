@@ -454,8 +454,8 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id 
 }
 
 // handleListSessions services GET /sessions. Supports three query
-// params: ?limit= (1..1000, default 100), ?cursor= (RFC3339, returns
-// rows strictly older than this timestamp), ?state= (filters to a
+// params: ?limit= (1..1000, default 100), ?cursor= (opaque created_at+id
+// continuation token; legacy RFC3339 timestamps supported), ?state= (filters to a
 // single session state). Malformed params yield 400 so callers know
 // to fix them rather than silently paging the full set.
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -482,17 +482,19 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, sessionResponseFor(r, dto))
 	}
 
-	// When we hit the requested page size, more rows may exist older
-	// than the last returned row's created_at — hand that back as the
-	// next cursor. When we returned fewer than the limit, we know we
-	// reached the end and emit no cursor.
+	// When the page fills, continue after its final (created_at, id) pair.
+	// A shorter page has reached the end, so emit no cursor.
 	resp := ListSessionsResponse{Sessions: out}
 	effectiveLimit := opts.Limit
 	if effectiveLimit <= 0 {
 		effectiveLimit = 100
 	}
+	if effectiveLimit > 1000 {
+		effectiveLimit = 1000
+	}
 	if len(rows) == effectiveLimit && len(rows) > 0 {
-		resp.NextCursor = rows[len(rows)-1].CreatedAt
+		last := rows[len(rows)-1]
+		resp.NextCursor = store.SessionCursor(last.CreatedAt, last.ID)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -515,6 +517,11 @@ func parseListSessionsOpts(r *http.Request) (store.ListSessionsOptions, error) {
 			return opts, errors.New("invalid limit: must be >= 0")
 		}
 		opts.Limit = n
+	}
+	if opts.Cursor != "" {
+		if _, _, err := store.ParseSessionCursor(opts.Cursor); err != nil {
+			return opts, err
+		}
 	}
 	return opts, nil
 }

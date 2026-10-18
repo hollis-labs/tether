@@ -819,7 +819,7 @@ List sessions with optional filters.
 | Query param | Type       | Description                                                   |
 |-------------|------------|---------------------------------------------------------------|
 | `limit`     | int 1–1000 | default 100                                                   |
-| `cursor`    | RFC3339    | return rows strictly older than this created_at               |
+| `cursor`    | string     | opaque continuation token; legacy RFC3339 timestamps also accepted |
 | `state`     | string     | exact-match state filter                                      |
 
 Response (200):
@@ -841,12 +841,23 @@ Response (200):
       "attached_clients": 0
     }
   ],
-  "next_cursor": "2026-04-19T08:14:10Z"
+  "next_cursor": "v1.WyIyMDI2LTA0LTE5VDA4OjE0OjEwWiIsInMxIl0"
 }
 ```
 
 `next_cursor` is only emitted when the page filled the requested limit; pass
-it back as `?cursor=` to continue.
+it back unchanged as `?cursor=` to continue with the same filters. Sessions are
+ordered by `created_at DESC, id DESC`; the token includes both values so equal
+timestamps cannot skip existing rows. An exactly full final page may require
+one empty request to establish exhaustion. Limits above 1000 are clamped.
+
+Pagination is a live scan, not a snapshot. Concurrent inserts ahead of the cursor
+are visible on a fresh scan; inserts behind it may appear on later pages.
+Deletions and state/filter changes may affect membership during the scan.
+Exhaustion therefore does not prove an authoritative inventory at one instant;
+clients must not infer deletion merely from absence. Legacy timestamp cursors
+retain strict `created_at < cursor` semantics and cannot recover timestamp ties.
+Malformed cursors return 400 `invalid_request`.
 
 ### `GET /sessions/{id}`
 
