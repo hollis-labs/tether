@@ -19,6 +19,9 @@ const MaxHookPayload = 1 << 20
 // agent_hook_spool_location_and_trust_2026_10_16: ~200 ms).
 const HookWriteBudget = 200 * time.Millisecond
 
+// hookStopGrace is how long a hook that ran out of budget waits for its writer to notice and stop.
+const hookStopGrace = 25 * time.Millisecond
+
 // RecordClaudeHook returns "" on success or when there is nothing to do, else a short error class (no paths, no content).
 func RecordClaudeHook(ctx context.Context, in io.Reader, session, spool string) string {
 	if session == "" || spool == "" {
@@ -38,7 +41,16 @@ func RecordClaudeHook(ctx context.Context, in io.Reader, session, spool string) 
 	select {
 	case class = <-done:
 	case <-ctx.Done():
-		class = "timeout" // the process exits right after; an append still in flight is abandoned
+		class = "timeout"
+		// A writer waiting on the lock polls ctx, so it returns within a few ms; wait briefly so it is not left running
+		// (and then writing) after this returns. One stuck in a syscall is abandoned: the process exits right after.
+		select {
+		case c := <-done:
+			if c == "" {
+				class = "" // it finished at the deadline, so the event was recorded
+			}
+		case <-time.After(hookStopGrace):
+		}
 	}
 	if class == "timeout" || class == "record_failed" {
 		// The event is dropped; count it where the relay and an operator can see it (lock-free, best effort).
