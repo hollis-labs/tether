@@ -1,0 +1,1 @@
+- CW-20261016-0136: Prepare the dormant stored-ID environment projection with full producer metadata, independent log cursors, and explicit retryable gaps while legacy IDs are backfilled; activation remains gated on the coordinated two-release rollout.
