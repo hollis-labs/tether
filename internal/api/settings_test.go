@@ -3,7 +3,6 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,23 +10,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/settings"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 func newSettingsServer(t *testing.T) (*settings.Service, http.Handler) {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open in-memory db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 
 	st := settings.NewStorage(db)
 	svc := settings.NewService(st)

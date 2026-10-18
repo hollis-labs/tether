@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
 
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -76,14 +77,7 @@ func doJSON(t *testing.T, srv *httptest.Server, method, path, principal string, 
 
 func groupFixture(t *testing.T, mode identity.Mode) (srv *httptest.Server, audit *auditLog, svc *registry.Service) {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatal(err)
-	}
+	db := migrateddb.Open(t)
 	svc = registry.NewService(registry.NewStorage(db))
 	audit = &auditLog{}
 	srv = principalServer(t, NewHandler(Deps{Registry: svc, Groups: svc, IdentityMode: mode, IdentityAudit: audit.record}))

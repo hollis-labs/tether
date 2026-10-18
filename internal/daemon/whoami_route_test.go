@@ -14,7 +14,6 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -22,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
@@ -41,14 +42,7 @@ func (stubCatalogLoader) Load() (*config.Catalog, error) { return &config.Catalo
 
 func newWhoamiRouteTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	svc := registry.NewService(registry.NewStorage(db))
 
 	st, err := store.Open(t.TempDir() + "/whoami-route.db")

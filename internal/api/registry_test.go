@@ -26,7 +26,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -38,8 +37,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 // newRegistryHandler stands up a real Service+Storage on an in-memory
@@ -47,14 +47,7 @@ import (
 // register Sync resolvers (file://) when needed.
 func newRegistryHandler(t *testing.T, opts ...registry.ServiceOption) (http.Handler, *registry.Service) {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage, opts...)
 	return NewHandler(Deps{Registry: svc}), svc

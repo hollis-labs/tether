@@ -28,18 +28,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 // newStorage builds an in-memory SQLite with the registry migration applied
 // and returns the storage wrapper. Reuses openInMemory from schema_test.go.
 func newStorage(t *testing.T) *registry.Storage {
 	t.Helper()
-	db := openInMemory(t)
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := migrateddb.Open(t)
 	return registry.NewStorage(db)
 }
 

@@ -24,7 +24,6 @@ package registry_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -33,8 +32,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
+
 	"github.com/hollis-labs/tether/internal/registry"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 // newService wraps newStorage so service-level tests get a real Service
@@ -52,16 +52,8 @@ func newService(t *testing.T) *registry.Service {
 // serialization property under test.
 func newServiceForConcurrency(t *testing.T) *registry.Service {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return registry.NewService(registry.NewStorage(db))
+	// store.Open pins MaxOpenConns to 1, the same invariant, on a file database.
+	return registry.NewService(registry.NewStorage(migrateddb.Open(t)))
 }
 
 // ─── Register ────────────────────────────────────────────────────────────────
