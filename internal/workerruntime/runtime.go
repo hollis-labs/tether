@@ -28,7 +28,7 @@ func NewRuntime(root, version string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Worker{Root: root, Config: cfg, Version: version, Activity: pulse.New().Scan}
+	w := &Worker{Root: root, Config: cfg, Version: version, Activity: pulse.New(cfg.Label).Scan}
 	if cfg.Path != "" {
 		if err := os.Setenv("PATH", cfg.Path); err != nil {
 			return nil, err
