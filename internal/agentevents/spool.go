@@ -65,7 +65,7 @@ func (s *Spool) limits() (session, total int64, age time.Duration) {
 }
 
 // Append stores ev in its session's file and returns it with Sequence assigned when it was zero.
-func (s *Spool) Append(_ context.Context, ev runtimeevents.Event) (runtimeevents.Event, error) {
+func (s *Spool) Append(ctx context.Context, ev runtimeevents.Event) (runtimeevents.Event, error) {
 	if s == nil || s.Dir == "" {
 		return ev, errors.New("agentevents: spool has no directory")
 	}
@@ -81,7 +81,7 @@ func (s *Spool) Append(_ context.Context, ev runtimeevents.Event) (runtimeevents
 		// A new session file: bound the directory once it exists, after this append has released its lock.
 		defer func() { _, _ = s.pruneToLimits(time.Now(), ev.SessionID) }()
 	}
-	f, unlock, err := openLocked(path)
+	f, unlock, err := openLockedCtx(ctx, path)
 	if err != nil {
 		return ev, err
 	}
@@ -355,12 +355,17 @@ func (s *Spool) removeSession(session string) (bool, error) {
 // lock (it try-locks, finds the file free, removes it); a writer that then got the lock would be appending to an unlinked
 // inode and its event would vanish. So after the lock the open file must still be the one the path names, else it reopens.
 func openLocked(path string) (*os.File, func(), error) {
+	return openLockedCtx(context.Background(), path)
+}
+
+// openLockedCtx is openLocked that stops waiting for the lock when ctx ends.
+func openLockedCtx(ctx context.Context, path string) (*os.File, func(), error) {
 	for attempt := 0; attempt < 5; attempt++ {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: name checked by the caller, dir is ours
 		if err != nil {
 			return nil, nil, fmt.Errorf("agentevents: open spool: %w", err)
 		}
-		unlock, err := lockFile(f)
+		unlock, err := lockFileCtx(ctx, f)
 		if err != nil {
 			_ = f.Close()
 			return nil, nil, fmt.Errorf("agentevents: lock spool: %w", err)

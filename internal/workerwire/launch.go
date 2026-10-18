@@ -33,6 +33,10 @@ const FeatureWorkerResume = "worker-resume"
 // unrestricted.
 const FeatureEditableAgents = "editable-agents"
 
+// FeatureAgentEvents is advertised by a worker that plants Claude lifecycle hooks (`tether-worker hook claude`) when
+// LaunchSpec.AgentEvents is set (CW-20261014-0143). The hub sets the flag only for workers that advertise it.
+const FeatureAgentEvents = "agent-events"
+
 // FeatureAgentToken is advertised in a worker's hello when it can request
 // short-lived scoped agent tokens from the hub's issuer, keep them in
 // per-session 0600 token files and refresh them in place. The hub sends
@@ -91,6 +95,9 @@ type LaunchSpec struct {
 	// enforces that allowlist itself. A worker plants the /mcp relay only when it is set; a hub that predates it
 	// never sets it, and the worker then needs the degraded ssh fallback.
 	MCPPolicy bool `json:"mcp_policy,omitempty"`
+	// AgentEvents asks the worker to plant Claude lifecycle hooks that record content-free activity events to the
+	// session's local spool (CW-20261014-0143). Default off; only sent to workers that advertise FeatureAgentEvents.
+	AgentEvents bool `json:"agent_events,omitempty"`
 	// ResumeSessionID is the provider's own conversation id to continue (claude --resume). Set only for a
 	// hub-approved resume on the same worker that ran the source session.
 	ResumeSessionID string `json:"resume_session_id,omitempty"`
