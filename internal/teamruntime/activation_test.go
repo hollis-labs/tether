@@ -8,7 +8,9 @@ import (
 
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/teamactivation"
+	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/teamspolicy"
 )
 
@@ -52,5 +54,39 @@ func TestActivationBaselinePersistsAndChangedLaunchIsNotAttested(t *testing.T) {
 	check(t, err)
 	if len(receipt.payload) == 0 {
 		t.Fatal("missing admission receipt")
+	}
+}
+
+func TestActivationHistoricalSessionSurvivesMissingCurrentLaunch(t *testing.T) {
+	root := t.TempDir()
+	db, storage, reg := dbFixture(t, filepath.Join(root, "state.db"))
+	policy, err := teamspolicy.Parse([]byte("version: 1\nlaunches:\n- launch: worker-launch\n  runtime: cli\n  definition: {id: worker, revision: r1, digest: verified-digest}\n"))
+	check(t, err)
+	cat := &config.Catalog{Projects: map[string]config.Project{"p": {ID: "p", RepoRoot: t.TempDir()}}, Agents: map[string]config.Agent{"a": {ID: "a"}}, Providers: map[string]config.Provider{"cli": {ID: "cli", Type: "cli", Command: "echo"}}, Launches: map[string]config.Launch{"worker-launch": {ID: "worker-launch", Agent: "a", Project: "p", Provider: "cli"}}}
+	svc := &app.Service{Catalog: cat, Store: db}
+	e := enroller(t, db, storage, reg)
+	e.InspectLaunch = svc.InspectTeamLaunch
+	inspector := &ActivationInspector{Policy: policy, Service: svc, Definitions: &verifiedDefinitions{}, Enroller: e}
+	inspector.CaptureLoaded(t.Context())
+	e.InspectLaunch = inspector.InspectAdmission
+	enrollment, err := e.Ensure(t.Context(), fresh("historical"))
+	check(t, err)
+	r := receipts{db.DB(), storage}
+	_, err = r.reserve(t.Context(), "session", "historical", teamhost.SessionRequest{Actor: enrollment.Actor})
+	check(t, err)
+	plan, err := svc.BuildLaunchPlan(app.CreateSessionInput{LaunchID: "worker-launch"})
+	check(t, err)
+	plan.TeamMember = true
+	evidence, err := svc.InspectTeamLaunch(t.Context(), "worker-launch")
+	check(t, err)
+	plan.ActivationEvidence = &evidence
+	check(t, db.CreateSession(store.SessionRow{ID: "historical-session", LaunchID: "worker-launch", State: "completed"}, plan))
+	check(t, r.complete(t.Context(), "session", "historical", "historical-session"))
+	check(t, db.RecordTeamEvidence(t.Context(), "launched", "historical-session", evidence))
+	delete(cat.Launches, "worker-launch")
+	out, err := inspector.Inspect(t.Context(), teamactivation.Query{SessionID: "historical-session"})
+	check(t, err)
+	if out.CurrentState != "current_unavailable" || out.Session == nil || out.Admitted == nil || out.Created == nil || out.Launched == nil || out.LoadedBaseline == nil || out.BaselineState != "recorded" {
+		t.Fatal("current catalog hid historical facts")
 	}
 }

@@ -6,6 +6,8 @@ package launchprofile
 // os.Environ() at start time so fresh parent-env state is captured per
 // launch and overrides are the only values persisted in the plan.
 type Plan struct {
+	CatalogModel  string `json:"catalog_model,omitempty"`
+	BootProfileID string `json:"boot_profile_id,omitempty"`
 	// ActivationEvidence is the value-free observation sealed with this exact plan.
 	ActivationEvidence *LaunchEvidence  `json:"activation_evidence,omitempty"`
 	Lifecycle          *LifecyclePolicy `json:"lifecycle,omitempty"`

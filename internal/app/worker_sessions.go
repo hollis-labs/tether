@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
@@ -153,6 +154,13 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err != nil {
 		return nil, err
 	}
+	var launchEvidence *launchprofile.LaunchEvidence
+	if p.TeamMember {
+		if evidence, evidenceErr := s.teamPlanEvidence(p, row.WorkerID, spec.Sandbox); evidenceErr == nil {
+			evidence.CatalogGeneration = 0
+			launchEvidence = &evidence
+		}
+	}
 	spec.Env = sessionCorrelation(*row).SealMap(spec.Env)
 	if len(p.EditableAgents) > 0 {
 		if s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureEditableAgents) {
@@ -231,7 +239,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err
 	}
-	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), row.ID, p, row.WorkerID, spec.Sandbox)
+	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), row.ID, launchEvidence)
 	if spec.Provider == "claude" && spec.Credential != "" && s.Workers.Supports(row.WorkerID, workerwire.FeatureExtractRefs) {
 		attribution := store.RefAttributionNone
 		if spec.ExtractRefs {

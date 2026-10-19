@@ -58,9 +58,9 @@ type Launch struct {
 	Source string `yaml:"source,omitempty"`
 }
 type Pin struct {
-	ID       string `yaml:"id"`
-	Revision string `yaml:"revision"`
-	Digest   string `yaml:"digest"`
+	ID       string `yaml:"id" json:"id"`
+	Revision string `yaml:"revision" json:"revision"`
+	Digest   string `yaml:"digest" json:"digest"`
 }
 
 func (p Pin) Ref() mesh.DefinitionRef {

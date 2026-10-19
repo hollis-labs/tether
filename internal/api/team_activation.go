@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/hollis-labs/tether/internal/catalogapply"
+	"github.com/hollis-labs/tether/internal/identity"
 	"io"
 	"net/http"
 	"net/url"
@@ -26,10 +27,10 @@ func (s *Server) registerTeamActivationRoute(mux *http.ServeMux) {
 			writeError(w, 405, CodeMethodNotAllowed, "method not allowed")
 			return
 		}
-		// Match the existing catalog planning authority; this evidence includes
-		// effective permission/placement facts, never a new admission grant.
-		if !catalogWriter(r) {
-			writeError(w, 403, CodeForbidden, "inspection needs catalog.write scope")
+		// General structural inspection uses the existing read scope. Sensitive
+		// digests additionally require the existing local operator check.
+		if p, ok := identity.FromContext(r.Context()); ok && (p.Kind == "session" || p.Kind == "agent" || p.TokenID != "") && !identity.ScopeGranted(p.Scopes, "tether.read") {
+			writeError(w, 403, CodeForbidden, "inspection needs tether.read scope")
 			return
 		}
 		values, err := url.ParseQuery(r.URL.RawQuery)
@@ -44,14 +45,17 @@ func (s *Server) registerTeamActivationRoute(mux *http.ServeMux) {
 			}
 		}
 		q := teamactivation.Query{LaunchID: values.Get("launch_id"), SessionID: values.Get("session_id")}
-		if q.LaunchID == "" {
-			writeError(w, 400, CodeInvalidRequest, "launch_id required")
+		if q.LaunchID == "" && q.SessionID == "" {
+			writeError(w, 400, CodeInvalidRequest, "launch_id or session_id required")
 			return
 		}
 		out, err := ops.InspectTeamActivation(r.Context(), q)
 		if err != nil {
 			writeError(w, 409, CodeConflict, "activation evidence unavailable")
 			return
+		}
+		if !catalogApprover(r) {
+			out = out.General()
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, 200, out)

@@ -28,6 +28,7 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/provider"
 	"github.com/hollis-labs/tether/internal/provider/acp"
@@ -369,6 +370,13 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 	}
 
+	var launchEvidence *launchprofile.LaunchEvidence
+	if plan.TeamMember {
+		if evidence, evidenceErr := s.teamPlanEvidence(plan, "", &profile); evidenceErr == nil {
+			launchEvidence = &evidence
+		}
+	}
+
 	// Record provider-side session IDs for crash-recovery flows. Normal
 	// launches must not feed the stored ID back as SessionIDPreset; that
 	// would turn every boot into an implicit `--resume`.
@@ -640,6 +648,11 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		s.releaseScratchBeforeEntry(scratch, scratchRuntime)
 	}()
 	startOpts.Profile = profile
+	if plan.TeamMember {
+		startOpts.SandboxOutcomeCallback = func(out agentsessions.SandboxOutcome) {
+			s.recordTeamSandboxOutcome(context.WithoutCancel(ctx), sessionID, out)
+		}
+	}
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
 	turnOutput := s.newSessionTurnOutput(*row, plan)
@@ -751,7 +764,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		return nil, s.retainShimStartFailure(sessionID, err)
 	}
-	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), sessionID, plan, "", &profile)
+	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), sessionID, launchEvidence)
 	launched = true
 	if scratch != nil {
 		go s.releaseScratchAfterCompletion(context.WithoutCancel(ctx), scratch)

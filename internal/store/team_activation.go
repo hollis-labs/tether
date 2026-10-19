@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/hollis-labs/tether/internal/launchprofile"
+	"time"
 )
 
 // RecordTeamEvidence keeps the first observation at a lifecycle boundary. Retries
 // and daemon restarts cannot silently replace the attested baseline.
 func (s *Store) RecordTeamEvidence(ctx context.Context, kind, key string, e launchprofile.LaunchEvidence) error {
+	e.RecordedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return err
