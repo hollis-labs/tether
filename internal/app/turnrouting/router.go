@@ -89,7 +89,14 @@ func (r *Router) Close() {
 func (r *Router) run(ctx context.Context, live <-chan events.Event, unsubscribe func()) {
 	defer close(r.done)
 	defer r.running.Store(false)
-	defer func() { unsubscribe() }()
+	defer func(subscription <-chan events.Event) {
+		unsubscribe()
+		// Cancellation only requests teardown. Join the owned subscriber's
+		// replay reads before Close permits the caller to close its storage.
+		// Capture the original channel: live may be set to nil below.
+		for range subscription {
+		}
+	}(live)
 	ticks := r.ticks
 	if ticks == nil {
 		ticker := time.NewTicker(time.Second)
