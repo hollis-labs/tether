@@ -96,7 +96,9 @@ type Service struct {
 	Bus            events.Bus
 	// EventStamp is the stamp stage installed on Bus.
 	EventStamp *eventstamp.Stage
-	Broker     *broker.Service
+	// EventPipeline exposes value-free shadow/enforcement counters.
+	EventPipeline *events.Pipeline
+	Broker        *broker.Service
 
 	// Federation is the authority-routing messaging Router, or nil when
 	// federation is disabled (the standalone default). When non-nil it
@@ -300,6 +302,11 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 	// The stamp stage fills scope, correlation and actor from verified context.
 	// Daemon construction already knows the frozen process environment.
 	// Compatibility/inspection constructors leave unknown dimensions empty.
+	pipeline, err := events.NewPipeline(events.StageMode(cat.Global.Daemon.EventStageMode))
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	stamp := eventstamp.New()
 	stamp.SetProcess(eventProcess)
 	// The row stage fills worker and the session-bound dimensions for events
@@ -308,7 +315,7 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 	// Session health transitions are derived from the events other code
 	// publishes (internal/sessionhealth); the tracker emits on the same bus.
 	health := sessionhealth.New()
-	bus := events.NewBus(events.BusOptions{Persister: db, Stages: []events.Stage{stamp, rows}, Observers: []events.Observer{health}})
+	bus := events.NewBus(events.BusOptions{Pipeline: pipeline, Persister: db, Stages: []events.Stage{stamp, rows}, Observers: []events.Observer{health}})
 	health.SetPublisher(bus)
 	// A transaction that wrote outbox event rows calls Store.EventsCommitted after
 	// its commit; that wakes the bus so the rows are published now, not at the
@@ -366,16 +373,17 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 			MaxLaunchesPerWindow: cat.Global.Catalog.Defaults.LineageMaxLaunchesPerWindow,
 			LaunchWindow:         lineageLaunchWindow(cat.Global.Catalog.Defaults.LineageLaunchWindow),
 		},
-		Workers:    workerhub.New(db.DB()),
-		Manager:    mgr,
-		stops:      stops,
-		Bus:        bus,
-		EventStamp: stamp,
-		Broker:     brk,
-		Federation: fedRouter,
-		Registry:   regSvc,
-		Settings:   setSvc,
-		factories:  factories,
+		Workers:       workerhub.New(db.DB()),
+		Manager:       mgr,
+		stops:         stops,
+		Bus:           bus,
+		EventStamp:    stamp,
+		EventPipeline: pipeline,
+		Broker:        brk,
+		Federation:    fedRouter,
+		Registry:      regSvc,
+		Settings:      setSvc,
+		factories:     factories,
 	}
 	// Runtime constructors must fail before installing callbacks if the shared
 	// event bus is missing. Catalog-only services intentionally omit it.

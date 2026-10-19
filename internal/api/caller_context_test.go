@@ -83,6 +83,7 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 		{"operator", identity.Principal{Verified: true, ID: "operator", Kind: "operator", SessionID: "own"}, "", ""},
 		{"service", identity.Principal{Verified: true, ID: "service", Kind: "service", SessionID: "own"}, "", ""},
 		{"missing session", identity.Principal{Verified: true, ID: "session:absent", Kind: "session", SessionID: "absent"}, "", ""},
+		{"unverified session claim", identity.Principal{ID: "session:own", Kind: "session", SessionID: "own"}, "", ""},
 		{"verified own session", identity.Principal{Verified: true, ID: "session:own", Kind: "session", SessionID: "own"}, "own", registry.LogicalAgentBindingTarget("worker")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,7 +93,7 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 			}
 			bindings := contextBindings{registry.RuntimeBinding{TargetURN: registry.LogicalAgentBindingTarget("worker"), SessionID: "own"}}
 			got := ResolveCallerContext(ctx, sessions, bindings)
-			if got.SessionID != tc.session || got.AgentURN != tc.agent || got.SessionResolved != (tc.session != "") || got.Verified != (tc.p.ID != "") {
+			if got.SessionID != tc.session || got.AgentURN != tc.agent || got.SessionResolved != (tc.session != "") || got.Verified != tc.p.Verified {
 				t.Fatalf("context = %+v", got)
 			}
 			if !got.SessionResolved && got.TaskID != "" {

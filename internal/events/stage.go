@@ -49,6 +49,13 @@ func (e *StageError) Unwrap() error { return e.Err }
 // stage is reported and skipped; its partial work on a copy is discarded so a
 // half-stamped envelope never persists.
 func (b *memBus) stamp(ctx context.Context, e Event, tx bool) Event {
+	if b.pipeline != nil {
+		return b.pipeline.apply(ctx, e, func(ctx context.Context, e Event) Event { return b.stampFields(ctx, e, tx) })
+	}
+	return b.stampFields(ctx, e, tx)
+}
+
+func (b *memBus) stampFields(ctx context.Context, e Event, tx bool) Event {
 	for i, s := range b.stages {
 		if tx {
 			if safe, ok := s.(TxSafe); !ok || !safe.TxSafe() {

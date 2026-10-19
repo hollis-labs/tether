@@ -241,6 +241,8 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 // DaemonConfig controls the long-lived tetherd process. See ADR 0002 for the
 // scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 type DaemonConfig struct {
+	// EventStageMode is selected at startup; empty means shadow.
+	EventStageMode string `yaml:"event_stage_mode,omitempty"`
 	// RemoteListener adds an enforce-only loopback TCP listener beside listen_addr.
 	RemoteListener RemoteListenerConfig `yaml:"remote_listener,omitempty"`
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
