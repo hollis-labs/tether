@@ -11,6 +11,7 @@ import (
 
 // WorkstreamListOptions selects one bounded live page. Cursor is bound to filters.
 type WorkstreamListOptions struct {
+	ProjectURN string
 	Status     string
 	WorkflowID string
 	Ref        string
@@ -20,6 +21,9 @@ type WorkstreamListOptions struct {
 
 func (c *Client) ListWorkstreamsPage(ctx context.Context, opts WorkstreamListOptions) (api.WorkstreamListResponse, error) {
 	q := url.Values{}
+	if opts.ProjectURN != "" {
+		q.Set("project_urn", opts.ProjectURN)
+	}
 	if opts.Status != "" {
 		q.Set("status", opts.Status)
 	}

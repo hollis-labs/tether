@@ -2932,6 +2932,37 @@ empty digest does and does not mean, is in
 | `GET` | `/sessions/{id}/digest` | Assembled digest for this session alone. |
 | `GET` | `/sessions/{id}/workstream-namespace` | Where the workstream's scratch belongs in Tesseract workspace. `?project=` (defaults to session's project_id), `?owner=`, `?tail=` (defaults to `scratch`). |
 
+Workstreams have an explicit `project_urns` array: a sorted unique set of
+canonical **registry project URNs**, such as `msg://agent/agent-mux/prj_abcdefghij`.
+This many-to-many association is descriptive, not ownership or authorization.
+It is distinct from session/launch-context `project_id` values and Torque IDs.
+Resolve external IDs through the existing registry lookup-by API before writing;
+Tether never guesses project identity from names, session membership, workspace
+paths, workflow text or lineage. Existing workstreams remain `project_urns: []`.
+
+Create and PATCH accept `project_urns`; an omitted PATCH field leaves it alone,
+`[]` clears it, and explicit `null` is rejected with 400. New links require an
+existing non-deprecated registry entry of kind `project`; malformed, unknown,
+agent or newly deprecated targets return 400. Existing deprecated links remain
+visible and can be retained or removed. Registry lookup failure rejects the
+write without changing the workstream or its links. Project-link replacement
+and ordinary workstream edits commit atomically.
+
+Session workstream `ensure` accepts project URNs as a **seed on create only**.
+If the session or its ancestry already resolves a workstream, ensure returns
+that container's existing associations unchanged; use PATCH to change them.
+This adds no project inheritance, parent relationship or namespace rule.
+`workflow_id`, including any free-form parent convention in its text, stays
+opaque and is never parsed or migrated.
+
+`GET /workstreams?project_urn=<URN>` filters exact project membership and may
+combine with status/workflow filters. It is exclusive with `ref`, and the
+project filter is bound into continuation cursors. CLI create/update/ensure
+accept repeatable `--project-urn`; update `--project-urn=` clears. CLI list uses
+one `--project-urn` filter. MCP write tools accept `project_urns` arrays and the
+list tool accepts `project_urn`. Client create/ensure helpers accept optional
+project URNs; PATCH and page options expose the same explicit fields.
+
 Workstream listings preserve the `workstreams` array and add `next_cursor`
 (only when more rows exist), `has_more`, `complete`, and the effective `limit`.
 The default limit is 100; zero selects the default, values above 1000 clamp to

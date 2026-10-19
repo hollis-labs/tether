@@ -26,8 +26,9 @@ var ErrWorkstreamNotFound = errors.New("workstream not found")
 
 // WorkstreamRow mirrors the workstreams table.
 type WorkstreamRow struct {
-	ID   string
-	Name string
+	ProjectURNs []string
+	ID          string
+	Name        string
 	// WorkflowID correlates this workstream with a workflow owned by some
 	// other system. Free-form and unresolved here by design (migration 0023).
 	WorkflowID string
@@ -53,13 +54,26 @@ func (s *Store) CreateWorkstream(w WorkstreamRow) (WorkstreamRow, error) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	w.CreatedAt, w.UpdatedAt = now, now
-	if _, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return WorkstreamRow{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(
 		`INSERT INTO workstreams (id, name, workflow_id, status, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		w.ID, nullIfEmpty(w.Name), nullIfEmpty(w.WorkflowID), w.Status, w.CreatedAt, w.UpdatedAt,
 	); err != nil {
 		return WorkstreamRow{}, fmt.Errorf("create workstream %q: %w", w.ID, err)
 	}
+	projects, err := replaceWorkstreamProjects(tx, w.ID, w.ProjectURNs)
+	if err != nil {
+		return WorkstreamRow{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WorkstreamRow{}, err
+	}
+	w.ProjectURNs = projects
 	return w, nil
 }
 
@@ -78,7 +92,11 @@ func (s *Store) GetWorkstream(id string) (*WorkstreamRow, error) {
 		return nil, fmt.Errorf("get workstream %q: %w", id, err)
 	}
 	w.Name, w.WorkflowID = name.String, workflowID.String
-	return &w, nil
+	items, err := s.loadWorkstreamProjects([]WorkstreamRow{w})
+	if err != nil {
+		return nil, err
+	}
+	return &items[0], nil
 }
 
 // ErrInvalidWorkstreamStatus is returned by UpdateWorkstream for a status
@@ -90,9 +108,10 @@ var ErrInvalidWorkstreamStatus = errors.New("invalid workstream status: want act
 // (stored as NULL) while omitting it leaves the value alone. Status cannot be
 // cleared: it is validated and must be "active" or "closed".
 type WorkstreamPatch struct {
-	Name       *string
-	WorkflowID *string
-	Status     *string
+	ProjectURNs *[]string
+	Name        *string
+	WorkflowID  *string
+	Status      *string
 }
 
 // UpdateWorkstream applies patch to the workstream id and returns the
@@ -116,7 +135,12 @@ func (s *Store) UpdateWorkstream(id string, patch WorkstreamPatch) (*WorkstreamR
 	if patch.Status != nil {
 		setStatus, statusVal = 1, *patch.Status
 	}
-	res, err := s.db.Exec(`UPDATE workstreams SET
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE workstreams SET
 		name = CASE WHEN ? = 1 THEN ? ELSE name END,
 		workflow_id = CASE WHEN ? = 1 THEN ? ELSE workflow_id END,
 		status = CASE WHEN ? = 1 THEN ? ELSE status END,
@@ -134,11 +158,20 @@ func (s *Store) UpdateWorkstream(id string, patch WorkstreamPatch) (*WorkstreamR
 	if n == 0 {
 		return nil, ErrWorkstreamNotFound
 	}
+	if patch.ProjectURNs != nil {
+		if _, err := replaceWorkstreamProjects(tx, id, *patch.ProjectURNs); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.GetWorkstream(id)
 }
 
 // ListWorkstreamsOptions selects a bounded page in descending created_at, id order.
 type ListWorkstreamsOptions struct {
+	ProjectURN string
 	Status     string
 	WorkflowID string
 	Ref        string
@@ -156,7 +189,7 @@ func (s *Store) ListWorkstreams(opts ListWorkstreamsOptions) ([]WorkstreamRow, e
 // lookup in digest.go so both listings decode the nullable columns the same
 // way -- name and workflow_id are NULL-when-unset, and a second hand-written
 // scan loop is where that detail drifts.
-func scanWorkstreams(rows *sql.Rows, what string) ([]WorkstreamRow, error) {
+func (s *Store) scanWorkstreams(rows *sql.Rows, what string) ([]WorkstreamRow, error) {
 	var out []WorkstreamRow
 	for rows.Next() {
 		var w WorkstreamRow
@@ -167,7 +200,13 @@ func scanWorkstreams(rows *sql.Rows, what string) ([]WorkstreamRow, error) {
 		w.Name, w.WorkflowID = name.String, workflowID.String
 		out = append(out, w)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return s.loadWorkstreamProjects(out)
 }
 
 // AssignSessionWorkstream stamps workstreamID onto sessionID. Passing an empty

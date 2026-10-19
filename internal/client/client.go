@@ -1584,10 +1584,10 @@ func (c *Client) postWorkstreamJSON(ctx context.Context, path string, body any, 
 }
 
 // CreateWorkstream creates a workstream via POST /workstreams.
-func (c *Client) CreateWorkstream(ctx context.Context, name, workflowID string) (api.WorkstreamDTO, error) {
+func (c *Client) CreateWorkstream(ctx context.Context, name, workflowID string, projectURNs ...string) (api.WorkstreamDTO, error) {
 	var out api.WorkstreamDTO
 	err := c.postWorkstreamJSON(ctx, "/workstreams",
-		api.WorkstreamCreateRequest{Name: name, WorkflowID: workflowID},
+		api.WorkstreamCreateRequest{Name: name, WorkflowID: workflowID, ProjectURNs: projectURNs},
 		&out, http.StatusCreated)
 	return out, err
 }
@@ -1644,10 +1644,10 @@ func (c *Client) AssignSessionWorkstream(ctx context.Context, sessionID, workstr
 
 // EnsureSessionWorkstream returns the session's workstream, creating one for
 // the lineage when it has none — the "obtain one in one call" path.
-func (c *Client) EnsureSessionWorkstream(ctx context.Context, sessionID, name, workflowID string) (api.WorkstreamDTO, error) {
+func (c *Client) EnsureSessionWorkstream(ctx context.Context, sessionID, name, workflowID string, projectURNs ...string) (api.WorkstreamDTO, error) {
 	var out api.WorkstreamDTO
 	err := c.postWorkstreamJSON(ctx, "/sessions/"+url.PathEscape(sessionID)+"/workstream",
-		api.SessionWorkstreamRequest{Ensure: true, Name: name, WorkflowID: workflowID},
+		api.SessionWorkstreamRequest{Ensure: true, Name: name, WorkflowID: workflowID, ProjectURNs: projectURNs},
 		&out, http.StatusOK)
 	return out, err
 }

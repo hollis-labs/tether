@@ -30,12 +30,13 @@ type WorkstreamStore interface {
 
 // WorkstreamDTO is the wire shape for a workstream.
 type WorkstreamDTO struct {
-	ID         string `json:"id"`
-	Name       string `json:"name,omitempty"`
-	WorkflowID string `json:"workflow_id,omitempty"`
-	Status     string `json:"status"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
+	ProjectURNs []string `json:"project_urns"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name,omitempty"`
+	WorkflowID  string   `json:"workflow_id,omitempty"`
+	Status      string   `json:"status"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
 }
 
 // WorkstreamListResponse is the collection response for GET /workstreams.
@@ -50,17 +51,19 @@ type WorkstreamListResponse struct {
 
 // WorkstreamCreateRequest is the JSON body for POST /workstreams.
 type WorkstreamCreateRequest struct {
-	Name       string `json:"name,omitempty"`
-	WorkflowID string `json:"workflow_id,omitempty"`
+	ProjectURNs []string `json:"project_urns,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	WorkflowID  string   `json:"workflow_id,omitempty"`
 }
 
 // WorkstreamUpdateRequest is the JSON body for PATCH /workstreams/{id}.
 // A nil (absent) field is left unchanged; a present empty string clears name
 // or workflow_id. Status must be "active" or "closed" when present.
 type WorkstreamUpdateRequest struct {
-	Name       *string `json:"name,omitempty"`
-	WorkflowID *string `json:"workflow_id,omitempty"`
-	Status     *string `json:"status,omitempty"`
+	ProjectURNs *[]string `json:"project_urns,omitempty"`
+	Name        *string   `json:"name,omitempty"`
+	WorkflowID  *string   `json:"workflow_id,omitempty"`
+	Status      *string   `json:"status,omitempty"`
 }
 
 // WorkstreamAssignRequest is the JSON body for
@@ -75,20 +78,23 @@ type WorkstreamAssignRequest struct {
 // POST /sessions/{id}/workstream. An empty WorkstreamID clears the
 // association; Ensure asks for one to be created when the lineage has none.
 type SessionWorkstreamRequest struct {
-	WorkstreamID string `json:"workstream_id,omitempty"`
-	Ensure       bool   `json:"ensure,omitempty"`
-	Name         string `json:"name,omitempty"`
-	WorkflowID   string `json:"workflow_id,omitempty"`
+	ProjectURNs  []string `json:"project_urns,omitempty"`
+	WorkstreamID string   `json:"workstream_id,omitempty"`
+	Ensure       bool     `json:"ensure,omitempty"`
+	Name         string   `json:"name,omitempty"`
+	WorkflowID   string   `json:"workflow_id,omitempty"`
 }
 
 func workstreamToDTO(w store.WorkstreamRow) WorkstreamDTO {
+	projects := append([]string{}, w.ProjectURNs...)
 	return WorkstreamDTO{
-		ID:         w.ID,
-		Name:       w.Name,
-		WorkflowID: w.WorkflowID,
-		Status:     w.Status,
-		CreatedAt:  w.CreatedAt,
-		UpdatedAt:  w.UpdatedAt,
+		ProjectURNs: projects,
+		ID:          w.ID,
+		Name:        w.Name,
+		WorkflowID:  w.WorkflowID,
+		Status:      w.Status,
+		CreatedAt:   w.CreatedAt,
+		UpdatedAt:   w.UpdatedAt,
 	}
 }
 
@@ -125,11 +131,16 @@ func (s *Server) handleCreateWorkstream(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	created, err := s.Workstreams.CreateWorkstream(store.WorkstreamRow{
-		Name:       req.Name,
-		WorkflowID: req.WorkflowID,
+		Name:        req.Name,
+		WorkflowID:  req.WorkflowID,
+		ProjectURNs: req.ProjectURNs,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		if errors.Is(err, store.ErrWorkstreamProject) {
+			writeError(w, 400, CodeInvalidRequest, err.Error())
+		} else {
+			writeError(w, 500, CodeInternalError, "workstream creation failed")
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, workstreamToDTO(created))
@@ -137,7 +148,7 @@ func (s *Server) handleCreateWorkstream(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleListWorkstreams(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	opts := store.ListWorkstreamsOptions{Status: q.Get("status"), WorkflowID: q.Get("workflow_id"), Ref: q.Get("ref"), Cursor: q.Get("cursor")}
+	opts := store.ListWorkstreamsOptions{Status: q.Get("status"), WorkflowID: q.Get("workflow_id"), ProjectURN: q.Get("project_urn"), Ref: q.Get("ref"), Cursor: q.Get("cursor")}
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
@@ -214,13 +225,14 @@ func (s *Server) handleUpdateWorkstream(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	row, err := s.Workstreams.UpdateWorkstream(id, store.WorkstreamPatch{
-		Name: req.Name, WorkflowID: req.WorkflowID, Status: req.Status,
+		Name: req.Name, WorkflowID: req.WorkflowID,
+		ProjectURNs: req.ProjectURNs, Status: req.Status,
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrWorkstreamNotFound):
 			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
-		case errors.Is(err, store.ErrInvalidWorkstreamStatus):
+		case errors.Is(err, store.ErrInvalidWorkstreamStatus), errors.Is(err, store.ErrWorkstreamProject):
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		default:
 			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -265,14 +277,19 @@ func (s *Server) handleSessionWorkstream(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		ws, err := s.Workstreams.EnsureSessionWorkstream(sessionID, store.WorkstreamRow{
-			Name:       req.Name,
-			WorkflowID: req.WorkflowID,
+			Name:        req.Name,
+			WorkflowID:  req.WorkflowID,
+			ProjectURNs: req.ProjectURNs,
 		})
 		if err != nil {
 			writeAssignError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, workstreamToDTO(ws))
+		return
+	}
+	if req.ProjectURNs != nil {
+		writeError(w, 400, CodeInvalidRequest, "project_urns is a seed for ensure only; use PATCH to change associations")
 		return
 	}
 	if err := s.Workstreams.AssignSessionWorkstream(sessionID, req.WorkstreamID); err != nil {
@@ -286,6 +303,8 @@ func (s *Server) handleSessionWorkstream(w http.ResponseWriter, r *http.Request,
 // produce onto 404 and everything else onto 500.
 func writeAssignError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrWorkstreamProject):
+		writeError(w, 400, CodeInvalidRequest, err.Error())
 	case errors.Is(err, store.ErrWorkstreamNotFound), errors.Is(err, store.ErrSessionNotFound):
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 	default:
