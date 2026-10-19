@@ -36,7 +36,7 @@ func TestDaemonRunStartupFailuresCloseServiceOnce(t *testing.T) {
 			tc.change(cat)
 			svc := &app.Service{Catalog: cat, Store: db}
 			catalogPath = filepath.Join(t.TempDir(), "absent-catalog")
-			newDaemonService = func(string) (*app.Service, error) { return svc, nil }
+			newDaemonService = func(string) (*app.Service, error) { seedDaemonFixtureEventIdentity(t, svc); return svc, nil }
 			closed := 0
 			closeDaemonService = func(got *app.Service) error {
 				if got != svc {
@@ -75,7 +75,7 @@ func TestDaemonRunSharesChannelsAndOrdersCloseHook(t *testing.T) {
 	svc := &app.Service{Store: db, CatalogRoot: t.TempDir(), Catalog: &config.Catalog{Global: config.Global{Daemon: config.DaemonConfig{ListenAddr: "unix:" + filepath.Join(t.TempDir(), "daemon.sock"), ShutdownTimeout: "1s"}, Identity: config.IdentityConfig{Mode: "off"}}}}
 	svc.Channels = channels.New(db, nil)
 	catalogPath = filepath.Join(t.TempDir(), "absent-catalog")
-	newDaemonService = func(string) (*app.Service, error) { return svc, nil }
+	newDaemonService = func(string) (*app.Service, error) { seedDaemonFixtureEventIdentity(t, svc); return svc, nil }
 	closed := 0
 	closeDaemonService = func(got *app.Service) error {
 		if got != svc {
