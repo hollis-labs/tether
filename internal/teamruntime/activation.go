@@ -149,7 +149,7 @@ func (i *ActivationInspector) Inspect(ctx context.Context, q teamactivation.Quer
 	}
 	if out.LoadedBaseline != nil {
 		out.BaselineState = "recorded"
-		if out.Launch.Fingerprint != out.LoadedBaseline.Fingerprint || out.Launch.EffectiveSandboxPolicyDigest != out.LoadedBaseline.EffectiveSandboxPolicyDigest {
+		if planFactsDiffer(&out.Launch, out.LoadedBaseline) {
 			out.Divergence = append(out.Divergence, "launch_changed_since_load")
 		}
 	}
@@ -164,16 +164,16 @@ func (i *ActivationInspector) Inspect(ctx context.Context, q teamactivation.Quer
 }
 
 func finishActivation(out teamactivation.Evidence) (teamactivation.Evidence, error) {
-	if out.LoadedBaseline != nil && out.Admitted != nil && out.LoadedBaseline.Fingerprint != out.Admitted.Fingerprint {
+	if planFactsDiffer(out.LoadedBaseline, out.Admitted) {
 		out.Divergence = append(out.Divergence, "admitted_differs_from_loaded")
 	}
-	if out.Admitted != nil && out.Created != nil && out.Admitted.Fingerprint != out.Created.Fingerprint {
+	if planFactsDiffer(out.Admitted, out.Created) {
 		out.Divergence = append(out.Divergence, "created_differs_from_admitted")
 	}
-	if out.Admitted != nil && out.Launched != nil && out.Admitted.Fingerprint != out.Launched.Fingerprint {
+	if planFactsDiffer(out.Admitted, out.Launched) {
 		out.Divergence = append(out.Divergence, "executed_differs_from_admitted")
 	}
-	if out.Created != nil && out.Launched != nil && out.Created.EffectiveSandboxPolicyDigest != out.Launched.EffectiveSandboxPolicyDigest {
+	if privateSandboxDiffers(out.Created, out.Launched) {
 		out.Divergence = append(out.Divergence, "sandbox_changed_between_create_and_launch")
 	}
 	if out.Session != nil && out.Loaded && out.Session.Pin != out.Pin {
@@ -205,4 +205,16 @@ func (i *ActivationInspector) InspectAdmission(ctx context.Context, id string) (
 		}
 	}
 	return e, nil
+}
+
+// Recompute the comparable projection for retained observations, including ones
+// written before metadata normalization. Missing historical facts stay unknown.
+func planFactsDiffer(a, b *teamactivation.Launch) bool {
+	if a == nil || b == nil || a.Version == "" || b.Version == "" || a.Fingerprint == "" || b.Fingerprint == "" {
+		return false
+	}
+	return a.Digest() != b.Digest() || privateSandboxDiffers(a, b)
+}
+func privateSandboxDiffers(a, b *teamactivation.Launch) bool {
+	return a != nil && b != nil && a.EffectiveSandboxPolicyDigest != "" && b.EffectiveSandboxPolicyDigest != "" && a.EffectiveSandboxPolicyDigest != b.EffectiveSandboxPolicyDigest
 }

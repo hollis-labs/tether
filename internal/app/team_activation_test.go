@@ -210,3 +210,45 @@ func TestTeamActivationEnforcementOutcomeIsSeparateFromPolicy(t *testing.T) {
 		t.Fatal("enforcement outcome lost")
 	}
 }
+
+func TestTeamActivationSuccessfulLifecycleHasComparablePlanFacts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	rig := newCodexRig(t)
+	provider := rig.svc.Catalog.Providers["codex-cli"]
+	provider.Provider = "claude"
+	provider.ID = "claude-pty"
+	provider.RuntimeKind = config.RuntimeKindPTY
+	rig.svc.Catalog.Providers[provider.ID] = provider
+	l := rig.svc.Catalog.Launches["codex-launch"]
+	l.Provider = provider.ID
+	rig.svc.Catalog.Launches[l.ID] = l
+	rig.svc.factories[provider.ID] = func(p *launch.Plan) (agentsessions.Runtime, error) { return stub.New(p) }
+	admitted, err := rig.svc.InspectTeamLaunch(t.Context(), l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := rig.svc.CreateTeamSession(t.Context(), "unchanged-lifecycle", l.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := rig.svc.Store.GetLaunchPlan(created.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rig.svc.LaunchSession(created.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	launched, err := rig.svc.Store.TeamEvidence(t.Context(), "launched", created.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launched.ScopeResolution == admitted.ScopeResolution {
+		t.Fatal("fixture did not exercise observed scope transition")
+	}
+	if persisted.ActivationEvidence == nil || admitted.Digest() != persisted.ActivationEvidence.Digest() || admitted.Digest() != launched.Digest() {
+		t.Fatal("unchanged successful lifecycle falsely changed comparable facts")
+	}
+	if admitted.EffectiveSandboxPolicyDigest != launched.EffectiveSandboxPolicyDigest {
+		t.Fatal("unchanged sandbox changed")
+	}
+}

@@ -21,9 +21,7 @@ Launch-time sandbox differences report `sandbox_changed_between_create_and_launc
 
 `tether.launch-evidence/v1` hashes a normalized selector projection of the actual
 persisted plan and launch-time sandbox facts: provider/runtime, catalog model,
-permission mode, sandbox structural summary/digest, MCP server IDs, granted session scope
-names when available, placement/project, route, lifecycle and environment key
-names. It excludes environment values, argument values, instructions, injected
+permission mode, sandbox structural summary/digest, MCP server IDs, placement/project, route, lifecycle and environment key names. Observed grants, enforcement outcomes and placement availability remain separate fields; they do not alter the comparable plan fingerprint. Known private effective sandbox digests are compared internally at each lifecycle boundary. Missing historical facts remain unknown rather than mismatches. It excludes environment values, argument values, instructions, injected
 contents and workspace paths. General readers never receive path-inclusive policy/file digests, including through nested fingerprints or the aggregate digest. The existing local operator check additionally permits `effective_sandbox_policy_digest`, `installed_sandbox_file_digest`, and `installed_sandbox_policy_digest`. Effective policy is captured from the parsed object passed at launch; installed raw bytes are read separately and never substituted for active policy. Canonicalization sorts/cleans selectors without accessing those paths. Paths are never returned.
 
 Sandbox enforcement is a separate closed-state observation from the runtime's sandbox outcome callback: `enforced`, `downgraded`, `not_enforced`, `unsupported_platform`, or `unknown`. Adapters and remote launch acknowledgements without such an observation remain `unknown`; a policy digest or successful process start proves no enforcement. This is a selector

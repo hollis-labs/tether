@@ -90,3 +90,43 @@ func TestActivationHistoricalSessionSurvivesMissingCurrentLaunch(t *testing.T) {
 		t.Fatal("current catalog hid historical facts")
 	}
 }
+
+func TestActivationComparisonsSeparateObservedFactsAndPrivateChanges(t *testing.T) {
+	base := teamactivation.Launch{Version: "tether.launch-evidence/v1", ExecutionBasis: "legacy_catalog", LaunchID: "launch", ScopeResolution: "launch_admission_caller_bound", SandboxEnforcement: "unknown", EffectiveSandboxPolicyDigest: "PRIVATE_POLICY_A"}
+	base.Fingerprint = base.Digest()
+	observed := base
+	observed.ScopeResolution = "granted_session_credential"
+	observed.GrantedScopes = []string{"tether.read"}
+	observed.SandboxEnforcement = "enforced"
+	observed.PlacementResolved = true
+	observed.Fingerprint = observed.Digest()
+	unchanged, err := finishActivation(teamactivation.Evidence{LoadedBaseline: &base, Admitted: &base, Created: &base, Launched: &observed})
+	check(t, err)
+	if len(unchanged.Divergence) != 0 {
+		t.Fatal("stage-specific observations caused false divergence")
+	}
+	changed := base
+	changed.EffectiveSandboxPolicyDigest = "PRIVATE_POLICY_B"
+	for _, fixture := range []struct {
+		out    teamactivation.Evidence
+		reason string
+	}{
+		{teamactivation.Evidence{LoadedBaseline: &base, Admitted: &changed}, "admitted_differs_from_loaded"},
+		{teamactivation.Evidence{Admitted: &base, Created: &changed}, "created_differs_from_admitted"},
+		{teamactivation.Evidence{Admitted: &base, Launched: &changed}, "executed_differs_from_admitted"},
+		{teamactivation.Evidence{Created: &base, Launched: &changed}, "sandbox_changed_between_create_and_launch"},
+	} {
+		out, err := finishActivation(fixture.out)
+		check(t, err)
+		if !slices.Contains(out.Divergence, fixture.reason) {
+			t.Fatal("path-only policy change hidden", fixture.reason)
+		}
+	}
+	unknown := base
+	unknown.EffectiveSandboxPolicyDigest = ""
+	out, err := finishActivation(teamactivation.Evidence{LoadedBaseline: &base, Admitted: &unknown, Created: &unknown, Launched: &base})
+	check(t, err)
+	if len(out.Divergence) != 0 {
+		t.Fatal("unknown historical policy treated as mismatch")
+	}
+}

@@ -59,6 +59,11 @@ type LaunchEvidence struct {
 }
 
 func (e LaunchEvidence) Digest() string {
+	// Stage observations remain visible but are not comparable plan facts.
+	e.ScopeResolution = ""
+	e.GrantedScopes = nil
+	e.SandboxEnforcement = ""
+	e.PlacementResolved = false
 	e.Fingerprint = ""
 	e.ObservedAt = ""
 	e.PolicyDigest = ""
