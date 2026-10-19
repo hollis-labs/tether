@@ -17,22 +17,27 @@ import (
 // before taking its observer mutex. Payload intentionally excludes params,
 // answers, reasons, tool contents, or any credential/configuration material.
 func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event, origin *outputEventOrigin) {
+	if err := o.service.recordRuntimeRequest(o.row, ev, origin); err != nil {
+		log.Printf("environment request status for session %s unavailable: %v", o.row.ID, err)
+	}
+}
+
+func (s *Service) recordRuntimeRequest(row store.SessionRow, ev runtimeevents.Event, origin *outputEventOrigin) error {
 	if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
-		o.recordEndedTurnRequests(ev, origin)
-		return
+		return s.recordEndedTurnRequests(row, ev, origin)
 	}
 	if ev.Kind != runtimeevents.KindAgentPermissionRequested && ev.Kind != runtimeevents.KindAgentPermissionResolved {
-		return
+		return nil
 	}
-	if o.service.Bus == nil || ev.TurnID == "" || ev.Sequence == 0 {
-		return
+	if s.Bus == nil || ev.TurnID == "" || ev.Sequence == 0 {
+		return nil
 	}
 	var data struct {
 		RequestID json.RawMessage `json:"request_id"`
 		Method    string          `json:"method"`
 	}
 	if json.Unmarshal(ev.Payload, &data) != nil {
-		return
+		return nil
 	}
 	id := scalarRequestID(data.RequestID)
 	open := ev.Kind == runtimeevents.KindAgentPermissionRequested
@@ -44,7 +49,7 @@ func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event, ori
 		}
 	}
 	if id == "" {
-		return
+		return nil
 	}
 	kind := "approval"
 	if strings.HasSuffix(strings.ToLower(data.Method), "requestuserinput") {
@@ -56,13 +61,14 @@ func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event, ori
 	req := store.EnvironmentRequest{TurnID: ev.TurnID, RequestID: id, Kind: kind, Open: open, SourceSequence: ev.Sequence}
 	raw, err := json.Marshal(req)
 	if err != nil {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err = o.service.Bus.Publish(ctx, origin.apply(events.Event{Scope: events.ScopeSession, SessionID: o.row.ID, LogicalAgentID: o.row.LogicalAgentID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)})); err != nil {
-		log.Printf("environment request status for session %s unavailable: %v", o.row.ID, err)
+	if err = s.Bus.Publish(ctx, origin.apply(events.Event{Scope: events.ScopeSession, SessionID: row.ID, LogicalAgentID: row.LogicalAgentID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)})); err != nil {
+		return err
 	}
+	return nil
 }
 
 // JSON-RPC identities are scalars. Never turn an arbitrary object/array or
@@ -88,29 +94,16 @@ func scalarRequestID(raw json.RawMessage) string {
 
 // A real terminal turn event closes only requests from that exact turn. A
 // detached/orphaned lifecycle event never calls this path.
-func (o *sessionTurnOutput) recordEndedTurnRequests(ev runtimeevents.Event, origin *outputEventOrigin) {
-	if o.service.Bus == nil || ev.TurnID == "" || ev.Sequence == 0 {
-		return
+func (s *Service) recordEndedTurnRequests(row store.SessionRow, ev runtimeevents.Event, origin *outputEventOrigin) error {
+	if s.Bus == nil || ev.TurnID == "" || ev.Sequence == 0 {
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	base, err := o.service.Store.EnvironmentSnapshot(ctx, o.row.ID)
+	req := store.EnvironmentRequest{TurnID: ev.TurnID, Terminal: true, SourceSequence: ev.Sequence}
+	raw, err := json.Marshal(req)
 	if err != nil {
-		return
+		return err
 	}
-	for _, req := range base.Requests {
-		if req.TurnID != ev.TurnID || !req.Open || req.SourceSequence > ev.Sequence {
-			continue
-		}
-		req.Open = false
-		req.Kind = ""
-		req.SourceSequence = ev.Sequence
-		raw, err := json.Marshal(req)
-		if err != nil {
-			return
-		}
-		if err = o.service.Bus.Publish(ctx, origin.apply(events.Event{Scope: events.ScopeSession, SessionID: o.row.ID, LogicalAgentID: o.row.LogicalAgentID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)})); err != nil {
-			log.Printf("terminal request status for session %s unavailable: %v", o.row.ID, err)
-		}
-	}
+	return s.Bus.Publish(ctx, origin.apply(events.Event{Scope: events.ScopeSession, SessionID: row.ID, LogicalAgentID: row.LogicalAgentID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)}))
 }

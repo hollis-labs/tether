@@ -64,3 +64,58 @@ func TestEnvironmentRequestsExactResolutionRetentionAndRestart(t *testing.T) {
 		t.Fatalf("retention/restart lost state %+v", restarted)
 	}
 }
+
+func TestEnvironmentRequestOutOfOrderFencesSurviveRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fences.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err = db.CreateSession(SessionRow{ID: "s", State: "running"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	write := func(req EnvironmentRequest) {
+		t.Helper()
+		raw, _ := json.Marshal(req)
+		if _, _, err := db.InsertEvent(events.ScopeSession, "s", EnvironmentRequestKind, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(EnvironmentRequest{TurnID: "turn", RequestID: "one", SourceSequence: 9007199254740993})
+	write(EnvironmentRequest{Terminal: true, TurnID: "ended", SourceSequence: 9007199254740999})
+	base, err := db.EnvironmentSnapshot(context.Background(), "s")
+	if err != nil || len(base.Requests) != 0 {
+		t.Fatal("unobserved resolution established support", base, err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(EnvironmentRequest{TurnID: "turn", RequestID: "one", Kind: "approval", Open: true, SourceSequence: 9007199254740992})
+	write(EnvironmentRequest{TurnID: "ended", RequestID: "two", Kind: "question", Open: true, SourceSequence: 9007199254740998})
+	write(EnvironmentRequest{TurnID: "other", RequestID: "two", Kind: "question", Open: true, SourceSequence: 9007199254740998})
+	base, err = db.EnvironmentSnapshot(context.Background(), "s")
+	if err != nil || len(base.Requests) != 3 {
+		t.Fatal(base, err)
+	}
+	for _, req := range base.Requests {
+		switch req.TurnID {
+		case "turn":
+			if req.Open || req.SourceSequence != 9007199254740993 {
+				t.Fatal("resolution floor lost", req)
+			}
+		case "ended":
+			if req.Open || req.SourceSequence != 9007199254740999 {
+				t.Fatal("terminal floor lost", req)
+			}
+		case "other":
+			if !req.Open || req.SourceSequence != 9007199254740998 {
+				t.Fatal("other turn closed", req)
+			}
+		}
+	}
+}

@@ -1,0 +1,1 @@
+- CW-20261012-0070: Forward supported ACP and worker Codex permission observations into durable session request status, preserving exact request/turn identity across overlapping requests, restart, replay and terminal events. Unsupported sources remain unknown; worker fallback decisions are unchanged.

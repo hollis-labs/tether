@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/workerwire"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -37,13 +38,21 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return err
 		}
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) //nolint:gosec // G304: path is the hub-owned session log of a session this connection owns
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600) //nolint:gosec // G304: path is the hub-owned session log of a session this connection owns
 		if err != nil {
 			return err
+		}
+		offset, seekErr := file.Seek(0, io.SeekEnd)
+		if seekErr != nil {
+			_ = file.Close()
+			return seekErr
 		}
 		_, err = file.Write(f.Data)
 		if err == nil {
 			err = file.Sync()
+		}
+		if err == nil {
+			err = s.workerPermissionOutput(row, f, file, offset)
 		}
 		file.Close()
 		if err != nil {

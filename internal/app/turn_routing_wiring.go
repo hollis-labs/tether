@@ -13,8 +13,9 @@ import (
 // Registrations describe the installed source handlers. Unknown producers retain
 // the generic final/failure feed; advanced signals require an installed handler.
 type turnFeedRegistration struct {
-	questionTools []string
-	approval      func(*sessionTurnOutput, gopevents.PermissionDenied)
+	requestSignals bool
+	questionTools  []string
+	approval       func(*sessionTurnOutput, gopevents.PermissionDenied)
 }
 
 func (s *Service) installTurnFeeds() {
@@ -24,7 +25,7 @@ func (s *Service) installTurnFeeds() {
 		if err != nil {
 			continue
 		}
-		registration := turnFeedRegistration{}
+		registration := turnFeedRegistration{requestSignals: p.EffectiveRuntimeKind() == "acp-stdio"}
 		switch runtimeID {
 		case "claude", "codex":
 			registration.questionTools = append([]string(nil), turnoutput.DefaultQuestionTools...)

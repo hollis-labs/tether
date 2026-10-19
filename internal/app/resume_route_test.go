@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
@@ -18,6 +20,18 @@ func TestResumePreservesPersistedRouteOverrideAndAbsentOptIn(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			rig := newCodexRig(t)
+			// Recovery starts its subprocess control turn asynchronously. Hold
+			// it until cleanup to exercise teardown while the producer is late.
+			releaseInput, inputDone := make(chan struct{}), make(chan error, 1)
+			baseFactory := rig.svc.factories["codex-cli"]
+			var resumedRuntimeStarted bool
+			rig.svc.factories["codex-cli"] = func(plan *launch.Plan) (agentsessions.Runtime, error) {
+				rt, err := baseFactory(plan)
+				if err != nil || plan.ResumeSourceSessionID == "" {
+					return rt, err
+				}
+				return routeResumeRuntime{Runtime: rt, release: releaseInput, done: inputDone, started: &resumedRuntimeStarted}, nil
+			}
 			request := CreateSessionInput{LaunchID: "codex-launch"}
 			if routed {
 				request.Route = &launchprofile.Route{Channel: "override-channel", Kinds: []string{"question", "failure"}}
@@ -30,6 +44,18 @@ func TestResumePreservesPersistedRouteOverrideAndAbsentOptIn(t *testing.T) {
 			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
+				if resumedRuntimeStarted {
+					close(releaseInput)
+					select {
+					case err := <-inputDone:
+						if err != nil {
+							t.Errorf("fixture recovery input failed before teardown: %v", err)
+						}
+					case <-ctx.Done():
+						t.Error("fixture recovery input did not finish before teardown")
+						return
+					}
+				}
 				tick := time.NewTicker(10 * time.Millisecond)
 				defer tick.Stop()
 				for _, id := range owned {
@@ -52,6 +78,7 @@ func TestResumePreservesPersistedRouteOverrideAndAbsentOptIn(t *testing.T) {
 						}
 					}
 				}
+				rig.svc.stopOutputRetries()
 			})
 			if _, err := rig.svc.LaunchSession(parent.SessionID); err != nil {
 				t.Fatal(err)
@@ -83,4 +110,41 @@ func TestResumePreservesPersistedRouteOverrideAndAbsentOptIn(t *testing.T) {
 			}
 		})
 	}
+}
+
+// This fixture is subprocess-only: no optional RPC/interrupt interfaces are
+// replaced. Typed output callbacks still go through the real runtime.
+type routeResumeRuntime struct {
+	agentsessions.Runtime
+	release <-chan struct{}
+	done    chan error
+	started *bool
+}
+
+func (r routeResumeRuntime) Start(ctx context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
+	session, err := r.Runtime.Start(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	*r.started = true
+	return routeResumeSession{Session: session, release: r.release, done: r.done}, nil
+}
+
+type routeResumeSession struct {
+	agentsessions.Session
+	release <-chan struct{}
+	done    chan error
+}
+
+func (s routeResumeSession) SendInput(ctx context.Context, data []byte) error {
+	var err error
+	defer func() { s.done <- err }()
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		err = ctx.Err()
+		return err
+	}
+	err = s.Session.SendInput(ctx, data)
+	return err
 }
