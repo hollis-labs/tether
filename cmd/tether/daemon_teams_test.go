@@ -384,7 +384,7 @@ func TestDaemonRunWiresTeamsOnlyWhenExplicitlyEnabled(t *testing.T) {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
 			f := newDaemonTeamFixture(t, &enabled)
 			catalogPath = filepath.Join(t.TempDir(), "absent")
-			newDaemonService = func(string) (*app.Service, error) { return f.svc, nil }
+			newDaemonService = func(string) (*app.Service, error) { seedDaemonFixtureEventIdentity(t, f.svc); return f.svc, nil }
 			called := false
 			runDaemonServer = func(server *daemon.Server, _ context.Context) error {
 				called = true

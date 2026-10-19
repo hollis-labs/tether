@@ -1,0 +1,1 @@
+- CW-20261016-0136: Wire daemon startup to frozen event identity, bounded resumable ID backfill, counts-only readiness health and persisted-envelope streams. Preserve legacy IDs/cursors, refuse identity-less post-cutover writes, join background work on shutdown, and document owner activation/rollback evidence.

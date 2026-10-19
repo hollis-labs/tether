@@ -209,13 +209,16 @@ var daemonRunCmd = &cobra.Command{
 		// lived subcommands (`tether mcp`, `tether agents`, etc.) — those may
 		// run concurrently with the daemon (e.g. as an MCP subprocess
 		// spawned by a session) and would clobber actively-tracked rows.
-		svc.ReconcileStaleState()
 
 		// Signal-cancellable context spans the bootstrap + the HTTP serve so
 		// SIGINT/SIGTERM during a slow bootstrap (large catalog, slow disk)
 		// aborts cleanly instead of running to completion before shutdown.
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
+		if err := svc.StartEventIDBackfill(ctx); err != nil {
+			return err
+		}
+		svc.ReconcileStaleState()
 
 		// Passive catalog and Cerberus bootstrap importers are retired per CW-20260914-0043.
 		// Catalog files retain their launch configuration role (repo root, workspace mode,
@@ -259,10 +262,14 @@ var daemonRunCmd = &cobra.Command{
 			host, _ := os.Hostname()
 			svc.EventStamp.SetProcess(eventstamp.Process{EnvironmentID: environmentID, Authority: svc.Catalog.Global.Environment.Authority, Host: host})
 		}
+		environmentID, _, _ := environmentDescriptor.Identity()
+		eventProjection, err := environmentstream.NewStored(ctx, environmentID, svc.Store, svc.Bus)
+		if err != nil {
+			return err
+		}
 		var environmentStream *environmentstream.Server
 		if cfg.Modules.Enabled(environment.StreamAPI) {
-			environmentID, _, _ := environmentDescriptor.Identity()
-			environmentStream = environmentstream.New(environmentID, svc.Store, svc.Bus)
+			environmentStream = eventProjection
 		}
 		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
 			Recorder:  svc.Store,
@@ -376,6 +383,11 @@ var daemonRunCmd = &cobra.Command{
 			ReplySweeper:   svc,
 			SessionDrainer: svc,
 			EventRetention: svc,
+			EventIdentity: func() *environmentstream.IdentityHealth {
+				requestCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+				defer cancel()
+				return eventProjection.EventIdentityHealth(requestCtx)
+			},
 			Hardening: func() *daemon.HealthHardening {
 				st := svc.ClaudeStrictMCPStatus()
 				countCtx, cancelCounts := context.WithTimeout(ctx, 200*time.Millisecond)

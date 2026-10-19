@@ -77,7 +77,7 @@ func TestServeComposesRemoteIdentityWithLocalOff(t *testing.T) {
 	svc := &app.Service{Store: db, Catalog: cat, CatalogRoot: t.TempDir()}
 	catalogPath = filepath.Join(t.TempDir(), "unused-catalog")
 	created, closed, ran := 0, 0, 0
-	newDaemonService = func(string) (*app.Service, error) { created++; return svc, nil }
+	newDaemonService = func(string) (*app.Service, error) { created++; seedDaemonFixtureEventIdentity(t, svc); return svc, nil }
 	closeDaemonService = func(*app.Service) error { closed++; return nil }
 	reached := errors.New("test foreground daemon composed")
 	runDaemonServer = func(s *daemon.Server, _ context.Context) error {

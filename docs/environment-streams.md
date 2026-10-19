@@ -21,25 +21,26 @@ members with those names remain nested payload members and cannot shadow the
 envelope coordinates. Original kinds and JSON payloads are retained, including
 unknown kinds. Invalid persisted JSON ends the stream with a resnapshot signal.
 
-The mapping is deliberately explicit:
+The daemon uses the persisted producer envelope after the frozen-ID readiness
+step described below. IDs are opaque strings; log cursors and producer counters
+remain separate.
 
 | Durable source | Mesh projection |
 | --- | --- |
-| Event-table id | `seq`, decimal `Cursor`, and this source's `SourceSequence` |
-| Environment id + event id | Stable envelope `ID` |
-| Persisted timestamp/kind/payload | `Time`, unchanged `Kind`, unchanged `Payload` (`null` if absent) |
-| Scope | `Process.scope` |
-| Session id when recorded | `SessionID`, `Subject=urn:session:<id>` |
-| Daemon or broker event without session | Environment `Subject` |
-| Reporting source | `Actor=msg://service/tether/<environment_id>`, `Source.channel=tether.events` |
+| Event-table id | `seq`, decimal `Cursor`, SSE `id:` |
+| Persisted `event_id` | Envelope `ID`, unchanged |
+| Producer sequence/generation/origin time | Preserved producer coordinates; log sequence is not substituted for a known producer sequence |
+| Persisted scope/corr/actor/class/process | Corresponding v1.1 blocks; unknown fields remain absent |
+| Persisted kind/payload | Unchanged `Kind` and approved payload (`null` if absent) |
+| Missing producer coordinates | Durable `tether.events` source and log sequence |
+| Missing author | Reporting hub service with `actor_verified: none`; no invented operator or delegation |
 
-All currently persisted kinds follow this mapping: `session.state_changed`,
-`session.turn_routed`, `session.turn_output`, `session.boot_dir_planted`,
-`provider.session_lost`, `provider.permission_denied`, broker envelope events,
-daemon lifecycle/sweep events, budget rejections, and new `session.request_status`.
-No original caller attribution, provider/shim generation, causation/correlation,
-or instance identity is invented when the old event row did not record it.
-Generation `1` belongs to this projection, not the runtime's custody generation.
+The legacy `scope` string remains a storage/filter field, separate from the
+v1.1 scope block. Unknown runtime custody generation is not inferred from a
+session name; the library's zero-generation compatibility value is one.
+The default `environmentstream.New` constructor retains the old projection for
+compatibility embedders. Daemon startup explicitly selects `NewStored` and never
+falls back to the old mapping while backfill is pending.
 Future durable kinds use the same lossless kind/payload mapping.
 
 There are three independent cursor domains. The environment event cursor is
@@ -169,8 +170,9 @@ output but never silently downgrade it.
 ### Frozen legacy-ID storage
 
 Migration 0087 creates only the singleton `event_identity` metadata table. It
-creates no indexes, seeds no identity and backfills no events. The storage
-methods remain dormant until the coordinated startup and projection cutover.
+creates no indexes, seeds no identity and backfills no events. The daemon-specific
+constructor now selects the coordinated startup and projection source path;
+ordinary inspection/compatibility constructors do not seed.
 
 At that cutover, startup reads the environment UUID file and calls
 `SeedEventIdentity` before starting event producers. The first call freezes the
@@ -183,9 +185,13 @@ the stored counters.
 fills only NULL IDs at or below the frozen cutover with the literal
 `<environment UUID>:<sequence>`. It never changes existing IDs, including IDs
 minted before cutover. The cursor and progress commit with each chunk; failures
-roll back the whole chunk and a restart resumes from the saved cursor. The caller
-records failed chunks separately, yields between chunks and controls cancellation.
-The backfill never drops an event. No background runner is enabled by this slice.
+roll back the whole chunk and a restart resumes from the saved cursor. The
+daemon background worker yields for 10 ms between chunks, observes
+cancellation, and is joined before its database closes. It stops after a failed
+chunk and records only a failure count; a fresh daemon resumes the committed
+cursor. The backfill never drops an event. Migration 0093 installs an additive
+insert guard: once seeded, NULL/empty new IDs are refused at insertion too.
+The migration itself performs no backfill or history update.
 
 Release coordination: startup seeding, complete ID minting, stored-ID wire
 projection and retryable handling of unfinished legacy rows must ship together.
@@ -201,11 +207,26 @@ build with partial ID minting. On restart, the identity seed refuses any NULL ID
 above the frozen cutover instead of moving the cutover or silently repairing it.
 A matching database snapshot restore is the last resort.
 
-## Dormant stored-ID projection
+## Stored-ID readiness and source rollout
 
-`environmentstream.Server.StoredIDs` is unset in production. Its optional
-projection is prepared for release N+1, after the release-N proof above. There
-is no CLI or configuration switch to bypass that gate.
+`NewDaemon` reads the environment file and seeds the opened database before
+constructing the bus, manager, or other event producers. The explicit
+`NewStored` branch verifies server/seeded environment equality and takes its
+cutover from that persisted singleton. The background runner starts before
+startup reconciliation. `/health.event_identity` exposes `ready` plus durable
+progress coordinates/counts; unavailable reads omit the progress block and
+remain unready. Health status is `starting` during a clean backfill, `degraded`
+for unavailable
+progress or an incomplete backfill with failed chunks, and `ok` after readiness
+succeeds (historical failure counts are retained).
+This metadata remains available with the stream API module disabled.
+
+During initial backfill both snapshot and SSE endpoints return HTTP 503,
+`Retry-After: 1`, `backfill_in_progress`, and `snapshot_required: false`.
+Requests do not run backfill. Only complete readiness admits the persisted-ID
+projection, so no response mixes generated and stored IDs and an oversized gap
+cannot discard unbackfilled history. Failed chunks leave readiness false until
+a successful resume. Default compatibility constructors remain unchanged.
 
 When activated, `id` is the persisted opaque string, including both legacy
 `<environment UUID>:<rowid>` and new `evt_…` values. The JSON `cursor` and SSE
@@ -225,3 +246,62 @@ history. The complete global window is checked before session filtering.
 A NULL above the cutover is an `event_id_invariant` error, never a generated ID
 or skipped row. Existing purged/oversized-window gaps retain their snapshot
 semantics.
+
+### Atomic store producers
+
+The application wires store-owned reaper, activity, channel-routing and
+replacement events to `OutboxBus.PublishTx`. These events run the same
+transaction-safe stages before insertion, using the caller's existing SQL
+transaction. Session dimensions come from that transaction's session row;
+actor and correlation still require verified context. Unknown generation and
+actor stay absent. Database-reading stages remain excluded inside a transaction.
+A failed event insert rolls back its business mutation; only committed rows
+reach subscribers, with their original persisted IDs and sequence order. Bare
+storage-only callers retain the persister primitive without a running bus.
+
+### Sysop operator observations
+
+Sysop enqueues its five existing operator observation kinds through
+`OutboxBus.PublishTx`. The daemon drains their durable pending rows in log
+order; Sysop does not clear pending or publish through a separate live stream.
+IDs are minted once and stored, with producer app, private/local audit class,
+known session dimensions, and the frozen environment identity when seeded.
+Without a verified operator principal, actor and delegation remain absent.
+
+The observation allowlist contains fixed source/action, bounded identifiers,
+counts, and the known checkpoint-policy enum. Checkpoint summary/status and
+policy status prose are excluded; the authoritative checkpoint request and
+stored content remain unchanged. Cleanup observations carry counts rather
+than a list of deleted sessions. Unknown fields are discarded before insertion.
+
+The daemon action and this Sysop audit enqueue are separate cross-process
+operations. A successful action can therefore lack an observation if Sysop
+exits or its audit write fails afterward. Audit failure is logged without
+request content and does not undo or report failure for an already successful
+action. This change makes each enqueue transactional; it does not make the
+preceding daemon action atomic with that enqueue.
+
+### Activation evidence and rollback
+
+Source tests exercise temporary databases only. They are not evidence that the
+live hub has run the mint-capable release N, that its post-release writes have
+zero NULL IDs, or that an acceptable rollback bundle is installed. The owner
+owns that proof, the coordinated release N+1 activation, backup and deployment.
+The historical 281-row estimate above is historical planning evidence, not a
+current database measurement. Consumers must treat stored IDs as opaque and
+resume from the log cursor.
+
+Rollback requires a mint-capable build. Schema rollback is intentionally a no-op
+for the additive identity metadata and insert guard: reverting source does not
+delete, NULL or regenerate minted IDs, remove the frozen cutover, or move its
+cursor. No destructive down migration is supplied in this forward-only
+repository. A partial-mint rollback build is unsupported and its identity-less
+writes are refused by the guard; startup also refuses NULL rows above the
+cutover if an older schema/snapshot lacks that guard. A matching database
+snapshot restore remains an owner-controlled last resort.
+
+X1 events-table closure includes root transactional producers and Sysop's
+outbox producer. Separate proxy-event, AI-audit and fabric tables retain their
+own contracts. Raw runtime bodies remain excluded by the existing per-kind
+sanitizer/admission ruling; this source wiring does not admit them or alter
+retention policy. Existing degraded-mode lifecycle notices remain best effort.

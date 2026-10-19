@@ -49,6 +49,8 @@ type Config struct {
 type Server struct {
 	Forums  api.ForumService
 	Workers *workerhub.Hub
+	// EventIdentity reports sanitized startup/readiness coordinates and counts.
+	EventIdentity func() *environmentstream.IdentityHealth
 	// Environment is the cached public descriptor composed from selected
 	// state identity. It is separate from authenticated session/API handlers.
 	EnvironmentStream *environmentstream.Server
@@ -694,16 +696,17 @@ func (s *Server) handler(remote bool) http.Handler {
 // Health is the response body shape for GET /health. Kept small on purpose —
 // full session/API surfaces arrive in Sprint v002-s05.
 type Health struct {
-	DenyListWatch *DenyListWatchHealth `json:"deny_list_watch,omitempty"`
-	EnvironmentID string               `json:"environmentId,omitempty"`
-	ServerVersion string               `json:"serverVersion,omitempty"`
-	Protocol      int                  `json:"protocol,omitempty"`
-	Identity      *IdentityHealth      `json:"identity,omitempty"`
-	Status        string               `json:"status"`
-	PID           int                  `json:"pid"`
-	UptimeSec     int64                `json:"uptime_sec"`
-	Listener      string               `json:"listener"`
-	Sessions      int                  `json:"sessions"`
+	EventIdentity *environmentstream.IdentityHealth `json:"event_identity,omitempty"`
+	DenyListWatch *DenyListWatchHealth              `json:"deny_list_watch,omitempty"`
+	EnvironmentID string                            `json:"environmentId,omitempty"`
+	ServerVersion string                            `json:"serverVersion,omitempty"`
+	Protocol      int                               `json:"protocol,omitempty"`
+	Identity      *IdentityHealth                   `json:"identity,omitempty"`
+	Status        string                            `json:"status"`
+	PID           int                               `json:"pid"`
+	UptimeSec     int64                             `json:"uptime_sec"`
+	Listener      string                            `json:"listener"`
+	Sessions      int                               `json:"sessions"`
 	// Hardening reports the launch-hardening switches the running daemon
 	// decided from its own environment, so `tether doctor` can report what
 	// tetherd does rather than what the doctor's environment would do. Absent
@@ -826,6 +829,15 @@ func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode,
 		PID:       os.Getpid(),
 		UptimeSec: int64(time.Since(s.startedAt).Seconds()),
 		Listener:  addr,
+	}
+	if s.EventIdentity != nil {
+		h.EventIdentity = s.EventIdentity()
+		if h.EventIdentity != nil && !h.EventIdentity.Ready {
+			h.Status = "starting"
+			if h.EventIdentity.Progress == nil || h.EventIdentity.Progress.Failed > 0 {
+				h.Status = "degraded"
+			}
+		}
 	}
 	h.Identity = s.identityHealth()
 	h.DenyListWatch = denyListWatchHealth(os.Getenv("TETHER_DENYLIST_WATCH_STATE"), time.Now())

@@ -135,7 +135,7 @@ func TestDaemonEnvironmentReportCloseBeforeServiceOnRunFailure(t *testing.T) {
 				Catalog: config.CatalogRoots{Defaults: config.Defaults{WorkspaceRoot: t.TempDir()}},
 			}}}
 			catalogPath = filepath.Join(t.TempDir(), "absent-catalog")
-			newDaemonService = func(string) (*app.Service, error) { return svc, nil }
+			newDaemonService = func(string) (*app.Service, error) { seedDaemonFixtureEventIdentity(t, svc); return svc, nil }
 			var stopped atomic.Bool
 			newDaemonEnvironmentReport = func(ctx context.Context, got *app.Service, cfg daemon.Config, health app.ProtectionHealth) (*report.API, func(), error) {
 				api, stop, err := buildDaemonEnvironmentReport(ctx, got, cfg, health, environmentReportDeps{

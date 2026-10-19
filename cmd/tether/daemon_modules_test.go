@@ -86,7 +86,7 @@ func TestWorkerDaemonCompositionStartsWithoutHubModules(t *testing.T) {
 	cat := &config.Catalog{Global: config.Global{Role: "worker", Teams: config.TeamsConfig{Enabled: true}, AI: config.AIConfig{Providers: []config.AIProviderConfig{{ID: "configured"}}}, Daemon: config.DaemonConfig{ListenAddr: "unix:" + filepath.Join(t.TempDir(), "unused.sock"), ShutdownTimeout: "1s"}, Identity: config.IdentityConfig{Mode: "off"}}}
 	svc := &app.Service{Store: db, Catalog: cat, CatalogRoot: t.TempDir()}
 	catalogPath = filepath.Join(t.TempDir(), "unused-catalog")
-	newDaemonService = func(string) (*app.Service, error) { return svc, nil }
+	newDaemonService = func(string) (*app.Service, error) { seedDaemonFixtureEventIdentity(t, svc); return svc, nil }
 	reached := errors.New("composed worker")
 	runDaemonServer = func(s *daemon.Server, _ context.Context) error {
 		if api.HasTeamOps(s.Teams) || s.AI != nil || s.Config.TeamsEnabled || s.Config.Modules.Role != "worker" || s.Environment == nil {

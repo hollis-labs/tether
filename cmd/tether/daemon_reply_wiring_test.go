@@ -29,7 +29,7 @@ func TestDaemonRunInstallsReplyRoutingBeforeServing(t *testing.T) {
 	svc := &app.Service{Store: db, CatalogRoot: t.TempDir(), Catalog: &config.Catalog{Global: config.Global{Daemon: config.DaemonConfig{ListenAddr: "unix:" + filepath.Join(t.TempDir(), "daemon.sock"), ShutdownTimeout: "1s"}, Identity: config.IdentityConfig{Mode: "off"}}}}
 	svc.Channels = channels.New(db, nil)
 	catalogPath = filepath.Join(t.TempDir(), "absent-catalog")
-	newDaemonService = func(string) (*app.Service, error) { return svc, nil }
+	newDaemonService = func(string) (*app.Service, error) { seedDaemonFixtureEventIdentity(t, svc); return svc, nil }
 	expected := errors.New("serve failure")
 	served := false
 	runDaemonServer = func(server *daemon.Server, _ context.Context) error {
