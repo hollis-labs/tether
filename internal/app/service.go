@@ -295,6 +295,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	// next sweep. Only StartEventsOutbox (the daemon) runs the drainer.
 	if ob, ok := bus.(events.OutboxBus); ok {
 		db.SetEventsCommittedHook(ob.KickOutbox)
+		db.SetEventTxPublisher(ob.PublishTx)
 	}
 
 	mgr, stops := newSessionManager(db, bus)

@@ -178,7 +178,7 @@ func (s *Store) RecordReaperOrphan(ctx context.Context, id, reason string, obser
 	payload, _ := json.Marshal(map[string]string{"reason": reason, "stage": "outcome", "outcome": "orphaned"})
 	// The outcome event is an outbox row on this transaction: it commits with the
 	// orphaning, and is published only if that commit happens.
-	if _, _, err = insertEventRow(ctx, tx, events.ScopeSession, id, "session.reaper", string(payload), stamp, true); err != nil {
+	if err = s.publishOutboxEvent(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: id, Kind: "session.reaper", PayloadJSON: string(payload), At: at}); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -203,8 +203,16 @@ func (s *Store) RecordSessionActivity(ctx context.Context, id string, at time.Ti
 	if err != nil {
 		return err
 	}
-	// Outbox row (published by the bus drainer), not a write around the bus.
-	_, _, err = insertEventRow(ctx, s.db, events.ScopeSession, id, "session.activity", string(payload), time.Now().UTC().Format(time.RFC3339Nano), true)
+	// Use one caller-owned transaction for enrichment and the staged insert.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	err = s.publishOutboxEvent(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: id, Kind: "session.activity", PayloadJSON: string(payload)})
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err == nil {
 		s.EventsCommitted()
 	}
