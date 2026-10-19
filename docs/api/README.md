@@ -3063,3 +3063,131 @@ The `/forums` routes provide durable topics and threaded posts. See
 compact response contract.
 
 Forums participant grants and ownership management: see [Forums](../forums.md#explicit-participants).
+
+## Current workload trust
+
+`POST /auth/workload-trust` supplies the current-lifecycle half of Basalisk's
+`CurrentWorkloadTrust.CheckCurrentWorkload(context.Context, auth.Principal)`.
+It does **not** verify the queried JWT signature or approve an operation. The
+consumer first verifies the JWT against its pinned issuer and freshly retrieved
+HTTPS JWKS, then copies the resulting principal into this request. No target
+bearer or bearer hash is sent. This initial profile accepts only direct
+`basalisk-status` device/service tokens with scope
+`basalisk-status.assurance_read`, `par == sub`, no session, and lifetime <=900s.
+
+Authenticate the request with a separately commissioned stored **device**
+credential whose sole scope is `tether.workload_trust_read`. This is compatible
+with the existing device-only remote listener. Broad maintain/admin/operator
+credentials, service credentials and issued JWTs cannot act as readers. Send
+`Tether-Protocol: 1`, use the configured HTTPS issuer origin, and refuse redirects.
+No new reader credential is needed by Tachyon or Tether: Basalisk performs this
+lookup while authenticating their status JWTs.
+
+Request (all IDs below are illustrative, not enrolled identities):
+
+```json
+{
+  "query_id": "<32 fresh random bytes, canonical unpadded base64url>",
+  "workload": {
+    "issuer": "<pinned configured issuer>",
+    "subject": "<verified p.ID>",
+    "kind": "device",
+    "audience": "basalisk-status",
+    "scopes": ["basalisk-status.assurance_read"],
+    "token_id": "<verified p.TokenID>",
+    "parent": "<verified p.Parent, equal to subject>",
+    "expires_at": "<verified p.ExpiresAt as RFC3339 UTC>"
+  }
+}
+```
+
+The response is `{query_id, workload, active, checked_at}`. `query_id` and every
+`workload` field echo the request exactly; `checked_at` is an RFC3339 UTC timestamp.
+`active: true` requires a durable mint record matching every queried field, the
+exact originating credential row still active and unexpired, its current exact
+scope grant, an eligible current signing key, no JTI/subject/parent denial, and
+unexpired token time without leeway. For this direct-only profile the subject
+and minting parent are the same principal. `created_by` is commissioning
+provenance, not a delegated JWT parent. Delegated/agent tokens are unsupported.
+
+Old tokens with no credential-bound mint record return `active: false` and need
+a new exchange after this issuer version is deployed. A replacement credential
+for the same service subject cannot revive a token minted by a revoked row.
+Mint metadata persists across restart and is pruned after expiry. It contains
+no bearer or hash. Failure to persist it prevents release of the signed token.
+The existing parent-mint denial operation also revokes these tokens by JTI.
+Normal signing-key overlap remains eligible until its exact retirement time;
+key removal or overlap expiry refuses even before periodic pruning. A device
+renewal does not extend an already minted JWT's expiry.
+
+The endpoint performs targeted reads, not inventory or deny-list export. It has
+no continuation side effect; concurrent/repeated reads do not spend a proof.
+Each new consumer attempt generates a fresh query ID, including after timeout.
+Require HTTP 200, `active == true`, exact query and workload echo, a bounded JSON
+response, and completion within a five-second request deadline. Reject unknown
+or malformed response fields, redirects, stale/mismatched echoes, timeout,
+non-200, and expiry reached while awaiting the response. Do not cache a good
+result or infer trust from `checked_at` alone. Repeat on every status request. Require adapter acceptance tests for the pinned
+origin, redirects, bounded bodies, deadline, mismatched/stale echoes and issuer
+outage. The HTTPS origin and its owner-controlled TLS terminator are trusted;
+this response is not independently signed. If an untrusted intermediary is
+introduced, use a reviewed issuer-signed response profile before activation.
+These reads are observations, not leases against subsequent revocation: consuming
+services must still perform the shared contract's decision and consume checks.
+Basalisk's existing callback signature suffices: issuer is adapter configuration;
+all other query fields are present on the verified shared-auth principal.
+
+Responses use `Cache-Control: no-store`. A valid query for an unknown, expired,
+revoked, narrowed, mismatched or unrecorded token returns 200 with `active: false`.
+Malformed/unsupported queries return 400; missing reader authentication 401;
+insufficient reader authorization 403; unavailable storage or issuer dependency
+503. Outer transport/auth policy may refuse before dispatch. No failure conveys
+permission and no response returns a credential, key material, or full registry.
+
+### Enrollment and exchange boundary
+
+Each workload credential must carry exactly one of these capabilities; mixing
+them with each other or broad scopes is refused at pairing and status exchange.
+Commission three distinct callers through the supported local-operator pairing
+and private client custody flow: Tachyon and Tether each get
+`basalisk-status.assurance_read`; Basalisk gets only
+`tether.workload_trust_read`. Pairing is an explicit owner-attended commissioning
+step, not the routine high-tier registration API. This source change does not
+perform commissioning or implement the separate operation-approved grant
+continuation. Never substitute a broad existing credential or direct DB insert.
+
+The pairing grant is one-use, bounded by its existing expiry, and redemption
+atomically consumes it and creates the device credential. Deliver both grant
+and resulting credential only through the approved private sink. Do not print
+or paste their values into task comments, logs or handoffs. Existing CLI pairing
+prints a code, so unattended private-sink automation must not blindly invoke it.
+A lost redemption response does not permit replay: reconcile/revoke an orphan
+through the supported device lifecycle before an explicitly approved replacement.
+
+After enrollment, the two status clients exchange their stored device bearer at
+`POST /auth/token` with:
+
+```json
+{"audience":"basalisk-status","scopes":["basalisk-status.assurance_read"],"ttl_seconds":900}
+```
+
+Omit `session_id`. Reuse the JWT within its validity window while querying current
+trust on every use. New status mints are capped at 32 live records per credential
+and 1024 in total. Excess exchanges return 429 `workload_mint_limit`,
+`Retry-After: 60`, and no token; capacity releases at expiry. Refused mints do not
+rewrite issuer state. These bounds constrain this profile's state size and
+synchronous persistence cost, including contention with revocation writes.
+Keep the returned JWT private and short-lived; retrying an
+exchange issues a different JWT, not another long-lived credential. Basalisk's
+trust-reader device uses its stored credential directly at the issuer endpoint.
+`tachyon-enrollment` is a separate transport and grants none of these rights.
+
+Before activation, verify and record the actual issuer name, HTTPS origin and
+`/.well-known/jwks.json`, enrolled subjects/kinds, credential-file references and
+custody ownership/mode, and Basalisk's server-owned caller-to-operation-audience
+pins. Deployment configuration supplies the issuer name; do not assume its
+local default is the hub's value. No literal enrolled subjects or private-file
+references are supplied by this source change. Current-trust and Basalisk status
+must be deployed and cross-service verified before privileged consumption;
+Tether still owns authoritative outcome/requester checks and exactly-once
+continuation. Basalisk remains the sole human assurance authority.

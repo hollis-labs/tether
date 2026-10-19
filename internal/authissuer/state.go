@@ -38,7 +38,7 @@ type SessionGrant struct {
 }
 
 // mintedEntry remembers an unexpired token minted from a parent credential
-// that can be rotated (the operator), so that rotating it can deny the tokens
+// that can be rotated (the operator or a recorded direct workload), so that rotating it can deny the tokens
 // it already issued. It holds ids only, never a token.
 type mintedEntry struct {
 	JTI string    `json:"jti"`
@@ -47,9 +47,10 @@ type mintedEntry struct {
 }
 
 type stateDoc struct {
-	Deny   []denyEntry             `json:"deny"`
-	Grants map[string]SessionGrant `json:"grants"`
-	Minted []mintedEntry           `json:"minted,omitempty"`
+	Workloads map[string]WorkloadMint `json:"workloads,omitempty"`
+	Deny      []denyEntry             `json:"deny"`
+	Grants    map[string]SessionGrant `json:"grants"`
+	Minted    []mintedEntry           `json:"minted,omitempty"`
 }
 
 // State is the issuer's small persisted state: the deny-list and the session
@@ -105,6 +106,12 @@ func (s *State) pruneLocked() bool {
 	for sid, g := range s.doc.Grants {
 		if !now.Before(g.Expires) {
 			delete(s.doc.Grants, sid)
+			changed = true
+		}
+	}
+	for id, m := range s.doc.Workloads {
+		if now.Unix() >= m.Claims.Exp {
+			delete(s.doc.Workloads, id)
 			changed = true
 		}
 	}

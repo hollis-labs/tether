@@ -297,24 +297,34 @@ func TestFailedCreatorCannotSettlePendingSteering(t *testing.T) {
 }
 
 // Fail publication after staging, then allow the retry to reach the real bus.
-type stalledOutputBus struct {
+type failFirstOutputBus struct {
 	events.Bus
-	calls atomic.Int32
+	calls  atomic.Int32
+	failed chan struct{}
 }
 
-func (b *stalledOutputBus) Publish(ctx context.Context, ev events.Event) error {
+func (b *failFirstOutputBus) Publish(ctx context.Context, ev events.Event) error {
 	if b.calls.Add(1) == 1 {
-		<-ctx.Done()
-		return ctx.Err()
+		close(b.failed)
+		return context.DeadlineExceeded
 	}
 	return b.Bus.Publish(ctx, ev)
 }
 func TestTurnOutputEventRetryRetainsSingleStagedBody(t *testing.T) {
 	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
-	svc.turnOutputTimeout = 25 * time.Millisecond
-	svc.Bus = &stalledOutputBus{Bus: svc.Bus}
+	// Inject the publication failure at its boundary. A 25ms service-wide
+	// timeout also starves real staging/retry writes under race/coverage load
+	// and can fail before this test ever exercises event publication.
+	bus := &failFirstOutputBus{Bus: svc.Bus, failed: make(chan struct{})}
+	svc.Bus = bus
 	output.observeProvider(gopevents.Done{Text: "retry body"})
-	deadline := time.After(3 * time.Second)
+	select {
+	case <-bus.failed:
+	default:
+		t.Fatal("publication failure was not exercised")
+	}
+	// Allow the normal five-second persistence budget plus retry scheduling.
+	deadline := time.After(10 * time.Second)
 	for {
 		got := outputEvents(t, svc)
 		if len(got) == 1 {

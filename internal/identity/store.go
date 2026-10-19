@@ -129,10 +129,10 @@ func (s *Store) verifyHash(ctx context.Context, hash string) (Principal, error) 
 	var p Principal
 	var scopes, addresses, created string
 	var revoked, expires sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT principal_id, kind, display,
+	err := s.db.QueryRowContext(ctx, `SELECT id, principal_id, kind, display,
         scopes_json, session_id, addresses_json, created_by, created_at,
         revoked_at, expires_at FROM principals WHERE token_hash = ?`, hash).Scan(
-		&p.ID, &p.Kind, &p.Display, &scopes, &p.SessionID,
+		&p.CredentialID, &p.ID, &p.Kind, &p.Display, &scopes, &p.SessionID,
 		&addresses, &p.CreatedBy, &created, &revoked, &expires)
 	// Verification uses an indexed lookup of a cryptographic token hash. The
 	// database lookup is not constant-time; no token material is compared here.

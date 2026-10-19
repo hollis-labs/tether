@@ -14,6 +14,9 @@ const (
 	ScopeMaintain = "maintain"
 	ScopeAdmin    = "admin"
 	ScopeWorker   = "worker"
+	// Exact workload capabilities, independent of broad Tether device scopes.
+	WorkloadTrustScope  = "tether.workload_trust_read"
+	BasaliskStatusScope = "basalisk-status.assurance_read"
 	// The narrow scopes below are carved out of the broader device scopes, one
 	// per legacy worker/MCP child scope, each covering only what that legacy
 	// scope covered. They are canonical (tether.sessions, ...) but are not
@@ -38,17 +41,20 @@ const (
 // In particular admin does not imply terminal, operate or maintain, and legacy
 // wildcards do not become remote device authority (ADR 0062).
 func NormalizeDeviceScopes(scopes []string) ([]string, error) {
-	if len(scopes) == 0 || len(scopes) > 6 {
-		return nil, fmt.Errorf("choose at least one of read, operate, terminal, maintain, admin, worker")
+	if len(scopes) == 0 || len(scopes) > 8 {
+		return nil, fmt.Errorf("choose between one and eight supported device scopes")
 	}
 	seen := make(map[string]bool)
 	for _, scope := range scopes {
 		switch scope {
-		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker:
+		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker, WorkloadTrustScope, BasaliskStatusScope:
 		default:
 			return nil, fmt.Errorf("unknown device scope")
 		}
 		seen[scope] = true
+	}
+	if len(seen) != 1 && (seen[WorkloadTrustScope] || seen[BasaliskStatusScope]) {
+		return nil, fmt.Errorf("workload credentials require one exact capability")
 	}
 	out := make([]string, 0, len(seen))
 	for scope := range seen {
@@ -195,6 +201,8 @@ func CanonicalScopes(in []string) ([]string, error) {
 		switch {
 		case IsLegacyChildScope(s):
 			seen[legacyScopeNeeds[s]] = true
+		case s == WorkloadTrustScope:
+			seen[s] = true
 		case IsCanonicalScope(s):
 			seen[s] = true
 		case CanonicalScope(s) != s:
