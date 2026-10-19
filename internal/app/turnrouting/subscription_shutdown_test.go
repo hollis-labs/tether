@@ -47,3 +47,30 @@ func TestRouterCloseJoinsOwnedSubscription(t *testing.T) {
 	case <-time.After(25 * time.Millisecond):
 	}
 }
+
+func TestRouterRepeatedCloseAfterParentCancellation(t *testing.T) {
+	db, _ := database(t)
+	router := New(db, events.NewBus(events.BusOptions{Persister: db}), channels.New(db, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := router.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	var callers sync.WaitGroup
+	for range 4 {
+		callers.Add(1)
+		go func() { defer callers.Done(); router.Close() }()
+	}
+	joined := make(chan struct{})
+	go func() { callers.Wait(); close(joined) }()
+	select {
+	case <-joined:
+	case <-time.After(time.Second):
+		t.Fatal("repeated Close deadlocked after parent cancellation")
+	}
+	router.Close()
+	if router.Running() {
+		t.Fatal("closed router still running")
+	}
+}
