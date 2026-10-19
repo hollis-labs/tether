@@ -17,9 +17,9 @@ import (
 
 var ErrBackfillInProgress = errors.New("backfill_in_progress")
 
-// StoredIDProjection is dormant until startup has seeded the frozen identity
-// and cutover, before producers start. New deliberately leaves it disabled.
-// Activation requires the release-N mint-on-every-path proof (CW-20261016-0136).
+// StoredIDProjection uses the frozen identity/cutover seeded before producers.
+// New leaves it disabled; NewStored checks readiness before serving it.
+// Live deployment requires the owner's release-N mint proof (CW-20261016-0136).
 type StoredIDProjection struct {
 	Cutover int64
 }
