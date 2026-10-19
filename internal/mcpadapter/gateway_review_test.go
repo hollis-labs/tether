@@ -3,7 +3,11 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -55,22 +59,93 @@ func TestGatewayDispatchSanitizeTelemetryAndExactNames(t *testing.T) {
 				if received["query"] != "find x" {
 					t.Fatalf("sanitizer parity: %+v", received)
 				}
-				if len(capture.recorded) != 2 {
-					t.Fatalf("events=%v", capture.recorded)
+				if len(capture.recorded) != 4 {
+					t.Fatalf("want one legacy and one canonical pair, got %v", capture.recorded)
 				}
-				for _, ev := range capture.recorded {
-					var call events.ToolCallEvent
-					if err := json.Unmarshal([]byte(ev.PayloadJSON), &call); err != nil {
+				wantOrigin := origin
+				if wantOrigin == "" {
+					wantOrigin = "tether"
+				}
+				wantKinds := []string{events.EventTypeToolCallStart, catalog.KindToolCallStarted, events.EventTypeToolCallEnd, catalog.KindToolCallFinished}
+				var legacyStart, legacyEnd events.ToolCallEvent
+				for i, ev := range capture.recorded {
+					if ev.Kind != wantKinds[i] {
+						t.Fatalf("phase %d kind=%q want %q", i, ev.Kind, wantKinds[i])
+					}
+					if strings.Contains(ev.PayloadJSON, "find x") || strings.Contains(ev.PayloadJSON, "</query>") {
+						t.Fatal("argument content retained in telemetry")
+					}
+					if ev.Kind == events.EventTypeToolCallStart || ev.Kind == events.EventTypeToolCallEnd {
+						var call events.ToolCallEvent
+						if err := json.Unmarshal([]byte(ev.PayloadJSON), &call); err != nil {
+							t.Fatal(err)
+						}
+						if call.ToolName != tool.Name || call.Server != wantOrigin {
+							t.Fatalf("legacy event=%+v", call)
+						}
+						if ev.Kind == events.EventTypeToolCallStart {
+							legacyStart = call
+						} else {
+							legacyEnd = call
+						}
+						continue
+					}
+					entry, found := catalog.Lookup(ev.Kind)
+					if !found {
+						t.Fatalf("missing catalog kind %s", ev.Kind)
+					}
+					raw, err := catalog.PayloadSchema(entry.PayloadSchema)
+					if err != nil {
 						t.Fatal(err)
 					}
-					wantOrigin := origin
-					if wantOrigin == "" {
-						wantOrigin = "tether"
+					var schema jsonschema.Schema
+					if err = json.Unmarshal(raw, &schema); err != nil {
+						t.Fatal(err)
 					}
-					if call.ToolName != tool.Name || call.Server != wantOrigin {
-						t.Fatalf("event=%+v", call)
+					resolved, err := schema.Resolve(nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var payload map[string]any
+					if err = json.Unmarshal([]byte(ev.PayloadJSON), &payload); err != nil {
+						t.Fatal(err)
+					}
+					if err = resolved.Validate(payload); err != nil {
+						t.Fatal(err)
+					}
+					if payload["tool"] != tool.Name || payload["server"] != wantOrigin {
+						t.Fatalf("canonical exact name/origin=%v", payload)
+					}
+					for key := range payload {
+						switch key {
+						case "tool", "server", "args_bytes", "args_schema_fp", "ok", "error_class", "duration_ms", "gateway_ms", "forward_ms", "result_bytes":
+						default:
+							t.Fatalf("canonical content field %s", key)
+						}
+					}
+					if payload["args_bytes"].(float64) <= 0 || payload["args_schema_fp"] == "" {
+						t.Fatalf("missing canonical argument metadata: %v", payload)
+					}
+					if ev.Kind == catalog.KindToolCallStarted {
+						if _, ok := payload["ok"]; ok {
+							t.Fatal("canonical start carries outcome")
+						}
+						if len(payload) != 4 {
+							t.Fatal("canonical start carries finish metadata")
+						}
+					} else {
+						if payload["ok"] != true || payload["error_class"] != "" || payload["result_bytes"].(float64) <= 0 {
+							t.Fatalf("canonical finish outcome=%v", payload)
+						}
+						if payload["args_bytes"] != float64(legacyEnd.ArgsBytes) || payload["args_schema_fp"] != legacyEnd.ArgsSchemaFP || payload["result_bytes"] != float64(legacyEnd.ResultBytes) || payload["duration_ms"] != float64(legacyEnd.DurationMs) {
+							t.Fatal("canonical and legacy metadata disagree")
+						}
 					}
 				}
+				if legacyStart.OK || !legacyEnd.OK || legacyEnd.Error != "" || legacyEnd.ErrorClass != "" {
+					t.Fatalf("legacy outcomes start=%+v end=%+v", legacyStart, legacyEnd)
+				}
+
 				if mode == mcpgateway.Search {
 					tools, err := c.ListTools(context.Background(), nil)
 					if err != nil {
