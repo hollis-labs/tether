@@ -144,7 +144,7 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 			if len(registration.questionTools) == 0 {
 				return
 			}
-		} else if registration.approval == nil {
+		} else if registration.approval == nil && !registration.requestSignals {
 			return
 		}
 	}

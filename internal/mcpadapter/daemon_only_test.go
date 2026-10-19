@@ -336,7 +336,9 @@ func TestDaemonToolCallPublisher_PostsStartThenEndWithPublish(t *testing.T) {
 	end.DurationMs, end.OK = 12, true
 	for _, e := range []events.Event{
 		mk(events.EventTypeToolCallStart, call),
+		events.CanonicalToolCall(call, false), // derived at daemon ingress, never posted twice
 		mk(events.EventTypeToolCallEnd, end),
+		events.CanonicalToolCall(end, true),
 		{Scope: events.ScopeDaemon, Kind: "daemon.started", PayloadJSON: `{}`}, // not a tool call: ignored
 	} {
 		if err := p.Publish(ctx, e); err != nil {

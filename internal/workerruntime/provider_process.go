@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
 	"github.com/hollis-labs/libs/harness/core/adapters/turn"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 	"github.com/hollis-labs/tether/internal/shimagy"
@@ -200,6 +201,13 @@ func (r *providerRPC) read(input io.Reader, output io.Writer) {
 				if json.Unmarshal(frame.Params, &params) != nil || params.Turn.ID == "" {
 					return
 				}
+				kind := runtimeevents.KindTurnCompleted
+				if params.Turn.Status != "completed" {
+					kind = runtimeevents.KindTurnFailed
+				}
+				if err := writeProviderObservation(output, kind, params.Turn.ID, nil); err != nil {
+					return
+				}
 				if err := writeProviderResult(output, "codex", params.Turn.ID, finalText, params.Turn.Status != "completed"); err != nil {
 					return
 				}
@@ -214,8 +222,21 @@ func (r *providerRPC) read(input io.Reader, output io.Writer) {
 		if frame.Method != "" {
 			// No interactive approval channel exists on a worker. The planted
 			// permission posture controls execution; unsolicited requests fail.
+			turn, observation := workerPermissionRequest(frame.Method, frame.ID, frame.Params)
+			if observation != nil {
+				if err := writeProviderObservation(output, runtimeevents.KindAgentPermissionRequested, turn, observation); err != nil {
+					return
+				}
+			}
 			if err := r.write(map[string]any{"id": frame.ID, "error": map[string]any{"code": -32601, "message": "worker has no interactive request handler"}}); err != nil {
 				return
+			}
+			if observation != nil {
+				observation["allowed"] = false
+				observation["reason"] = "unsupported-handler"
+				if err := writeProviderObservation(output, runtimeevents.KindAgentPermissionResolved, turn, observation); err != nil {
+					return
+				}
 			}
 			continue
 		}

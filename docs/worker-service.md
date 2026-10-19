@@ -213,3 +213,22 @@ Changing the catalog does not reconfigure already planted sessions. Enablement
 also depends on authenticated proxy provenance (CW-20261016-0157); propagation
 alone does not supply an issuer-minted proxy credential. Keep extraction off
 until that path is ready. No existing settings are changed by this support.
+
+## Permission observations
+
+Codex JSON-RPC workers forward existing permission-request and reply observations
+through the normal stdout journal and output transport. The hub records only
+request ID, method, outcome and exact session/turn ordering metadata in native
+permission events and the existing `session.request_status` projection. Request
+params, questions and answers remain outside these observation payloads. This
+adds observation only: the worker's existing unsupported-interactive-handler
+reply remains unchanged, and a failed reply write leaves the request unresolved.
+
+Partial stdout lines resume from byte offsets in the existing session log after
+a hub restart; interleaved stderr cannot become part of a permission record.
+Output retries retain ordering and native event identity. Resolutions and actual
+terminal-turn events fence older observations for the same request or turn;
+another turn and a disconnected/orphaned session cannot clear a pending request.
+Sources without supported observations retain unknown pending state. Configured,
+registry-supported local ACP runtimes also feed their existing native permission
+signals into this same projection without installing a new decision handler.

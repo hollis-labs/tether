@@ -11,12 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/eventstamp"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/settings"
@@ -30,6 +32,9 @@ type synchronousContextPublisher struct {
 }
 
 func (p *synchronousContextPublisher) Publish(ctx context.Context, e events.Event) error {
+	if e.Kind != events.EventTypeToolCallStart && e.Kind != events.EventTypeToolCallEnd {
+		return nil
+	}
 	var call events.ToolCallEvent
 	if err := json.Unmarshal([]byte(e.PayloadJSON), &call); err != nil {
 		return err
@@ -74,7 +79,7 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	daemonServer := &daemon.Server{Config: daemon.Config{IdentityMode: identity.Observe}, Identity: identities, Service: f.service, Registry: regSvc, ProxyEvents: f.db, Bus: events.NewBus(events.BusOptions{Persister: f.db}), Settings: settings.NewService(settings.NewStorage(f.db.DB()))}
+	daemonServer := &daemon.Server{Config: daemon.Config{IdentityMode: identity.Observe}, Identity: identities, Service: f.service, Registry: regSvc, ProxyEvents: f.db, Bus: events.NewBus(events.BusOptions{Persister: f.db, Stages: []events.Stage{eventstamp.New()}}), Settings: settings.NewService(settings.NewStorage(f.db.DB()))}
 	defer daemonServer.CloseIdentityAudit()
 	srv := httptest.NewServer(daemonServer.Handler())
 	defer srv.Close()
@@ -133,6 +138,27 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	}
 	if rows[0].Attribution != want || rows[0].SessionID != want.SessionID || rows[0].ClaimedSessionID != "forged-session" {
 		t.Fatalf("persisted=%+v want=%+v", rows[0], want)
+	}
+
+	persisted, err := f.db.EventsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := 0
+	for _, ev := range persisted {
+		if ev.Kind != catalog.KindToolCallStarted && ev.Kind != catalog.KindToolCallFinished {
+			continue
+		}
+		canonical++
+		if ev.SessionID != want.SessionID || ev.Envelope.Dims.AgentURN != want.AgentURN || ev.Envelope.Dims.WorkstreamID != want.WorkstreamID || ev.Envelope.Actor.URN != want.AgentURN || ev.Envelope.Actor.Verified != "token" {
+			t.Fatalf("forwarded canonical scope: %+v", ev)
+		}
+		if strings.Contains(ev.PayloadJSON, "forged") {
+			t.Fatal("canonical payload retained caller claims")
+		}
+	}
+	if canonical != 2 {
+		t.Fatalf("forwarded canonical count %d", canonical)
 	}
 	readback, err := (DaemonProxyEvents{Client: dc}).QueryProxyEvents(store.ProxyEventFilter{ToolName: "context_test"})
 	if err != nil || len(readback) != 1 || readback[0].Attribution != want || readback[0].ClaimedSessionID != "forged-session" {

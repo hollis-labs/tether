@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
@@ -75,11 +76,11 @@ func TestIngestProxyEvent_PublishPutsTheCallOnTheDaemonsBus(t *testing.T) {
 		}
 	}
 
-	if len(bus.published) != 2 {
-		t.Fatalf("published %d events, want 2 (start, end)", len(bus.published))
+	if len(bus.published) != 4 {
+		t.Fatalf("published %d events, want legacy and canonical pairs", len(bus.published))
 	}
 	wantKinds := []string{events.EventTypeToolCallStart, events.EventTypeToolCallEnd}
-	for i, e := range bus.published {
+	for i, e := range []events.Event{bus.published[0], bus.published[2]} {
 		if e.Kind != wantKinds[i] || e.Scope != events.ScopeSession || e.SessionID != "s1" {
 			t.Errorf("event %d = %+v, want %s on the session scope of s1", i, e, wantKinds[i])
 		}
@@ -92,6 +93,34 @@ func TestIngestProxyEvent_PublishPutsTheCallOnTheDaemonsBus(t *testing.T) {
 		}
 		if tce.Timestamp.Year() < 2026 || time.Since(tce.Timestamp) > time.Minute {
 			t.Errorf("event %d timestamp = %v: the daemon must stamp the time itself, not take the caller's", i, tce.Timestamp)
+		}
+	}
+
+	for i, e := range []events.Event{bus.published[1], bus.published[3]} {
+		wantKind := catalog.KindToolCallStarted
+		if i == 1 {
+			wantKind = catalog.KindToolCallFinished
+		}
+		// This handler has no authenticated caller: an existing session named in
+		// the request retains legacy behavior, but is no canonical binding.
+		if e.Kind != wantKind || e.SessionID != "" || e.Scope != events.ScopeDaemon {
+			t.Fatalf("canonical event promoted request claim: %+v", e)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(e.PayloadJSON), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["tool"] != "hadron_x" {
+			t.Fatal(payload)
+		}
+		outcome, has := payload["ok"]
+		if (i == 0 && has) || (i == 1 && outcome != true) {
+			t.Fatalf("canonical outcome: %v", payload)
+		}
+		for _, key := range []string{"error", "args", "result", "result_summary", "attribution", "claimed_session_id"} {
+			if _, ok := payload[key]; ok {
+				t.Fatalf("unexpected content field %s", key)
+			}
 		}
 	}
 	// A start record carries no outcome.
@@ -166,8 +195,8 @@ func TestIngestProxyEvent_PublishNeedsAnExistingSession(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("no session id: status = %d, want 201 (body %s)", rr.Code, rr.Body.String())
 	}
-	if len(bus.published) != 1 || bus.published[0].Scope != events.ScopeDaemon || bus.published[0].SessionID != "" {
-		t.Errorf("published = %+v, want one event on the daemon scope", bus.published)
+	if len(bus.published) != 2 || bus.published[0].Scope != events.ScopeDaemon || bus.published[0].SessionID != "" {
+		t.Errorf("published = %+v, want legacy and canonical events on the daemon scope", bus.published)
 	}
 
 	// With no way to look sessions up, a named session cannot be vouched for.
@@ -281,7 +310,7 @@ func TestIngestProxyEventPreservesTelemetryAndRejectsInvalidMetrics(t *testing.T
 	if rr.Code != http.StatusCreated {
 		t.Fatal(rr.Code, rr.Body.String())
 	}
-	if len(rows.events) != 1 || len(bus.published) != 1 {
+	if len(rows.events) != 1 || len(bus.published) != 2 {
 		t.Fatal("record not persisted and published")
 	}
 	var call events.ToolCallEvent

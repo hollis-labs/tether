@@ -48,6 +48,9 @@ func TestServiceBoundsLargeToolNamesInBothDurablePhases(t *testing.T) {
 			t.Fatalf("recorded name: %q", end.ToolName)
 		}
 		for _, row := range publisher.rows {
+			if row.Kind != events.EventTypeToolCallStart && row.Kind != events.EventTypeToolCallEnd {
+				continue
+			}
 			var call events.ToolCallEvent
 			if err := json.Unmarshal([]byte(row.PayloadJSON), &call); err != nil {
 				t.Fatal(err)
@@ -82,11 +85,11 @@ func TestServiceRecordsVerifiedMetadataAndTypedOutcome(t *testing.T) {
 	if end.TraceID == "" || end.SpanID == "" || end.GatewayMs < 0 || end.ForwardMs < 0 {
 		t.Fatalf("trace/timing: %+v", end)
 	}
-	if len(publisher.rows) != 2 || publisher.rows[1].Kind != events.EventTypeToolCallEnd {
+	if len(publisher.rows) != 4 || publisher.rows[2].Kind != events.EventTypeToolCallEnd {
 		t.Fatalf("published: %+v", publisher.rows)
 	}
 	var roundtrip events.ToolCallEvent
-	if err := json.Unmarshal([]byte(publisher.rows[1].PayloadJSON), &roundtrip); err != nil {
+	if err := json.Unmarshal([]byte(publisher.rows[2].PayloadJSON), &roundtrip); err != nil {
 		t.Fatal(err)
 	}
 	if roundtrip.ErrorClass != events.ToolErrorDenied {

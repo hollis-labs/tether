@@ -40,14 +40,39 @@ func applyRequest(s *Session, req store.EnvironmentRequest) {
 	if s.requests == nil {
 		s.requests = make(map[string]store.EnvironmentRequest)
 	}
-	key := req.TurnID + "\x00" + req.RequestID
-	if previous, exists := s.requests[key]; exists {
-		if req.SourceSequence < previous.SourceSequence {
+	if req.Terminal {
+		key := req.TurnID + "\x00"
+		if req.SourceSequence < s.requests[key].SourceSequence {
 			return
 		}
-		req.Kind = previous.Kind
-	} else if !req.Open {
+		s.requests[key] = req
+		for id, previous := range s.requests {
+			if previous.TurnID == req.TurnID && previous.RequestID != "" && previous.SourceSequence <= req.SourceSequence {
+				previous.Open = false
+				previous.SourceSequence = req.SourceSequence
+				s.requests[id] = previous
+			}
+		}
+		refreshRequests(s)
 		return
+	}
+	if floor := s.requests[req.TurnID+"\x00"].SourceSequence; floor > 0 && req.SourceSequence <= floor {
+		req.Open = false
+		req.SourceSequence = floor
+	}
+	key := req.TurnID + "\x00" + req.RequestID
+	if previous, exists := s.requests[key]; exists {
+		if req.SourceSequence < previous.SourceSequence || (req.SourceSequence == previous.SourceSequence && !previous.Open && req.Open) {
+			if previous.Kind == "" && (req.Kind == "approval" || req.Kind == "question") {
+				req.Open = false
+				req.SourceSequence = previous.SourceSequence
+			} else {
+				return
+			}
+		}
+		if previous.Kind != "" {
+			req.Kind = previous.Kind
+		}
 	}
 	s.requests[key] = req
 	refreshRequests(s)

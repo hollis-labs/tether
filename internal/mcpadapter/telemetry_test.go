@@ -105,6 +105,9 @@ func TestTelemetryEmptyArgumentsHaveZeroBytes(t *testing.T) {
 type callCapturePublisher struct{ calls []events.ToolCallEvent }
 
 func (p *callCapturePublisher) Publish(_ context.Context, event events.Event) error {
+	if event.Kind != events.EventTypeToolCallStart && event.Kind != events.EventTypeToolCallEnd {
+		return nil
+	}
 	var call events.ToolCallEvent
 	if err := json.Unmarshal([]byte(event.PayloadJSON), &call); err != nil {
 		return err

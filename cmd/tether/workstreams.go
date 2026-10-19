@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,15 +17,20 @@ import (
 )
 
 var (
-	workstreamName       string
-	workstreamWorkflowID string
-	workstreamStatus     string
-	workstreamProject    string
-	workstreamOwner      string
-	workstreamTail       string
-	workstreamUser       string
-	workstreamMemoryType string
-	workstreamJSON       bool
+	workstreamProjectURNs   []string
+	workstreamProjectFilter string
+	workstreamName          string
+	workstreamWorkflowID    string
+	workstreamStatus        string
+	workstreamProject       string
+	workstreamOwner         string
+	workstreamTail          string
+	workstreamUser          string
+	workstreamMemoryType    string
+	workstreamJSON          bool
+	workstreamLimit         int
+	workstreamCursor        string
+	workstreamRef           string
 )
 
 var workstreamsCmd = &cobra.Command{
@@ -46,7 +52,7 @@ var workstreamCreateCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.CreateWorkstream(cmdCtx(cmd), workstreamName, workstreamWorkflowID)
+		out, err := c.CreateWorkstream(cmdCtx(cmd), workstreamName, workstreamWorkflowID, workstreamProjectURNs...)
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -97,8 +103,12 @@ must be active or closed. id and created_at never change.`,
 		if cmd.Flags().Changed("status") {
 			patch.Status = &workstreamStatus
 		}
-		if patch.Name == nil && patch.WorkflowID == nil && patch.Status == nil {
-			return fmt.Errorf("nothing to update: pass at least one of --name, --workflow-id, --status")
+		if cmd.Flags().Changed("project-urn") {
+			projects := append([]string{}, workstreamProjectURNs...)
+			patch.ProjectURNs = &projects
+		}
+		if patch.Name == nil && patch.WorkflowID == nil && patch.Status == nil && patch.ProjectURNs == nil {
+			return fmt.Errorf("nothing to update: pass at least one of --name, --workflow-id, --status, --project-urn")
 		}
 		c, err := registryClientFactory()
 		if err != nil {
@@ -124,20 +134,24 @@ var workstreamListCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.ListWorkstreams(cmdCtx(cmd), workstreamStatus, workstreamWorkflowID)
+		out, err := c.ListWorkstreamsPage(cmdCtx(cmd), client.WorkstreamListOptions{ProjectURN: workstreamProjectFilter, Status: workstreamStatus, WorkflowID: workstreamWorkflowID, Ref: workstreamRef, Limit: workstreamLimit, Cursor: workstreamCursor})
 		if err != nil {
 			return classifyErr(err)
 		}
 		if workstreamJSON {
 			return printJSON(out)
 		}
-		if len(out) == 0 {
-			fmt.Println("(no workstreams)")
+		if len(out.Workstreams) == 0 {
+			fmt.Println("(no workstreams; complete live page)")
 			return nil
 		}
 		fmt.Printf("%-38s %-10s %-20s %s\n", "ID", "STATUS", "WORKFLOW", "NAME")
-		for _, w := range out {
+		for _, w := range out.Workstreams {
 			fmt.Printf("%-38s %-10s %-20s %s\n", w.ID, w.Status, dashIfEmpty(w.WorkflowID), dashIfEmpty(w.Name))
+		}
+		fmt.Printf("complete=%t has_more=%t limit=%d\n", out.Complete, out.HasMore, out.Limit)
+		if out.HasMore {
+			fmt.Printf("next_cursor=%s\n", out.NextCursor)
 		}
 		return nil
 	},
@@ -182,7 +196,7 @@ container too.`,
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.EnsureSessionWorkstream(cmdCtx(cmd), args[0], workstreamName, workstreamWorkflowID)
+		out, err := c.EnsureSessionWorkstream(cmdCtx(cmd), args[0], workstreamName, workstreamWorkflowID, workstreamProjectURNs...)
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -239,11 +253,16 @@ func printWorkstream(w api.WorkstreamDTO) {
 	fmt.Printf("id:         %s\n", w.ID)
 	fmt.Printf("name:       %s\n", dashIfEmpty(w.Name))
 	fmt.Printf("workflow:   %s\n", dashIfEmpty(w.WorkflowID))
+	fmt.Printf("projects:   %s\n", strings.Join(w.ProjectURNs, ", "))
 	fmt.Printf("status:     %s\n", w.Status)
 	fmt.Printf("created_at: %s\n", w.CreatedAt)
 }
 
 func init() {
+	workstreamCreateCmd.Flags().StringSliceVar(&workstreamProjectURNs, "project-urn", nil, "explicit registry project URN (repeatable)")
+	workstreamUpdateCmd.Flags().StringSliceVar(&workstreamProjectURNs, "project-urn", nil, "replace registry projects (repeatable); empty clears")
+	workstreamEnsureCmd.Flags().StringSliceVar(&workstreamProjectURNs, "project-urn", nil, "registry project URN seed on create only (repeatable)")
+	workstreamListCmd.Flags().StringVar(&workstreamProjectFilter, "project-urn", "", "exact registry project membership filter")
 	workstreamCreateCmd.Flags().StringVar(&workstreamName, "name", "", "optional human label")
 	workstreamCreateCmd.Flags().StringVar(&workstreamWorkflowID, "workflow-id", "", "optional workflow correlation id (free-form; never resolved by Tether)")
 	workstreamCreateCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
@@ -257,6 +276,9 @@ func init() {
 
 	workstreamListCmd.Flags().StringVar(&workstreamStatus, "status", "", "filter by status: active or closed")
 	workstreamListCmd.Flags().StringVar(&workstreamWorkflowID, "workflow-id", "", "filter by workflow correlation id")
+	workstreamListCmd.Flags().IntVar(&workstreamLimit, "limit", 100, "page size (1..1000; zero uses default)")
+	workstreamListCmd.Flags().StringVar(&workstreamCursor, "cursor", "", "opaque continuation; reuse the same filters")
+	workstreamListCmd.Flags().StringVar(&workstreamRef, "ref", "", "exact kind:ref_id selector; exclusive with status/workflow-id")
 	workstreamListCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
 
 	workstreamEnsureCmd.Flags().StringVar(&workstreamName, "name", "", "label used only if a workstream is created")

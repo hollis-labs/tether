@@ -8,6 +8,8 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 
@@ -30,6 +32,7 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"creates a new session row and orphans anything keyed on session_id. " +
 			"Requires the session.write scope.",
 		InputSchema: gomcp.InputSchema(
+			gomcp.StringArrayProp("project_urns", "Explicit canonical registry projects; [] clears on update, seed-only on ensure. Null is invalid.", false),
 			gomcp.StringProp("name", "Optional human label.", false),
 			gomcp.StringProp("workflow_id", "Optional correlation id for a workflow owned by another system. Free-form; Tether records it and never resolves it.", false),
 		),
@@ -44,6 +47,7 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"are immutable; updated_at is set. Returns the refreshed workstream. " +
 			"Requires the session.write scope.",
 		InputSchema: gomcp.InputSchema(
+			gomcp.StringArrayProp("project_urns", "Explicit canonical registry projects; [] clears on update, seed-only on ensure. Null is invalid.", false),
 			gomcp.StringProp("id", "Workstream id.", true),
 			gomcp.StringProp("name", "New label; empty string clears it. Omit to leave unchanged.", false),
 			gomcp.StringProp("workflow_id", "New workflow correlation id (for example torque:PRJ-...); empty string clears it. Omit to leave unchanged.", false),
@@ -63,10 +67,14 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_workstream_list",
-		Description: "List workstreams, newest first.",
+		Description: "List one bounded workstream page, newest first. Follow next_cursor with unchanged filters; complete is live exhaustion, not a snapshot.",
 		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("project_urn", "Exact registry project membership filter; exclusive with ref.", false),
 			gomcp.StringProp("status", "Filter by status: active or closed.", false),
 			gomcp.StringProp("workflow_id", "Filter by workflow correlation id.", false),
+			gomcp.StringProp("ref", "Exact kind:ref_id; exclusive with status/workflow_id.", false),
+			gomcp.NumberProp("limit", "Page size, default 100, maximum 1000.", false),
+			gomcp.StringProp("cursor", "Opaque continuation; keep filters unchanged.", false),
 		),
 		Handler: a.handleWorkstreamList,
 	}, Reads("store.ListWorkstreams: SELECT"))
@@ -89,6 +97,7 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"needs a container without ceremony. Idempotent: a second call returns the " +
 			"same workstream. Requires the session.write scope.",
 		InputSchema: gomcp.InputSchema(
+			gomcp.StringArrayProp("project_urns", "Explicit canonical registry projects; [] clears on update, seed-only on ensure. Null is invalid.", false),
 			gomcp.StringProp("session_id", "Session that needs a container.", true),
 			gomcp.StringProp("name", "Optional label, used only when one is created.", false),
 			gomcp.StringProp("workflow_id", "Optional workflow correlation id, used only when one is created.", false),
@@ -150,11 +159,13 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"lookup. Use it when you hold an identifier and want the work it came out of: " +
 			"\"which Tesseract records came from CW-20260911-0039?\" starts here, then " +
 			"digests the result.\n\n" +
-			"RETURNS ALL MATCHES AND NEVER PICKS ONE. Two separate efforts touching the " +
+			"RETURNS A PAGE OF MATCHES; FOLLOW next_cursor UNTIL complete. Two separate efforts touching the " +
 			"same task is ordinary, so a single answer would look authoritative and be " +
 			"wrong whenever the ambiguity is real.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("ref", "Selector as <kind>:<ref_id>, for example torque_task:CW-20260912-0063. Split on the FIRST colon only, so a ref_id containing colons (msg://...) is preserved.", true),
+			gomcp.NumberProp("limit", "Page size, default 100, maximum 1000.", false),
+			gomcp.StringProp("cursor", "Opaque continuation for this ref.", false),
 		),
 		Handler: a.handleWorkstreamsForRef,
 	}, Reads("store.WorkstreamsForRef: one SELECT DISTINCT"))
@@ -197,6 +208,10 @@ func (a *Adapter) handleWorkstreamDigest(ctx context.Context, args map[string]an
 }
 
 func (a *Adapter) handleWorkstreamsForRef(ctx context.Context, args map[string]any) (any, error) {
+	limit, limitErr := workstreamPageLimit(args)
+	if limitErr != nil {
+		return nil, limitErr
+	}
 	selector := str(args, "ref")
 	if selector == "" {
 		return nil, toolError("invalid_request", "ref is required, as <kind>:<ref_id>")
@@ -204,14 +219,14 @@ func (a *Adapter) handleWorkstreamsForRef(ctx context.Context, args map[string]a
 	if err := a.workstreamClientReady(); err != nil {
 		return nil, err
 	}
-	out, err := a.client.WorkstreamsForRef(ctx, selector)
+	out, err := a.client.ListWorkstreamsPage(ctx, client.WorkstreamListOptions{Ref: selector, Limit: limit, Cursor: str(args, "cursor")})
 	if err != nil {
 		return nil, workstreamErr(err)
 	}
 	// Reported rather than left for the caller to count: "which workstream"
 	// answered with three is a materially different answer from one, and the
 	// count is what makes a consumer notice.
-	return toolJSON(map[string]any{"ok": true, "matched": len(out), "workstreams": out}), nil
+	return toolJSON(map[string]any{"ok": true, "matched": len(out.Workstreams), "workstreams": out.Workstreams, "next_cursor": out.NextCursor, "has_more": out.HasMore, "complete": out.Complete, "limit": out.Limit}), nil
 }
 
 func (a *Adapter) handleWorkstreamNamespace(ctx context.Context, args map[string]any) (any, error) {
@@ -249,13 +264,17 @@ func (a *Adapter) workstreamClientReady() error {
 }
 
 func (a *Adapter) handleWorkstreamCreate(ctx context.Context, args map[string]any) (any, error) {
+	projects, projectErr := workstreamProjectsArg(args)
+	if projectErr != nil {
+		return nil, projectErr
+	}
 	if err := a.checkScope("session.write"); err != nil {
 		return nil, err
 	}
 	if err := a.workstreamClientReady(); err != nil {
 		return nil, err
 	}
-	out, err := a.client.CreateWorkstream(ctx, str(args, "name"), str(args, "workflow_id"))
+	out, err := a.client.CreateWorkstream(ctx, str(args, "name"), str(args, "workflow_id"), projects...)
 	if err != nil {
 		return nil, workstreamErr(err)
 	}
@@ -277,6 +296,10 @@ func optStr(args map[string]any, key string) *string {
 }
 
 func (a *Adapter) handleWorkstreamUpdate(ctx context.Context, args map[string]any) (any, error) {
+	projects, projectErr := workstreamProjectsArg(args)
+	if projectErr != nil {
+		return nil, projectErr
+	}
 	if err := a.checkScope("session.write"); err != nil {
 		return nil, err
 	}
@@ -288,9 +311,10 @@ func (a *Adapter) handleWorkstreamUpdate(ctx context.Context, args map[string]an
 		return nil, err
 	}
 	out, err := a.client.UpdateWorkstream(ctx, id, api.WorkstreamUpdateRequest{
-		Name:       optStr(args, "name"),
-		WorkflowID: optStr(args, "workflow_id"),
-		Status:     optStr(args, "status"),
+		Name:        optStr(args, "name"),
+		WorkflowID:  optStr(args, "workflow_id"),
+		Status:      optStr(args, "status"),
+		ProjectURNs: projectSlicePointer(projects),
 	})
 	if err != nil {
 		return nil, workstreamErr(err)
@@ -314,14 +338,18 @@ func (a *Adapter) handleWorkstreamGet(ctx context.Context, args map[string]any) 
 }
 
 func (a *Adapter) handleWorkstreamList(ctx context.Context, args map[string]any) (any, error) {
+	limit, limitErr := workstreamPageLimit(args)
+	if limitErr != nil {
+		return nil, limitErr
+	}
 	if err := a.workstreamClientReady(); err != nil {
 		return nil, err
 	}
-	out, err := a.client.ListWorkstreams(ctx, str(args, "status"), str(args, "workflow_id"))
+	out, err := a.client.ListWorkstreamsPage(ctx, client.WorkstreamListOptions{ProjectURN: str(args, "project_urn"), Status: str(args, "status"), WorkflowID: str(args, "workflow_id"), Ref: str(args, "ref"), Limit: limit, Cursor: str(args, "cursor")})
 	if err != nil {
 		return nil, workstreamErr(err)
 	}
-	return toolJSON(map[string]any{"ok": true, "workstreams": out}), nil
+	return toolJSON(map[string]any{"ok": true, "workstreams": out.Workstreams, "next_cursor": out.NextCursor, "has_more": out.HasMore, "complete": out.Complete, "limit": out.Limit}), nil
 }
 
 func (a *Adapter) handleWorkstreamAssign(ctx context.Context, args map[string]any) (any, error) {
@@ -342,6 +370,10 @@ func (a *Adapter) handleWorkstreamAssign(ctx context.Context, args map[string]an
 }
 
 func (a *Adapter) handleWorkstreamEnsure(ctx context.Context, args map[string]any) (any, error) {
+	projects, projectErr := workstreamProjectsArg(args)
+	if projectErr != nil {
+		return nil, projectErr
+	}
 	if err := a.checkScope("session.write"); err != nil {
 		return nil, err
 	}
@@ -352,7 +384,7 @@ func (a *Adapter) handleWorkstreamEnsure(ctx context.Context, args map[string]an
 	if err := a.workstreamClientReady(); err != nil {
 		return nil, err
 	}
-	out, err := a.client.EnsureSessionWorkstream(ctx, sessionID, str(args, "name"), str(args, "workflow_id"))
+	out, err := a.client.EnsureSessionWorkstream(ctx, sessionID, str(args, "name"), str(args, "workflow_id"), projects...)
 	if err != nil {
 		return nil, workstreamErr(err)
 	}
@@ -367,4 +399,46 @@ func workstreamErr(err error) error {
 		return daemonUnreachableError(err)
 	}
 	return toolError("internal_error", err.Error())
+}
+
+func workstreamPageLimit(args map[string]any) (int, error) {
+	value, ok := args["limit"]
+	if !ok {
+		return 0, nil
+	}
+	raw, ok := value.(string)
+	if !ok {
+		b, err := json.Marshal(value)
+		if err != nil {
+			return 0, toolError("invalid_request", "limit must be a nonnegative integer")
+		}
+		raw = string(b)
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, toolError("invalid_request", "limit must be a nonnegative integer")
+	}
+	return n, nil
+}
+
+func workstreamProjectsArg(args map[string]any) ([]string, error) {
+	value, ok := args["project_urns"]
+	if !ok {
+		return nil, nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, toolError("invalid_request", "project_urns must be an array of strings")
+	}
+	var out []string
+	if string(raw) == "null" || json.Unmarshal(raw, &out) != nil {
+		return nil, toolError("invalid_request", "project_urns must be an array of strings, not null")
+	}
+	return out, nil
+}
+func projectSlicePointer(projects []string) *[]string {
+	if projects == nil {
+		return nil
+	}
+	return &projects
 }
