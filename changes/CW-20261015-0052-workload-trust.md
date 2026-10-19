@@ -1,1 +1,2 @@
 - Add a narrowly authorized current-workload trust read for Basalisk status authentication, with durable credential-bound mint metadata, current lifecycle/scope/revocation/key checks, and explicit commissioning/exchange semantics. (CW-20261015-0052)
+- Stabilize the output-publication retry regression by injecting its first failure directly while retaining normal persistence deadlines under CI race/coverage load. (CW-20261015-0052)
