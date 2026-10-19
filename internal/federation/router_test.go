@@ -226,3 +226,22 @@ func TestRouterMutualPeerConfiguration_NoLoop(t *testing.T) {
 		t.Fatalf("storeA inbox = %v, err=%v, want exactly 1 envelope", aInbox, err)
 	}
 }
+
+func TestRouterDropsStreamControlBeforeLocalOrPeerSend(t *testing.T) {
+	local, remote := memstore.New(), memstore.New()
+	router := NewRouter(local, "local")
+	if err := router.Register("remote", remote); err != nil {
+		t.Fatal(err)
+	}
+	for _, authority := range []string{"local", "remote"} {
+		env := envTo(addr(authority, "receiver"))
+		env.Kind = messaging.Kind("stream.cursor")
+		if _, err := router.Send(context.Background(), env); err == nil {
+			t.Fatal("stream control frame accepted as mail")
+		}
+		rows, err := router.Inbox(context.Background(), env.To, messaging.Filter{})
+		if err != nil || len(rows) != 0 {
+			t.Fatalf("control frame reached recipient: %v %v", rows, err)
+		}
+	}
+}

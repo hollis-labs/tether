@@ -105,6 +105,12 @@ func openDB(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply delivery schema: %w", err)
 	}
+	// Fence pre-activation library history once. On a fresh database the high
+	// water is zero; reopening never moves an established checkpoint.
+	if _, err := db.Exec(`UPDATE message_event_checkpoints SET position=(SELECT coalesce(max(id),0) FROM messaging_transitions) WHERE source='delivery' AND position=-1`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("activate message events: %w", err)
+	}
 	if err := installReplacementDeliveryFences(context.Background(), db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("install replacement delivery fences: %w", err)

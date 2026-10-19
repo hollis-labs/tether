@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/api"
@@ -23,7 +24,15 @@ func (s *Service) installRecipientWake() {
 	})
 }
 
-func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, env messaging.Envelope) api.WakeOutcome {
+func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, env messaging.Envelope) (out api.WakeOutcome) {
+	delegated := false
+	defer func() {
+		if !delegated && st != nil {
+			if err := st.RecordMessageWake(context.WithoutCancel(ctx), env.ID, env.To.URN(), "wake.outcome", "", 0, 0, out.Attempted, out.Delivered, out.Reason); err != nil {
+				log.Printf("app: record recipient wake outcome: %v", err)
+			}
+		}
+	}()
 	intent, err := wakeintent.Read(env)
 	if err != nil {
 		return api.WakeOutcome{Reason: "invalid-wake-intent", Detail: err.Error()}
@@ -42,6 +51,7 @@ func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, 
 	if text == "" {
 		text = sweepWakeText(env)
 	}
+	delegated = true
 	return attemptRecipientWake(ctx, st, reg, rt, env.ID, env.To, sessionID, text)
 }
 

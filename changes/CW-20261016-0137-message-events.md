@@ -1,0 +1,1 @@
+- CW-20261016-0137: Project durable delivery transitions, mailbox attention changes and wake outcomes into canonical metadata-only message and wake events through the existing event outbox, retaining mailbox bodies and legacy compatibility.

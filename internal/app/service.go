@@ -53,9 +53,11 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
-	admitMu      sync.Mutex        // guards admitPending
-	admitPending map[string]string // sessionID -> projectID reserved by admitLaunch
-	lineageMu    sync.Mutex        // serializes lineage check + child insert
+	messageEventsMu   sync.Mutex
+	messageEventsStop func()
+	admitMu           sync.Mutex        // guards admitPending
+	admitPending      map[string]string // sessionID -> projectID reserved by admitLaunch
+	lineageMu         sync.Mutex        // serializes lineage check + child insert
 	// LineageLimits caps plain session lineage; zero means unlimited.
 	LineageLimits LineageLimits
 	// WorkerResume opts in to resuming a worker-placed session on the same
@@ -584,6 +586,7 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 // to call multiple times only via the underlying components' contracts;
 // callers should treat Close as one-shot.
 func (s *Service) Close() error {
+	s.stopMessageEvents()
 	s.stopEventsOutbox()
 	if s.Workers != nil {
 		s.Workers.Close()

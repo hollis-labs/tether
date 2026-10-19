@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
@@ -169,6 +170,10 @@ func (r *Router) storeFor(authority string) (messaging.Store, error) {
 
 // Send routes the envelope to the store owning env.To.Authority.
 func (r *Router) Send(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	// Stream control frames belong to their transport, never durable mail or a peer.
+	if strings.HasPrefix(string(env.Kind), "stream.") {
+		return messaging.Envelope{}, fmt.Errorf("federation: stream control frame is not mail")
+	}
 	s, err := r.storeFor(env.To.Authority)
 	if err != nil {
 		return messaging.Envelope{}, err
