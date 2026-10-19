@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
@@ -14,6 +15,7 @@ import (
 const EnvironmentRequestKind = "session.request_status"
 
 type EnvironmentRequest struct {
+	Terminal       bool   `json:"terminal,omitempty"`
 	SessionID      string `json:"-"`
 	TurnID         string `json:"turn_id"`
 	RequestID      string `json:"request_id"`
@@ -33,7 +35,7 @@ func (s *Store) insertEnvironmentRequestEnvelope(ctx context.Context, e events.E
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
 		return events.Event{}, err
 	}
-	if sessionID == "" || req.TurnID == "" || req.RequestID == "" || (req.Open && req.Kind != "question" && req.Kind != "approval") {
+	if (req.Terminal && (req.Open || req.RequestID != "" || req.Kind != "" || req.SourceSequence == 0)) || sessionID == "" || req.TurnID == "" || (!req.Terminal && req.RequestID == "") || (req.Open && req.Kind != "question" && req.Kind != "approval") {
 		return events.Event{}, fmt.Errorf("incomplete environment request identity")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -41,9 +43,17 @@ func (s *Store) insertEnvironmentRequestEnvelope(ctx context.Context, e events.E
 		return events.Event{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := normalizeEnvironmentRequest(ctx, tx, sessionID, &req); err != nil {
+		return events.Event{}, err
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return events.Event{}, err
+	}
+	e.PayloadJSON = string(raw)
 	// A resolution cannot invent an observed request, or resolve a different
 	// turn. ParentID correlation is normalized by the producer before here.
-	if !req.Open {
+	if !req.Open && !req.Terminal {
 		err = tx.QueryRowContext(ctx, `SELECT request_kind FROM environment_request_status WHERE session_id=? AND turn_id=? AND request_id=?`, sessionID, req.TurnID, req.RequestID).Scan(&req.Kind)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return events.Event{}, err
@@ -55,6 +65,11 @@ func (s *Store) insertEnvironmentRequestEnvelope(ctx context.Context, e events.E
 	stored, _, err := insertEventEnvelopeRow(ctx, tx, e, at, "", false)
 	if err != nil {
 		return events.Event{}, err
+	}
+	if req.Terminal {
+		if _, err = tx.ExecContext(ctx, `UPDATE environment_request_status SET is_open=0,event_seq=?,source_sequence=? WHERE session_id=? AND turn_id=? AND source_sequence<=?`, stored.Seq, fmt.Sprintf("%020d", req.SourceSequence), sessionID, req.TurnID, fmt.Sprintf("%020d", req.SourceSequence)); err != nil {
+			return events.Event{}, err
+		}
 	}
 	if req.Kind == "question" || req.Kind == "approval" {
 		_, err = tx.ExecContext(ctx, `INSERT INTO environment_request_status(session_id,turn_id,request_id,request_kind,is_open,event_seq,source_sequence) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,turn_id,request_id) DO UPDATE SET is_open=excluded.is_open,event_seq=excluded.event_seq,source_sequence=excluded.source_sequence WHERE excluded.source_sequence>=environment_request_status.source_sequence`, sessionID, req.TurnID, req.RequestID, req.Kind, req.Open, stored.Seq, fmt.Sprintf("%020d", req.SourceSequence))
@@ -81,9 +96,11 @@ func environmentRequests(ctx context.Context, tx *sql.Tx, head int64, sessionID 
 		if err := rows.Scan(&req.SessionID, &req.TurnID, &req.RequestID, &req.Kind, &req.Open, &sequence); err != nil {
 			return nil, err
 		}
-		if _, err := fmt.Sscan(sequence, &req.SourceSequence); err != nil {
+		value, err := strconv.ParseUint(sequence, 10, 64)
+		if err != nil {
 			return nil, err
 		}
+		req.SourceSequence = value
 		out = append(out, req)
 	}
 	return out, rows.Err()

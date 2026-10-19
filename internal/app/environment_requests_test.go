@@ -83,3 +83,24 @@ func TestEnvironmentRequestIdentityRejectsObjects(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestEnvironmentRequestSupportedACPObservation(t *testing.T) {
+	svc, _ := outputHarness(t, nil)
+	svc.Catalog = &config.Catalog{Providers: map[string]config.Provider{"pi": {ID: "pi", Provider: "pi", RuntimeKind: config.RuntimeKindACPStdio}}}
+	svc.installTurnFeeds()
+	row, err := svc.Store.GetSession("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := svc.newSessionTurnOutput(*row, &launch.Plan{ProviderBrand: "pi"})
+	output.observeRuntime(runtimeevents.Event{ID: "acp-request", Kind: runtimeevents.KindAgentPermissionRequested, TurnID: "turn", Sequence: 8, Payload: json.RawMessage(`{"request_id":"acp-1","method":"session/request_permission"}`)})
+	got := permissionSnapshot(t, svc)
+	if len(got) != 1 || !got[0].Open {
+		t.Fatal("supported ACP request suppressed", got)
+	}
+	output.observeRuntime(runtimeevents.Event{ID: "acp-resolution", Kind: runtimeevents.KindAgentPermissionResolved, TurnID: "turn", Sequence: 9, Payload: json.RawMessage(`{"request_id":"acp-1","method":"session/request_permission"}`)})
+	got = permissionSnapshot(t, svc)
+	if len(got) != 1 || got[0].Open || got[0].SourceSequence != 9 {
+		t.Fatal("ACP resolution lost", got)
+	}
+}
