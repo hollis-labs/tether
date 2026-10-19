@@ -320,8 +320,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := h.prepare(r.Context(), a, parts[1], s)
 	if err != nil {
-		slog.Warn("daemon MCP view preparation failed", "reason", "runtime or credential policy unavailable")
-		transportError(w, http.StatusServiceUnavailable, "mcp_view_unavailable")
+		stage := prepareStageOf(err)
+		// The stage names the failing step and is safe to return; the cause stays in the daemon log, bounded.
+		slog.Warn("daemon MCP view preparation failed", "stage", stage, "principal_kind", a.caller.Principal.Kind, "error", boundedError(err))
+		transportError(w, http.StatusServiceUnavailable, "mcp_view_unavailable_"+stage)
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), preparedViewKey{}, v))
@@ -388,6 +390,44 @@ func (h *Handler) adopt(v *transportView, token string, exp *time.Time) {
 	}
 }
 
+// Stages of view preparation, named in the 503 so a refusal can be read without the daemon log.
+const (
+	stageCapacity   = "view_capacity"
+	stageRuntime    = "runtime_create"
+	stageOriginPick = "origin_select"
+	stageOriginRun  = "origin_start"
+	stageAdapter    = "adapter_build"
+	stageGateway    = "gateway_view"
+	stageStopping   = "stopping"
+)
+
+// prepareError tags a preparation failure with the stage that produced it.
+type prepareError struct {
+	stage string
+	err   error
+}
+
+func (e *prepareError) Error() string { return e.stage + ": " + e.err.Error() }
+func (e *prepareError) Unwrap() error { return e.err }
+
+func stageErr(stage string, err error) error { return &prepareError{stage: stage, err: err} }
+
+func prepareStageOf(err error) string {
+	var pe *prepareError
+	if errors.As(err, &pe) {
+		return pe.stage
+	}
+	return "unknown"
+}
+
+func boundedError(err error) string {
+	text := err.Error()
+	if len(text) > 500 {
+		text = text[:500] + "..."
+	}
+	return text
+}
+
 func (h *Handler) prepare(ctx context.Context, a admission, token string, s selectors) (*transportView, error) {
 	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint, principalKey: a.caller.Principal.Kind + ":" + a.caller.Principal.ID, operator: identity.IsOperatorCredential(a.caller.Principal), lastUsed: time.Now()}
 	if a.caller.Principal.ExpiresAt != nil {
@@ -414,7 +454,7 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		v.cancelCalls()
 		v.cancelStreams()
 		h.mu.Unlock()
-		return nil, fmt.Errorf("MCP view capacity unavailable")
+		return nil, stageErr(stageCapacity, fmt.Errorf("MCP view capacity unavailable"))
 	}
 	h.views[v] = struct{}{}
 	h.mu.Unlock()
@@ -430,24 +470,24 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		h.runtime, err = h.cfg.NewRuntime(h.ctx, a.catalog)
 		if err != nil {
 			h.runtimeMu.Unlock()
-			return nil, err
+			return nil, stageErr(stageRuntime, err)
 		}
 	}
 	pool := h.runtime
 	if pool == nil {
 		h.runtimeMu.Unlock()
-		return nil, fmt.Errorf("MCP runtime factory returned no pool")
+		return nil, stageErr(stageRuntime, fmt.Errorf("MCP runtime factory returned no pool"))
 	}
 	h.runtimeMu.Unlock()
 	origins, err := selectedUpstreamOrigins(a)
 	if err != nil {
-		return nil, err
+		return nil, stageErr(stageOriginPick, err)
 	}
 	if len(origins) > 0 {
 		err := pool.StartOrigins(h.ctx, origins)
 		var collision *mcpgateway.CollisionError
 		if err != nil && !errors.As(err, &collision) {
-			return nil, err
+			return nil, stageErr(stageOriginRun, err)
 		}
 		if collision != nil {
 			slog.Warn("daemon MCP name collision; healthy origins remain available", "collisions", collision.Collisions)
@@ -462,7 +502,7 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 	}
 	adapter, err := mcpadapter.NewVerifiedAdapterWith(ctx, h.cfg.Service, dc, h.cfg.Verifier)
 	if err != nil {
-		return nil, err
+		return nil, stageErr(stageAdapter, err)
 	}
 	adapter.ExtractRefs = a.caller.Policy.ExtractRefs
 	// The session's editable_agents allowlist rides in its saved policy: a
@@ -484,7 +524,7 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 	}
 	view, err := pool.NewGatewayView(identity.WithPrincipal(h.ctx, a.caller.Principal), adapter, a.options)
 	if err != nil {
-		return nil, err
+		return nil, stageErr(stageGateway, err)
 	}
 	view.Server.AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
@@ -513,7 +553,7 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 	if h.closed {
 		h.mu.Unlock()
 		view.Close()
-		return nil, fmt.Errorf("MCP stopping")
+		return nil, stageErr(stageStopping, fmt.Errorf("MCP stopping"))
 	}
 	v.view = view
 	h.mu.Unlock()
