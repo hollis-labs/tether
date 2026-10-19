@@ -651,6 +651,36 @@ func TestTransportCloseCancelsRuntimePreparation(t *testing.T) {
 	}
 }
 
+// A refused view says which stage failed, without leaking the cause, and the cause reaches the log.
+func TestTransportPrepareFailureNamesItsStage(t *testing.T) {
+	f := newTransportFixture(t, true, false)
+	token := f.token(t, "alpha", nil)
+	f.handler.cfg.NewRuntime = func(context.Context, *config.Catalog) (*mcpadapter.SharedUpstreams, error) {
+		return nil, errors.New("read upstream service credential: open token file: /secret/path")
+	}
+	response := f.request(t, http.MethodPost, "/mcp", token, "", nil)
+	defer closeResponse(response)
+	if response.StatusCode != 503 {
+		t.Fatal("failed runtime accepted", response.StatusCode)
+	}
+	body, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(body), "mcp_view_unavailable_runtime_create") {
+		t.Fatalf("503 does not name the failing stage: %s", body)
+	}
+	if strings.Contains(string(body), "secret") || strings.Contains(string(body), "token file") {
+		t.Fatalf("503 leaks the cause: %s", body)
+	}
+}
+
+func TestPrepareStageOf(t *testing.T) {
+	if got := prepareStageOf(stageErr(stageGateway, errors.New("x"))); got != stageGateway {
+		t.Fatal(got)
+	}
+	if got := prepareStageOf(errors.New("x")); got != "unknown" {
+		t.Fatal(got)
+	}
+}
+
 func TestTransportViewCapacityRecoversAfterDelete(t *testing.T) {
 	f := newTransportFixture(t, true, false)
 	f.handler.cfg.MaxViews = 1
