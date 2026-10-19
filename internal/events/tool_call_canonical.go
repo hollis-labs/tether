@@ -30,6 +30,9 @@ func CanonicalToolCall(call ToolCallEvent, finished bool) Event {
 	if call.Attribution.SessionResolved && call.Attribution.SessionID != "" && call.Attribution.SessionID == call.SessionID {
 		ev.Scope, ev.SessionID = ScopeSession, call.SessionID
 	}
+	// Trace/span metadata identifies the observed call, not a verified actor.
+	// Legacy proxy ingress already validates these identifiers before conversion.
+	ev.Envelope.Corr = Corr{TraceID: call.TraceID, SpanID: call.SpanID}
 	ev.Envelope.Class = Class{Category: "tool", PayloadSchema: "urn:hollis-labs:events:" + kind + "@1"}
 	return ev
 }
