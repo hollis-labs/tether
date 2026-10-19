@@ -66,7 +66,7 @@ func newPipeline(mode StageMode, sanitizer eventstage.PayloadSanitizer) (*Pipeli
 	if sanitizer == nil {
 		sanitizer = payloadPolicies(p.policies)
 	}
-	sanitize := pipelineSanitize{known: p.policies, inner: eventstage.RuntimeEventsSanitize(sanitizer, eventstage.ModeProducer)}
+	sanitize := pipelineSanitize{known: p.policies, inner: eventstage.RuntimeEventsSanitize(sanitizer, eventstage.ModeVerifyAndScrub)}
 	classify := eventstage.RuntimeEventsClassify(rules)
 	p.chain, err = eventstage.NewChain(eventstage.Config[pipelineEvent]{
 		Stamp: eventstage.Named("stamp/tether", func(ctx context.Context, e *pipelineEvent) (eventstage.Outcome, error) {
@@ -76,6 +76,11 @@ func newPipeline(mode StageMode, sanitizer eventstage.PayloadSanitizer) (*Pipeli
 		}),
 		Sanitize: sanitize,
 		Classify: eventstage.Named("classify/tether", func(ctx context.Context, e *pipelineEvent) (eventstage.Outcome, error) {
+			// Compatibility diagnostics are not an admission policy; no B body may
+			// enter classification, nor may a failed-closed/tombstoned payload.
+			if p.policies[e.candidate.Kind].class != Metadata || e.runtime.Tombstoned() || e.runtime.Class == nil || !e.runtime.Class.Sanitized {
+				return eventstage.Outcome{}, nil
+			}
 			out, err := classify.Apply(ctx, &e.runtime)
 			copyRuntimeClass(&e.candidate, e.runtime)
 			return out, err
@@ -166,10 +171,10 @@ func (pipelineSanitize) Name() string { return "sanitize/tether" }
 func (s pipelineSanitize) Apply(ctx context.Context, e *pipelineEvent) (eventstage.Outcome, error) {
 	c := e.candidate.Envelope.Class
 	e.runtime = runtimeevents.Event{Kind: runtimeevents.EventKind(e.candidate.Kind), Payload: json.RawMessage(e.candidate.PayloadJSON), PayloadDigest: e.candidate.Envelope.PayloadDigest, Class: &runtimeevents.Class{Category: c.Category, Severity: c.Severity, Sensitivity: c.Sensitivity, PII: c.PII, Sanitized: c.Sanitized, Labels: slices.Clone(c.Labels)}}
-	if _, known := s.known[e.candidate.Kind]; !known {
+	if _, known := s.known[e.candidate.Kind]; !known && !e.runtime.Tombstoned() {
 		return eventstage.Outcome{}, pipelineError("unknown_kind")
 	}
-	if c.Redactions < 0 || uint64(c.Redactions) > math.MaxUint32 {
+	if c.Redactions < 0 || uint64(c.Redactions) > min(uint64(math.MaxUint32), uint64(^uint(0)>>1)) {
 		return eventstage.Outcome{}, pipelineError("redactions_overflow")
 	}
 	// Reset the adapter's uint32 counter, then add in uint64 after sanitation.
@@ -178,7 +183,7 @@ func (s pipelineSanitize) Apply(ctx context.Context, e *pipelineEvent) (eventsta
 	if err != nil {
 		return out, err
 	}
-	if uint64(c.Redactions)+uint64(e.runtime.Class.Redactions) > math.MaxUint32 {
+	if uint64(c.Redactions)+uint64(e.runtime.Class.Redactions) > min(uint64(math.MaxUint32), uint64(^uint(0)>>1)) {
 		return eventstage.Outcome{}, pipelineError("redactions_overflow")
 	}
 	e.runtime.Class.Redactions += uint32(c.Redactions)

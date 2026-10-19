@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/events"
@@ -23,7 +24,13 @@ func TestPipelinePublishTxParityCommitAndRollback(t *testing.T) {
 	}
 	stamp := eventstamp.New()
 	stamp.SetProcess(eventstamp.Process{EnvironmentID: "fixture-env", Authority: "hub", Host: "fixture-host"})
-	bus := events.NewBus(events.BusOptions{Persister: db, Pipeline: p, Stages: []events.Stage{stamp}}).(events.OutboxBus)
+	var databaseStageCalls atomic.Int64
+	unsafe := events.StageFunc(func(ctx context.Context, _ *events.Event) error {
+		databaseStageCalls.Add(1)
+		var n int
+		return db.DB().QueryRowContext(ctx, "SELECT 1").Scan(&n)
+	})
+	bus := events.NewBus(events.BusOptions{Persister: db, Pipeline: p, Stages: []events.Stage{stamp, unsafe}}).(events.OutboxBus)
 	input := events.Event{Scope: events.ScopeSession, SessionID: "s1", Kind: events.KindSessionUsage, PayloadJSON: `{"input_tokens":1,"model":"synthetic@example.com"}`}
 	if err := bus.Publish(context.Background(), input); err != nil {
 		t.Fatal(err)
@@ -38,6 +45,9 @@ func TestPipelinePublishTxParityCommitAndRollback(t *testing.T) {
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
+	}
+	if databaseStageCalls.Load() != 1 {
+		t.Fatal("non-TxSafe database stage ran inside transaction")
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)

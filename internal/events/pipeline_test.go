@@ -30,6 +30,14 @@ func pipelineFixture(t *testing.T, mode StageMode, e Event) (Event, *Pipeline) {
 
 func TestPipelineMetadataGoldensAndCompatibilityBytes(t *testing.T) {
 	fixtures := map[string]string{
+		KindBrokerEnvelopeCreated: `{"id":"e1","sender":"msg://agent/fixture/one","recipient":"msg://agent/fixture/two","workflow_id":"w1","correlation_id":"c1","message_type":"request"}`,
+		KindBrokerEnvelopeReplied: `{"id":"e2","sender":"msg://agent/fixture/two","recipient":"msg://agent/fixture/one","workflow_id":"w1","correlation_id":"c1","message_type":"response"}`,
+		KindDaemonStarted:         `{"Version":"fixture","PID":123,"Listener":"unix:/fixture/tether.sock"}`,
+		KindDaemonShutdownStarted: ``, KindDaemonShutdownCompleted: ``,
+		KindSessionTurnRouted: `{"actor":"msg://user/fixture/one","publisher":"msg://session/local/s1","session_id":"s1","message_id":"m1","turn_id":"t1","channel":"ops"}`,
+		"wake.attempted":      `{"message_id":"m1","target":"msg://agent/fixture/one","attempted":true,"delivered":false,"reason":"busy","attempt_id":"a1","attempt":1,"binding_generation":2}`,
+		"wake.outcome":        `{"message_id":"m1","target":"msg://agent/fixture/one","attempted":true,"delivered":true,"reason":"","attempt_id":"a1","attempt":1,"binding_generation":2}`,
+
 		KindSessionUsage:                  `{"input_tokens":1,"output_tokens":2,"cache_read_tokens":3,"cache_write_tokens":4,"reasoning_tokens":5,"turns":1,"model":"fixture-model","final":true,"source":"provider","turn_id":"turn-1"}`,
 		KindSessionHealthChanged:          `{"from":"unknown","to":"healthy","reasons":["session_running"],"since":"2026-10-19T00:00:00Z"}`,
 		catalog.KindToolCallStarted:       `{"tool":"read","server":"fixture","args_bytes":2,"args_schema_fp":"1234"}`,
@@ -39,8 +47,8 @@ func TestPipelineMetadataGoldensAndCompatibilityBytes(t *testing.T) {
 	}
 	for kind, policy := range pipelinePolicies() {
 		t.Run(kind, func(t *testing.T) {
-			raw := fixtures[kind]
-			if policy.class == Metadata && raw == "" {
+			raw, hasGolden := fixtures[kind]
+			if policy.class == Metadata && !hasGolden {
 				t.Fatal("metadata policy has no golden consumer fixture")
 			}
 			if policy.class == Compatibility {
@@ -48,15 +56,21 @@ func TestPipelineMetadataGoldensAndCompatibilityBytes(t *testing.T) {
 			}
 			for _, mode := range []StageMode{Shadow, Enforce} {
 				original := Event{Scope: ScopeSession, SessionID: "s1", Kind: kind, PayloadJSON: raw, Envelope: Envelope{Dims: ScopeDims{TaskID: "CW-1"}, Actor: Actor{Kind: "agent", URN: "msg://agent/fixture/one", Verified: "token"}}}
-				got, _ := pipelineFixture(t, mode, original)
+				got, pipeline := pipelineFixture(t, mode, original)
 				if policy.class == Compatibility || mode == Shadow {
 					if got.PayloadJSON != raw || got.Envelope.Class.Sanitized {
 						t.Fatalf("compatibility changed in %s", mode)
 					}
 				} else {
 					var before, after any
-					if json.Unmarshal([]byte(raw), &before) != nil || json.Unmarshal([]byte(got.PayloadJSON), &after) != nil || !reflect.DeepEqual(before, after) || !got.Envelope.Class.Sanitized {
+					if (raw != "" && (json.Unmarshal([]byte(raw), &before) != nil || json.Unmarshal([]byte(got.PayloadJSON), &after) != nil || !reflect.DeepEqual(before, after))) || (raw == "" && got.PayloadJSON != "") || !got.Envelope.Class.Sanitized {
 						t.Fatalf("metadata golden changed: %s", got.PayloadJSON)
+					}
+				}
+				if policy.class == Compatibility {
+					count := pipeline.Counts()[kind]
+					if count.Events != 1 || count.Changed != 1 || count.Redactions < 1 {
+						t.Fatalf("missing B diagnostic counts: %+v", count)
 					}
 				}
 				if !reflect.DeepEqual(got.Envelope.Actor, original.Envelope.Actor) || got.Envelope.Dims != original.Envelope.Dims {
@@ -170,5 +184,48 @@ func TestPipelinePreservesStampIsolationAndTxSelection(t *testing.T) {
 	got := store.last()
 	if got.Envelope.Class.Labels[0] != "keep" || original.Envelope.Class.Labels[0] != "keep" || !got.Envelope.Class.Sanitized || safeCalls != 1 || unsafeCalls != 1 {
 		t.Fatal("stamp isolation/order changed")
+	}
+}
+
+func TestPipelinePreservesPriorShadowGuaranteesAndCatalogAliases(t *testing.T) {
+	p, err := NewPipeline(Shadow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{KindSessionUsage, catalog.KindSessionUsage}, {KindSessionHealthChanged, catalog.KindSessionHealthChanged}} {
+		if p.policies[pair[0]].sanitizer != p.policies[pair[1]].sanitizer || p.policies[pair[0]].class != Metadata {
+			t.Fatal("catalog alias has a different policy")
+		}
+	}
+	original := Event{Scope: ScopeSession, Kind: KindSessionTurnOutput, PayloadJSON: `{"text":"hello"}`, Envelope: Envelope{Class: Class{Sanitized: true, PII: true, Redactions: 2, Sensitivity: "private", Labels: []string{"proven"}}}}
+	got := p.apply(context.Background(), original, func(_ context.Context, e Event) Event { return e })
+	if got.PayloadJSON != original.PayloadJSON || !reflect.DeepEqual(got.Envelope.Class, original.Envelope.Class) {
+		t.Fatal("shadow replaced an independent proven class")
+	}
+	unknown := original
+	unknown.Kind = "session_usage"
+	got, ep := pipelineFixture(t, Enforce, unknown)
+	if got.PayloadJSON != `{"sanitize_error":"unknown_kind"}` {
+		t.Fatal("unmapped alias was guessed")
+	}
+	snapshot := ep.Counts()
+	snapshot["<unregistered>"].Errors["unknown_kind"] = 999
+	if ep.Counts()["<unregistered>"].Errors["unknown_kind"] != 1 {
+		t.Fatal("counter snapshot aliases live state")
+	}
+}
+
+func TestPipelineDoesNotRetrustFailedClosedOrTombstones(t *testing.T) {
+	for _, kind := range []string{KindSessionUsage, KindSessionTurnOutput, "unknown"} {
+		original := Event{Scope: ScopeSession, Kind: kind, PayloadJSON: "", Envelope: Envelope{PayloadDigest: "sha256:fixture", Class: Class{Sensitivity: "private", Labels: []string{"retained"}}}}
+		got, _ := pipelineFixture(t, Enforce, original)
+		if got.PayloadJSON != "" || !reflect.DeepEqual(got.Envelope, original.Envelope) {
+			t.Fatalf("tombstone changed for %s: %+v", kind, got.Envelope)
+		}
+	}
+	original := Event{Scope: ScopeSession, Kind: KindSessionUsage, PayloadJSON: `{"sanitize_error":"invalid_json"}`}
+	got, _ := pipelineFixture(t, Enforce, original)
+	if got.PayloadJSON != original.PayloadJSON || got.Envelope.Class.Sanitized || got.Envelope.Class.Category != "" {
+		t.Fatal("failed-closed payload was re-trusted")
 	}
 }

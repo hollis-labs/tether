@@ -42,14 +42,25 @@ func pipelinePolicies() map[string]admissionPolicy {
 	add(Metadata, catalog.KindToolCallFinished, "/tool", "/server", "/args_bytes", "/args_schema_fp", "/ok", "/error_class", "/duration_ms", "/gateway_ms", "/forward_ms", "/result_bytes")
 	add(Metadata, KindSessionStalled, "/reason", "/denied")
 	add(Metadata, EventTypeMachineAuthorityDecision, "/server", "/tool", "/class", "/mode", "/allowed", "/session_id", "/timestamp")
+	// Fixed metadata is derived from broker.EnvelopeEvent, daemon startup,
+	// the atomic channel audit and the X2 typed wake journal payloads.
+	for _, kind := range []string{KindBrokerEnvelopeCreated, KindBrokerEnvelopeReplied} {
+		add(Metadata, kind, "/id", "/sender", "/recipient", "/workflow_id", "/correlation_id", "/message_type")
+	}
+	add(Metadata, KindDaemonStarted, "/Version", "/PID", "/Listener")
+	add(Metadata, KindDaemonShutdownStarted)
+	add(Metadata, KindDaemonShutdownCompleted)
+	add(Metadata, KindSessionTurnRouted, "/actor", "/publisher", "/session_id", "/message_id", "/turn_id", "/channel")
+	for _, kind := range []string{"wake.attempted", "wake.outcome"} {
+		add(Metadata, kind, "/message_id", "/target", "/attempted", "/delivered", "/reason", "/attempt_id", "/attempt", "/binding_generation")
+	}
 	// Conservative compatibility entries retain every local-consumer byte. Their
 	// denylist sanitizer runs only on a diagnostic copy, even in enforce mode.
 	for _, kind := range []string{
 		KindRoutingReplyDelivered, KindRoutingReplyUndeliverable, KindSessionTurnInterruptRequested, KindSessionTurnInterruptCompleted,
 		catalog.KindMessageSent, catalog.KindMessageQueued, catalog.KindMessageRedriven, catalog.KindMessageFailed, catalog.KindMessageDeadLettered, catalog.KindMessageConsumed,
 		"session.request_status", "session.force_closed", "sandbox_rule_unenforced",
-		KindStreamGap, KindSessionTurnRouted, KindSessionShimRetired, KindSessionTurnOutput, KindSessionStateChanged,
-		KindBrokerEnvelopeCreated, KindBrokerEnvelopeReplied, KindDaemonStarted, KindDaemonShutdownStarted, KindDaemonShutdownCompleted,
+		KindStreamGap, KindSessionShimRetired, KindSessionTurnOutput, KindSessionStateChanged,
 		KindDaemonShutdownSessionsEnded, KindDaemonSessionsSwept, KindDaemonExecutionPolicyChanged, KindAIBudgetRejected,
 		KindSessionBootDirPlanted, KindProviderSessionLost, KindProviderPermissionDenied, KindSessionShimStatus,
 		EventTypeToolCallStart, EventTypeToolCallEnd,

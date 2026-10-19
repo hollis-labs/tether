@@ -28,11 +28,12 @@ keeps the chain's safe error payload instead of restoring raw bytes.
 
 The explicit registry in internal/events/pipeline_registry.go defines three classes:
 
-- Metadata (A): usage, health, canonical tool start/finish, stalled and machine
-  authority decisions. Policies list payload-struct paths; unknown fields are
+- Metadata (A): usage, health, canonical tool start/finish, stalled, machine
+  authority decisions, broker envelope metadata, daemon start/shutdown boundaries,
+  atomic turn-routing audit, and typed X2 wake journal records. Policies list payload-struct paths; unknown fields are
   removed, credential/PII values masked, and enforce marks successful sanitation.
 - Compatibility (B): other registered local payloads, including turn_output,
-  lifecycle, legacy tool calls and broker/message records. Payload bytes remain
+  mixed lifecycle, legacy tool calls and message delivery records. Payload bytes remain
   unchanged in either mode. Enforce marks them unsanitized; this slice does not
   close their raw-ingress/export sanitation policy or migrate their consumers.
 - Unregistered (C): shadow keeps the original; enforce emits the shared chain's
@@ -48,6 +49,9 @@ have different payload schemas and remain B, not aliases of canonical tool event
 Sensitivity and PII floors are never lowered; existing retention admission still
 rejects secret-class events. A sanitized candidate is not a bypass of that policy.
 Producer digest plus payload fails closed using harness v0.13.0 tombstone handling.
+Genuine payload-free retention tombstones remain unchanged, including for unknown
+kinds. Existing failed-closed payloads remain unsanitized rather than being re-trusted.
+Classification reads only successfully sanitized A candidates, never B text.
 Unknown values are not used to infer scope or actor. Caller resolution requires
 an existing verified principal before selecting session facts; missing bindings
 and unmanaged sessions remain unresolved.
