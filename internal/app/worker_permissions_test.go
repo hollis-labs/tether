@@ -145,3 +145,54 @@ func TestWorkerPermissionFailureReplayAndUnknownSource(t *testing.T) {
 		t.Fatal("unknown source established known state", got)
 	}
 }
+
+func TestWorkerPermissionBatchOversizeAndHealth(t *testing.T) {
+	s := permissionWorkerHarness(t)
+	seq := int64(0)
+	send := func(data []byte) {
+		t.Helper()
+		seq++
+		if err := s.ingestWorkerFrame("worker", workerwire.Frame{T: "output", Session: "s1", Seq: seq, Stream: "stdout", Data: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	health := func(want *bool) {
+		t.Helper()
+		h, err := s.SessionHealthObservations(context.Background(), "s1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (h.PendingApproval == nil) != (want == nil) || (want != nil && *h.PendingApproval != *want) || h.PendingQuestion != nil {
+			t.Fatalf("health %+v wanted %v", h, want)
+		}
+	}
+	health(nil)
+	send([]byte(strings.Repeat("x", workerPermissionLineLimit+1)))
+	// The continuation of an oversized line is discarded, then normal framing resumes.
+	open := permissionMarker(t, runtimeevents.KindAgentPermissionRequested, "turn", "one")
+	send(append([]byte("trailing\n"), open...))
+	yes, no := true, false
+	health(&yes)
+	// Two complete markers in one output frame must have distinct ordered coordinates.
+	resolution := permissionMarker(t, runtimeevents.KindAgentPermissionResolved, "turn", "one")
+	open2 := permissionMarker(t, runtimeevents.KindAgentPermissionRequested, "turn", "two")
+	send(append(resolution, open2...))
+	got := permissionSnapshot(t, s)
+	if len(got) != 2 || got[0].Open || !got[1].Open || got[0].SourceSequence != uint64(seq)<<32|uint64(len(resolution)) || got[1].SourceSequence != uint64(seq)<<32|uint64(len(resolution)+len(open2)) {
+		t.Fatalf("batch ordering %+v", got)
+	}
+	health(&yes)
+	send(permissionMarker(t, runtimeevents.KindAgentPermissionResolved, "turn", "two"))
+	health(&no)
+	unknown := permissionWorkerHarness(t)
+	if _, err := unknown.Store.DB().Exec(`UPDATE launch_plans SET plan_json='{}' WHERE session_id='s1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := unknown.ingestWorkerFrame("worker", workerwire.Frame{T: "output", Session: "s1", Seq: 1, Stream: "stdout", Data: open}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := unknown.SessionHealthObservations(context.Background(), "s1")
+	if err != nil || h.PendingApproval != nil || h.PendingQuestion != nil {
+		t.Fatal("unsupported health must stay unknown", h, err)
+	}
+}
