@@ -237,3 +237,25 @@ actor stay absent. Database-reading stages remain excluded inside a transaction.
 A failed event insert rolls back its business mutation; only committed rows
 reach subscribers, with their original persisted IDs and sequence order. Bare
 storage-only callers retain the persister primitive without a running bus.
+
+### Sysop operator observations
+
+Sysop enqueues its five existing operator observation kinds through
+`OutboxBus.PublishTx`. The daemon drains their durable pending rows in log
+order; Sysop does not clear pending or publish through a separate live stream.
+IDs are minted once and stored, with producer app, private/local audit class,
+known session dimensions, and the frozen environment identity when seeded.
+Without a verified operator principal, actor and delegation remain absent.
+
+The observation allowlist contains fixed source/action, bounded identifiers,
+counts, and the known checkpoint-policy enum. Checkpoint summary/status and
+policy status prose are excluded; the authoritative checkpoint request and
+stored content remain unchanged. Cleanup observations carry counts rather
+than a list of deleted sessions. Unknown fields are discarded before insertion.
+
+The daemon action and this Sysop audit enqueue are separate cross-process
+operations. A successful action can therefore lack an observation if Sysop
+exits or its audit write fails afterward. Audit failure is logged without
+request content and does not undo or report failure for an already successful
+action. This change makes each enqueue transactional; it does not make the
+preceding daemon action atomic with that enqueue.

@@ -1,0 +1,1 @@
+- CW-20261016-0136: Enqueue Sysop operator observations through stamped durable outbox publication, using bounded metadata without checkpoint summary/status bodies or invented operator identity; authoritative checkpoint content stays unchanged.
