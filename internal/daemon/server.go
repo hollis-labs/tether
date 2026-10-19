@@ -568,7 +568,7 @@ func (s *Server) handler(remote bool) http.Handler {
 	}
 	if s.Identity != nil {
 		devices := api.NewDeviceAuthHandler(s.Identity)
-		for _, path := range []string{"/auth/pair", "/auth/pair/revoke", "/auth/pair/exchange", "/auth/devices", "/auth/revoke", "/auth/renew"} {
+		for _, path := range []string{"/auth/pair", "/auth/pair/revoke", "/auth/pair/exchange", "/auth/devices", "/auth/keys", "/auth/revoke", "/auth/renew"} {
 			router.Handle(path, devices)
 		}
 	}

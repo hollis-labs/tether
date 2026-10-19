@@ -90,6 +90,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/auth/pair/revoke", "/auth/pair/revoke", map[string]string{"POST": localScope}),
 	routeScope(identity.PairingExchangePath, identity.PairingExchangePath, map[string]string{"POST": publicScope}),
 	routeScope("/auth/devices", "/auth/devices", map[string]string{"GET": adminScope}),
+	routeScope("/auth/keys", "/auth/keys", map[string]string{"GET": adminScope}),
 	routeScope("/auth/revoke", "/auth/revoke", map[string]string{"POST": adminScope}),
 	routeScope("/auth/renew", "/auth/renew", map[string]string{"POST": selfScope}),
 	routeScope("/auth/token", "/auth/token", map[string]string{"POST": selfScope}),

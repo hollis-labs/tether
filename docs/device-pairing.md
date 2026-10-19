@@ -114,6 +114,25 @@ a one-second polling interval, with a bounded verification timeout. Cancellation
 also interrupts a stream blocked on writing to its peer. It does not stop the
 hosted session or change retained shim authority.
 
+## Credential inventory
+
+For an inventory across principal kinds, use the read-only credential view:
+
+```sh
+tether key list --kind device
+tether key list --principal msg://device/DEVICE_ID --limit 100
+```
+
+This uses the local operator socket and `GET /auth/keys`; a remote client needs
+the independent `admin` device scope. The response contains `credentials` and,
+when another page exists, `next_after`. Pass that value as `--after` on the next
+call, keeping the same filters. Records include expired and revoked credentials.
+`credential_id` identifies one stored credential; `principal_id` identifies its
+subject, which can have multiple credential records. Neither bearer values nor
+stored hashes are returned. See the [API reference](api/README.md#credential-inventory)
+for fields and pagination. This inventory does not create, rotate, or renew
+credentials; the shared high-assurance registration flow remains separate.
+
 ## Acceptance limits
 
 This source slice uses only disposable databases, Unix/TCP listeners and

@@ -1,0 +1,1 @@
+- Add `tether key list` and authenticated `GET /auth/keys` for paged credential metadata, including principal subjects, scopes, expiry and revocation without bearer values or hashes (CW-20261015-0052).
