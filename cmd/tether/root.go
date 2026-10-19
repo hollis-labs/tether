@@ -44,6 +44,7 @@ func init() {
 	rootCmd.AddCommand(newWorkerServiceCommand())
 	rootCmd.AddCommand(newEnvironmentCommand(defaultEnrollmentManager))
 	rootCmd.AddCommand(newPairCommand(localDeviceAdminClient), newAuthCommand(localDeviceAdminClient))
+	rootCmd.AddCommand(newKeyCommand(localDeviceAdminClient))
 	rootCmd.AddCommand(workstreamsCmd)
 	rootCmd.AddCommand(catalogCmd)
 	rootCmd.AddCommand(newIdentityCommand())

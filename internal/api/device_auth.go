@@ -58,6 +58,7 @@ func (l *pairingLimiter) allow(now time.Time) bool {
 func NewDeviceAuthHandler(store *identity.Store) http.Handler {
 	limiter := &pairingLimiter{}
 	router := http.NewServeMux()
+	router.HandleFunc("GET /auth/keys", credentialInventory(store))
 	router.HandleFunc("POST /auth/pair", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := localOperator(r)
 		if !ok {

@@ -2623,6 +2623,37 @@ Body is empty; response is a `BootstrapReport`:
 
 ---
 
+## Credential inventory
+
+`GET /auth/keys` returns credential metadata for enrollment preflight and custody
+inspection (CW-20261015-0052). It requires a verified local Unix-socket operator
+or a verified remote device with the independent `admin` scope. Anonymous local
+calls remain refused in observe/off mode. Responses use `Cache-Control: no-store`.
+
+| Query | Meaning |
+|---|---|
+| `kind` | Exact principal kind: `operator`, `session`, `service`, `interactive`, or `device`; omitted selects all |
+| `principal` | Exact principal subject; omitted selects all |
+| `limit` | Page size, default 100, range 1–200 |
+| `after` | Credential ID from the previous `next_after`, default 0 |
+
+The response is `{"credentials":[...],"next_after":123}`. `next_after` is omitted
+on the last page; an empty result has `credentials: []`. Keep filters unchanged
+when following the cursor. Pages are ordered by credential ID and are current
+reads, not a snapshot across requests.
+
+Each record contains `credential_id`, `principal_id`, `kind`, `display`, `scopes`,
+and `created_at`, with optional `created_by`, `expires_at`, `revoked_at`, and
+`last_used_at`. Expired and revoked records remain visible. A credential ID is a
+record identifier, not a bearer or JWT subject; multiple records can name the
+same principal. Bearer values, token hashes and session runtime contents are
+never selected for this response. Owner/purpose labels are not synthesized from
+display text or creator identity; those await the registration model.
+
+Invalid or repeated query parameters return 400, insufficient authority 403,
+and unavailable inventory 503 with a sanitized error. The local CLI equivalent
+is `tether key list` with `--kind`, `--principal`, `--limit`, and `--after`.
+
 ## Identity, session bootstrap & runtime bindings
 
 Added by the messaging vNext epic. These separate *who an actor durably is*
