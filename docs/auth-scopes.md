@@ -45,3 +45,19 @@ Rules:
   unmapped routes are refused. Stored `tth_` credentials are unchanged.
 - Not carved: `delivery.write` (message redrive/purge) remains a separate legacy
   check; it is not in `mcp_scopes` and no canonical twin exists yet.
+
+## Basalisk workload capabilities
+
+Two additional exact device scopes support current assurance reads:
+
+- `basalisk-status.assurance_read`: exchange the stored device credential for a
+  direct `basalisk-status` JWT, with this single scope and a maximum 900-second
+  lifetime. No session delegation, operator, wildcard or broader-scope fallback.
+- `tether.workload_trust_read`: a dedicated stored device credential for
+  `POST /auth/workload-trust`. The handler requires this to be its only scope;
+  it accepts neither issued JWTs nor maintenance/operator authority.
+
+Neither grants inventory, deny-list, ceremony mutation, enrollment or execution
+rights. The remote Tether listener continues to accept only stored device
+credentials. The JWT is presented to Basalisk, not to that listener. See the
+[current-workload contract](api/README.md#current-workload-trust).

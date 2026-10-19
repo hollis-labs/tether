@@ -1,0 +1,1 @@
+- Add a narrowly authorized current-workload trust read for Basalisk status authentication, with durable credential-bound mint metadata, current lifecycle/scope/revocation/key checks, and explicit commissioning/exchange semantics. (CW-20261015-0052)

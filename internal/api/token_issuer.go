@@ -29,7 +29,8 @@ type TokenRequest struct {
 }
 
 type issuerConfig struct {
-	mintAudit func(context.Context, identity.Observation) error
+	mintAudit     func(context.Context, identity.Observation) error
+	workloadStore *identity.Store
 }
 
 // IssuerOption configures NewTokenIssuerHandler.
@@ -60,6 +61,7 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		o(&cfg)
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /auth/workload-trust", workloadTrustHandler(is, cfg.workloadStore))
 	mux.HandleFunc("GET /.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "public, max-age=60")
@@ -82,6 +84,11 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		}
 		tok, err := is.Exchange(p, authissuer.Request{Audience: req.Audience, Scopes: req.Scopes, TTL: time.Duration(req.TTLSeconds) * time.Second, SessionID: req.SessionID})
 		switch {
+		case errors.Is(err, authissuer.ErrWorkloadMintLimit):
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusTooManyRequests, "workload_mint_limit", "reuse the current status token or retry after mint capacity expires")
+			return
 		case errors.Is(err, authissuer.ErrForbidden):
 			writeError(w, http.StatusForbidden, CodeForbidden, strings.TrimPrefix(err.Error(), "authissuer: "))
 			return

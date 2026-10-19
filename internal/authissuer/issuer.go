@@ -140,6 +140,12 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 	case ttl > MaxTTL:
 		return Token{}, invalid("ttl exceeds the %s maximum", MaxTTL)
 	}
+	if req.Audience == BasaliskStatusAudience && (req.SessionID != "" ||
+		(parent.Kind != "device" && parent.Kind != "service") || parent.CredentialID <= 0 ||
+		len(scopes) != 1 || scopes[0] != identity.BasaliskStatusScope || ttl > DefaultTTL ||
+		!slices.Equal(parent.Scopes, []string{identity.BasaliskStatusScope}) || i.State.Denied(DenySub, parent.ID)) {
+		return Token{}, forbidden("status exchange requires a directly enrolled narrow workload and at most 15 minutes")
+	}
 	now := i.Now().UTC()
 	exp := now.Add(ttl)
 	if parent.ExpiresAt != nil && parent.ExpiresAt.Before(exp) {
@@ -191,6 +197,11 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 	tok, kid, err := i.sign(c)
 	if err != nil {
 		return Token{}, err
+	}
+	if req.Audience == BasaliskStatusAudience {
+		if err := i.State.trackWorkload(WorkloadMint{Claims: c, KID: kid, CredentialID: parent.CredentialID}); err != nil {
+			return Token{}, fmt.Errorf("authissuer: cannot record workload mint: %w", err)
+		}
 	}
 	return Token{Token: tok, ExpiresAt: exp, TTL: int(exp.Sub(now).Seconds()), Audience: c.Aud, Scopes: scopes, Kind: c.Kind, KID: kid, JTI: c.JTI}, nil
 }

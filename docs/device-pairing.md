@@ -22,7 +22,8 @@ the database, mint an operator, change config or enroll a worker.
 
 `POST /auth/pair` requires the verified operator on the accepted Unix connection.
 The default grant scope is `read`, default TTL is five minutes and maximum TTL
-is one hour. Scopes must be an explicit nonempty subset of the five below.
+is one hour. Scopes must be an explicit nonempty subset of the supported device capabilities.
+The two exact Basalisk workload scopes are described in [auth scopes](auth-scopes.md#basalisk-workload-capabilities); arbitrary app scopes and wildcards remain refused.
 An optional `key_thumbprint` reserves an exact exchange binding; it does not
 perform DPoP or prove possession of a private key. Grant revocation is local-only
 `POST /auth/pair/revoke` with its id.
