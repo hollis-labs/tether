@@ -217,6 +217,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		State:          string(session.StateCreated),
 		TaskID:         nullableTaskID(plan.TaskID),
 	}
+	s.sealTeamPlanEvidence(plan, "")
 	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {
 		return nil, err
 	}
@@ -750,6 +751,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		return nil, s.retainShimStartFailure(sessionID, err)
 	}
+	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), sessionID, plan, "", &profile)
 	launched = true
 	if scratch != nil {
 		go s.releaseScratchAfterCompletion(context.WithoutCancel(ctx), scratch)

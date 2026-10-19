@@ -63,6 +63,10 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 	if err != nil {
 		return nil, noop, err
 	}
+	inspector := &teamruntime.ActivationInspector{Policy: policy, Definitions: definitions, Service: svc, Enroller: enroller}
+	inspector.CaptureLoaded(context.Background())
+	enroller.InspectLaunch = svc.InspectTeamLaunch
+	svc.TeamActivationInspection = inspector.Inspect
 	sessions, err := teamruntime.NewSessions(svc.Store, storage, svc, enroller)
 	if err != nil {
 		return nil, noop, err

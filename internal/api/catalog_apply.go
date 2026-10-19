@@ -49,6 +49,7 @@ func (s *Server) registerCatalogApplyRoutes(router *http.ServeMux) {
 		return
 	}
 	router.HandleFunc("/catalog/plans", s.handleCatalogPlans)
+	router.HandleFunc("/catalog/plans/team-activation", s.handleTeamActivationPlan)
 	router.HandleFunc("/catalog/plans/", s.handleCatalogPlanItem)
 	router.HandleFunc("/catalog/backups", s.handleCatalogBackups)
 	router.HandleFunc("/catalog/validate", s.handleCatalogValidate)

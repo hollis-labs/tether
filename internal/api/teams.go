@@ -328,6 +328,7 @@ func (s *Server) registerTeamRoutes(mux *http.ServeMux) {
 		return
 	}
 	s.registerTeamRosterRoute(mux)
+	s.registerTeamActivationRoute(mux)
 	for _, verb := range TeamVerbs() {
 		mux.HandleFunc("/teams/"+verb, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {

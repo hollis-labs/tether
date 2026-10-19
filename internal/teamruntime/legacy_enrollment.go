@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/tether/internal/definitionresolve"
 	"github.com/hollis-labs/tether/internal/fabricstore"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/teamactivation"
 	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/teamstore"
 )
@@ -32,8 +33,10 @@ type enrollmentReceipt struct {
 	Enrollment teamhost.Enrollment
 	LaunchID   string
 	Pin        mesh.DefinitionRef
+	Evidence   *teamactivation.Launch `json:"evidence,omitempty"`
 }
 type LegacyEnroller struct {
+	InspectLaunch func(context.Context, string) (teamactivation.Launch, error)
 	receipts
 	registry    *registry.Service
 	definitions Definitions
@@ -130,7 +133,12 @@ func (e *LegacyEnroller) Ensure(ctx context.Context, in teamhost.EnrollmentReque
 			enrollment.SpawnCapable = true
 		}
 	}
-	saved := enrollmentReceipt{enrollment, target.LaunchID, pin}
+	saved := enrollmentReceipt{Enrollment: enrollment, LaunchID: target.LaunchID, Pin: pin}
+	if e.InspectLaunch != nil {
+		if evidence, err := e.InspectLaunch(ctx, target.LaunchID); err == nil {
+			saved.Evidence = &evidence
+		}
+	}
 	if err = e.complete(ctx, "enrollment", in.IntentKey, saved); err != nil {
 		return teamhost.Enrollment{}, errors.Join(err, e.cleanup(context.WithoutCancel(ctx), in.IntentKey))
 	}

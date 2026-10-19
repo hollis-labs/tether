@@ -103,6 +103,7 @@ type Caller struct {
 
 // Options carries the caller's context into planning.
 type Options struct {
+	expectedBase map[string]string
 	// Caller identifies who asked, for the audit record. Zero means unknown.
 	Caller Caller
 	// ProtectedPaths are catalog paths the caller may not change (its own
@@ -238,6 +239,9 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 		if exists {
 			pf.baseSHA256 = sha(old)
 		}
+		if expected, ok := opt.expectedBase[f.Path]; ok && expected != pf.baseSHA256 {
+			return nil, errors.New("catalog changed while preparing activation plan")
+		}
 		switch {
 		case f.Delete && !exists:
 			return nil, fmt.Errorf("%s: cannot delete, it does not exist", f.Path)
@@ -266,7 +270,7 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 			}
 		}
 		if pf.Action != "unchanged" {
-			if reasons := privilegedReasons(f.Path, old, f.Content, f.Delete); len(reasons) > 0 {
+			if reasons := append(privilegedReasons(f.Path, old, f.Content, f.Delete), e.teamLaunchReasons(f.Path)...); len(reasons) > 0 {
 				pf.Privileged = true
 				for _, r := range reasons {
 					privSet[f.Path+": "+r] = true
@@ -389,6 +393,9 @@ var privilegedKeys = []string{"permissions", "mcp_scopes", "mcp_grants", "grants
 
 func privilegedReasons(p, old, next string, deleted bool) []string {
 	var reasons []string
+	if p == "teams-policy.yaml" {
+		reasons = append(reasons, "changes team definition activation bindings; restart required")
+	}
 	if privilegedPath(p) {
 		reasons = append(reasons, "changes daemon defaults, upstream servers or sandbox rules")
 	}

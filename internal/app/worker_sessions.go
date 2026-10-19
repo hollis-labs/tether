@@ -75,6 +75,7 @@ func (s *Service) createWorkerSessionWith(in CreateSessionInput, digest string, 
 		return nil, err
 	}
 	row := store.SessionRow{ID: id, WorkerID: workerID, LaunchID: plan.LaunchID, ProjectID: plan.ProjectID, LogicalAgentID: plan.LogicalAgentID, ProviderID: plan.ProviderID, ProviderKind: "cli", TaskID: nullableTaskID(plan.TaskID), Workspace: ws.Root, State: "created", Publication: "tether-hosted"}
+	s.sealTeamPlanEvidence(plan, row.WorkerID)
 	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {
 		return nil, err
 	}
@@ -230,6 +231,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err
 	}
+	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), row.ID, p, row.WorkerID, spec.Sandbox)
 	if spec.Provider == "claude" && spec.Credential != "" && s.Workers.Supports(row.WorkerID, workerwire.FeatureExtractRefs) {
 		attribution := store.RefAttributionNone
 		if spec.ExtractRefs {

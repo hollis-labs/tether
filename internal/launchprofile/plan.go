@@ -6,11 +6,13 @@ package launchprofile
 // os.Environ() at start time so fresh parent-env state is captured per
 // launch and overrides are the only values persisted in the plan.
 type Plan struct {
-	Lifecycle      *LifecyclePolicy `json:"lifecycle,omitempty"`
-	Route          *Route           `json:"route,omitempty"`
-	LaunchID       string           `json:"launch_id"`
-	ProjectID      string           `json:"project_id"`
-	LogicalAgentID string           `json:"logical_agent_id"`
+	// ActivationEvidence is the value-free observation sealed with this exact plan.
+	ActivationEvidence *LaunchEvidence  `json:"activation_evidence,omitempty"`
+	Lifecycle          *LifecyclePolicy `json:"lifecycle,omitempty"`
+	Route              *Route           `json:"route,omitempty"`
+	LaunchID           string           `json:"launch_id"`
+	ProjectID          string           `json:"project_id"`
+	LogicalAgentID     string           `json:"logical_agent_id"`
 	// TeamMember is set only by the internal team create path. Catalog identity
 	// still resolves sandbox policy; the enrollment adapter owns actor binding.
 	TeamMember bool `json:"team_member,omitempty"`
