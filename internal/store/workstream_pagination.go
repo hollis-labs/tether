@@ -20,6 +20,7 @@ type WorkstreamPage struct {
 }
 
 type workstreamCursor struct {
+	ProjectURN string `json:"project_urn,omitempty"`
 	Version    int    `json:"v"`
 	CreatedAt  string `json:"at"`
 	ID         string `json:"id"`
@@ -30,6 +31,9 @@ type workstreamCursor struct {
 
 // ValidateWorkstreamPage rejects malformed and cross-filter cursors and normalizes limits.
 func ValidateWorkstreamPage(opts ListWorkstreamsOptions) (ListWorkstreamsOptions, error) {
+	if opts.ProjectURN != "" && !ValidProjectURN(opts.ProjectURN) {
+		return opts, ErrWorkstreamPage
+	}
 	if opts.Limit < 0 || (opts.Status != "" && opts.Status != "active" && opts.Status != "closed") {
 		return opts, ErrWorkstreamPage
 	}
@@ -40,7 +44,7 @@ func ValidateWorkstreamPage(opts ListWorkstreamsOptions) (ListWorkstreamsOptions
 		opts.Limit = MaxWorkstreamLimit
 	}
 	if opts.Ref != "" {
-		if opts.Status != "" || opts.WorkflowID != "" {
+		if opts.Status != "" || opts.WorkflowID != "" || opts.ProjectURN != "" {
 			return opts, ErrWorkstreamPage
 		}
 		if _, _, err := ParseRefSelector(opts.Ref); err != nil {
@@ -62,7 +66,7 @@ func decodeWorkstreamCursor(opts ListWorkstreamsOptions) (workstreamCursor, erro
 		return c, ErrWorkstreamPage
 	}
 	b, err := base64.RawURLEncoding.DecodeString(opts.Cursor)
-	if err != nil || json.Unmarshal(b, &c) != nil || c.Version != 1 || c.ID == "" || c.Status != opts.Status || c.WorkflowID != opts.WorkflowID || c.Ref != opts.Ref {
+	if err != nil || json.Unmarshal(b, &c) != nil || c.Version != 1 || c.ID == "" || c.Status != opts.Status || c.WorkflowID != opts.WorkflowID || c.Ref != opts.Ref || c.ProjectURN != opts.ProjectURN {
 		return c, ErrWorkstreamPage
 	}
 	if _, err := time.Parse(time.RFC3339Nano, c.CreatedAt); err != nil {
@@ -93,14 +97,15 @@ func (s *Store) ListWorkstreamsPage(opts ListWorkstreamsOptions) (WorkstreamPage
  WHERE (? = '' OR w.status = ?) AND (? = '' OR w.workflow_id = ?)
  AND (? = '' OR EXISTS (SELECT 1 FROM session_refs r JOIN sessions s ON s.id = r.session_id
  WHERE s.workstream_id = w.id AND r.kind = ? AND r.ref_id = ?))
+ AND (? = '' OR EXISTS (SELECT 1 FROM workstream_projects wp WHERE wp.workstream_id=w.id AND wp.project_urn=?))
  AND (? = '' OR (w.created_at, w.id) < (?, ?))
  ORDER BY w.created_at DESC, w.id DESC LIMIT ?`,
-		opts.Status, opts.Status, opts.WorkflowID, opts.WorkflowID, opts.Ref, kind, refID, opts.Cursor, c.CreatedAt, c.ID, opts.Limit+1)
+		opts.Status, opts.Status, opts.WorkflowID, opts.WorkflowID, opts.Ref, kind, refID, opts.ProjectURN, opts.ProjectURN, opts.Cursor, c.CreatedAt, c.ID, opts.Limit+1)
 	if err != nil {
 		return WorkstreamPage{}, err
 	}
 	defer rows.Close()
-	items, err := scanWorkstreams(rows, "list workstreams page")
+	items, err := s.scanWorkstreams(rows, "list workstreams page")
 	if err != nil {
 		return WorkstreamPage{}, err
 	}
@@ -109,7 +114,7 @@ func (s *Store) ListWorkstreamsPage(opts ListWorkstreamsOptions) (WorkstreamPage
 		page.HasMore = true
 		page.Workstreams = items[:opts.Limit]
 		last := page.Workstreams[len(page.Workstreams)-1]
-		c = workstreamCursor{Version: 1, CreatedAt: last.CreatedAt, ID: last.ID, Status: opts.Status, WorkflowID: opts.WorkflowID, Ref: opts.Ref}
+		c = workstreamCursor{Version: 1, CreatedAt: last.CreatedAt, ID: last.ID, Status: opts.Status, WorkflowID: opts.WorkflowID, Ref: opts.Ref, ProjectURN: opts.ProjectURN}
 		b, err := json.Marshal(c)
 		if err != nil {
 			return WorkstreamPage{}, err

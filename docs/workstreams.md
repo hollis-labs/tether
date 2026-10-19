@@ -278,3 +278,15 @@ completeness: an insertion ahead of the cursor needs a fresh scan. The same
 page envelope and continuation are available in the CLI and MCP; the legacy
 client slice helpers traverse every page. See the API reference for invalid
 cursor rules and ref-filter exclusivity (CW-20261018-0008).
+
+## Explicit registry projects
+
+A workstream's `project_urns` are explicit many-to-many registry associations,
+not a launch-context `project_id`, inferred session membership or an ownership
+grant. Create/PATCH accept the URN set; omitted PATCH leaves it unchanged,
+`[]` clears it, and null is rejected. New links must target existing live
+registry projects; old deprecated links remain visible. Ensure uses the set
+only when creating a new container, never to rebind an existing lineage.
+The exact `project_urn` list filter participates in cursor binding. CLI, MCP
+and client contracts mirror these fields. Old workstreams stay unassociated;
+opaque workflow strings and parent semantics are unchanged (CW-20261018-0009).

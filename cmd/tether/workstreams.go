@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,18 +17,20 @@ import (
 )
 
 var (
-	workstreamName       string
-	workstreamWorkflowID string
-	workstreamStatus     string
-	workstreamProject    string
-	workstreamOwner      string
-	workstreamTail       string
-	workstreamUser       string
-	workstreamMemoryType string
-	workstreamJSON       bool
-	workstreamLimit      int
-	workstreamCursor     string
-	workstreamRef        string
+	workstreamProjectURNs   []string
+	workstreamProjectFilter string
+	workstreamName          string
+	workstreamWorkflowID    string
+	workstreamStatus        string
+	workstreamProject       string
+	workstreamOwner         string
+	workstreamTail          string
+	workstreamUser          string
+	workstreamMemoryType    string
+	workstreamJSON          bool
+	workstreamLimit         int
+	workstreamCursor        string
+	workstreamRef           string
 )
 
 var workstreamsCmd = &cobra.Command{
@@ -49,7 +52,7 @@ var workstreamCreateCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.CreateWorkstream(cmdCtx(cmd), workstreamName, workstreamWorkflowID)
+		out, err := c.CreateWorkstream(cmdCtx(cmd), workstreamName, workstreamWorkflowID, workstreamProjectURNs...)
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -100,8 +103,12 @@ must be active or closed. id and created_at never change.`,
 		if cmd.Flags().Changed("status") {
 			patch.Status = &workstreamStatus
 		}
-		if patch.Name == nil && patch.WorkflowID == nil && patch.Status == nil {
-			return fmt.Errorf("nothing to update: pass at least one of --name, --workflow-id, --status")
+		if cmd.Flags().Changed("project-urn") {
+			projects := append([]string{}, workstreamProjectURNs...)
+			patch.ProjectURNs = &projects
+		}
+		if patch.Name == nil && patch.WorkflowID == nil && patch.Status == nil && patch.ProjectURNs == nil {
+			return fmt.Errorf("nothing to update: pass at least one of --name, --workflow-id, --status, --project-urn")
 		}
 		c, err := registryClientFactory()
 		if err != nil {
@@ -127,7 +134,7 @@ var workstreamListCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.ListWorkstreamsPage(cmdCtx(cmd), client.WorkstreamListOptions{Status: workstreamStatus, WorkflowID: workstreamWorkflowID, Ref: workstreamRef, Limit: workstreamLimit, Cursor: workstreamCursor})
+		out, err := c.ListWorkstreamsPage(cmdCtx(cmd), client.WorkstreamListOptions{ProjectURN: workstreamProjectFilter, Status: workstreamStatus, WorkflowID: workstreamWorkflowID, Ref: workstreamRef, Limit: workstreamLimit, Cursor: workstreamCursor})
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -189,7 +196,7 @@ container too.`,
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.EnsureSessionWorkstream(cmdCtx(cmd), args[0], workstreamName, workstreamWorkflowID)
+		out, err := c.EnsureSessionWorkstream(cmdCtx(cmd), args[0], workstreamName, workstreamWorkflowID, workstreamProjectURNs...)
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -246,11 +253,16 @@ func printWorkstream(w api.WorkstreamDTO) {
 	fmt.Printf("id:         %s\n", w.ID)
 	fmt.Printf("name:       %s\n", dashIfEmpty(w.Name))
 	fmt.Printf("workflow:   %s\n", dashIfEmpty(w.WorkflowID))
+	fmt.Printf("projects:   %s\n", strings.Join(w.ProjectURNs, ", "))
 	fmt.Printf("status:     %s\n", w.Status)
 	fmt.Printf("created_at: %s\n", w.CreatedAt)
 }
 
 func init() {
+	workstreamCreateCmd.Flags().StringSliceVar(&workstreamProjectURNs, "project-urn", nil, "explicit registry project URN (repeatable)")
+	workstreamUpdateCmd.Flags().StringSliceVar(&workstreamProjectURNs, "project-urn", nil, "replace registry projects (repeatable); empty clears")
+	workstreamEnsureCmd.Flags().StringSliceVar(&workstreamProjectURNs, "project-urn", nil, "registry project URN seed on create only (repeatable)")
+	workstreamListCmd.Flags().StringVar(&workstreamProjectFilter, "project-urn", "", "exact registry project membership filter")
 	workstreamCreateCmd.Flags().StringVar(&workstreamName, "name", "", "optional human label")
 	workstreamCreateCmd.Flags().StringVar(&workstreamWorkflowID, "workflow-id", "", "optional workflow correlation id (free-form; never resolved by Tether)")
 	workstreamCreateCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")

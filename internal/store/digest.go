@@ -485,7 +485,7 @@ func (s *Store) WorkstreamsForRef(kind, refID string) ([]WorkstreamRow, error) {
 		return nil, fmt.Errorf("workstreams for ref %s/%s: %w", kind, refID, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanWorkstreams(rows, fmt.Sprintf("workstreams for ref %s/%s", kind, refID))
+	return s.scanWorkstreams(rows, fmt.Sprintf("workstreams for ref %s/%s", kind, refID))
 }
 
 // WorkstreamsForItem answers the reverse question with item-wide scope: which
@@ -525,5 +525,5 @@ func (s *Store) WorkstreamsForItem(itemID string, connectedRevisionIDs ...string
 		return nil, fmt.Errorf("workstreams for item %s: %w", itemID, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanWorkstreams(rows, fmt.Sprintf("workstreams for item %s", itemID))
+	return s.scanWorkstreams(rows, fmt.Sprintf("workstreams for item %s", itemID))
 }
