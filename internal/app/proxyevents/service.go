@@ -361,12 +361,17 @@ func (s *Service) publishToolCallEvent(ctx context.Context, req ProxyEventIngest
 	if tce.SessionID == "" {
 		scope = events.ScopeDaemon
 	}
-	return s.bus.Publish(ctx, events.Event{
+	if err := s.bus.Publish(ctx, events.Event{
 		Scope:       scope,
 		SessionID:   tce.SessionID,
 		Kind:        kind,
 		PayloadJSON: string(raw),
-	})
+	}); err != nil {
+		return err
+	}
+	// The authenticated boundary resolved this snapshot; body attribution is ignored.
+	ctx = callcontext.WithSnapshot(ctx, req.Attribution)
+	return s.bus.Publish(ctx, events.CanonicalToolCall(tce, req.Phase != ProxyEventPhaseStart))
 }
 
 // truncateUTF8 cuts s to at most n bytes without splitting a rune.

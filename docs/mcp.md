@@ -1741,6 +1741,32 @@ normal and `--proxy` mode.
 > same durable `proxy_events` SQLite table as `tether_proxy_events`. Results
 > survive daemon restarts.
 
+#### Canonical tool-call events
+
+Gateway telemetry emits metadata-only `tool.call.started` and
+`tool.call.finished` events alongside the legacy pair during the compatibility
+window (CW-20261016-0138). Their payload schemas are the pinned catalog's
+`urn:hollis-labs:events:tool.call.started@1` and `tool.call.finished@1`.
+Both carry `tool`, `server`, `args_bytes` and `args_schema_fp`. Started has
+no `ok` or outcome fields. Finished adds `ok`, `error_class`, `duration_ms`,
+`gateway_ms`, `forward_ms` and `result_bytes`. Canonical payloads exclude
+arguments, results, error text and summaries, including scrubbed error text
+that could echo request content.
+
+The existing stamp stage supplies verified session/task/project/workstream
+and actor dimensions and known trace correlation in the envelope. Unresolved
+session claims do not select canonical session scope or dimensions; missing
+context stays absent. The daemon recorder preserves caller stamps before its
+async queue. Daemon-only forwarding sends the legacy phases once and derives
+canonical metadata after the daemon validates them and resolves attribution;
+it preserves the accepted trace/span identifiers as call correlation metadata.
+These identifiers are not evidence of caller identity; scope and actor still
+come exclusively from authenticated daemon resolution.
+The legacy `proxy_events` projection still receives one completed row per call,
+and existing legacy subscribers and metrics retain their contracts. Recording
+remains best effort with bounded queues; this change does not retire legacy
+kinds or change retention.
+
 #### Tool-call telemetry v2
 
 `tool_call_start` and `tool_call_end` are durable `events` payloads. Calls

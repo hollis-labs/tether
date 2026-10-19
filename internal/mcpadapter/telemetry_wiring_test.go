@@ -77,7 +77,7 @@ func TestTelemetrySharedViewPolicyDenialsCarryProfileAndMode(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sink := make(wiringEventSink, 2)
+			sink := make(wiringEventSink, 4)
 			profile := mcpgateway.ProfileSelection{ID: "reader"}
 			if scenario.profile {
 				profile.Profile = &mcpgateway.Profile{}
@@ -102,7 +102,8 @@ func TestTelemetrySharedViewPolicyDenialsCarryProfileAndMode(t *testing.T) {
 					t.Fatalf("unknown-tool RPC changed: %+v %v", result, err)
 				}
 			}
-			<-sink // start
+			<-sink // legacy start
+			<-sink // canonical start
 			var call events.ToolCallEvent
 			if err := json.Unmarshal([]byte((<-sink).PayloadJSON), &call); err != nil {
 				t.Fatal(err)

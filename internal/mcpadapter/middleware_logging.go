@@ -15,7 +15,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// LoggingMiddleware emits tool_call_start and tool_call_end events to an
+// LoggingMiddleware emits canonical metadata observations and compatible
+// tool_call_start and tool_call_end events to an
 // events Publisher (the Bus, or a DaemonToolCallPublisher) for every proxied
 // tool call. ArgsSchemaFP is derived from
 // the sorted arg key names only — values are never logged. See ADR 0021

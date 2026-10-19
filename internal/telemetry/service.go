@@ -68,6 +68,7 @@ func (s *Service) Start(ctx context.Context, call Call) (context.Context, *Obser
 	}
 	o := &Observation{started: now, span: span, event: events.ToolCallEvent{ToolCallDetails: details, Attribution: attribution, SessionID: call.SessionID, ClaimedSessionID: call.ClaimedSessionID, ToolName: boundedToolName(call.Name), Server: call.Server, ArgsSchemaFP: call.Fingerprint, Timestamp: now}}
 	s.publish(ctx, events.EventTypeToolCallStart, o.event)
+	s.publishCanonical(ctx, o.event, false)
 	return context.WithValue(ctx, observationKey{}, o), o
 }
 
@@ -139,6 +140,7 @@ func (s *Service) End(ctx context.Context, o *Observation, out Outcome) events.T
 		processMetrics.Observe(ctx, ev)
 	}
 	s.publish(ctx, events.EventTypeToolCallEnd, ev)
+	s.publishCanonical(ctx, ev, true)
 	o.span.End()
 	return ev
 }
@@ -158,6 +160,16 @@ func (s *Service) publish(ctx context.Context, kind string, ev events.ToolCallEv
 	// Recording failures must not change the result of the observed call.
 	if err = s.Publisher.Publish(context.WithoutCancel(ctx), events.Event{Scope: scope, SessionID: ev.SessionID, Kind: kind, PayloadJSON: string(raw)}); err != nil {
 		slog.Warn("telemetry: publish call", "err", err)
+	}
+}
+
+// Canonical observations carry no free-form error text or payload content.
+func (s *Service) publishCanonical(ctx context.Context, call events.ToolCallEvent, finished bool) {
+	if s.Publisher == nil {
+		return
+	}
+	if err := s.Publisher.Publish(context.WithoutCancel(ctx), events.CanonicalToolCall(call, finished)); err != nil {
+		slog.Warn("telemetry: publish canonical call", "err", err)
 	}
 }
 
