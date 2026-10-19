@@ -71,6 +71,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect

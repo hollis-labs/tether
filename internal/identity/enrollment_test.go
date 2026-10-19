@@ -29,3 +29,15 @@ func TestReservedIssuerSubjectsCannotRegister(t *testing.T) {
 		t.Fatal("ordinary registration changed")
 	}
 }
+
+func TestIssuerSubjectReservationIgnoresCase(t *testing.T) {
+	s, _ := identityStore(t)
+	for _, id := range []string{"URN:TETHER:ISSUER:credential-enrollment", "uRn:TeThEr:IsSuEr:other"} {
+		if !identity.ReservedIssuerSubject(id) {
+			t.Fatal("alternate-case issuer subject not reserved")
+		}
+		if token, err := s.Mint(context.Background(), identity.Principal{ID: id, Kind: "service", Scopes: []string{"read"}}); err == nil || token != "" {
+			t.Fatal("alternate-case issuer subject registered")
+		}
+	}
+}

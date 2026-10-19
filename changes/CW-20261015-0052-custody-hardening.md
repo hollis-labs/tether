@@ -1,0 +1,1 @@
+- CW-20261015-0052: Reject weak, mixed-order and noncanonical enrollment signing keys; require issuer-signed sealed delivery with current pinned trust, bind custody proofs to the issuer, and harden display IDs, clock boundaries and reserved subject casing. Custody v2 remains unwired pending the durable enrollment controller and helper.

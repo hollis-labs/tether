@@ -5,6 +5,7 @@
 package enrollment
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/hpke"
@@ -17,13 +18,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
+
+	"filippo.io/edwards25519"
 )
 
 const (
-	DeliveryProfile       = "tether-enrollment-delivery-v1"
-	PossessionProfile     = "tether-enrollment-possession-v1"
+	DeliveryProfile       = "tether-enrollment-delivery-v2"
+	PossessionProfile     = "tether-enrollment-possession-v2"
+	CustodyProfile        = "tether-enrollment-custody-v2"
+	DestinationClockSkew  = 5 * time.Second
 	MaxCredentialBytes    = 4096
 	MaxDeliveryLifetime   = 10 * time.Minute
 	MaxPossessionLifetime = time.Minute
@@ -43,6 +46,7 @@ type DestinationKeys struct {
 // custody record, never from the redemption request itself. Thumbprints use
 // RFC7638 canonical OKP JWK members and SHA256, encoded as unpadded base64url.
 type Binding struct {
+	Issuer               string `json:"issuer"`
 	GrantID              string `json:"grant_id"`
 	OperationDigest      string `json:"op_digest"`
 	PrincipalID          string `json:"principal_id"`
@@ -80,7 +84,7 @@ type Challenge struct {
 // PublicKeys validates destination keys and returns their RFC7638 thumbprints.
 func PublicKeys(keys DestinationKeys) (signingThumbprint, encryptionThumbprint string, err error) {
 	sign, err := decode(keys.Signing, ed25519.PublicKeySize)
-	if err != nil || allZero(sign) {
+	if err != nil || !strongSigningKey(sign) {
 		return "", "", ErrCustody
 	}
 	enc, err := decode(keys.Encryption, 32)
@@ -93,7 +97,9 @@ func PublicKeys(keys DestinationKeys) (signingThumbprint, encryptionThumbprint s
 	}
 	// ecdh.NewPublicKey checks the length only. Reject non-contributory keys
 	// before an operation can be prepared, rather than after credential minting.
-	probe, err := ecdh.X25519().GenerateKey(rand.Reader)
+	// Fixed public validation scalar: this is not a secret or an encryption
+	// key. X25519 clamps it to a nonzero multiple of the cofactor.
+	probe, err := ecdh.X25519().NewPrivateKey(make([]byte, 32))
 	if err != nil {
 		return "", "", err
 	}
@@ -111,7 +117,7 @@ func thumbprint(curve, key string) string {
 }
 
 func validateBinding(keys DestinationKeys, b Binding) error {
-	for _, id := range []string{b.GrantID, b.PrincipalID, b.DestinationID} {
+	for _, id := range []string{b.Issuer, b.GrantID, b.PrincipalID, b.DestinationID} {
 		if !validID(id) {
 			return ErrCustody
 		}
@@ -140,12 +146,12 @@ func validateBinding(keys DestinationKeys, b Binding) error {
 // Seal creates an HPKE base-mode delivery using DHKEM(X25519, HKDF-SHA256),
 // HKDF-SHA256 and AES-256-GCM. The complete binding and delivery metadata are
 // HPKE info, so changing any field prevents opening. No raw key is retained.
-func Seal(keys DestinationKeys, b Binding, credentialID int64, credential []byte, now, expires time.Time) (Delivery, error) {
+func seal(keys DestinationKeys, b Binding, credentialID int64, credential []byte, now, expires time.Time) (Delivery, error) {
 	if err := validateBinding(keys, b); err != nil {
 		return Delivery{}, err
 	}
 	d := Delivery{Profile: DeliveryProfile, Binding: b, CredentialID: credentialID, IssuedAt: now.Unix(), ExpiresAt: expires.Unix()}
-	if !validDelivery(d, now) || len(credential) == 0 || len(credential) > MaxCredentialBytes {
+	if !validDelivery(d, now, 0) || len(credential) == 0 || len(credential) > MaxCredentialBytes {
 		return Delivery{}, ErrCustody
 	}
 	pubBytes, _ := decode(keys.Encryption, 32)
@@ -164,8 +170,8 @@ func Seal(keys DestinationKeys, b Binding, credentialID int64, credential []byte
 // Open verifies the expected server binding and delivery lifetime before
 // decrypting. The caller must additionally verify the authenticated source,
 // expected credential ID, current grant state and destination file custody.
-func Open(keys DestinationKeys, private *ecdh.PrivateKey, expected Binding, d Delivery, now time.Time) ([]byte, error) {
-	if d.Binding != expected || !validDelivery(d, now) || private == nil || private.Curve() != ecdh.X25519() {
+func open(keys DestinationKeys, private *ecdh.PrivateKey, expected Binding, d Delivery, now time.Time) ([]byte, error) {
+	if d.Binding != expected || !validDelivery(d, now, DestinationClockSkew) || private == nil || private.Curve() != ecdh.X25519() {
 		return nil, ErrCustody
 	}
 	if err := validateBinding(keys, expected); err != nil {
@@ -193,8 +199,8 @@ func Open(keys DestinationKeys, private *ecdh.PrivateKey, expected Binding, d De
 	return plaintext, nil
 }
 
-func validDelivery(d Delivery, now time.Time) bool {
-	return d.Profile == DeliveryProfile && d.CredentialID > 0 && validWindow(d.IssuedAt, d.ExpiresAt, now, MaxDeliveryLifetime)
+func validDelivery(d Delivery, now time.Time, skew time.Duration) bool {
+	return d.Profile == DeliveryProfile && d.CredentialID > 0 && validWindow(d.IssuedAt, d.ExpiresAt, now, MaxDeliveryLifetime, skew)
 }
 
 // NewChallenge creates a fresh server nonce. A caller must durably store the
@@ -208,7 +214,7 @@ func NewChallenge(keys DestinationKeys, b Binding, action string, credentialID i
 		return Challenge{}, err
 	}
 	c := Challenge{Profile: PossessionProfile, Binding: b, Action: action, CredentialID: credentialID, Nonce: base64.RawURLEncoding.EncodeToString(nonce[:]), IssuedAt: now.Unix(), ExpiresAt: now.Add(MaxPossessionLifetime).Unix()}
-	if !validChallenge(c, now) {
+	if !validChallenge(c, now, 0) {
 		return Challenge{}, ErrCustody
 	}
 	return c, nil
@@ -218,7 +224,7 @@ func NewChallenge(keys DestinationKeys, b Binding, action string, credentialID i
 // against the locally retained approved binding. It returns a signature, not a
 // credential or reusable redemption bearer.
 func Sign(private ed25519.PrivateKey, keys DestinationKeys, expected Binding, c Challenge, now time.Time) (string, error) {
-	if len(private) != ed25519.PrivateKeySize || c.Binding != expected || !validChallenge(c, now) {
+	if len(private) != ed25519.PrivateKeySize || c.Binding != expected || !validChallenge(c, now, DestinationClockSkew) {
 		return "", ErrCustody
 	}
 	if err := validateBinding(keys, expected); err != nil {
@@ -234,7 +240,7 @@ func Sign(private ed25519.PrivateKey, keys DestinationKeys, expected Binding, c 
 // caller's request. The caller must atomically consume its nonce with the state
 // transition; repeating this stateless verification alone does not stop replay.
 func Verify(keys DestinationKeys, expected Challenge, signature string, now time.Time) error {
-	if !validChallenge(expected, now) {
+	if !validChallenge(expected, now, 0) {
 		return ErrCustody
 	}
 	if err := validateBinding(keys, expected.Binding); err != nil {
@@ -251,16 +257,16 @@ func Verify(keys DestinationKeys, expected Challenge, signature string, now time
 	return nil
 }
 
-func validChallenge(c Challenge, now time.Time) bool {
+func validChallenge(c Challenge, now time.Time, skew time.Duration) bool {
 	_, err := decode(c.Nonce, 32)
-	return err == nil && c.Profile == PossessionProfile && validWindow(c.IssuedAt, c.ExpiresAt, now, MaxPossessionLifetime) &&
+	return err == nil && c.Profile == PossessionProfile && validWindow(c.IssuedAt, c.ExpiresAt, now, MaxPossessionLifetime, skew) &&
 		((c.Action == "redeem" && c.CredentialID == 0) || (c.Action == "confirm" && c.CredentialID > 0))
 }
 
-func validWindow(issued, expires int64, now time.Time, maxLifetime time.Duration) bool {
+func validWindow(issued, expires int64, now time.Time, maxLifetime, skew time.Duration) bool {
 	// Subtract only after proving ordered positive timestamps, preventing
 	// overflow from a malformed far-future expiry. No positive expiry leeway.
-	return issued > 0 && expires > issued && expires-issued <= int64(maxLifetime/time.Second) && issued <= now.Unix() && now.Unix() < expires
+	return issued > 0 && expires > issued && expires-issued <= int64(maxLifetime/time.Second) && !time.Unix(issued, 0).After(now.Add(skew)) && now.Unix() < expires
 }
 
 func deliveryInfo(d Delivery) []byte {
@@ -276,13 +282,12 @@ func challengeInfo(c Challenge) []byte {
 // operation representation or the shared WebAuthn challenge.
 func transcript(domain string, b Binding, tail ...string) []byte {
 	out := append([]byte(domain), 0)
-	fields := []string{b.GrantID, b.OperationDigest, b.PrincipalID, b.DestinationID, b.DestinationRevision, b.SigningThumbprint, b.EncryptionThumbprint}
+	fields := []string{b.Issuer, b.GrantID, b.OperationDigest, b.PrincipalID, b.DestinationID, b.DestinationRevision, b.SigningThumbprint, b.EncryptionThumbprint}
 	fields = append(fields, tail...)
 	for _, field := range fields {
-		// All callers validate IDs to 256 bytes; other fields are fixed-size
-		// digests, nonces, actions or decimal integers. No unbounded input
-		// reaches this conversion.
-		// #nosec G115 -- validated transcript fields are at most 256 bytes.
+		// Callers validate IDs to 256 bytes and ciphertext to 5526 bytes;
+		// all other fields are fixed-size digests/nonces or decimal integers.
+		// #nosec G115 -- all transcript fields are bounded below uint32 max.
 		out = binary.BigEndian.AppendUint32(out, uint32(len(field)))
 		out = append(out, field...)
 	}
@@ -301,14 +306,31 @@ func decode(raw string, size int) ([]byte, error) {
 }
 
 func validID(id string) bool {
-	return id != "" && len(id) <= 256 && utf8.ValidString(id) && !strings.ContainsFunc(id, unicode.IsControl)
-}
-
-func allZero(value []byte) bool {
-	for _, b := range value {
-		if b != 0 {
-			return false
+	if id == "" || len(id) > 256 {
+		return false
+	}
+	for _, c := range id {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._:@/-", c) {
+			continue
 		}
+		return false
 	}
 	return true
+}
+
+// Require a canonical nonidentity prime-order point. Merely rejecting zero or
+// testing [8]A != identity would still accept mixed-order points. Project onto
+// the prime subgroup as [inverse(8) mod L]([8]A), then require equality with A.
+// All inputs here are public; no secret scalar arithmetic is implemented here.
+func strongSigningKey(raw []byte) bool {
+	p, err := new(edwards25519.Point).SetBytes(raw)
+	if err != nil || !bytes.Equal(p.Bytes(), raw) || p.Equal(edwards25519.NewIdentityPoint()) == 1 {
+		return false
+	}
+	var eight [32]byte
+	eight[0] = 8
+	s, _ := new(edwards25519.Scalar).SetCanonicalBytes(eight[:])
+	inv := new(edwards25519.Scalar).Invert(s)
+	cleared := new(edwards25519.Point).MultByCofactor(p)
+	return new(edwards25519.Point).ScalarMult(inv, cleared).Equal(p) == 1
 }
