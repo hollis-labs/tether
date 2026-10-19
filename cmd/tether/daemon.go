@@ -309,6 +309,7 @@ var daemonRunCmd = &cobra.Command{
 		// Events outbox: publish event rows a previous process committed on a
 		// transaction but never published, and every later one after its commit.
 		svc.StartEventsOutbox(ctx)
+		svc.StartMessageEvents(ctx)
 		// Reply-to-sender: recover replies a previous process left mid-delivery
 		// and start draining. A failure leaves RoutingReplyWired false and the
 		// reply routes answer 501 rather than taking the daemon down.

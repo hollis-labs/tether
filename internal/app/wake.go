@@ -463,7 +463,18 @@ func legacyNewestRunningSession(st *store.Store, rt wakeRuntime, logicalAgentID 
 	return "", nil
 }
 
-func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
+func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, messageID string, to messaging.Address, sessionID, wakeText string) (out api.WakeOutcome) {
+	var observationAttempt string
+	var observationNumber int
+	var observationGeneration int64
+	if st != nil {
+		defer func() {
+			if err := st.RecordMessageWake(context.WithoutCancel(ctx), messageID, to.URN(), "wake.outcome", observationAttempt, observationNumber, observationGeneration, out.Attempted, out.Delivered, out.Reason); err != nil {
+				log.Printf("app: record wake outcome: %v", err)
+			}
+		}()
+	}
+
 	if sessionID == "" {
 		return api.WakeOutcome{Reason: "offline"}
 	}
@@ -513,6 +524,12 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		// in every case a second wake attempt here risks double-submitting
 		// the same turn, so this is a no-op, not a retry-worthy failure.
 		return api.WakeOutcome{Reason: "claim-unavailable", Detail: claimErr.Error()}
+	}
+	observationAttempt = string(claim.Attempt.ID)
+	observationNumber = claim.Delivery.AttemptCount
+	observationGeneration = claim.Attempt.BindingGeneration
+	if err := st.RecordMessageWake(context.WithoutCancel(ctx), messageID, to.URN(), "wake.attempted", observationAttempt, observationNumber, observationGeneration, true, false, ""); err != nil {
+		log.Printf("app: record wake attempt: %v", err)
 	}
 	lease := delivery.LeaseRef{
 		DeliveryID:        claim.Attempt.DeliveryID,
