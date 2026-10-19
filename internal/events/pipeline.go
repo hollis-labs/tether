@@ -242,7 +242,7 @@ func priorFailedClosed(raw string) bool {
 		return false
 	}
 	switch payload.Class {
-	case "oversized", "invalid_json", "opaque", "depth", "tombstone_with_payload", "redactions_overflow", "unknown_kind", "error", "stage_error":
+	case "panic", "oversized", "invalid_json", "opaque", "depth", "tombstone_with_payload", "redactions_overflow", "unknown_kind", "error", "stage_error":
 	default:
 		return false
 	}

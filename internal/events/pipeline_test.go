@@ -223,10 +223,14 @@ func TestPipelineDoesNotRetrustFailedClosedOrTombstones(t *testing.T) {
 			t.Fatalf("tombstone changed for %s: %+v", kind, got.Envelope)
 		}
 	}
-	original := Event{Scope: ScopeSession, Kind: KindSessionUsage, PayloadJSON: `{"sanitize_error":"invalid_json"}`}
-	got, _ := pipelineFixture(t, Enforce, original)
-	if got.PayloadJSON != original.PayloadJSON || got.Envelope.Class.Sanitized || got.Envelope.Class.Category != "" {
-		t.Fatal("failed-closed payload was re-trusted")
+	for _, raw := range []string{`{"sanitize_error":"invalid_json"}`, `{"sanitize_error":"panic"}`} {
+		t.Run(raw, func(t *testing.T) {
+			original := Event{Scope: ScopeSession, Kind: KindSessionUsage, PayloadJSON: raw}
+			got, _ := pipelineFixture(t, Enforce, original)
+			if got.PayloadJSON != original.PayloadJSON || got.Envelope.Class.Sanitized || got.Envelope.Class.Category != "" {
+				t.Fatal("failed-closed payload was re-trusted")
+			}
+		})
 	}
 }
 
