@@ -13,7 +13,7 @@ import (
 // serialize Go nil slices and maps as JSON null (`"required": null`), which
 // JSON Schema forbids and strict MCP clients (Claude Code) reject for the whole
 // tools/list. A null for a schema keyword means "absent", so dropping it
-// changes no behaviour. The registry keeps the upstream definition untouched;
+// changes no behavior. The registry keeps the upstream definition untouched;
 // this runs where the list is handed to a client. t is returned as is when
 // nothing needs to change; otherwise a copy is returned.
 func ClientSafeTool(t *mcpsdk.Tool) *mcpsdk.Tool {
