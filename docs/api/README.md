@@ -845,6 +845,33 @@ Response (200):
 }
 ```
 
+Session list, detail (`GET /sessions/{id}`), and group-session reads also expose
+explicitly recorded correlation fields:
+
+| Field | Meaning when present | Absent/unknown semantics |
+|---|---|---|
+| `parent_session_id` | Canonical Tether session this session continues from | Omitted when no parent is recorded; not proof that an older/imported session has no ancestor |
+| `intent` | Stored creation intent, such as `fresh` or `resume` | Omitted when unstamped; no inferred resume mode |
+| `task_id` | Explicitly recorded Torque task ID | Omitted when no task was recorded |
+| `worker_id` | Explicitly recorded Tether worker ID | Omitted when no worker was recorded; does not infer placement from a workspace |
+| `provider_mappings` | Array of recorded native identities | `[]` means the lookup succeeded with no mappings; `null` means this server/service has no mapping reader |
+
+Each mapping contains `owner`, `provider`, `native_session_id`, `created_at`, and
+`updated_at`. `native_session_id: null` means the owner/provider mapping exists
+but its native identifier is unknown. An identifier is qualified by **both**
+`owner` and `provider` within the selected Tether environment; equal native IDs
+under different qualifiers must not be merged. The timestamps describe mapping
+observations, not native-session lifetimes. A configured mapping lookup failure
+returns 500 rather than pretending that no mappings exist.
+
+These are stored observations and relations, not credentials, authenticated
+identity claims, or a complete ancestry graph. Parent links do not promise native
+runtime reuse: use explicit mappings to correlate native identities. Do not infer
+identity or lineage from launch names, workspace paths, or a missing field.
+Mappings may appear or change as producers report them; missing producer mappings
+remain separate work (CW-20261012-0063), as does task-attribution production
+(CW-20261012-0062). Remote reads retain workspace path redaction.
+
 `next_cursor` is only emitted when the page filled the requested limit; pass
 it back unchanged as `?cursor=` to continue with the same filters. Sessions are
 ordered by `created_at DESC, id DESC`; the token includes both values so equal

@@ -1146,3 +1146,8 @@ func (s *Service) closeCreatedSession(id string) (bool, error) {
 	}
 	return true, nil
 }
+
+// SessionProviderMappings returns only explicitly stored native identities.
+func (s *Service) SessionProviderMappings(ids []string) (map[string][]store.SessionProviderMapping, error) {
+	return s.Store.SessionProviderMappings(ids)
+}

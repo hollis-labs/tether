@@ -178,3 +178,26 @@ func TestCreateSession_CanonicalIdentityFields(t *testing.T) {
 		t.Fatalf("resuming must not rewrite the parent session's own intent, got %q", original.Intent)
 	}
 }
+
+func TestSessionProviderMappingsBatch(t *testing.T) {
+	db := openTestStoreForSessions(t)
+	for _, id := range []string{"a", "b", "excluded"} {
+		if err := db.CreateSession(SessionRow{ID: id, LaunchID: "l", State: "created"}, &launch.Plan{LaunchID: "l"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.UpsertSessionProviderMapping(id, "tether", "codex", "native-"+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.SessionProviderMappings([]string{"a", "b", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || len(got["a"]) != 1 || len(got["b"]) != 1 {
+		t.Fatalf("page isolation: %+v", got)
+	}
+	empty, err := db.SessionProviderMappings(nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty page: %+v %v", empty, err)
+	}
+}
