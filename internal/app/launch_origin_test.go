@@ -83,6 +83,38 @@ func TestLaunchCeilingBoundsByLauncherAndByOriginAndSaysWhatVouched(t *testing.T
 	}
 }
 
+// An agent that launches over /mcp holds an issued JWT with canonical tether.* scopes, while the profile
+// ceiling is written in the legacy names. The ceiling must survive that mix, or the child is minted with
+// no scopes and no session agent token (agent-initiated launches failed that way).
+func TestLaunchCeilingComparesAcrossScopeVocabularies(t *testing.T) {
+	svc, _ := ceilingService(t)
+	launcher := func(scopes ...string) context.Context {
+		return identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://session/local/pm", Kind: "agent", TokenID: "jti-1", Scopes: scopes})
+	}
+	device := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://device/d", Kind: "device", TokenID: "jti-2", Scopes: []string{"tether.operate"}})
+	granted := []string{"message.write", "registry.write", "groups.write"}
+	for name, tc := range map[string]struct {
+		ctx  context.Context
+		want []string
+	}{
+		"canonical launcher, legacy ceiling": {launcher("tether.catalog", "tether.groups", "tether.messages", "tether.registry", "tether.sessions"), granted},
+		"canonical launcher without groups":  {launcher("tether.messages", "tether.registry"), []string{"message.write", "registry.write"}},
+		"operate contains the child scopes":  {launcher("tether.operate"), []string{"message.write", "groups.write"}},
+		"canonical launcher, nothing shared": {launcher("tether.sessions"), nil},
+		"device stays strict (CW-0173)":      {device, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, _, err := svc.launchCeiling(tc.ctx, granted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // On a worker, a team child is bounded by its parent session's grant, through
 // the same helper the hub path uses.
 func TestWorkerTeamChildIsBoundedByItsParent(t *testing.T) {

@@ -232,10 +232,13 @@ func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, s
 	}
 	canonical, err := identity.CanonicalScopes(mcpScopes)
 	if err != nil || len(canonical) == 0 {
+		// The launch then falls to the degraded ssh path or fails; say why here, since the worker only sees "no token".
+		log.Printf("worker session %s: no agent token granted: launch scopes %v are empty or outside the vocabulary", row.ID, mcpScopes)
 		return noop
 	}
 	device, err := s.Workers.DeviceID(ctx, row.WorkerID)
 	if err != nil {
+		log.Printf("worker session %s: no agent token granted: worker device lookup failed", row.ID)
 		return noop
 	}
 	grant := map[string][]string{"tether": canonical}
