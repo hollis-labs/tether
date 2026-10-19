@@ -11,6 +11,7 @@ import (
 	"time"
 
 	auth "github.com/hollis-labs/libs/security/auth"
+	"github.com/hollis-labs/tether/internal/identity"
 )
 
 // Deny-list kinds, matching the wire document's three arrays.
@@ -205,6 +206,14 @@ func (s *State) DenyDoc() (body []byte, etag string) {
 
 // Grant registers the launch policy for a session.
 func (s *State) Grant(sid string, g SessionGrant) error {
+	if identity.ReservedIssuerSubject(g.Launcher) {
+		return forbidden("issuer protocol subjects cannot launch sessions")
+	}
+	for audience := range g.Scopes {
+		if identity.ReservedEnrollmentAudience(audience) {
+			return forbidden("issuer enrollment protocols cannot be delegated")
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.doc.Grants[sid] = g

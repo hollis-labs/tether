@@ -60,6 +60,9 @@ func (s *Store) MintSessionForLaunch(ctx context.Context, p Principal) (string, 
 }
 
 func mint(ctx context.Context, writer principalWriter, p Principal) (string, error) {
+	if ReservedIssuerSubject(p.ID) {
+		return "", fmt.Errorf("issuer protocol subjects cannot be registered as principals")
+	}
 	if p.ID == "" || (p.Kind != "operator" && p.Kind != "session" && p.Kind != "service" && p.Kind != "interactive" && p.Kind != "device") {
 		return "", fmt.Errorf("principal id and valid kind required")
 	}
