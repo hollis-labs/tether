@@ -224,3 +224,9 @@ func (s *DefinitionStore) verifyRefs(ctx context.Context, d *agentdef.Definition
 	}
 	return nil
 }
+
+// InspectSource verifies installed authored content without indexing or changing
+// a loaded binding. Inspection can therefore distinguish installation from load.
+func (s *DefinitionStore) InspectSource(ctx context.Context, source string) (VerifiedDefinition, error) {
+	return s.parse(ctx, source)
+}

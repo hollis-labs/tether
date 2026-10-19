@@ -1,0 +1,1 @@
+- CW-20261019-0021: Expose provider-owned team definition-to-catalog launch evidence, distinguishing loaded pins, installed policy and retained session admission from definition execution.

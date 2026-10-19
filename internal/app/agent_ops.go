@@ -153,11 +153,13 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 		plan.SandboxProfile = eff
 	}
 
+	plan.CatalogModel = effectiveAgent.Model
 	bootProfile, err := loadBootProfile(in.BootProfileFile)
 	if err != nil {
 		return err
 	}
 
+	plan.BootProfileID = bootProfile.ID
 	if effectiveAgent.Route != s.cat().Agents[plan.CatalogAgent()].Route {
 		plan.Route = effectiveAgent.Route
 	}

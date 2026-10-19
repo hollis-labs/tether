@@ -179,6 +179,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/catalog/reload", "/catalog/reload", map[string]string{"POST": localScope}),
 
 	routeScope("/catalog/plans", "/catalog/plans", map[string]string{"POST": localScope}),
+	routeScope("/catalog/plans/team-activation", "/catalog/plans/team-activation", map[string]string{"POST": localScope}),
 	routeScope("/catalog/plans/", "/catalog/plans/{id}", map[string]string{"GET": readScope}),
 	routeScope("/catalog/plans/", "/catalog/plans/{id}/approve", map[string]string{"POST": localScope}),
 	routeScope("/catalog/plans/", "/catalog/plans/{id}/apply", map[string]string{"POST": localScope}),
@@ -244,6 +245,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/mcp", "/mcp", map[string]string{"GET": localScope, "POST": localScope, "DELETE": localScope}),
 	routeScope("/p/", "/p/{rest...}", map[string]string{"GET": localScope, "POST": localScope, "DELETE": localScope}),
 	routeScope("/teams/roster", "/teams/roster", map[string]string{"GET": readScope}),
+	routeScope("/teams/activation", "/teams/activation", map[string]string{"GET": readScope}),
 	routeScope("/teams/form", "/teams/form", map[string]string{"POST": teamsScope}, "team-idempotency"),
 	routeScope("/teams/dissolve", "/teams/dissolve", map[string]string{"POST": teamsScope}, "team-idempotency"),
 	routeScope("/teams/member_add", "/teams/member_add", map[string]string{"POST": teamsScope}, "team-idempotency"),

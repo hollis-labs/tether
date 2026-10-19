@@ -200,7 +200,10 @@ func (s *Service) CreateTeamSessionWithLimits(ctx context.Context, key, launchID
 			return err
 		}
 		capTeamMaxDuration(plan, maxDuration)
-		return applyTeamBootContext(plan, boot)
+		if err := applyTeamBootContext(plan, boot); err != nil {
+			return err
+		}
+		return nil
 	}
 	// A launch that names a worker places its team members there; it never
 	// falls back to the hub (createWorkerSessionWith fails closed when the

@@ -12,8 +12,9 @@ import (
 // mutated after it is loaded, so a reader that took the pointer keeps a
 // consistent view while a reload swaps in the next one.
 type catalogState struct {
-	mu       sync.RWMutex
-	reloadMu sync.Mutex
+	mu         sync.RWMutex
+	reloadMu   sync.Mutex
+	generation uint64
 }
 
 // CurrentCatalog returns the catalog launches resolve against right now.
@@ -64,7 +65,15 @@ func (s *Service) ReloadCatalog(_ context.Context) (*config.ReloadReport, error)
 
 	s.catalogState.mu.Lock()
 	s.Catalog = &next
+	s.catalogState.generation++
 	s.catalogState.mu.Unlock()
 	report.Reloaded = true
 	return &report, nil
+}
+
+// CatalogGeneration is a process-local reload counter; zero is the initial load.
+func (s *Service) CatalogGeneration() uint64 {
+	s.catalogState.mu.RLock()
+	defer s.catalogState.mu.RUnlock()
+	return s.catalogState.generation
 }
