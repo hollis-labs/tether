@@ -1629,24 +1629,10 @@ func (c *Client) GetWorkstream(ctx context.Context, id string) (api.WorkstreamDT
 	return out, nil
 }
 
-// ListWorkstreams lists workstreams via GET /workstreams.
+// ListWorkstreams follows every page of the selected live listing.
+// It is not a point-in-time snapshot; use ListWorkstreamsPage for bounded reads.
 func (c *Client) ListWorkstreams(ctx context.Context, status, workflowID string) ([]api.WorkstreamDTO, error) {
-	params := url.Values{}
-	if status != "" {
-		params.Set("status", status)
-	}
-	if workflowID != "" {
-		params.Set("workflow_id", workflowID)
-	}
-	path := "/workstreams"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
-	var res api.WorkstreamListResponse
-	if err := c.getJSON(ctx, path, &res); err != nil {
-		return nil, wrapIfUnreachable(err)
-	}
-	return res.Workstreams, nil
+	return c.allWorkstreams(ctx, WorkstreamListOptions{Status: status, WorkflowID: workflowID})
 }
 
 // AssignSessionWorkstream stamps a workstream onto a session via
@@ -1823,11 +1809,5 @@ func (c *Client) WorkstreamDigest(ctx context.Context, workstreamID string, q Di
 // Returns ALL matches. Two efforts touching the same task is ordinary, so a
 // single answer would be confidently wrong whenever the ambiguity is real.
 func (c *Client) WorkstreamsForRef(ctx context.Context, selector string) ([]api.WorkstreamDTO, error) {
-	var res api.WorkstreamListResponse
-	params := url.Values{}
-	params.Set("ref", selector)
-	if err := c.getJSON(ctx, "/workstreams?"+params.Encode(), &res); err != nil {
-		return nil, wrapIfUnreachable(err)
-	}
-	return res.Workstreams, nil
+	return c.allWorkstreams(ctx, WorkstreamListOptions{Ref: selector})
 }

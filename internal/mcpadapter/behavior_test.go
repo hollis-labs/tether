@@ -41,6 +41,7 @@ var clientMethodWrites = map[string]bool{
 	"StreamEvents":               false,
 	"GetWorkstream":              false,
 	"ListWorkstreams":            false,
+	"ListWorkstreamsPage":        false,
 	"ListSessionRefs":            false,
 	"ListWorkstreamRefs":         false,
 	"SessionDigest":              false,
