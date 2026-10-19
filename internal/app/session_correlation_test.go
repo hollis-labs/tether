@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
 func TestTurnOutputReplayUsesSessionTaskNotNativeClaim(t *testing.T) {
@@ -75,5 +76,35 @@ func TestWorkerLaunchSealsSessionCorrelation(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("worker received no spec")
 		}
+	}
+}
+
+func TestWorkerOutputTransportKeepsStoredCorrelation(t *testing.T) {
+	s := permissionWorkerHarness(t)
+	if _, err := s.Store.DB().Exec(`UPDATE sessions SET task_id='CW-20261012-0062',route_json='{"channel":"ops","kinds":["final"]}' WHERE id='s1'`); err != nil {
+		t.Fatal(err)
+	}
+	// The authenticated worker owns the session; output bytes carry no authority
+	// to rebind it. Split delivery and replay exercise the transport's cursor.
+	data := []byte("{\"type\":\"result\",\"uuid\":\"transport-turn\",\"result\":\"answer\",\"task_id\":\"forged\",\"project_id\":\"forged\"}\n")
+	frames := []workerwire.Frame{{T: "output", Session: "s1", Seq: 1, Stream: "stdout", Data: data[:20]}, {T: "output", Session: "s1", Seq: 2, Stream: "stdout", Data: data[20:]}}
+	if err := s.ingestWorkerFrame("foreign", frames[0]); err == nil {
+		t.Fatal("foreign worker accepted")
+	}
+	for _, f := range frames {
+		if err := s.ingestWorkerFrame("worker", f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ingestWorkerFrame("worker", frames[1]); err != nil {
+		t.Fatal(err)
+	}
+	outputs := outputEvents(t, s)
+	if len(outputs) != 1 || outputs[0].TaskID != "CW-20261012-0062" || outputs[0].ProjectID != "project" || outputs[0].WorkstreamID != "workstream" {
+		t.Fatalf("transport outputs=%+v", outputs)
+	}
+	staged, err := s.Store.StagedTurnOutput(context.Background(), outputs[0].MessageID)
+	if err != nil || staged.Metadata["task_id"] != "CW-20261012-0062" {
+		t.Fatalf("routed task missing: %v", err)
 	}
 }
