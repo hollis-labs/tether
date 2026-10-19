@@ -36,7 +36,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 	out := callcontext.Snapshot{Verified: p.Verified, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind}
 	// A session credential, or an issued session-bound agent token (TokenID +
 	// sid + matching subject; never Kind alone), selects the session row.
-	if (p.Kind != "session" && !identity.IsBoundAgentToken(p)) || p.SessionID == "" || sessions == nil {
+	if !p.Verified || (p.Kind != "session" && !identity.IsBoundAgentToken(p)) || p.SessionID == "" || sessions == nil {
 		return out
 	}
 	row, err := sessions.GetSession(p.SessionID)
