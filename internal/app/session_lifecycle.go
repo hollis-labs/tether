@@ -278,6 +278,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	if err != nil {
 		return nil, fmt.Errorf("load launch plan: %w", err)
 	}
+	correlation := sessionCorrelation(*row)
 	if row.WorkerID != "" {
 		return s.launchWorkerSession(ctx, row, plan)
 	}
@@ -678,13 +679,16 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 	}
 
+	startOpts.Env = correlation.SealEnv(startOpts.Env)
 	req := agentsessions.StartRequest{
 		ID:      sessionID,
 		Runtime: rt,
 		Options: startOpts,
 		SessionMeta: map[string]string{
 			"logical_agent_id": plan.LogicalAgentID,
-			"project_id":       plan.ProjectID,
+			"project_id":       row.ProjectID,
+			"task_id":          row.TaskID.String,
+			"workstream_id":    row.WorkstreamID.String,
 			"launch_id":        plan.LaunchID,
 			"provider_id":      plan.ProviderID,
 		},

@@ -218,3 +218,21 @@ func TestStampedValuesReachTheStoredRow(t *testing.T) {
 func sameActor(a, b events.Actor) bool {
 	return a.Kind == b.Kind && a.URN == b.URN && a.Verified == b.Verified && a.OnBehalfOf == b.OnBehalfOf
 }
+
+func TestCanonicalToolCorrelationUsesOnlyResolvedSession(t *testing.T) {
+	for _, verified := range []bool{true, false} {
+		snapshot := resolved
+		snapshot.SessionResolved = verified
+		for _, finished := range []bool{false, true} {
+			e := events.CanonicalToolCall(events.ToolCallEvent{SessionID: "s1", ToolName: "read", Attribution: snapshot}, finished)
+			got := stamp(sessionCtx(snapshot, sessionPrincipal), t, New(), e)
+			if verified {
+				if d := got.Envelope.Dims; d.TaskID != "CW-1" || d.ProjectID != "PRJ-1" || d.WorkstreamID != "ws-1" {
+					t.Fatalf("resolved correlation=%+v", d)
+				}
+			} else if d := got.Envelope.Dims; d.TaskID != "" || d.ProjectID != "" || d.WorkstreamID != "" {
+				t.Fatalf("claimed correlation=%+v", d)
+			}
+		}
+	}
+}

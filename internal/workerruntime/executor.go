@@ -305,6 +305,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		cmd.Env = provider.BuildEnv("merge", nil, nil, spec.Env, os.Environ())
 		cmd.Env = provider.BuildEnv("merge", nil, nil, prepared.Env, cmd.Env)
 	}
+	cmd.Env = launch.CorrelationFromEnv(spec.Env).SealEnv(cmd.Env)
 	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+spec.Actor)
 	// Per-session issued tokens: 0600 files outside the checkout, refreshed in
 	// place; the child gets only their paths.

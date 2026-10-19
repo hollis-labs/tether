@@ -23,6 +23,7 @@ type TurnOutputEvent struct {
 	Confidence        turnoutput.Confidence `json:"confidence"`
 	Runtime           string                `json:"runtime"`
 	LogicalAgentID    string                `json:"logical_agent_id"`
+	TaskID            string                `json:"task_id,omitempty"`
 	ProjectID         string                `json:"project_id"`
 	WorkstreamID      string                `json:"workstream_id"`
 	MessageID         string                `json:"message_id,omitempty"`
