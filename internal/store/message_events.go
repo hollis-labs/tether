@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,11 +32,14 @@ type messageEventRecord struct {
 // outbox rows. Crash/retry cannot skip or duplicate a committed observation.
 // It never changes mailbox/delivery state or replays historical attention state.
 func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (int, error) {
-	var deliveryAfter, attentionAfter int64
+	var deliveryAfter, attentionAfter, retryAfter int64
 	if err := s.db.QueryRowContext(ctx, `SELECT position FROM message_event_checkpoints WHERE source='delivery'`).Scan(&deliveryAfter); err != nil {
 		return 0, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT position FROM message_event_checkpoints WHERE source='attention'`).Scan(&attentionAfter); err != nil {
+		return 0, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT position FROM message_event_checkpoints WHERE source='retry'`).Scan(&retryAfter); err != nil {
 		return 0, err
 	}
 	transitions, err := s.DeliveryStore().Transitions(ctx, deliveryAfter, messageEventBatch)
@@ -75,7 +79,7 @@ func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (i
 	}
 	// A missing mailbox row (Enqueue/content commit gap or orphan) must not
 	// stall unrelated mail. Keep its transition reference and retry independently.
-	pendingRows, err := s.db.QueryContext(ctx, `SELECT transition_id FROM message_event_deferred ORDER BY transition_id LIMIT ?`, messageEventBatch)
+	pendingRows, err := s.db.QueryContext(ctx, `SELECT transition_id FROM message_event_deferred ORDER BY CASE WHEN transition_id>? THEN 0 ELSE 1 END,transition_id LIMIT ?`, retryAfter, messageEventBatch)
 	if err != nil {
 		return 0, err
 	}
@@ -113,7 +117,7 @@ func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (i
 		}
 		ready = append(ready, record)
 	}
-	if len(core)+len(attention)+len(ready) == 0 {
+	if len(core)+len(attention)+len(pendingIDs) == 0 {
 		return 0, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -123,14 +127,17 @@ func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (i
 	defer func() { _ = tx.Rollback() }()
 	// Another drainer may have committed while this one read. Check both source
 	// positions under the write transaction instead of replaying stale snapshots.
-	var d, a int64
+	var d, a, r int64
 	if err = tx.QueryRowContext(ctx, `SELECT position FROM message_event_checkpoints WHERE source='delivery'`).Scan(&d); err != nil {
 		return 0, err
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT position FROM message_event_checkpoints WHERE source='attention'`).Scan(&a); err != nil {
 		return 0, err
 	}
-	if d != deliveryAfter || a != attentionAfter {
+	if err = tx.QueryRowContext(ctx, `SELECT position FROM message_event_checkpoints WHERE source='retry'`).Scan(&r); err != nil {
+		return 0, err
+	}
+	if d != deliveryAfter || a != attentionAfter || r != retryAfter {
 		return 0, nil
 	}
 	count := 0
@@ -178,21 +185,16 @@ func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (i
 		}
 		count++
 	}
+	if len(pendingIDs) > 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE message_event_checkpoints SET position=? WHERE source='retry'`, pendingIDs[len(pendingIDs)-1]); err != nil {
+			return 0, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
 	bus.KickOutbox()
 	return count, nil
-}
-
-func messageMetadataEvent(kind, raw string, at time.Time, team string) events.Event {
-	schema := "urn:hollis-labs:events:message.lifecycle@1"
-	category := "message"
-	if strings.HasPrefix(kind, "wake.") {
-		schema = "urn:hollis-labs:events:wake@1"
-		category = "wake"
-	}
-	return events.Event{Scope: events.ScopeDaemon, Kind: kind, At: at, PayloadJSON: raw, Envelope: events.Envelope{Dims: events.ScopeDims{TeamRunID: team}, Class: events.Class{Category: category, PayloadSchema: schema, Sensitivity: "private", Visibility: "environment"}}}
 }
 
 func (s *Store) messageTransition(ctx context.Context, tr delivery.Transition) (messageEventRecord, error) {
@@ -205,8 +207,10 @@ func (s *Store) messageTransition(ctx context.Context, tr delivery.Transition) (
 	if strings.HasPrefix(string(msg.Kind), "stream.") {
 		return record, nil
 	}
-	rd, err := ds.GetDelivery(ctx, tr.DeliveryID)
-	if err != nil {
+	// GetDelivery performs lease expiry in the shipped library. Projection is
+	// read-only: read the frozen recipient without advancing that state machine.
+	var recipient string
+	if err = s.db.QueryRowContext(ctx, `SELECT recipient_urn FROM messaging_deliveries WHERE id=?`, tr.DeliveryID).Scan(&recipient); err != nil {
 		return record, err
 	}
 	messageID := string(msg.ID)
@@ -225,20 +229,11 @@ func (s *Store) messageTransition(ctx context.Context, tr delivery.Transition) (
 	if exists == 0 {
 		return record, fmt.Errorf("transition %d: %w", tr.ID, errMessageContentPending)
 	}
-	attempt, generation := 0, int64(0)
-	if tr.AttemptID != "" {
-		attempts, err := ds.Attempts(ctx, tr.DeliveryID)
-		if err != nil {
-			return record, err
-		}
-		for i, a := range attempts {
-			if a.ID == tr.AttemptID {
-				attempt = i + 1
-				generation = a.BindingGeneration
-				break
-			}
-		}
+	attempt, generation, err := s.messageTransitionAttempt(ctx, tr)
+	if err != nil {
+		return record, err
 	}
+
 	team := ""
 	if candidate := msg.Metadata["team_run"]; candidate != "" {
 		err = s.db.QueryRowContext(ctx, `SELECT run_id FROM team_runs WHERE run_id=?`, candidate).Scan(&team)
@@ -251,17 +246,24 @@ func (s *Store) messageTransition(ctx context.Context, tr delivery.Transition) (
 	case "very-low", "low", "normal", "high":
 		urgency = v
 	}
+	groupSeq, _ := strconv.ParseInt(msg.Metadata["tether_group_seq"], 10, 64)
 	ref := "/messages/" + url.PathEscape(messageID)
 	if !msg.Group.IsZero() {
-		ref = "/groups/" + url.PathEscape(msg.Group.URN()) + "/messages?message_id=" + url.QueryEscape(messageID)
+		ref = "/groups/" + url.PathEscape(msg.Group.URN()) + "/messages?since_seq=" + strconv.FormatInt(max(0, groupSeq-1), 10) + "&limit=1"
 	}
-	payload := map[string]any{"message_id": messageID, "from": msg.From.URN(), "to": []string{rd.Recipient.URN()}, "thread_id": msg.ThreadID, "in_reply_to": msg.InReplyTo, "msg_kind": msg.Kind, "urgency": urgency, "body_ref": ref, "body_bytes": len(msg.Payload), "content_type": msg.ContentType, "delivery": map[string]any{"state": tr.To, "attempt": attempt, "binding_generation": generation, "delivery_id": tr.DeliveryID, "attempt_id": tr.AttemptID}, "transition_id": tr.ID, "reason": tr.Reason}
+	payload := map[string]any{"message_id": messageID, "from": msg.From.URN(), "to": []string{recipient}, "thread_id": msg.ThreadID, "in_reply_to": msg.InReplyTo, "msg_kind": msg.Kind, "urgency": urgency, "body_ref": ref, "body_bytes": len(msg.Payload), "content_type": msg.ContentType, "delivery": map[string]any{"state": tr.To, "attempt": attempt, "binding_generation": generation, "delivery_id": tr.DeliveryID, "attempt_id": tr.AttemptID}, "transition_id": tr.ID, "reason": tr.Reason, "delivery_message_id": tr.MessageID}
+	if !msg.Group.IsZero() {
+		payload["group"] = msg.Group.URN()
+		payload["group_seq"] = groupSeq
+	}
 	kinds := []string{}
 	switch tr.Reason {
 	case delivery.TransitionCreated:
 		kinds = []string{catalog.KindMessageSent, catalog.KindMessageQueued}
 	case delivery.TransitionRedriven:
 		kinds = []string{catalog.KindMessageRedriven, catalog.KindMessageQueued}
+	case delivery.TransitionClaimed, delivery.TransitionConsumed, delivery.TransitionDeadlineExceeded:
+	// Claim is not delivery evidence; consumed/deadline are handled by state below.
 	case delivery.TransitionNacked, delivery.TransitionLeaseExpired:
 		kinds = []string{catalog.KindMessageFailed}
 	}

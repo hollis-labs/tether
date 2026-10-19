@@ -251,3 +251,60 @@ only — `go-tether-client` has no typed wrapper for them yet (CW-20260907-0038)
 
 > **Every messaging read must assert a caller identity** via `?as=<urn>`
 > (ADR 0045). See [messaging-adoption.md](./messaging-adoption.md).
+
+## Canonical lifecycle events
+
+CW-20261016-0137 projects mailbox observations onto the hub event stream using
+`message.lifecycle@1` and `wake@1` from the pinned runtime-event catalog.
+The mailbox remains the body system of record. Event payloads carry message,
+thread and reply IDs, sender and recipient URNs, message kind, known urgency,
+content type, byte length and `body_ref`. Arbitrary metadata, bodies, wake text,
+provider error detail and lease tokens are excluded. Existing legacy broker and
+routing events continue unchanged.
+
+| Evidence | Canonical observations |
+|---|---|
+| New delivery obligation | `message.sent`, `message.queued`, per frozen recipient |
+| Retry failure or expired lease | `message.failed`, with the library's stable reason |
+| Deadline or terminal failure | `message.dead_lettered` |
+| Authorized redrive | `message.redriven`, `message.queued` |
+| Mailbox pull / actual remote delivery acknowledgement | `message.delivered` |
+| Explicit read / consume / cancel / archive / body purge | `message.read`, `message.consumed`, `message.canceled`, `message.archived`, `message.purged` |
+| Consumption through delivery receipts without a mailbox consume stamp | `message.consumed` |
+| Runtime submission boundary / returned result | `wake.attempted`, `wake.outcome` |
+
+A claim alone is a lease, not evidence of delivery. Busy, offline, already
+handled, marker-write failure and binding-fence exits have an honest
+`wake.outcome` with `attempted:false`; they do not emit `wake.attempted`.
+The direct legacy wake path records actual submissions too. Wake observations
+are best effort at the runtime boundary: a crash after submission can leave an
+attempt without an outcome, and events never cause a second submission.
+
+Delivery payloads name the canonical mailbox message ID and the distinct
+library delivery/message/attempt IDs when available. `transition_id` is the
+library's ascending durable source cursor. `delivery.attempt` is its historical
+attempt count at that transition, independent of timestamps or later retries;
+`binding_generation` comes from the matching persisted attempt. Attention-only
+observations omit attempt details they cannot establish. Correlation identifies
+the message and known thread/reply; team-run scope is drawn from persisted
+`team_runs.run_id` associations. Actor/session identity is not inferred from a
+message body or a claimed sender address.
+
+`body_ref` is relative to the recipient authority's existing HTTP API and
+includes its existing `as` selector. Personal messages use
+`/messages/{id}?as=...`. Group fanout retains one canonical room message ID and
+one event pair per frozen recipient, with `group` and `group_seq` metadata.
+Its reference uses `/groups/{urn}/messages?since_seq=...&limit=1&as=...` to select
+the exact post even after the member read cursor advances. The first post uses
+`since_seq=-1`, since zero means the current member cursor. Group cursor updates
+emit one read observation per newly covered post and member.
+
+The daemon drains bounded pages into the existing event outbox. Source
+checkpoints and outbox rows commit together; publication can replay an event
+with the same durable event ID. Missing mailbox references are retried through
+a persisted rotating cursor, so permanent holes do not starve later repairs.
+Initial activation fences the library's existing transition high water once;
+restarts preserve that fence and drain new committed backlog. Existing mailbox
+attention history is not reconstructed. Stream-control `stream.*` kinds are
+excluded by both the projection and federation send boundary. Event retention,
+mailbox retention and existing access rules are unchanged.

@@ -54,10 +54,9 @@ func (s *Service) StartMessageEvents(ctx context.Context) {
 
 func (s *Service) stopMessageEvents() {
 	s.messageEventsMu.Lock()
-	stop := s.messageEventsStop
-	s.messageEventsStop = nil
-	s.messageEventsMu.Unlock()
-	if stop != nil {
-		stop()
+	defer s.messageEventsMu.Unlock()
+	if s.messageEventsStop != nil {
+		s.messageEventsStop()
+		s.messageEventsStop = nil
 	}
 }

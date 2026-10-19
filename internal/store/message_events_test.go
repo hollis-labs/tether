@@ -117,7 +117,7 @@ func TestMessageEventsLifecycleRestartAndIdempotency(t *testing.T) {
 		if payload["message_id"] != env.ID || payload["from"] != env.From.URN() || payload["to"].([]any)[0] != env.To.URN() {
 			t.Fatal(payload)
 		}
-		if ev.EventID == "" || ev.Seq <= 0 || payload["body_ref"] != "/messages/"+env.ID {
+		if ev.EventID == "" || ev.Seq <= 0 || !strings.HasPrefix(payload["body_ref"].(string), "/messages/"+env.ID+"?as=") {
 			t.Fatal("missing durable identity/ref")
 		}
 	}
@@ -270,6 +270,167 @@ func TestMessageEventsGroupFanoutUsesCanonicalMailboxID(t *testing.T) {
 	for recipient := range recipients {
 		if counts[recipient] != 2 {
 			t.Fatal(counts)
+		}
+	}
+	for recipient := range recipients {
+		if err := reg.MarkRead(ctx, group.URN, recipient, gm.GroupSeq); err != nil {
+			continue
+		} // removed member is no longer allowed
+		if err := reg.MarkRead(ctx, group.URN, recipient, gm.GroupSeq); err != nil {
+			t.Fatal(err)
+		}
+		all := drainMessages(t, st)
+		if len(all) != 5 {
+			t.Fatalf("group read was missing or replayed: %d", len(all))
+		}
+		payload := messageEventPayload(t, all[len(all)-1])
+		if all[len(all)-1].Kind != "message.read" || payload["message_id"] != gm.ID || payload["to"].([]any)[0] != recipient {
+			t.Fatal(payload)
+		}
+		return
+	}
+	t.Fatal("no remaining group member")
+}
+
+func TestMessageEventsPagingDeferredAndStreamControl(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	// Public delivery-core enqueue may commit before the mailbox body. Keep its
+	// source reference without allowing it to poison the rest of the stream.
+	orphan, err := st.DeliveryStore().Enqueue(ctx, delivery.EnqueueRequest{From: messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "a"}, Recipients: []delivery.RecipientTarget{{Address: messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "b"}}}, Kind: messaging.MsgKindNotice, Payload: []byte("BODY-CANARY")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 130 {
+		sendEventMessage(t, st)
+	}
+	if _, err = st.DB().Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,created_at) VALUES ('control','stream.cursor','msg://agent/test/a','msg://agent/test/b',?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	rows := drainMessages(t, st)
+	if len(rows) != 260 {
+		t.Fatalf("paging lost events or emitted stream control: %d", len(rows))
+	}
+	var deferred int
+	if err = st.DB().QueryRow(`SELECT count(*) FROM message_event_deferred`).Scan(&deferred); err != nil || deferred != 1 {
+		t.Fatal("missing durable deferred reference", deferred, err)
+	}
+	// Repair after the source checkpoint passed: the original durable IDs remain.
+	if _, err = st.DB().Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,payload,created_at,delivery_id) VALUES (?,'notice',?,?,?, ?,?)`, orphan.Message.ID, orphan.Message.From.URN(), orphan.Deliveries[0].Recipient.URN(), "BODY-CANARY", orphan.Message.CreatedAt.Format(time.RFC3339Nano), orphan.Deliveries[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	rows = drainMessages(t, st)
+	if len(rows) != 262 {
+		t.Fatalf("deferred recovery count=%d", len(rows))
+	}
+	for _, ev := range rows {
+		messageEventPayload(t, ev)
+	}
+	if err = st.DB().QueryRow(`SELECT count(*) FROM message_event_deferred`).Scan(&deferred); err != nil || deferred != 0 {
+		t.Fatal("deferred observation not settled", deferred, err)
+	}
+}
+
+func TestMessageEventsTeamRunStampUsesPersistedRun(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if _, err = st.DB().Exec(`INSERT INTO team_runs(run_id,session_group_id,team_id,team_version,payload,created_at) VALUES ('run-1','group-1','team',1,'{}',?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	known := sendEventMessage(t, st)
+	// Retry-safe normal sends accept metadata, but only a persisted run can be
+	// stamped as a scope dimension; no other metadata enters the event.
+	if _, err = st.DB().Exec(`UPDATE messages SET metadata='{"team_run":"run-1"}' WHERE id=?`, known.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.MessagingStore().MarkRead(ctx, known.ID, known.To); err != nil {
+		t.Fatal(err)
+	}
+	unknown := sendEventMessage(t, st)
+	if _, err = st.DB().Exec(`UPDATE messages SET metadata='{"team_run":"METADATA-CANARY"}' WHERE id=?`, unknown.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.MessagingStore().MarkRead(ctx, unknown.ID, unknown.To); err != nil {
+		t.Fatal(err)
+	}
+	rows := drainMessages(t, st)
+	seen := 0
+	for _, ev := range rows {
+		payload := messageEventPayload(t, ev)
+		if ev.Kind != "message.read" {
+			continue
+		}
+		seen++
+		if payload["message_id"] == known.ID {
+			if ev.Envelope.Dims.TeamRunID != "run-1" {
+				t.Fatal("known run stamp lost")
+			}
+		} else if ev.Envelope.Dims.TeamRunID != "" {
+			t.Fatal("unknown metadata became run scope")
+		}
+	}
+	if seen != 2 {
+		t.Fatal("read events missing")
+	}
+}
+
+func TestMessageEventsDeferredRetryRotatesPastPoisonAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	from := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"}
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "recipient"}
+	var late delivery.EnqueueResult
+	for range 130 {
+		late, err = st.DeliveryStore().Enqueue(ctx, delivery.EnqueueRequest{From: from, Recipients: []delivery.RecipientTarget{{Address: to}}, Kind: messaging.MsgKindNotice})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	bus := events.NewBus(events.BusOptions{Persister: st}).(events.OutboxBus)
+	for range 2 {
+		if _, err = st.DrainMessageEvents(ctx, bus); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 129 permanent holes precede this repaired mailbox. Persisted rotation must
+	// reach it even though the oldest retry page never becomes ready.
+	if _, err = st.DB().Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,created_at,delivery_id) VALUES (?,'notice',?,?,?,?)`, late.Message.ID, from.URN(), to.URN(), late.Message.CreatedAt.Format(time.RFC3339Nano), late.Deliveries[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bus = events.NewBus(events.BusOptions{Persister: st}).(events.OutboxBus)
+	for range 3 {
+		if _, err = st.DrainMessageEvents(ctx, bus); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := st.EventsSince(0)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("late ready observation starved: %d events %v", len(rows), err)
+	}
+	for _, ev := range rows {
+		payload := messageEventPayload(t, ev)
+		if payload["message_id"] != string(late.Message.ID) {
+			t.Fatal(payload)
 		}
 	}
 }

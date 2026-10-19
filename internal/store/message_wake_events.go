@@ -3,16 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 )
 
 // RecordMessageWake records identifiers and typed outcome only. Free-form
 // provider detail, wake text and message metadata are never journaled.
 func (s *Store) RecordMessageWake(ctx context.Context, id, target, kind, attemptID string, attempt int, generation int64, attempted, delivered bool, reason string) error {
-	if strings.HasPrefix(reason, "stream.") {
-		return nil
-	}
 	if kind != "wake.attempted" && kind != "wake.outcome" {
 		return nil
 	}
@@ -27,16 +23,19 @@ func (s *Store) RecordMessageWake(ctx context.Context, id, target, kind, attempt
 		payload["attempt"] = attempt
 		payload["binding_generation"] = generation
 	}
+	if generation > 0 {
+		payload["binding_generation"] = generation
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO message_event_journal(kind,at,payload_json) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM messages WHERE id=? AND kind NOT LIKE 'stream.%')`, kind, time.Now().UTC().Format(time.RFC3339Nano), string(raw), id)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO message_event_journal(kind,at,payload_json,team_run_id) SELECT ?,?,?,coalesce((SELECT run_id FROM team_runs WHERE run_id=(SELECT CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.team_run') END FROM messages WHERE id=?)), '') WHERE EXISTS (SELECT 1 FROM messages WHERE id=? AND kind NOT LIKE 'stream.%')`, kind, time.Now().UTC().Format(time.RFC3339Nano), string(raw), id, id)
 	return err
 }
 
 var messageWakeReasons = map[string]bool{
-	"":                      true,
+	"": true, "pull-only": true, "stale-generation": true, "binding-check-failed": true,
 	"already-handled":       true,
 	"busy":                  true,
 	"claim-unavailable":     true,

@@ -13,7 +13,8 @@ CREATE TABLE message_event_checkpoints (
  source TEXT PRIMARY KEY,
  position INTEGER NOT NULL DEFAULT 0
 );
-INSERT INTO message_event_checkpoints(source) VALUES ('delivery'), ('attention');
+-- -1 is initialized exactly once after mesh/core applies its own schema.
+INSERT INTO message_event_checkpoints(source,position) VALUES ('delivery',-1), ('attention',0), ('retry',0);
 
 CREATE TRIGGER message_events_untracked_sent AFTER INSERT ON messages
  WHEN NEW.delivery_id IS NULL AND NEW.routing_staged=0 AND NEW.kind NOT LIKE 'stream.%' AND coalesce(NEW.group_urn,'')=''

@@ -467,9 +467,18 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	var observationAttempt string
 	var observationNumber int
 	var observationGeneration int64
+	submitted := false
+	recordSubmission := func() {
+		submitted = true
+		if st != nil {
+			if err := st.RecordMessageWake(context.WithoutCancel(ctx), messageID, to.URN(), "wake.attempted", observationAttempt, observationNumber, observationGeneration, true, false, ""); err != nil {
+				log.Printf("app: record wake submission: %v", err)
+			}
+		}
+	}
 	if st != nil {
 		defer func() {
-			if err := st.RecordMessageWake(context.WithoutCancel(ctx), messageID, to.URN(), "wake.outcome", observationAttempt, observationNumber, observationGeneration, out.Attempted, out.Delivered, out.Reason); err != nil {
+			if err := st.RecordMessageWake(context.WithoutCancel(ctx), messageID, to.URN(), "wake.outcome", observationAttempt, observationNumber, observationGeneration, submitted, out.Delivered, out.Reason); err != nil {
 				log.Printf("app: record wake outcome: %v", err)
 			}
 		}()
@@ -484,8 +493,9 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	if blocked.Reason != "" {
 		return blocked
 	}
+	observationGeneration = bindingGeneration
 	if st == nil {
-		return sendTurnDirect(ctx, reg, rt, to, sessionID, wakeText, bindingGeneration)
+		return sendTurnDirect(ctx, reg, rt, to, sessionID, wakeText, bindingGeneration, recordSubmission)
 	}
 
 	deliveryID, ok, err := st.DeliveryIDForMessage(ctx, messageID)
@@ -496,7 +506,7 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		// Pre-T03 legacy message (no delivery-core tracking) or a lookup
 		// failure: fall back to a direct, untracked wake rather than
 		// blocking the caller's notify request on a bookkeeping gap.
-		return sendTurnDirect(ctx, reg, rt, to, sessionID, wakeText, bindingGeneration)
+		return sendTurnDirect(ctx, reg, rt, to, sessionID, wakeText, bindingGeneration, recordSubmission)
 	}
 
 	// T09 (messaging vNext, CW-20260906-0040): capture the binding
@@ -528,9 +538,7 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	observationAttempt = string(claim.Attempt.ID)
 	observationNumber = claim.Delivery.AttemptCount
 	observationGeneration = claim.Attempt.BindingGeneration
-	if err := st.RecordMessageWake(context.WithoutCancel(ctx), messageID, to.URN(), "wake.attempted", observationAttempt, observationNumber, observationGeneration, true, false, ""); err != nil {
-		log.Printf("app: record wake attempt: %v", err)
-	}
+
 	lease := delivery.LeaseRef{
 		DeliveryID:        claim.Attempt.DeliveryID,
 		AttemptID:         claim.Attempt.ID,
@@ -613,6 +621,7 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		return blocked
 	}
 
+	recordSubmission()
 	var submitErr error
 	if rt.sendMail != nil {
 		submitErr = rt.sendMail(ctx, sessionID, messageID, wakeText)
@@ -687,10 +696,11 @@ func checkWakeBinding(ctx context.Context, reg *registry.Service, to messaging.A
 	return 0, api.WakeOutcome{}
 }
 
-func sendTurnDirect(ctx context.Context, reg *registry.Service, rt wakeRuntime, to messaging.Address, sessionID, wakeText string, bindingGeneration int64) api.WakeOutcome {
+func sendTurnDirect(ctx context.Context, reg *registry.Service, rt wakeRuntime, to messaging.Address, sessionID, wakeText string, bindingGeneration int64, beforeSubmit func()) api.WakeOutcome {
 	if _, blocked := checkWakeBinding(ctx, reg, to, sessionID, bindingGeneration); blocked.Reason != "" {
 		return blocked
 	}
+	beforeSubmit()
 	if err := rt.sendTurn(ctx, sessionID, wakeText); err != nil {
 		return api.WakeOutcome{Attempted: true, SessionID: sessionID, Reason: "turn-submit-failed", Detail: err.Error()}
 	}
