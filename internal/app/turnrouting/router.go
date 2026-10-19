@@ -86,17 +86,25 @@ func (r *Router) Close() {
 	<-r.done
 }
 
+// Keep the owned channel/cancel pair separate from the selectable live channel,
+// which becomes nil after eviction. Only a successful replacement changes owner.
+type routerSubscription struct {
+	live   <-chan events.Event
+	cancel func()
+}
+
+func (s routerSubscription) close() {
+	s.cancel()
+	// Bus cancellation requests teardown; channel closure joins replay reads.
+	for range s.live {
+	}
+}
+
 func (r *Router) run(ctx context.Context, live <-chan events.Event, unsubscribe func()) {
 	defer close(r.done)
 	defer r.running.Store(false)
-	defer func(subscription <-chan events.Event) {
-		unsubscribe()
-		// Cancellation only requests teardown. Join the owned subscriber's
-		// replay reads before Close permits the caller to close its storage.
-		// Capture the original channel: live may be set to nil below.
-		for range subscription {
-		}
-	}(live)
+	owned := routerSubscription{live: live, cancel: unsubscribe}
+	defer func() { owned.close() }()
 	ticks := r.ticks
 	if ticks == nil {
 		ticker := time.NewTicker(time.Second)
@@ -119,12 +127,13 @@ func (r *Router) run(ctx context.Context, live <-chan events.Event, unsubscribe 
 			}
 		case <-ticks:
 			if live == nil {
-				var err error
-				live, unsubscribe, err = r.subscribe(ctx)
+				next, cancel, err := r.subscribe(ctx)
 				if err != nil {
 					log.Printf("turn router: resubscribe: %v", err)
-					live = nil
-					unsubscribe = func() {}
+				} else {
+					owned.close() // the evicted channel has already closed
+					owned = routerSubscription{live: next, cancel: cancel}
+					live = next
 				}
 			}
 			r.sweep(ctx)
