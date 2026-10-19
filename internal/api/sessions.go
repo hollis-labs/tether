@@ -482,6 +482,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, sessionResponseFor(r, dto))
 	}
 
+	if err := s.populateSessionMappings(out); err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, "session identity lookup failed")
+		return
+	}
 	// When the page fills, continue after its final (created_at, id) pair.
 	// A shorter page has reached the end, so emit no cursor.
 	resp := ListSessionsResponse{Sessions: out}
@@ -538,6 +542,12 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id str
 	}
 	dto := SessionRowToDTO(*row)
 	dto.AttachedClients = s.Service.AttachedClients(id)
+	dtos := []SessionDTO{dto}
+	if err := s.populateSessionMappings(dtos); err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, "session identity lookup failed")
+		return
+	}
+	dto = dtos[0]
 	writeJSON(w, http.StatusOK, sessionResponseFor(r, dto))
 }
 

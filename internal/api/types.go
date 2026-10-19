@@ -370,6 +370,14 @@ type SessionDTO struct {
 	EndedAt         *string `json:"ended_at,omitempty"`
 	AttachedClients int     `json:"attached_clients"`
 	SessionGroupID  string  `json:"session_group_id,omitempty"`
+	// Explicit correlation only; omitted means no value was recorded.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	Intent          string `json:"intent,omitempty"`
+	TaskID          string `json:"task_id,omitempty"`
+	WorkerID        string `json:"worker_id,omitempty"`
+	// ProviderMappings is null when the reader is unavailable, [] when no
+	// mappings are recorded. Native identifiers require owner+provider context.
+	ProviderMappings []SessionProviderMappingDTO `json:"provider_mappings"`
 	// WorkstreamID is the workstream the session is assigned to, if any.
 	WorkstreamID string `json:"workstream_id,omitempty"`
 	// Stalled is true for a running session that is not making progress
@@ -377,6 +385,16 @@ type SessionDTO struct {
 	Stalled bool `json:"stalled,omitempty"`
 	// StallReason names why Stalled is set.
 	StallReason string `json:"stall_reason,omitempty"`
+}
+
+// SessionProviderMappingDTO is an explicitly recorded native identity, qualified
+// by its observing owner and provider. A null native ID is not yet known.
+type SessionProviderMappingDTO struct {
+	Owner           string  `json:"owner"`
+	Provider        string  `json:"provider"`
+	NativeSessionID *string `json:"native_session_id"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 // AttachmentDTO is the on-the-wire shape for a client attachment row.
@@ -425,6 +443,14 @@ func SessionRowToDTO(r store.SessionRow) SessionDTO {
 		s := r.EndedAt.String
 		dto.EndedAt = &s
 	}
+	if r.ParentSessionID.Valid {
+		dto.ParentSessionID = r.ParentSessionID.String
+	}
+	dto.Intent = r.Intent
+	if r.TaskID.Valid {
+		dto.TaskID = r.TaskID.String
+	}
+	dto.WorkerID = r.WorkerID
 	dto.SessionGroupID = r.SessionGroupID.String
 	dto.WorkstreamID = r.WorkstreamID.String
 	return dto

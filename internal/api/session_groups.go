@@ -164,7 +164,7 @@ func (s *Server) handleGetSessionGroup(w http.ResponseWriter, _ *http.Request, i
 	writeJSON(w, http.StatusOK, groupToDTO(*g))
 }
 
-func (s *Server) handleListGroupSessions(w http.ResponseWriter, _ *http.Request, groupID string) {
+func (s *Server) handleListGroupSessions(w http.ResponseWriter, req *http.Request, groupID string) {
 	rows, err := s.GroupStore.ListSessionsByGroup(groupID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -172,7 +172,11 @@ func (s *Server) handleListGroupSessions(w http.ResponseWriter, _ *http.Request,
 	}
 	dtos := make([]SessionDTO, 0, len(rows))
 	for _, r := range rows {
-		dtos = append(dtos, SessionRowToDTO(r))
+		dtos = append(dtos, sessionResponseFor(req, SessionRowToDTO(r)))
+	}
+	if err := s.populateSessionMappings(dtos); err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, "session identity lookup failed")
+		return
 	}
 	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: dtos})
 }

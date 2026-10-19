@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -89,6 +90,33 @@ func (s *Store) ListSessionProviderMappings(sessionID string) ([]SessionProvider
 			return nil, err
 		}
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// SessionProviderMappings reads mappings for a page of sessions in one query.
+// Only explicitly recorded mappings are returned, ordered by provider and owner.
+func (s *Store) SessionProviderMappings(ids []string) (map[string][]SessionProviderMapping, error) {
+	out := make(map[string][]SessionProviderMapping)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.Query(`SELECT session_id, owner, provider, native_session_id, created_at, updated_at
+ FROM session_provider_mappings WHERE session_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`) ORDER BY session_id, provider, owner`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m SessionProviderMapping
+		if err := rows.Scan(&m.SessionID, &m.Owner, &m.Provider, &m.NativeSessionID, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out[m.SessionID] = append(out[m.SessionID], m)
 	}
 	return out, rows.Err()
 }
