@@ -24,18 +24,33 @@ var workerScopes = []string{"session.write", "message.write", "catalog.write"}
 // granted as the catalog or profile set it; it does not widen anything, since
 // granted is itself the ceiling. Both the hub-local and the worker credential
 // paths use this, so they cannot drift apart.
+//
+// A launcher that reached the hub with an issued agent or session JWT holds
+// canonical tether.* scopes, while the profile ceiling is written in the legacy
+// names (message.write ...): an exact string match emptied the ceiling, so an
+// agent-initiated worker launch got no session agent token and failed (the "hub
+// did not grant a session agent token" refusal). For those launchers the
+// comparison is vocabulary-aware (identity.ScopeGranted). Every other launcher,
+// device principals included, is still compared exactly: a device child gets no
+// legacy scopes (CW-20261010-0173).
 func narrowToLauncher(ctx context.Context, granted []string) []string {
 	parent, ok := identity.FromContext(ctx)
 	if !ok || slices.Contains(parent.Scopes, "*") {
 		return slices.Clone(granted)
 	}
+	vocabAware := issuedAgentCredential(parent)
 	var out []string
 	for _, scope := range granted {
-		if slices.Contains(parent.Scopes, scope) {
+		if slices.Contains(parent.Scopes, scope) || (vocabAware && identity.ScopeGranted(parent.Scopes, scope)) {
 			out = append(out, scope)
 		}
 	}
 	return out
+}
+
+// issuedAgentCredential reports whether p is an agent or session principal authenticated by an issued JWT.
+func issuedAgentCredential(p identity.Principal) bool {
+	return p.TokenID != "" && (p.Kind == "agent" || p.Kind == "session")
 }
 
 func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (string, error) {
