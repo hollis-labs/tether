@@ -1692,10 +1692,9 @@ func (s *appServer) handleSessionCheckpoint(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.recordOperatorEvent(events.ScopeSession, req.ID, kindSysopSessionCheckpoint, map[string]any{
-		"source":  "sysop",
-		"action":  "checkpoint",
-		"status":  strings.TrimSpace(req.Status),
-		"summary": strings.TrimSpace(req.Summary),
+		"source":        "sysop",
+		"action":        "checkpoint",
+		"summary_bytes": len(req.Summary),
 	})
 	writeJSON(w, http.StatusOK, actionResponse{Status: "checkpointed", SessionID: req.ID})
 }
@@ -4081,30 +4080,6 @@ func (s *appServer) openStateDB() (*store.Store, error) {
 		return nil, errStateDBUnset
 	}
 	return store.Open(dbPath)
-}
-
-func (s *appServer) recordOperatorEvent(scope events.Scope, sessionID, kind string, payload any) {
-	db, err := s.openStateDB()
-	if err != nil {
-		if !errors.Is(err, errStateDBUnset) {
-			log.Printf("sysop: open state db for event %s: %v", kind, err)
-		}
-		return
-	}
-	defer db.Close()
-
-	payloadJSON := ""
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			log.Printf("sysop: marshal payload for event %s: %v", kind, err)
-			return
-		}
-		payloadJSON = string(b)
-	}
-	if _, _, err := db.InsertEvent(scope, sessionID, kind, payloadJSON); err != nil {
-		log.Printf("sysop: persist event %s: %v", kind, err)
-	}
 }
 
 // scopeOf classifies a recipient URN as "user", "agent", or "other".
