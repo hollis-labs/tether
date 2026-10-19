@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/store"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,7 +36,21 @@ func TestStampTaskIDOverwritesAnySpoofedEnv(t *testing.T) {
 
 // A launch carries the launcher's task id onto the session row and into the plan env, and
 // an env override in the request (or the catalog) cannot replace it.
+type correlationCaptureRuntime struct {
+	agentsessions.Runtime
+	env *[]string
+}
+
+func (r correlationCaptureRuntime) Start(ctx context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
+	*r.env = append([]string(nil), opts.Env...)
+	return r.Runtime.Start(ctx, opts)
+}
+
 func TestCreateSessionStampsTaskID(t *testing.T) {
+	for _, k := range []string{"TETHER_TASK_ID", "TETHER_WORKSTREAM_ID", "TETHER_PROJECT_ID"} {
+		t.Setenv(k, "ambient-wrong")
+	}
+
 	t.Setenv("HOME", t.TempDir())
 	svc := bindingHarness(t)
 	svc.CatalogRoot = t.TempDir()
@@ -44,7 +61,11 @@ func TestCreateSessionStampsTaskID(t *testing.T) {
 		Providers: map[string]config.Provider{"stub": {ID: "stub", Provider: "claude", RuntimeKind: config.RuntimeKindPTY, Command: "test-fake"}},
 		Launches:  map[string]config.Launch{"l1": {ID: "l1", Project: "p", Agent: "worker", Provider: "stub"}},
 	}
-	svc.factories = map[string]RuntimeFactory{"stub": stub.New}
+	var actualEnv []string
+	svc.factories = map[string]RuntimeFactory{"stub": func(p *launch.Plan) (agentsessions.Runtime, error) {
+		r, err := stub.New(p)
+		return correlationCaptureRuntime{Runtime: r, env: &actualEnv}, err
+	}}
 
 	l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", TaskID: "CW-20261016-0155", Override: `{"env":{"TETHER_TASK_ID":"evil"}}`})
 	if err != nil {
@@ -62,6 +83,21 @@ func TestCreateSessionStampsTaskID(t *testing.T) {
 		t.Fatalf("stored plan = %+v err=%v", stored, err)
 	}
 
+	if _, err := svc.Store.CreateWorkstream(store.WorkstreamRow{ID: "WS-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.AssignSessionWorkstream(l.SessionID, "WS-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LaunchSession(l.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.StopSession(l.SessionID) })
+	for _, want := range []string{"TETHER_TASK_ID=CW-20261016-0155", "TETHER_PROJECT_ID=p", "TETHER_WORKSTREAM_ID=WS-1"} {
+		if !strings.Contains(strings.Join(actualEnv, "\n"), want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
 	// No task named, but an override tries to name one through env: nothing is stamped.
 	l2, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", Override: `{"env":{"TETHER_TASK_ID":"evil"}}`})
 	if err != nil {
@@ -74,6 +110,16 @@ func TestCreateSessionStampsTaskID(t *testing.T) {
 	if v, ok := l2.Plan.Env[TaskIDEnv]; ok {
 		t.Fatalf("spoofed TETHER_TASK_ID survived: %q", v)
 	}
+	if _, err := svc.LaunchSession(l2.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.StopSession(l2.SessionID) })
+	for _, v := range actualEnv {
+		if strings.HasPrefix(v, "TETHER_TASK_ID=") || strings.HasPrefix(v, "TETHER_WORKSTREAM_ID=") {
+			t.Fatalf("unbound launch inherited correlation: %s", v)
+		}
+	}
+
 }
 
 // An Outpost launch gets the stamp through the LaunchSpec env: workerSpec copies the plan env.
@@ -92,6 +138,12 @@ func TestResumeKeepsTaskStamp(t *testing.T) {
 	rig := newCodexRig(t)
 	parent, err := rig.svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "codex-launch", TaskID: "CW-20261016-0155"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.svc.Store.CreateWorkstream(store.WorkstreamRow{ID: "WS-resume"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.Store.AssignSessionWorkstream(parent.SessionID, "WS-resume"); err != nil {
 		t.Fatal(err)
 	}
 	owned := []string{parent.SessionID}
@@ -131,7 +183,7 @@ func TestResumeKeepsTaskStamp(t *testing.T) {
 	}
 	owned = append(owned, resumed.SessionID)
 	row, err := rig.svc.Store.GetSession(resumed.SessionID)
-	if err != nil || row.TaskID.String != "CW-20261016-0155" {
+	if err != nil || row.TaskID.String != "CW-20261016-0155" || row.WorkstreamID.String != "WS-resume" || row.ProjectID != "proj" {
 		t.Fatalf("resumed task = %+v err=%v, want the parent's", row.TaskID, err)
 	}
 	plan, err := rig.svc.Store.GetLaunchPlan(resumed.SessionID)

@@ -137,6 +137,10 @@ func TestPlantHubMCPFallsBackToSSHOnlyWhenEnabledAndLogsIt(t *testing.T) {
 // The whole launch: the outpost mints the session's agent token before the agent starts, the token file exists at
 // the path the planted entry names, and the entry runs the HTTP bridge. (The shim host runs in-process.)
 func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
+	for _, k := range []string{"TETHER_TASK_ID", "TETHER_WORKSTREAM_ID", "TETHER_PROJECT_ID"} {
+		t.Setenv(k, "ambient-wrong")
+	}
+
 	fakeClaudeSleeping(t)
 	providerPath, err := exec.LookPath("claude")
 	if err != nil {
@@ -173,6 +177,10 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
+		env := strings.Join(spec.Env, "\n")
+		if !strings.Contains(env, "TETHER_TASK_ID=CW-20261012-0062") || !strings.Contains(env, "TETHER_PROJECT_ID=PRJ-1") || strings.Contains(env, "TETHER_WORKSTREAM_ID=") || strings.Contains(env, "ambient-wrong") {
+			t.Fatalf("incorrect launched correlation environment")
+		}
 		h, err := shim.Start(spec)
 		if err == nil {
 			hosts = append(hosts, h)
@@ -184,7 +192,7 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 			_ = h.Close()
 		}
 	})
-	spec := workerwire.LaunchSpec{Session: "s-http", MCPPolicy: true, Actor: "msg://agent/agent-mux/agt_http_probe", Provider: "claude", Command: "missing-on-this-worker", RuntimeKind: "streaming-stdio",
+	spec := workerwire.LaunchSpec{Env: map[string]string{"TETHER_TASK_ID": "CW-20261012-0062", "TETHER_PROJECT_ID": "PRJ-1"}, Session: "s-http", MCPPolicy: true, Actor: "msg://agent/agent-mux/agt_http_probe", Provider: "claude", Command: "missing-on-this-worker", RuntimeKind: "streaming-stdio",
 		Credential: "cred", MCPServers: []string{}, AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: []string{"tether.read"}}}}
 	raw, _ := json.Marshal(spec)
 	if err := e.Command(context.Background(), workerwire.Frame{T: "launch", CmdID: "c1", Session: "s-http", Spec: raw}); err != nil {

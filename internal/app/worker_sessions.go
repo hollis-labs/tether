@@ -152,6 +152,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err != nil {
 		return nil, err
 	}
+	spec.Env = sessionCorrelation(*row).SealMap(spec.Env)
 	if len(p.EditableAgents) > 0 {
 		if s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureEditableAgents) {
 			exit := 1
