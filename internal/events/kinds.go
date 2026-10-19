@@ -1,5 +1,7 @@
 package events
 
+import "github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
+
 // Event kind constants. Keep this list small and justified — clients
 // depend on stable kind strings. New kinds should be documented in
 // docs/api/README.md alongside their payload schema.
@@ -104,11 +106,11 @@ const (
 	// session end with final=true; never periodic. Observability only: cost
 	// belongs to the usage ledger. Payload schema:
 	//   {"input_tokens":<int>,"output_tokens":<int>,"turns":<int>,"final":<bool>,"source":"provider","turn_id":"<id>"}
-	KindSessionUsage = "session.usage"
+	KindSessionUsage = catalog.KindSessionUsage
 
 	// KindSessionHealthChanged reports a session health transition (schema
 	// session_health_changed@1, retention R-state): on change only, from != to.
-	KindSessionHealthChanged = "session.health_changed"
+	KindSessionHealthChanged = catalog.KindSessionHealthChanged
 
 	// KindSessionShimStatus reports the state of a session's detached shim host.
 	// Payload schema: {"state":"<string>","reason":"<string>", ...}

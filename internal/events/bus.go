@@ -16,6 +16,8 @@ import (
 // drop-oldest events on a single subscriber, the bus closes its
 // channel so the caller observes termination (default 64).
 type BusOptions struct {
+	// Pipeline optionally runs shared sanitation/classification after stamping.
+	Pipeline       *Pipeline
 	Persister      Persister
 	SubBuffer      int
 	MaxConsecDrops int64
@@ -102,6 +104,7 @@ type subscriber struct {
 // memBus is the in-memory Bus implementation. Persistence is
 // delegated to Persister.
 type memBus struct {
+	pipeline       *Pipeline
 	persister      Persister
 	paged          PagedPersister
 	txp            TxPersister
@@ -150,6 +153,7 @@ func NewBus(opts BusOptions) Bus {
 		opts.OnStageError = defaultOnStageError
 	}
 	b := &memBus{
+		pipeline:       opts.Pipeline,
 		stages:         append([]Stage(nil), opts.Stages...),
 		observers:      append([]Observer(nil), opts.Observers...),
 		onStageError:   opts.OnStageError,
