@@ -30,6 +30,9 @@ type synchronousContextPublisher struct {
 }
 
 func (p *synchronousContextPublisher) Publish(ctx context.Context, e events.Event) error {
+	if e.Kind != events.EventTypeToolCallStart && e.Kind != events.EventTypeToolCallEnd {
+		return nil
+	}
 	var call events.ToolCallEvent
 	if err := json.Unmarshal([]byte(e.PayloadJSON), &call); err != nil {
 		return err

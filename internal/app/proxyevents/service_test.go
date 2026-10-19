@@ -102,7 +102,7 @@ func TestIngestTrustedAttributionAndPublishOrder(t *testing.T) {
 			operation := New(st, bus, func(id string) error { looked = id; return nil })
 			before := time.Now().UTC()
 			err := operation.Ingest(context.Background(), ProxyEventIngestRequest{SessionID: "other", ToolName: "tool", Error: strings.Repeat("€", 5000), Timestamp: "2001-01-01T00:00:00Z", Publish: true, Attribution: callcontext.Snapshot{SessionID: "forged", Verified: true}}, func() callcontext.Snapshot { return tc.snapshot })
-			if err != nil || len(st.rows) != 1 || len(bus.published) != 1 {
+			if err != nil || len(st.rows) != 1 || len(bus.published) != 2 {
 				t.Fatalf("ingest=%v rows=%v published=%v", err, st.rows, bus.published)
 			}
 			row := st.rows[0]
@@ -135,7 +135,7 @@ func TestIngestFailureAndStartSemantics(t *testing.T) {
 		wantRows, wantPublish int
 		wantMessage           string
 	}{
-		{name: "start", phase: ProxyEventPhaseStart, wantPublish: 1},
+		{name: "start", phase: ProxyEventPhaseStart, wantPublish: 2},
 		{name: "append fails before publish", appendErr: errors.New("disk"), wantMessage: "persist proxy event: disk"},
 		{name: "publish fails after append", publishErr: errors.New("bus"), wantRows: 1, wantPublish: 1, wantMessage: "publish tool call event: bus"},
 	} {

@@ -79,6 +79,9 @@ type reviewIngestPublisher struct {
 }
 
 func (publisher *reviewIngestPublisher) Publish(ctx context.Context, event events.Event) error {
+	if event.Kind != events.EventTypeToolCallStart && event.Kind != events.EventTypeToolCallEnd {
+		return nil
+	}
 	var call events.ToolCallEvent
 	if err := json.Unmarshal([]byte(event.PayloadJSON), &call); err != nil {
 		return err

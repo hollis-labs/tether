@@ -6,8 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/eventstamp"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -54,21 +56,29 @@ func NewDaemonToolCallRecorder(ctx context.Context, bus events.Publisher, writer
 	return r
 }
 
-func (r *DaemonToolCallRecorder) Publish(_ context.Context, event events.Event) error {
-	if event.Kind != events.EventTypeToolCallStart && event.Kind != events.EventTypeToolCallEnd {
+func (r *DaemonToolCallRecorder) Publish(ctx context.Context, event events.Event) error {
+	canonical := event.Kind == catalog.KindToolCallStarted || event.Kind == catalog.KindToolCallFinished
+	if !canonical && event.Kind != events.EventTypeToolCallStart && event.Kind != events.EventTypeToolCallEnd {
 		return nil
 	}
-	// Timestamp is daemon-owned; attribution is the already resolved call context.
-	var call events.ToolCallEvent
-	if err := json.Unmarshal([]byte(event.PayloadJSON), &call); err != nil {
+	// Stamp caller-owned verified dimensions before crossing the async queue.
+	// The bus later adds process dimensions with its configured stamp stage.
+	if err := eventstamp.New().Stamp(ctx, &event); err != nil {
 		return err
 	}
-	call.Timestamp = time.Now().UTC()
-	raw, err := json.Marshal(call)
-	if err != nil {
-		return err
+	if !canonical {
+		// Timestamp is daemon-owned; attribution is the already resolved call context.
+		var call events.ToolCallEvent
+		if err := json.Unmarshal([]byte(event.PayloadJSON), &call); err != nil {
+			return err
+		}
+		call.Timestamp = time.Now().UTC()
+		raw, err := json.Marshal(call)
+		if err != nil {
+			return err
+		}
+		event.PayloadJSON = string(raw)
 	}
-	event.PayloadJSON = string(raw)
 	select {
 	case r.queue <- event:
 	default:
