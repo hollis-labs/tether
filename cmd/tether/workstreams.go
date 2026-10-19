@@ -25,6 +25,9 @@ var (
 	workstreamUser       string
 	workstreamMemoryType string
 	workstreamJSON       bool
+	workstreamLimit      int
+	workstreamCursor     string
+	workstreamRef        string
 )
 
 var workstreamsCmd = &cobra.Command{
@@ -124,20 +127,24 @@ var workstreamListCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.ListWorkstreams(cmdCtx(cmd), workstreamStatus, workstreamWorkflowID)
+		out, err := c.ListWorkstreamsPage(cmdCtx(cmd), client.WorkstreamListOptions{Status: workstreamStatus, WorkflowID: workstreamWorkflowID, Ref: workstreamRef, Limit: workstreamLimit, Cursor: workstreamCursor})
 		if err != nil {
 			return classifyErr(err)
 		}
 		if workstreamJSON {
 			return printJSON(out)
 		}
-		if len(out) == 0 {
-			fmt.Println("(no workstreams)")
+		if len(out.Workstreams) == 0 {
+			fmt.Println("(no workstreams; complete live page)")
 			return nil
 		}
 		fmt.Printf("%-38s %-10s %-20s %s\n", "ID", "STATUS", "WORKFLOW", "NAME")
-		for _, w := range out {
+		for _, w := range out.Workstreams {
 			fmt.Printf("%-38s %-10s %-20s %s\n", w.ID, w.Status, dashIfEmpty(w.WorkflowID), dashIfEmpty(w.Name))
+		}
+		fmt.Printf("complete=%t has_more=%t limit=%d\n", out.Complete, out.HasMore, out.Limit)
+		if out.HasMore {
+			fmt.Printf("next_cursor=%s\n", out.NextCursor)
 		}
 		return nil
 	},
@@ -257,6 +264,9 @@ func init() {
 
 	workstreamListCmd.Flags().StringVar(&workstreamStatus, "status", "", "filter by status: active or closed")
 	workstreamListCmd.Flags().StringVar(&workstreamWorkflowID, "workflow-id", "", "filter by workflow correlation id")
+	workstreamListCmd.Flags().IntVar(&workstreamLimit, "limit", 100, "page size (1..1000; zero uses default)")
+	workstreamListCmd.Flags().StringVar(&workstreamCursor, "cursor", "", "opaque continuation; reuse the same filters")
+	workstreamListCmd.Flags().StringVar(&workstreamRef, "ref", "", "exact kind:ref_id selector; exclusive with status/workflow-id")
 	workstreamListCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
 
 	workstreamEnsureCmd.Flags().StringVar(&workstreamName, "name", "", "label used only if a workstream is created")

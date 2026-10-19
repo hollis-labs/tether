@@ -2918,8 +2918,8 @@ empty digest does and does not mean, is in
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/workstreams` | Create a container. Empty body is valid. |
-| `GET` | `/workstreams` | List, newest first. `?status=`, `?workflow_id=`. |
-| `GET` | `/workstreams?ref=<kind>:<ref_id>` | **Reverse lookup**: which workstreams touched this object. Returns every match. Not combinable with `status`/`workflow_id`. |
+| `GET` | `/workstreams` | Bounded page, newest first. `?status=`, `?workflow_id=`, `?limit=`, `?cursor=`. |
+| `GET` | `/workstreams?ref=<kind>:<ref_id>` | **Reverse lookup**: which workstreams touched this object. Paginated matches, with `limit`/`cursor`. Not combinable with `status`/`workflow_id`. |
 | `GET` | `/workstreams/{id}` | One workstream. |
 | `PATCH` | `/workstreams/{id}` | Partial update of `name`, `workflow_id`, `status` (`active`/`closed`). Absent field = unchanged; `""` clears name/workflow_id. 404 for unknown id, 400 for a bad status. Returns the refreshed workstream. |
 | `POST` | `/workstreams/{id}/sessions` | Assign a session (`{"session_id": "..."}`). |
@@ -2931,6 +2931,34 @@ empty digest does and does not mean, is in
 | `GET` | `/sessions/{id}/usage` | Per-session meter: `turns`, `failed_turns`, `turn_ms`, and `input_tokens`/`output_tokens`/`cost_usd` summed over the `usage_turns` turns whose runtime reported usage. `metered` is false when none did (PTY CLI agents): unmetered, not zero. Recording only; no budget is enforced from it. |
 | `GET` | `/sessions/{id}/digest` | Assembled digest for this session alone. |
 | `GET` | `/sessions/{id}/workstream-namespace` | Where the workstream's scratch belongs in Tesseract workspace. `?project=` (defaults to session's project_id), `?owner=`, `?tail=` (defaults to `scratch`). |
+
+Workstream listings preserve the `workstreams` array and add `next_cursor`
+(only when more rows exist), `has_more`, `complete`, and the effective `limit`.
+The default limit is 100; zero selects the default, values above 1000 clamp to
+1000, and negative/non-integer limits return 400. Ordering is
+`created_at DESC, id DESC`, including reverse-ref lookups. One lookahead row
+makes an exactly full final page report `complete: true` with no continuation.
+Empty results contain `workstreams: []`.
+
+Treat cursors as opaque and send them with the same `status`, `workflow_id`,
+and `ref` filters. A changed filter, malformed cursor, unknown cursor version,
+or malformed ref returns 400 `invalid_request`. Page size may change between
+requests. `ref` remains exclusive with `status`/`workflow_id`; its ID is split
+at the first colon only. Cursors are positions, not authorization grants.
+
+`complete` means this query is exhausted, **not** that the pages form a
+point-in-time snapshot. Insertions ahead of a cursor require a fresh scan;
+filter changes/deletions during the scan affect membership. Consumers must not
+infer deletion from absence across a live scan.
+
+CLI `tether workstreams list --limit N --cursor TOKEN --json` returns this same
+envelope; text output prints continuation and completeness. `--ref` selects
+reverse lookup. MCP `tether_workstream_list` and `tether_workstreams_for_ref`
+accept `limit`/`cursor` and return the same metadata (`matched` on the latter
+counts the current page). Follow continuation explicitly. Client
+`ListWorkstreamsPage` exposes bounded pages; legacy `ListWorkstreams` and
+`WorkstreamsForRef` helpers follow all pages and reject missing/repeated
+continuations or a server that cannot report completeness.
 
 Digest filters, shared by both grains: `kind`, `relation`, `source`, `since`
 (RFC3339 **UTC**), `limit`.

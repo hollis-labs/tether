@@ -137,44 +137,19 @@ func (s *Store) UpdateWorkstream(id string, patch WorkstreamPatch) (*WorkstreamR
 	return s.GetWorkstream(id)
 }
 
-// ListWorkstreamsOptions filters ListWorkstreams. Zero value lists everything,
-// newest first.
+// ListWorkstreamsOptions selects a bounded page in descending created_at, id order.
 type ListWorkstreamsOptions struct {
 	Status     string
 	WorkflowID string
+	Ref        string
 	Limit      int
+	Cursor     string
 }
 
-// ListWorkstreams returns workstreams newest-first.
+// ListWorkstreams preserves the row-only store helper; new consumers use the page API.
 func (s *Store) ListWorkstreams(opts ListWorkstreamsOptions) ([]WorkstreamRow, error) {
-	where := ""
-	args := []any{}
-	if opts.Status != "" {
-		where += " WHERE status = ?"
-		args = append(args, opts.Status)
-	}
-	if opts.WorkflowID != "" {
-		if where == "" {
-			where = " WHERE workflow_id = ?"
-		} else {
-			where += " AND workflow_id = ?"
-		}
-		args = append(args, opts.WorkflowID)
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
-	}
-	args = append(args, limit)
-
-	rows, err := s.db.Query(
-		`SELECT id, name, workflow_id, status, created_at, updated_at FROM workstreams`+
-			where+` ORDER BY created_at DESC LIMIT ?`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list workstreams: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanWorkstreams(rows, "list workstreams")
+	page, err := s.ListWorkstreamsPage(opts)
+	return page.Workstreams, err
 }
 
 // scanWorkstreams drains a workstream result set. Shared with the reverse
