@@ -1,0 +1,1 @@
+- CW-20261016-0136: Route atomic reaper, activity, channel-routing and replacement events through the shared bus's transaction-safe stages, preserving caller-owned transactions and verified session dimensions before durable outbox publication.

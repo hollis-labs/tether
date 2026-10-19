@@ -311,7 +311,8 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	if err != nil {
 		return result, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	eventTime := time.Now().UTC()
+	now := eventTime.Format(time.RFC3339Nano)
 	// The source row is the authoritative provider/workstream/route identity;
 	// the caller supplies only an isolated prepared destination workspace.
 	_, err = q.ExecContext(ctx, `INSERT INTO sessions(id,launch_id,project_id,logical_agent_id,provider_id,provider_kind,workspace,state,created_at,updated_at,parent_session_id,intent,publication,session_group_id,workstream_id,ref_attribution,route_json,task_id)
@@ -386,7 +387,7 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	}{in.DestinationID, id, f.ActorURI})
 	// An outbox row on the caller's transaction. The caller must call
 	// Store.EventsCommitted once that transaction commits.
-	if _, _, err = insertEventRow(ctx, q, events.ScopeSession, id, "session.replaced_by", string(lineage), now, true); err != nil {
+	if err = s.publishOutboxEvent(ctx, q, events.Event{Scope: events.ScopeSession, SessionID: id, Kind: "session.replaced_by", PayloadJSON: string(lineage), At: eventTime}); err != nil {
 		return result, err
 	}
 	return result, ctx.Err()

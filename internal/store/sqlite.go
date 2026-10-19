@@ -18,6 +18,7 @@ import (
 	// Pure-Go SQLite driver registered by side-effect; used via database/sql.
 	_ "modernc.org/sqlite"
 
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
@@ -31,11 +32,12 @@ var ErrSessionNotFound = errors.New("session not found")
 type Store struct {
 	// eventsCommitted is called after a transaction that wrote outbox event rows
 	// commits (see events_outbox.go).
-	eventsCommitted atomic.Pointer[func()]
-	db              *sql.DB
-	stateDBPath     string
-	channelAuthMu   sync.RWMutex
-	channelAuth     channels.Authorization
+	eventsCommitted  atomic.Pointer[func()]
+	eventTxPublisher atomic.Pointer[func(context.Context, events.Tx, events.Event) (events.Event, error)]
+	db               *sql.DB
+	stateDBPath      string
+	channelAuthMu    sync.RWMutex
+	channelAuth      channels.Authorization
 	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
 	// fan-out instance on every call within a process so Subscribe/Send
 	// cross-talk works. See messaging_store.go.

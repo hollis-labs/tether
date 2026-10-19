@@ -225,3 +225,15 @@ history. The complete global window is checked before session filtering.
 A NULL above the cutover is an `event_id_invariant` error, never a generated ID
 or skipped row. Existing purged/oversized-window gaps retain their snapshot
 semantics.
+
+### Atomic store producers
+
+The application wires store-owned reaper, activity, channel-routing and
+replacement events to `OutboxBus.PublishTx`. These events run the same
+transaction-safe stages before insertion, using the caller's existing SQL
+transaction. Session dimensions come from that transaction's session row;
+actor and correlation still require verified context. Unknown generation and
+actor stay absent. Database-reading stages remain excluded inside a transaction.
+A failed event insert rolls back its business mutation; only committed rows
+reach subscribers, with their original persisted IDs and sequence order. Bare
+storage-only callers retain the persister primitive without a running bus.
