@@ -20,9 +20,11 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
   it only when the row is created. A later request, even from the launcher, never rebinds the session.
   Later claims about the task are Torque facts, not Tether state.
 - **Where it goes.** The session row and the stored launch plan; `TETHER_TASK_ID` in the agent's environment, for
-  hub-local and Outpost launches alike (the Outpost gets it through the `LaunchSpec` env, so no worker change or feature
-  flag is needed). The variable is set last: a catalog, agent or `override.env` value for `TETHER_TASK_ID` is replaced
-  by the stamp, or removed when the launcher named no task, so the agent cannot spoof it through its own environment.
+  hub-local and Outpost launches alike. At process launch, all three reserved variables (`TETHER_TASK_ID`,
+  `TETHER_WORKSTREAM_ID`, `TETHER_PROJECT_ID`) come from the persisted session row. The hub seals the Outpost
+  `LaunchSpec` environment; local and Outpost process launchers seal again after provider and ambient environment
+  merging. Missing values remove inherited variables. Catalog, override, provider, and daemon-process values cannot
+  supply a missing binding. These variables are context for the process, not proof for API attribution.
 - **Resume and replacement.** A resume or team replacement continues the same work, so it inherits the stamp.
 - **Attribution.** `callcontext.Snapshot.TaskID` is filled only when the caller is a verified session whose row was
   found (`SessionResolved`), so `tool_call_start`/`tool_call_end` attribution carries it for managed sessions and
@@ -37,6 +39,22 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
   refused, so the stamp is set by the operator CLI (and later Torque's service principal), never through MCP.
 - Torque's own launches wait for a Torque service principal (see the TODO in `internal/api/task_stamp.go`).
 
-## Not yet
+## Event propagation and source acceptance
 
-`task_id` on `session.turn_output` (CW-20261012-0062b) and any backfill of older sessions (0062c) are separate.
+`session.turn_output` carries optional `task_id` alongside project/workstream in its payload, envelope scope, and
+routed-message metadata. The durable output retry format remains unchanged: publication rereads the session row
+for the task binding and current workstream, including after restart. Native event scope cannot replace these
+session facts. A metadata read timeout keeps the output queued; an unavailable row does not invent a task.
+
+Canonical `tool.call.started`/`tool.call.finished` retain their published metadata-only payload schemas. Their
+correlation belongs in envelope scope, supplied by verified session attribution and the existing session-row stage;
+unresolved claims never become verified attribution. Legacy tool-call attribution snapshots retain the same fields.
+
+Resume/replacement reuse the stored task, project resolution, and existing workstream lineage inheritance.
+Bootstrap creates an external identity row and accepts a task only through the existing operator policy; repeated
+bootstrap cannot rebind it. It does not launch a process or establish verified MCP attribution. Missing project or
+workstream on an external row stays missing rather than being inferred from a task, directory, or transcript.
+
+Source acceptance covers these propagation paths and focused synthetic checks. Owner live activation and rollback
+verification are separate deployment evidence. No historical task inference/backfill or new service-principal
+credential/issuer authority is part of this change; Torque service launch authorization remains held as above.

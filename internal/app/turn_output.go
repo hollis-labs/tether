@@ -340,7 +340,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	if storage == nil {
 		storage = s.Store
 	}
-	workstream := ""
+	workstream, taskID := "", ""
 	ctx, cancel = s.outputPersistenceContextFrom(parent)
 	current, err := storage.GetSessionContext(ctx, w.row.ID)
 	cancel()
@@ -351,6 +351,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 		log.Printf("ERROR session %q: read output workstream: %v", w.row.ID, err)
 	} else {
 		workstream = current.WorkstreamID.String
+		taskID = current.TaskID.String
 	}
 	if w.routeUnread {
 		ctx, cancel = s.outputPersistenceContextFrom(parent)
@@ -367,7 +368,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	payload := events.TurnOutputEvent{SessionID: w.row.ID, TurnID: result.TurnID, Kind: result.Kind,
 		ProviderResultID: w.providerResultID, OutputID: w.journalID, FreshConversation: w.freshConversation,
 		StopReason: result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
-		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, WorkstreamID: workstream, MessageID: w.messageID,
+		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, TaskID: taskID, WorkstreamID: workstream, MessageID: w.messageID,
 		Reason: w.withheldReason, Size: w.withheldSize}
 	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
@@ -379,7 +380,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 			ThreadID: w.row.ID, Payload: text, ContentType: "application/json",
 			Metadata: map[string]string{"session_id": w.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
 				"stop_reason": result.StopReason, "confidence": string(result.Confidence), "runtime": result.Runtime,
-				"logical_agent_id": w.row.LogicalAgentID, "project_id": w.row.ProjectID, "workstream_id": workstream,
+				"logical_agent_id": w.row.LogicalAgentID, "project_id": w.row.ProjectID, "workstream_id": workstream, "task_id": taskID,
 				"output_id": w.journalID, "fresh_conversation": fmt.Sprint(w.freshConversation), "provider_result_id": w.providerResultID},
 		})
 		cancel()
@@ -396,8 +397,13 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	data, _ := json.Marshal(payload)
 	ctx, cancel = s.outputPersistenceContextFrom(parent)
 	defer cancel()
-	if err := s.Bus.Publish(ctx, w.origin.apply(events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
-		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)})); err != nil {
+	event := w.origin.apply(events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
+		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)})
+	// Derived native metadata cannot replace the session's launcher-owned facts.
+	event.Envelope.Dims.TaskID = taskID
+	event.Envelope.Dims.ProjectID = w.row.ProjectID
+	event.Envelope.Dims.WorkstreamID = workstream
+	if err := s.Bus.Publish(ctx, event); err != nil {
 		return err
 	}
 	return w.completeJournal(s)
