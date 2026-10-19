@@ -48,7 +48,7 @@ Rules:
 
 ## Basalisk workload capabilities
 
-Two additional exact device scopes support current assurance reads:
+Exact device capabilities support current assurance reads and transport:
 
 - `basalisk-status.assurance_read`: exchange the stored device credential for a
   direct `basalisk-status` JWT, with this single scope and a maximum 900-second
@@ -57,7 +57,16 @@ Two additional exact device scopes support current assurance reads:
   `POST /auth/workload-trust`. The handler requires this to be its only scope;
   it accepts neither issued JWTs nor maintenance/operator authority.
 
-Neither grants inventory, deny-list, ceremony mutation, enrollment or execution
-rights. The remote Tether listener continues to accept only stored device
-credentials. The JWT is presented to Basalisk, not to that listener. See the
+- `tachyon-assurance.items_read`, `tachyon-assurance.completions_deliver`, and
+  `tachyon-assurance.outcomes_read`: a separate direct workload parent may hold
+  any nonempty subset of these exact scopes. It exchanges for `tachyon-assurance`
+  JWTs with the requested subset (normally one scope per route), at most 900
+  seconds and no session. Outcome-only callers cannot mint delivery tokens.
+
+Status, trust-reader and Tachyon route capabilities cannot be mixed with each
+other or broad Tether scopes. None grants inventory, deny-list, enrollment or
+execution authority; Tachyon independently verifies completion evidence.
+The remote Tether listener continues to accept only stored device credentials.
+Workload JWTs are presented to their named recipient. Basalisk and Tachyon each
+commission a separate trust-reader device credential. See the
 [current-workload contract](api/README.md#current-workload-trust).

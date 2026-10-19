@@ -4,12 +4,20 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
-const BasaliskStatusAudience = "basalisk-status"
+const (
+	BasaliskStatusAudience   = identity.BasaliskStatusAudience
+	TachyonAssuranceAudience = identity.TachyonAssuranceAudience
+)
+
+func isWorkloadAudience(audience string) bool {
+	return audience == BasaliskStatusAudience || audience == TachyonAssuranceAudience
+}
 
 // Bound new workload state and its synchronous persistence cost. Clients reuse
 // their short-lived JWT; current trust is queried for each use, not re-minted.
@@ -90,13 +98,13 @@ func (i *Issuer) CurrentWorkload(ctx context.Context, ids *identity.Store, q Wor
 	m, ok := i.State.workload(q.TokenID)
 	c := m.Claims
 	if !ok || q.Issuer != i.Name || c.Iss != q.Issuer || q.Subject != c.Sub || q.Kind != c.Kind ||
-		q.Audience != BasaliskStatusAudience || c.Aud != q.Audience || q.Parent != c.Par || c.Par != c.Sub ||
+		!identity.WorkloadScopesAllowed(q.Audience, q.Scopes) || c.Aud != q.Audience || q.Parent != c.Par || c.Par != c.Sub ||
 		c.SID != "" || (c.Kind != "device" && c.Kind != "service") || c.JTI != q.TokenID ||
-		!q.ExpiresAt.Equal(time.Unix(c.Exp, 0)) || c.Scope != identity.BasaliskStatusScope ||
-		!slices.Equal(q.Scopes, []string{identity.BasaliskStatusScope}) || c.Iat <= 0 || c.Exp <= c.Iat || c.Exp-c.Iat > 900 {
+		!q.ExpiresAt.Equal(time.Unix(c.Exp, 0)) ||
+		!slices.Equal(q.Scopes, strings.Fields(c.Scope)) || c.Iat <= 0 || c.Exp <= c.Iat || c.Exp-c.Iat > 900 {
 		return false, nil
 	}
-	if err := ids.CheckWorkloadCredential(ctx, m.CredentialID, c.Sub, c.Kind, c.Scope, i.Now()); err != nil {
+	if err := ids.CheckWorkloadCredential(ctx, m.CredentialID, c.Sub, c.Kind, c.Aud, q.Scopes, i.Now()); err != nil {
 		if errors.Is(err, identity.ErrInvalidToken) {
 			return false, nil
 		}
