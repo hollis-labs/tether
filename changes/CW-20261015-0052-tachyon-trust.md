@@ -1,0 +1,1 @@
+- Support credential-bound current trust and narrow pairing for Tachyon assurance item, completion and outcome transport, with one parent granting explicit route subsets and separate reader custody. (CW-20261015-0052)

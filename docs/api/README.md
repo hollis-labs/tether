@@ -3066,22 +3066,36 @@ Forums participant grants and ownership management: see [Forums](../forums.md#ex
 
 ## Current workload trust
 
-`POST /auth/workload-trust` supplies the current-lifecycle half of Basalisk's
-`CurrentWorkloadTrust.CheckCurrentWorkload(context.Context, auth.Principal)`.
+`POST /auth/workload-trust` supplies current lifecycle evidence for Basalisk's
+`CurrentWorkloadTrust.CheckCurrentWorkload(context.Context, auth.Principal)` and
+Tachyon's inbound assurance route authentication.
 It does **not** verify the queried JWT signature or approve an operation. The
 consumer first verifies the JWT against its pinned issuer and freshly retrieved
 HTTPS JWKS, then copies the resulting principal into this request. No target
-bearer or bearer hash is sent. This initial profile accepts only direct
-`basalisk-status` device/service tokens with scope
-`basalisk-status.assurance_read`, `par == sub`, no session, and lifetime <=900s.
+bearer or bearer hash is sent. Both supported profiles require direct device/service
+tokens, `par == sub`, no session, and lifetime <=900s:
+
+| Audience | Exact allowed scopes |
+| --- | --- |
+| `basalisk-status` | Sole scope `basalisk-status.assurance_read` |
+| `tachyon-assurance` | Any nonempty subset of `tachyon-assurance.items_read`, `tachyon-assurance.completions_deliver`, `tachyon-assurance.outcomes_read` |
+
+The originating credential must hold only scopes from the same profile and cover
+every token scope. Wildcards, unknown scopes, broad Tether scopes and mixed
+profiles are refused. For Tachyon, one parent can hold all three capabilities
+and mint a singleton JWT per route; an outcome-only parent cannot mint item or
+completion tokens. Multiple explicitly requested route scopes are also supported.
+Scope arrays copied from the verified JWT retain its canonical sorted order;
+the lookup compares the exact minted claims, not just scope membership.
 
 Authenticate the request with a separately commissioned stored **device**
 credential whose sole scope is `tether.workload_trust_read`. This is compatible
 with the existing device-only remote listener. Broad maintain/admin/operator
 credentials, service credentials and issued JWTs cannot act as readers. Send
 `Tether-Protocol: 1`, use the configured HTTPS issuer origin, and refuse redirects.
-No new reader credential is needed by Tachyon or Tether: Basalisk performs this
-lookup while authenticating their status JWTs.
+Basalisk needs its own reader for incoming status JWTs; Tachyon needs a separate
+reader for incoming assurance JWTs. Tether's outbound status client does not
+need a reader. Reader credentials grant no route JWT minting authority.
 
 Request (all IDs below are illustrative, not enrolled identities):
 
@@ -3105,8 +3119,9 @@ The response is `{query_id, workload, active, checked_at}`. `query_id` and every
 `workload` field echo the request exactly; `checked_at` is an RFC3339 UTC timestamp.
 `active: true` requires a durable mint record matching every queried field, the
 exact originating credential row still active and unexpired, its current exact
-scope grant, an eligible current signing key, no JTI/subject/parent denial, and
-unexpired token time without leeway. For this direct-only profile the subject
+scope grant covering all token scopes within the same closed profile, an eligible
+current signing key, no JTI/subject/parent denial, and unexpired token time without
+leeway. For this direct-only profile the subject
 and minting parent are the same principal. `created_by` is commissioning
 provenance, not a delegated JWT parent. Delegated/agent tokens are unsupported.
 
@@ -3127,8 +3142,9 @@ Require HTTP 200, `active == true`, exact query and workload echo, a bounded JSO
 response, and completion within a five-second request deadline. Reject unknown
 or malformed response fields, redirects, stale/mismatched echoes, timeout,
 non-200, and expiry reached while awaiting the response. Do not cache a good
-result or infer trust from `checked_at` alone. Repeat on every status request. Require adapter acceptance tests for the pinned
-origin, redirects, bounded bodies, deadline, mismatched/stale echoes and issuer
+result or infer trust from `checked_at` alone. Repeat on every protected status
+or assurance request. Require adapter acceptance tests for the pinned origin,
+redirects, bounded bodies, deadline, mismatched/stale echoes and issuer
 outage. The HTTPS origin and its owner-controlled TLS terminator are trusted;
 this response is not independently signed. If an untrusted intermediary is
 introduced, use a reviewed issuer-signed response profile before activation.
@@ -3146,12 +3162,22 @@ permission and no response returns a credential, key material, or full registry.
 
 ### Enrollment and exchange boundary
 
-Each workload credential must carry exactly one of these capabilities; mixing
-them with each other or broad scopes is refused at pairing and status exchange.
-Commission three distinct callers through the supported local-operator pairing
-and private client custody flow: Tachyon and Tether each get
-`basalisk-status.assurance_read`; Basalisk gets only
-`tether.workload_trust_read`. Pairing is an explicit owner-attended commissioning
+Commission five separate stored device credentials through the supported
+local-operator pairing and private client custody flow:
+
+| Consumer / purpose | Parent credential scopes |
+| --- | --- |
+| Tachyon status client | `basalisk-status.assurance_read` only |
+| Tether status client | `basalisk-status.assurance_read` only |
+| Basalisk current-trust reader | `tether.workload_trust_read` only |
+| Basalisk caller of Tachyon | The three exact `tachyon-assurance` route scopes above |
+| Tachyon current-trust reader | `tether.workload_trust_read` only |
+
+A caller needing fewer Tachyon routes should receive only that subset. Status,
+assurance and reader capabilities must not be mixed on one credential. Narrowing
+a Tachyon parent preserves only tokens whose entire requested scope set is still
+granted. A replacement credential cannot preserve a revoked credential's JWTs.
+Pairing is an explicit owner-attended commissioning
 step, not the routine high-tier registration API. This source change does not
 perform commissioning or implement the separate operation-approved grant
 continuation. Never substitute a broad existing credential or direct DB insert.
@@ -3171,20 +3197,34 @@ After enrollment, the two status clients exchange their stored device bearer at
 {"audience":"basalisk-status","scopes":["basalisk-status.assurance_read"],"ttl_seconds":900}
 ```
 
+Basalisk's Tachyon caller exchanges its separate parent at the same endpoint,
+requesting the singleton needed for each route, for example:
+
+```json
+{"audience":"tachyon-assurance","scopes":["tachyon-assurance.items_read"],"ttl_seconds":300}
+```
+
+Use `tachyon-assurance.completions_deliver` for `/complete` and
+`tachyon-assurance.outcomes_read` for `/outcome`. These transport permissions are
+not approval evidence or execution authority. Tachyon still verifies human
+assurance and its configured caller/application/operation bindings.
+
 Omit `session_id`. Reuse the JWT within its validity window while querying current
-trust on every use. New status mints are capped at 32 live records per credential
-and 1024 in total. Excess exchanges return 429 `workload_mint_limit`,
+trust on every use. Workload mints across both profiles are capped at 32 live
+records per credential and 1024 in total. Excess exchanges return 429 `workload_mint_limit`,
 `Retry-After: 60`, and no token; capacity releases at expiry. Refused mints do not
 rewrite issuer state. These bounds constrain this profile's state size and
 synchronous persistence cost, including contention with revocation writes.
 Keep the returned JWT private and short-lived; retrying an
-exchange issues a different JWT, not another long-lived credential. Basalisk's
-trust-reader device uses its stored credential directly at the issuer endpoint.
+exchange issues a different JWT, not another long-lived credential. Basalisk and
+Tachyon trust readers each use their own stored device credential directly at the
+issuer endpoint. Invalidate cached JWTs when the parent credential file rotates.
 `tachyon-enrollment` is a separate transport and grants none of these rights.
 
 Before activation, verify and record the actual issuer name, HTTPS origin and
 `/.well-known/jwks.json`, enrolled subjects/kinds, credential-file references and
-custody ownership/mode, and Basalisk's server-owned caller-to-operation-audience
+custody ownership/mode, Basalisk's server-owned caller-to-operation-audience pins,
+and Tachyon's canonical HTTPS origin plus caller/application/executing-audience
 pins. Deployment configuration supplies the issuer name; do not assume its
 local default is the hub's value. No literal enrolled subjects or private-file
 references are supplied by this source change. Current-trust and Basalisk status

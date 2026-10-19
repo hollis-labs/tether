@@ -63,9 +63,9 @@ func workloadTrustHandler(is *authissuer.Issuer, ids *identity.Store) http.Handl
 		nonce, err := base64.RawURLEncoding.DecodeString(req.QueryID)
 		q := req.Workload
 		if err != nil || len(nonce) != 32 || base64.RawURLEncoding.EncodeToString(nonce) != req.QueryID ||
-			q.Issuer != is.Name || q.Audience != authissuer.BasaliskStatusAudience ||
+			q.Issuer != is.Name || !identity.WorkloadScopesAllowed(q.Audience, q.Scopes) ||
 			(q.Kind != "device" && q.Kind != "service") || q.Subject == "" || q.Parent != q.Subject ||
-			q.TokenID == "" || q.ExpiresAt.IsZero() || len(q.Scopes) != 1 || q.Scopes[0] != identity.BasaliskStatusScope {
+			q.TokenID == "" || q.ExpiresAt.IsZero() {
 			writeError(w, 400, CodeInvalidRequest, "invalid current workload query")
 			return
 		}

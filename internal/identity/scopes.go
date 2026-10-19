@@ -15,8 +15,11 @@ const (
 	ScopeAdmin    = "admin"
 	ScopeWorker   = "worker"
 	// Exact workload capabilities, independent of broad Tether device scopes.
-	WorkloadTrustScope  = "tether.workload_trust_read"
-	BasaliskStatusScope = "basalisk-status.assurance_read"
+	WorkloadTrustScope      = "tether.workload_trust_read"
+	BasaliskStatusScope     = "basalisk-status.assurance_read"
+	TachyonItemsScope       = "tachyon-assurance.items_read"
+	TachyonCompletionsScope = "tachyon-assurance.completions_deliver"
+	TachyonOutcomesScope    = "tachyon-assurance.outcomes_read"
 	// The narrow scopes below are carved out of the broader device scopes, one
 	// per legacy worker/MCP child scope, each covering only what that legacy
 	// scope covered. They are canonical (tether.sessions, ...) but are not
@@ -47,7 +50,7 @@ func NormalizeDeviceScopes(scopes []string) ([]string, error) {
 	seen := make(map[string]bool)
 	for _, scope := range scopes {
 		switch scope {
-		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker, WorkloadTrustScope, BasaliskStatusScope:
+		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker, WorkloadTrustScope, BasaliskStatusScope, TachyonItemsScope, TachyonCompletionsScope, TachyonOutcomesScope:
 		default:
 			return nil, fmt.Errorf("unknown device scope")
 		}
@@ -61,6 +64,9 @@ func NormalizeDeviceScopes(scopes []string) ([]string, error) {
 		out = append(out, scope)
 	}
 	sort.Strings(out)
+	if (seen[TachyonItemsScope] || seen[TachyonCompletionsScope] || seen[TachyonOutcomesScope]) && !WorkloadScopesAllowed(TachyonAssuranceAudience, out) {
+		return nil, fmt.Errorf("tachyon workload credentials require only exact assurance capabilities")
+	}
 	return out, nil
 }
 
