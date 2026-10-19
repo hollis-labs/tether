@@ -25,15 +25,17 @@ func (s *Server) populateSessionMappings(dtos []SessionDTO) error {
 		return err
 	}
 	for i := range dtos {
-		dtos[i].ProviderMappings = make([]SessionProviderMappingDTO, 0, len(mappings[dtos[i].ID]))
-		for _, m := range mappings[dtos[i].ID] {
+		session := &dtos[i]
+		projected := make([]SessionProviderMappingDTO, 0, len(mappings[session.ID]))
+		for _, m := range mappings[session.ID] {
 			dto := SessionProviderMappingDTO{Owner: m.Owner, Provider: m.Provider, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 			if m.NativeSessionID.Valid && m.NativeSessionID.String != "" {
 				id := m.NativeSessionID.String
 				dto.NativeSessionID = &id
 			}
-			dtos[i].ProviderMappings = append(dtos[i].ProviderMappings, dto)
+			projected = append(projected, dto)
 		}
+		session.ProviderMappings = projected
 	}
 	return nil
 }

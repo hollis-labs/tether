@@ -105,6 +105,7 @@ func (s *Store) SessionProviderMappings(ids []string) (map[string][]SessionProvi
 	for i, id := range ids {
 		args[i] = id
 	}
+	//nolint:gosec // G202: generated SQL contains only len(ids) question-mark placeholders; every ID is a bound argument.
 	rows, err := s.db.Query(`SELECT session_id, owner, provider, native_session_id, created_at, updated_at
  FROM session_provider_mappings WHERE session_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`) ORDER BY session_id, provider, owner`, args...)
 	if err != nil {
