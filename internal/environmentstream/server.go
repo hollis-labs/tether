@@ -27,9 +27,10 @@ type Server struct {
 	MaxCatchUp    int
 	PollInterval  time.Duration
 	WriteTimeout  time.Duration
-	// StoredIDs is nil until the coordinated ID activation. The default
-	// constructor and all production callers leave the legacy projection on.
-	StoredIDs *StoredIDProjection
+	// StoredIDs is nil in the compatibility constructor. NewStored selects
+	// it explicitly, with readiness checked before any response data.
+	StoredIDs        *StoredIDProjection
+	identityProgress func(context.Context) (store.EventIdentityProgress, error)
 }
 
 func New(environmentID string, db *store.Store, bus events.Bus) *Server {
@@ -39,6 +40,10 @@ func New(environmentID string, db *store.Store, bus events.Bus) *Server {
 func (s *Server) Snapshot(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.checkIdentityReady(r.Context()); err != nil {
+		s.writeIdentityNotReady(w, err)
 		return
 	}
 	base, err := s.Store.EnvironmentSnapshot(r.Context(), sessionID)
@@ -90,6 +95,10 @@ func (s *Server) checkWindowIDs(window store.EnvironmentWindow, after int64) err
 func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.checkIdentityReady(r.Context()); err != nil {
+		s.writeIdentityNotReady(w, err)
 		return
 	}
 	raw := r.URL.Query().Get("after_seq")

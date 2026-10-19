@@ -163,7 +163,11 @@ func TestFrozenEventIDStartupRefusesBadRollbackWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An unsupported old binary can append NULL after the frozen cutover.
+	// Simulate an unsupported snapshot/build without the new insert guard.
+	// Supported schema now refuses this write at insertion as well.
+	if _, err := db.db.Exec(`DROP TRIGGER events_require_id_after_seed`); err != nil {
+		t.Fatal(err)
+	}
 	insertLegacyIDFixture(t, db, 1)
 	if _, err := db.SeedEventIdentity(ctx, frozenTestEnvironment); !errors.Is(err, ErrEventIDsAfterCutover) {
 		t.Fatalf("bad rollback accepted: %v", err)

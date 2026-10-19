@@ -115,6 +115,11 @@ type Service struct {
 	// (CW-20260914-0042) for onboarding and deployment configuration.
 	Settings *settings.Service
 
+	eventIDsMu     sync.Mutex
+	eventIDsCancel context.CancelFunc
+	eventIDsDone   chan struct{}
+	eventIDsClosed bool
+
 	launchMu sync.Mutex
 	reaperMu sync.Mutex
 	reaper   *sessionReaper
@@ -219,16 +224,17 @@ type Service struct {
 // with state/attachment/event sinks, and registers the built-in + catalog-
 // declared runtime factories.
 func New(catalogRoot string) (*Service, error) {
-	return newService(catalogRoot, false)
+	return newService(catalogRoot, false, false)
 }
 
 // NewDaemon validates every declared MCP grant at an operator's explicit
-// startup. Ordinary CLI services remain usable for catalog inspection/repair.
+// startup and freezes the event identity before constructing producers.
+// Ordinary CLI services remain usable for catalog inspection/repair.
 func NewDaemon(catalogRoot string) (*Service, error) {
-	return newService(catalogRoot, true)
+	return newService(catalogRoot, true, true)
 }
 
-func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
+func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Service, error) {
 	maybeAutoSeedCatalog(catalogRoot)
 
 	cat, err := config.LoadLayered(catalogRoot)
@@ -259,6 +265,19 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		return nil, err
 	}
 
+	var eventProcess eventstamp.Process
+	if frozenEventIDs {
+		seedCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		progress, seedErr := seedDaemonEventIdentity(seedCtx, db, cat.Global.Environment.Authority)
+		cancel()
+		if seedErr != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize event identity: %w", seedErr)
+		}
+		host, _ := os.Hostname()
+		eventProcess = eventstamp.Process{EnvironmentID: progress.EnvironmentID, Authority: cat.Global.Environment.Authority, Host: host}
+	}
+
 	factories := map[string]RuntimeFactory{}
 	for _, p := range cat.Providers {
 		factory, err := runtimeFactoryForProvider(p)
@@ -279,9 +298,10 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		log.Printf("store: seeded %d logical_agent row(s) from catalog", n)
 	}
 	// The stamp stage fills scope, correlation and actor from verified context.
-	// The daemon adds the process dimensions once it has read the environment
-	// identity (SetProcess), which happens after the bus exists.
+	// Daemon construction already knows the frozen process environment.
+	// Compatibility/inspection constructors leave unknown dimensions empty.
 	stamp := eventstamp.New()
+	stamp.SetProcess(eventProcess)
 	// The row stage fills worker and the session-bound dimensions for events
 	// published outside the session's own call context.
 	rows := eventstamp.NewRows(stampSessions{db}, 0)
@@ -587,6 +607,7 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 // to call multiple times only via the underlying components' contracts;
 // callers should treat Close as one-shot.
 func (s *Service) Close() error {
+	s.stopEventIDBackfill()
 	s.stopMessageEvents()
 	s.stopEventsOutbox()
 	if s.Workers != nil {
