@@ -1,0 +1,1 @@
+- CW-20261015-0052: Reserve enrollment issuer subjects and audiences from ordinary credential minting, exchanges and session grants; add internal destination possession and sealed-delivery primitives with binding and expiry checks. Enrollment routes, durable redemption and credential issuance remain unwired.

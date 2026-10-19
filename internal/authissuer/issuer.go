@@ -111,6 +111,9 @@ func SessionPrincipalID(sid string) string { return "msg://session/local/" + sid
 // exception that is itself a narrowing: a device asking for an agent token for
 // a session may receive up to what the hub granted that session at launch.
 func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error) {
+	if identity.ReservedIssuerSubject(parent.ID) || identity.ReservedEnrollmentAudience(req.Audience) {
+		return Token{}, forbidden("issuer enrollment protocols are not ordinary token exchanges")
+	}
 	if !parent.Verified {
 		return Token{}, forbidden("unverified caller")
 	}
@@ -221,6 +224,9 @@ func (i *Issuer) sign(c Claims) (token, kid string, err error) {
 // wildcards. For Tether's own audience the bare device scopes and the legacy
 // MCP child scopes are accepted and mapped into the tether.* vocabulary.
 func normalizeScopes(aud string, in []string) ([]string, error) {
+	if identity.ReservedEnrollmentAudience(aud) {
+		return nil, forbidden("issuer enrollment protocols cannot be delegated")
+	}
 	if len(in) == 0 || len(in) > 16 {
 		return nil, invalid("request between 1 and 16 scopes")
 	}
