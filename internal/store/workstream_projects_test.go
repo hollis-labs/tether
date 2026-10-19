@@ -96,6 +96,17 @@ func TestWorkstreamProjectsEnsureAndRegistryFailure(t *testing.T) {
 	if err != nil || same.ID != first.ID || !reflect.DeepEqual(same.ProjectURNs, []string{projectA}) {
 		t.Fatalf("ensure rebound: %+v %v", same, err)
 	}
+
+	if err := db.CreateSession(SessionRow{ID: "child", State: "created", ProjectID: "different-launch-context", ParentSessionID: sql.NullString{String: "session", Valid: true}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	inherited, err := db.EnsureSessionWorkstream("child", WorkstreamRow{ProjectURNs: []string{projectB}})
+	if err != nil || inherited.ID != first.ID || !reflect.DeepEqual(inherited.ProjectURNs, []string{projectA}) {
+		t.Fatalf("ancestor projects rebound: %+v %v", inherited, err)
+	}
+	if _, err := db.ListWorkstreamsPage(ListWorkstreamsOptions{ProjectURN: projectA, Ref: "task:x"}); !errors.Is(err, ErrWorkstreamPage) {
+		t.Fatal("project/ref combination accepted")
+	}
 	seedWorkstreamProject(t, db, "msg://agent/test/prj_wrongkind", "agent", "active")
 	for _, invalid := range []string{"tether", "PRJ-20260418-0001", "msg://agent/test/agt_aaaaaaaaaa", "msg://agent/test/prj_missing", "msg://agent/test/prj_wrongkind"} {
 		if _, err := db.CreateWorkstream(WorkstreamRow{ProjectURNs: []string{invalid}}); !errors.Is(err, ErrWorkstreamProject) {
@@ -110,6 +121,11 @@ func TestWorkstreamProjectsEnsureAndRegistryFailure(t *testing.T) {
 	if _, err := db.UpdateWorkstream(first.ID, WorkstreamPatch{Name: &name, ProjectURNs: &projects}); err == nil {
 		t.Fatal("registry outage allowed write")
 	}
+	empty := []string{}
+	if _, err := db.UpdateWorkstream(first.ID, WorkstreamPatch{ProjectURNs: &empty}); err == nil {
+		t.Fatal("registry outage allowed clear")
+	}
+
 	got, err := db.GetWorkstream(first.ID)
 	if err != nil || got.Name != "" || !reflect.DeepEqual(got.ProjectURNs, []string{projectA}) {
 		t.Fatalf("outage changed data/read: %+v %v", got, err)

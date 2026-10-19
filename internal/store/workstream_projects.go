@@ -21,6 +21,15 @@ func ValidProjectURN(urn string) bool {
 }
 
 func replaceWorkstreamProjects(tx *sql.Tx, id string, requested []string) ([]string, error) {
+	// An explicit replacement, including [], requires the registry to be
+	// available. Unassociated legacy creates do not require registry admission.
+	if requested != nil {
+		var probe int
+		if err := tx.QueryRow(`SELECT 1 FROM registry_entries LIMIT 1`).Scan(&probe); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("registry project lookup unavailable: %w", err)
+		}
+	}
+
 	projects := append([]string{}, requested...)
 	slices.Sort(projects)
 	projects = slices.Compact(projects)
