@@ -229,3 +229,58 @@ func TestPipelineDoesNotRetrustFailedClosedOrTombstones(t *testing.T) {
 		t.Fatal("failed-closed payload was re-trusted")
 	}
 }
+
+func TestPipelineNormalProducerInputCannotUseFailClosedGuardAsBypass(t *testing.T) {
+	for _, raw := range []string{
+		`{"sanitize_error":"invalid_json","secret":"SYNTHETIC_SECRET"}`,
+		`{"sanitize_error":"SYNTHETIC_PRIVATE_VALUE"}`,
+		`{"sanitize_error":"SYNTHETIC_PRIVATE_VALUE","sanitize_error":"invalid_json"}`,
+	} {
+		got, _ := pipelineFixture(t, Enforce, Event{Scope: ScopeSession, Kind: KindSessionUsage, PayloadJSON: raw})
+		if strings.Contains(got.PayloadJSON, "SYNTHETIC") || got.PayloadJSON == raw {
+			t.Fatal("producer used failure guard to bypass sanitation")
+		}
+	}
+	original := Event{Scope: ScopeSession, Kind: KindSessionUsage, PayloadJSON: `{"sanitize_error":"invalid_json"}`, Envelope: Envelope{Class: Class{Sanitized: true}}}
+	got, _ := pipelineFixture(t, Enforce, original)
+	if got.PayloadJSON == original.PayloadJSON {
+		t.Fatal("claimed sanitation bypassed normal producer processing")
+	}
+}
+
+func TestPipelineCompatibilityCannotRestoreInvalidDigestBody(t *testing.T) {
+	for _, mode := range []StageMode{Shadow, Enforce} {
+		original := Event{Scope: ScopeSession, Kind: KindSessionTurnOutput, PayloadJSON: `{"text":"SYNTHETIC_PRIVATE_BODY"}`, Envelope: Envelope{PayloadDigest: "sha256:fixture", Class: Class{Sensitivity: "private", Labels: []string{"floor"}}}}
+		got, p := pipelineFixture(t, mode, original)
+		if mode == Shadow {
+			if got.PayloadJSON != original.PayloadJSON || !reflect.DeepEqual(got.Envelope.Class, original.Envelope.Class) {
+				t.Fatal("shadow changed compatibility contract")
+			}
+		} else if got.PayloadJSON != `{"sanitize_error":"tombstone_with_payload"}` || got.Envelope.PayloadDigest != "" || got.Envelope.Class.Sanitized {
+			t.Fatal("B restored an invalid producer body")
+		}
+		if p.Counts()[original.Kind].Errors["tombstone_with_payload"] != 1 {
+			t.Fatal("invalid digest candidate not counted")
+		}
+	}
+	for _, mode := range []StageMode{Shadow, Enforce} {
+		for _, sanitized := range []bool{false, true} {
+			for _, body := range []string{"", "null", " null "} {
+				original := Event{Scope: ScopeSession, Kind: KindSessionTurnOutput, PayloadJSON: body, Envelope: Envelope{PayloadDigest: "sha256:fixture", Class: Class{Sensitivity: "private", PII: true, Sanitized: sanitized, Redactions: 3, Labels: []string{"retained"}}}}
+				got, _ := pipelineFixture(t, mode, original)
+				if got.PayloadJSON != body || !reflect.DeepEqual(got.Envelope, original.Envelope) {
+					t.Fatal("genuine B tombstone class changed")
+				}
+			}
+		}
+	}
+}
+
+func TestPipelineUnknownFailureClassNeverEntersDiagnostics(t *testing.T) {
+	marker := "unknown_synthetic_private_value"
+	got, p := pipelineFixture(t, Enforce, Event{Scope: ScopeSession, Kind: KindSessionUsage, PayloadJSON: `{"sanitize_error":"` + marker + `"}`})
+	diagnostic, _ := json.Marshal(p.Counts())
+	if strings.Contains(got.PayloadJSON, marker) || strings.Contains(string(diagnostic), marker) || len(p.Counts()[KindSessionUsage].Errors) != 0 {
+		t.Fatal("unrecognized failure text was trusted")
+	}
+}

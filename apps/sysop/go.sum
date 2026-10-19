@@ -63,8 +63,8 @@ github.com/hollis-labs/libs/core/forums v0.3.0 h1:W3KbOgj88z1wvC1NzmwX6s95EHCseY
 github.com/hollis-labs/libs/core/forums v0.3.0/go.mod h1:tGNoAkvkUhIwkrPVpQO+LYSH94hYorHT8adUYC0znto=
 github.com/hollis-labs/libs/core/util v0.4.0 h1:UUEeCV0Zi5zynlgPh/Jw/bqgfmqD3NTp0HKgG5NWj20=
 github.com/hollis-labs/libs/core/util v0.4.0/go.mod h1:CpS3EUj+MHivKVnGWJj8Vtq1+J3TN1uPyPCbLzhQLh0=
-github.com/hollis-labs/libs/harness/core v0.12.0 h1:hex8hDy36ARGCcOjvxh9uGqZiNHwbnSESWpl4sN+biE=
-github.com/hollis-labs/libs/harness/core v0.12.0/go.mod h1:hj9S3Chzguss5UkJs4vFK7wz9WL+CyOa50/wEn56tNs=
+github.com/hollis-labs/libs/harness/core v0.13.0 h1:JIiIr+B6qcsG2vbB+CJb6dHUlJVzp7cVjGR0CmS9TF0=
+github.com/hollis-labs/libs/harness/core v0.13.0/go.mod h1:hj9S3Chzguss5UkJs4vFK7wz9WL+CyOa50/wEn56tNs=
 github.com/hollis-labs/libs/llm/core v0.2.0 h1:jYjfC4gsLbxsUG5mQ4ougbmUB0b9rQpqb85Vmb4CwQg=
 github.com/hollis-labs/libs/llm/core v0.2.0/go.mod h1:Hl8R2j3sR/mxfX8S/XBSxqcm7VM+RSVzH924gYXTyGw=
 github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0 h1:m9rCjLop6UCALCTF9Ssh/bZe/Y/0Xl/qvAPim4ZK67U=
@@ -75,8 +75,8 @@ github.com/hollis-labs/libs/security/auth v0.1.0 h1:Bq4pmTr4bnRY7a1bQq2ycuutRlCD
 github.com/hollis-labs/libs/security/auth v0.1.0/go.mod h1:GGJqJuSZwR57ygyml3kPt6Aw2rwPqAzTV2M9CXjTjo8=
 github.com/hollis-labs/libs/security/policy v0.1.0 h1:XsksYYhpJ315wlr9QmWwxUKRfyDAJSSRiekBh7jpI70=
 github.com/hollis-labs/libs/security/policy v0.1.0/go.mod h1:vFJQekM6tI5OV+2rqK+mx/imNUSSJ26PkvAvgMmdQBo=
-github.com/hollis-labs/libs/security/redact v0.1.0 h1:Tz6KMduh5cUJyWTsiEpWMOPErjGcW0FRDxNuyqqTEd8=
-github.com/hollis-labs/libs/security/redact v0.1.0/go.mod h1:WkIIK5n9hIoPY9Sm9yvPkmDYL1r93Obe1v4CsNmKU40=
+github.com/hollis-labs/libs/security/redact v0.2.0 h1:yaKmfWRMwlaAH1uur2yyS+DJjdhoM1XEdOdsafOhzjI=
+github.com/hollis-labs/libs/security/redact v0.2.0/go.mod h1:l6JdQCIwWPy686ZQ5li4clrcN6TtjFueotBzMxUbvbk=
 github.com/hollis-labs/libs/security/secrets v0.1.0 h1:/wrYAM5viUnYMpDhvbQmPlTMesqMIVfvfz+GiZ7jMAs=
 github.com/hollis-labs/libs/security/secrets v0.1.0/go.mod h1:Krd1kgmisOVmeN1G/ltaLMva58tIBki9xShsySqd86Y=
 github.com/hollis-labs/libs/ui/ui-go v0.1.0 h1:GFztthzyhlbrKemRItwyNlV+e83pZT+yFr5Y37iXlL4=

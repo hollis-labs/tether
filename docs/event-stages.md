@@ -42,13 +42,18 @@ The explicit registry in internal/events/pipeline_registry.go defines three clas
 Shadow runs sanitation/classification on a detached copy and returns only the real
 stamp result to local persistence. It does not change payload/class, downgrade
 an independently proven existing sanitation guarantee, or claim new enforcement.
+Normal input always runs the Producer adapter, even if it claims sanitized=true.
+Only an exact known fail-closed error payload with sanitized=false is preserved
+by the local guard; extra/duplicate fields cannot use that guard as a bypass.
 The same code builds the candidate for enforce. Source kind aliases whose wire
 values match the catalog share the policy automatically. Legacy tool-call records
 have different payload schemas and remain B, not aliases of canonical tool events.
 
 Sensitivity and PII floors are never lowered; existing retention admission still
 rejects secret-class events. A sanitized candidate is not a bypass of that policy.
-Producer digest plus payload fails closed using harness v0.13.0 tombstone handling.
+In enforce mode, producer digest plus payload fails closed for A, B and C using
+harness v0.13.0 tombstone handling. Shadow records the candidate failure without
+changing local payload/class.
 Genuine payload-free retention tombstones remain unchanged, including for unknown
 kinds. Existing failed-closed payloads remain unsanitized rather than being re-trusted.
 Classification reads only successfully sanitized A candidates, never B text.
@@ -63,12 +68,24 @@ raw errors are recorded. B counters describe candidate sanitation only. No live
 payload collection, rollout sampling, deployment or enforcement activation is
 claimed by fixture evidence.
 
+The startup mode configures the root daemon service bus, not every producer in
+this repository. The separate Sysop module keeps its existing independent
+`operatorObservation` metadata allowlist and five operator kinds:
+`sysop.session_stop`, `sysop.session_checkpoint`, `sysop.logical_agent_resume`,
+`sysop.session_cleanup`, `sysop.logical_agent_policy`. It omits prose/body fields,
+rejects unknown kinds, and emits its own proven sanitized class without inventing
+a verified operator. The daemon outbox drain relays these already-persisted rows
+without restamping or re-sanitizing. This slice preserves that independent
+invariant; it does not claim the root startup switch configures Sysop. A separate
+module test checks all five through an enforce-mode daemon drain.
+
 Source checks include metadata JSON-equal goldens, compatibility byte equality,
 secret/PII masking, unknown/error/panic/oversize/tombstone handling, transaction
 parity and rollback, existing observer/clone ordering, and real service/registry
 managed/unmanaged persisted/live attribution. The new AST source guard checks
-local event constants, direct Event.Kind expressions, catalog kind references and
-publishSessionEvent literals. It complements runtime fixtures; dynamic third-party
+internal/, cmd/ and apps/sysop Go sources: local event constants, direct
+Event.Kind expressions, catalog kind references, publishSessionEvent literals,
+event-like dynamic kind assignments, and the explicit independent Sysop inventory. It complements runtime fixtures; dynamic third-party
 kinds remain C by absence. Reviewer acceptance of this new guard is required as
 part of the normal review, not an assertion that static scanning proves all runtime
 producers. Owner live sampling/activation/rollback evidence remains separate.

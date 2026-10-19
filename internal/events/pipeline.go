@@ -1,6 +1,7 @@
 package events
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -66,7 +67,7 @@ func newPipeline(mode StageMode, sanitizer eventstage.PayloadSanitizer) (*Pipeli
 	if sanitizer == nil {
 		sanitizer = payloadPolicies(p.policies)
 	}
-	sanitize := pipelineSanitize{known: p.policies, inner: eventstage.RuntimeEventsSanitize(sanitizer, eventstage.ModeVerifyAndScrub)}
+	sanitize := pipelineSanitize{known: p.policies, inner: eventstage.RuntimeEventsSanitize(sanitizer, eventstage.ModeProducer)}
 	classify := eventstage.RuntimeEventsClassify(rules)
 	p.chain, err = eventstage.NewChain(eventstage.Config[pipelineEvent]{
 		Stamp: eventstage.Named("stamp/tether", func(ctx context.Context, e *pipelineEvent) (eventstage.Outcome, error) {
@@ -102,6 +103,17 @@ func (p *Pipeline) apply(ctx context.Context, e Event, stamp func(context.Contex
 	p.record(e.Kind, policy.class, known, state.stamped, state.candidate, report)
 	if p.mode == Shadow {
 		return state.stamped
+	}
+	// Retention tombstones are not new producer bodies. Preserve their whole
+	// existing class, including an independently proven sanitized=true flag.
+	if state.stamped.Envelope.PayloadDigest != "" {
+		payload := bytes.TrimSpace([]byte(state.stamped.PayloadJSON))
+		if len(payload) == 0 || bytes.Equal(payload, []byte("null")) {
+			return state.stamped
+		}
+		// Invalid digest+body is an envelope invariant, not B text policy. The
+		// shared FailClosed result must survive the compatibility return.
+		return state.candidate
 	}
 	if policy.class == Compatibility {
 		state.stamped.Envelope.Class.Sanitized = false
@@ -177,6 +189,13 @@ func (s pipelineSanitize) Apply(ctx context.Context, e *pipelineEvent) (eventsta
 	if c.Redactions < 0 || uint64(c.Redactions) > min(uint64(math.MaxUint32), uint64(^uint(0)>>1)) {
 		return eventstage.Outcome{}, pipelineError("redactions_overflow")
 	}
+	// Preserve only exact known fail-closed observations. Normal producer
+	// input, including anything claiming sanitized=true, still runs Producer
+	// sanitation. Canonical compact matching rejects extra/duplicate fields.
+	if !c.Sanitized && !e.runtime.Tombstoned() && priorFailedClosed(e.candidate.PayloadJSON) {
+		e.runtime.Class.Redactions = uint32(c.Redactions)
+		return eventstage.Outcome{Note: eventstage.NoteBackstopFailedClosed}, nil
+	}
 	// Reset the adapter's uint32 counter, then add in uint64 after sanitation.
 	// This prevents the shared adapter's uint32 addition from wrapping.
 	out, err := s.inner.Apply(ctx, &e.runtime)
@@ -214,3 +233,22 @@ type pipelineError string
 
 func (e pipelineError) Error() string              { return string(e) }
 func (e pipelineError) SanitizeErrorClass() string { return string(e) }
+
+func priorFailedClosed(raw string) bool {
+	var payload struct {
+		Class string `json:"sanitize_error"`
+	}
+	if json.Unmarshal([]byte(raw), &payload) != nil {
+		return false
+	}
+	switch payload.Class {
+	case "oversized", "invalid_json", "opaque", "depth", "tombstone_with_payload", "redactions_overflow", "unknown_kind", "error", "stage_error":
+	default:
+		return false
+	}
+	var compact bytes.Buffer
+	if json.Compact(&compact, []byte(raw)) != nil {
+		return false
+	}
+	return bytes.Equal(compact.Bytes(), eventstage.ErrorPayload(payload.Class))
+}
