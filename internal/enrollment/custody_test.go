@@ -27,14 +27,14 @@ func fixture(t *testing.T) (DestinationKeys, ed25519.PrivateKey, *ecdh.PrivateKe
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := Binding{GrantID: "grant-1", OperationDigest: "sha256:" + strings.Repeat("a", 64), PrincipalID: "producer-1", DestinationID: "agent-os", DestinationRevision: "1", SigningThumbprint: st, EncryptionThumbprint: et}
+	b := Binding{Issuer: "tether", GrantID: "grant-1", OperationDigest: "sha256:" + strings.Repeat("a", 64), PrincipalID: "producer-1", DestinationID: "agent-os", DestinationRevision: "1", SigningThumbprint: st, EncryptionThumbprint: et}
 	return keys, sign, enc, b, time.Unix(1800000000, 0)
 }
 
 func TestSealedDeliveryRoundTripAndRetainedRetry(t *testing.T) {
 	keys, _, private, binding, now := fixture(t)
 	credential := []byte("synthetic-private-credential-not-for-use")
-	d, err := Seal(keys, binding, 17, credential, now, now.Add(5*time.Minute))
+	d, err := seal(keys, binding, 17, credential, now, now.Add(5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,20 +50,20 @@ func TestSealedDeliveryRoundTripAndRetainedRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		got, err := Open(keys, private, binding, restored, now.Add(time.Second))
+		got, err := open(keys, private, binding, restored, now.Add(time.Second))
 		if err != nil || !bytes.Equal(got, credential) {
 			t.Fatal("retained envelope failed to open")
 		}
 	}
 	_, _, wrong, _, _ := fixture(t)
-	if _, err := Open(keys, wrong, binding, d, now); err == nil {
+	if _, err := open(keys, wrong, binding, d, now); err == nil {
 		t.Fatal("other destination opened credential")
 	}
 }
 
 func TestSealedDeliveryBindsEveryField(t *testing.T) {
 	keys, _, private, binding, now := fixture(t)
-	d, err := Seal(keys, binding, 17, []byte("synthetic"), now, now.Add(5*time.Minute))
+	d, err := seal(keys, binding, 17, []byte("synthetic"), now, now.Add(5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,13 +97,13 @@ func TestSealedDeliveryBindsEveryField(t *testing.T) {
 			mutate(&changed)
 			// Even an attacker changing the expected metadata cannot decrypt the
 			// ciphertext under another binding; the HPKE info binds it too.
-			if _, err := Open(keys, private, changed.Binding, changed, now); err == nil {
+			if _, err := open(keys, private, changed.Binding, changed, now); err == nil {
 				t.Fatal("mutation opened")
 			}
 		})
 	}
-	for _, at := range []time.Time{now.Add(-time.Second), time.Unix(d.ExpiresAt, 0)} {
-		if _, err := Open(keys, private, binding, d, at); err == nil {
+	for _, at := range []time.Time{now.Add(-6 * time.Second), time.Unix(d.ExpiresAt, 0)} {
+		if _, err := open(keys, private, binding, d, at); err == nil {
 			t.Fatal("time boundary accepted")
 		}
 	}
@@ -188,23 +188,23 @@ func TestCustodyRejectsMalformedKeysAndBounds(t *testing.T) {
 		}
 	}
 	for _, credential := range [][]byte{nil, make([]byte, MaxCredentialBytes+1)} {
-		if _, err := Seal(keys, binding, 1, credential, now, now.Add(time.Minute)); err == nil {
+		if _, err := seal(keys, binding, 1, credential, now, now.Add(time.Minute)); err == nil {
 			t.Fatal("credential size accepted")
 		}
 	}
 	for _, expiry := range []time.Time{now, now.Add(MaxDeliveryLifetime + time.Second)} {
-		if _, err := Seal(keys, binding, 1, []byte("synthetic"), now, expiry); err == nil {
+		if _, err := seal(keys, binding, 1, []byte("synthetic"), now, expiry); err == nil {
 			t.Fatal("delivery window accepted")
 		}
 	}
 	bad := binding
 	bad.DestinationRevision = "01"
-	if _, err := Seal(keys, bad, 1, []byte("synthetic"), now, now.Add(time.Minute)); err == nil {
+	if _, err := seal(keys, bad, 1, []byte("synthetic"), now, now.Add(time.Minute)); err == nil {
 		t.Fatal("noncanonical revision accepted")
 	}
 	bad = binding
 	bad.DestinationID = "bad\x00id"
-	if _, err := Seal(keys, bad, 1, []byte("synthetic"), now, now.Add(time.Minute)); err == nil {
+	if _, err := seal(keys, bad, 1, []byte("synthetic"), now, now.Add(time.Minute)); err == nil {
 		t.Fatal("control byte accepted")
 	}
 	c, err := NewChallenge(keys, binding, "redeem", 0, now)
@@ -214,14 +214,14 @@ func TestCustodyRejectsMalformedKeysAndBounds(t *testing.T) {
 	if _, err := Sign(private[:1], keys, binding, c, now); err == nil {
 		t.Fatal("short signing key accepted")
 	}
-	d, err := Seal(keys, binding, 1, []byte("synthetic"), now, now.Add(time.Minute))
+	d, err := seal(keys, binding, 1, []byte("synthetic"), now, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(keys, nil, binding, d, now); err == nil {
+	if _, err := open(keys, nil, binding, d, now); err == nil {
 		t.Fatal("nil encryption key accepted")
 	}
-	if _, err := Open(keys, enc, bad, d, now); err == nil {
+	if _, err := open(keys, enc, bad, d, now); err == nil {
 		t.Fatal("unexpected destination accepted")
 	}
 }

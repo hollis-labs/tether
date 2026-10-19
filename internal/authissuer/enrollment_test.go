@@ -34,6 +34,15 @@ func TestEnrollmentNamespaceCannotUseOrdinaryIssuer(t *testing.T) {
 		}
 	}
 	reopened, err := OpenState(dir + "/state.json")
+	for _, subject := range []string{"URN:TETHER:ISSUER:credential-enrollment", "uRn:TeThEr:IsSuEr:other"} {
+		p := identity.Principal{ID: subject, Kind: "service", Verified: true, Scopes: []string{"*"}}
+		if _, err := is.Exchange(p, Request{Audience: "tachyon", Scopes: []string{"tachyon.approvals_read"}}); !errors.Is(err, ErrForbidden) {
+			t.Fatal("alternate-case reserved exchange accepted")
+		}
+		if err := is.RegisterSessionGrant("session", subject, map[string][]string{"tachyon": {"tachyon.approvals_read"}}, time.Now().Add(time.Hour)); !errors.Is(err, ErrForbidden) {
+			t.Fatal("alternate-case reserved grant accepted")
+		}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ const (
 )
 
 func ReservedIssuerSubject(id string) bool {
-	return strings.HasPrefix(id, IssuerSubjectPrefix)
+	return len(id) >= len(IssuerSubjectPrefix) && strings.EqualFold(id[:len(IssuerSubjectPrefix)], IssuerSubjectPrefix)
 }
 
 func ReservedEnrollmentAudience(audience string) bool {
