@@ -41,6 +41,31 @@ func WithMintAudit(record func(context.Context, identity.Observation) error) Iss
 	return func(c *issuerConfig) { c.mintAudit = record }
 }
 
+// ServiceTokensPath is the operator-only service token surface (CW-20261019-0044).
+const ServiceTokensPath = "/auth/service-tokens" //nolint:gosec // G101: a route path, not a credential
+
+// ServiceTokenRequest is the body of POST /auth/service-tokens.
+type ServiceTokenRequest struct {
+	App           string   `json:"app"`
+	Env           string   `json:"env,omitempty"`
+	Audience      string   `json:"audience"`
+	Scopes        []string `json:"scopes"`
+	Label         string   `json:"label,omitempty"`
+	AllowWildcard bool     `json:"allow_wildcard,omitempty"`
+}
+
+// ServiceTokenResponse is the answer to POST /auth/service-tokens: the token,
+// shown once, and the metadata the issuer keeps (never the token).
+type ServiceTokenResponse struct {
+	authissuer.Token
+	Record authissuer.ServiceRecord `json:"record"`
+}
+
+// ServiceTokenListResponse is the answer to GET /auth/service-tokens.
+type ServiceTokenListResponse struct {
+	Tokens []authissuer.ServiceRecord `json:"tokens"`
+}
+
 // DenyKindParent is the DenyRequest kind that denies every unexpired token
 // minted from the named parent principal (see authissuer.State.DenyMintedBy).
 const DenyKindParent = "par"
@@ -116,6 +141,39 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, tok)
 	})
+	mux.HandleFunc("POST /auth/service-tokens", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := serviceTokenOperator(w, r)
+		if !ok {
+			return
+		}
+		var req ServiceTokenRequest
+		if !decodeDeviceBody(w, r, &req) {
+			return
+		}
+		tok, rec, err := is.IssueService(p, authissuer.ServiceRequest{App: req.App, Env: req.Env, Audience: req.Audience, Scopes: req.Scopes, Label: req.Label, AllowWildcard: req.AllowWildcard})
+		switch {
+		case errors.Is(err, authissuer.ErrForbidden):
+			writeError(w, http.StatusForbidden, CodeForbidden, strings.TrimPrefix(err.Error(), "authissuer: "))
+			return
+		case errors.Is(err, authissuer.ErrInvalid):
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, strings.TrimPrefix(err.Error(), "authissuer: "))
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "service token could not be issued")
+			return
+		}
+		// Ids and scopes only: the token is never logged.
+		log.Printf("authissuer: issued service token jti=%s sub=%s aud=%s scopes=%q by=%s", rec.JTI, rec.Sub, rec.Audience, rec.Scopes, rec.IssuedBy)
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, ServiceTokenResponse{Token: tok, Record: rec})
+	})
+	mux.HandleFunc("GET /auth/service-tokens", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := serviceTokenOperator(w, r); !ok {
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, ServiceTokenListResponse{Tokens: is.State.Services()})
+	})
 	mux.HandleFunc("GET /auth/denylist", func(w http.ResponseWriter, r *http.Request) {
 		if !denyListReader(r, false) {
 			writeError(w, http.StatusForbidden, "scope_required", "required scope: maintain")
@@ -163,6 +221,22 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		writeJSON(w, http.StatusOK, map[string]bool{"denied": true})
 	})
 	return mux
+}
+
+// serviceTokenOperator admits only the verified operator credential on the
+// local socket; every other caller, a remote one, a device, a service or an
+// agent, is refused. It writes the refusal.
+func serviceTokenOperator(w http.ResponseWriter, r *http.Request) (identity.Principal, bool) {
+	p, ok := identity.FromContext(r.Context())
+	if !ok || !p.Verified {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "verified caller identity required")
+		return p, false
+	}
+	if p.Kind != "operator" || !identity.IsOperatorCredential(p) || !localOperatorPrincipal(r, p) {
+		writeError(w, http.StatusForbidden, CodeForbidden, "service tokens are managed only by the operator over the local socket")
+		return p, false
+	}
+	return p, true
 }
 
 func subOf(parent identity.Principal, sid string) string {

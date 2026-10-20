@@ -52,6 +52,8 @@ type stateDoc struct {
 	Deny      []denyEntry             `json:"deny"`
 	Grants    map[string]SessionGrant `json:"grants"`
 	Minted    []mintedEntry           `json:"minted,omitempty"`
+	// Services is the metadata of issued service tokens, keyed by jti. Never a token.
+	Services map[string]ServiceRecord `json:"services,omitempty"`
 }
 
 // State is the issuer's small persisted state: the deny-list and the session
@@ -125,6 +127,12 @@ func (s *State) pruneLocked() bool {
 		keptMinted = append(keptMinted, m)
 	}
 	s.doc.Minted = keptMinted
+	for jti, r := range s.doc.Services {
+		if !now.Before(r.ExpiresAt) {
+			delete(s.doc.Services, jti)
+			changed = true
+		}
+	}
 	return changed
 }
 
@@ -290,4 +298,42 @@ func (s *State) DenyMintedBy(par string) (int, error) {
 	}
 	s.rebuildLocked()
 	return n, s.saveLocked()
+}
+
+// addService records a service token's metadata.
+func (s *State) addService(r ServiceRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	if s.doc.Services == nil {
+		s.doc.Services = map[string]ServiceRecord{}
+	}
+	s.doc.Services[r.JTI] = r
+	return s.saveLocked()
+}
+
+func (s *State) serviceCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	return len(s.doc.Services)
+}
+
+// Services lists service token metadata, oldest first. It never holds a token.
+func (s *State) Services() []ServiceRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	out := make([]ServiceRecord, 0, len(s.doc.Services))
+	for _, r := range s.doc.Services {
+		r.Scopes = append([]string(nil), r.Scopes...)
+		out = append(out, r)
+	}
+	sort.Slice(out, func(a, b int) bool {
+		if !out[a].IssuedAt.Equal(out[b].IssuedAt) {
+			return out[a].IssuedAt.Before(out[b].IssuedAt)
+		}
+		return out[a].JTI < out[b].JTI
+	})
+	return out
 }

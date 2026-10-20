@@ -584,7 +584,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			issuerOpts = append(issuerOpts, api.WithMintAudit(s.recordIdentityObservation), api.WithWorkloadTrustStore(s.Identity))
 		}
 		issuerHandler := api.NewTokenIssuerHandler(s.Issuer, issuerOpts...)
-		for _, path := range []string{api.TokenPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
+		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
 			router.Handle(path, issuerHandler)
 		}
 	}
