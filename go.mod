@@ -8,7 +8,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/libs/core/forums v0.3.0
-	github.com/hollis-labs/libs/harness/core v0.13.1-0.20261020014101-b9e7e08f7c85
+	github.com/hollis-labs/libs/harness/core v0.13.1-0.20261020020438-4ba932bc448d
 	github.com/hollis-labs/libs/llm/core v0.2.0
 	github.com/hollis-labs/libs/mesh/core v0.6.0
 	github.com/hollis-labs/libs/security/policy v0.1.0
@@ -27,6 +27,8 @@ require (
 )
 
 require github.com/hollis-labs/libs/security/redact v0.2.0
+
+require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
