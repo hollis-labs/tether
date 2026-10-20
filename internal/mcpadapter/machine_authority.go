@@ -24,21 +24,41 @@ var readToolVerbs = []string{"list", "get", "show", "describe", "status", "read"
 // name, so compound names such as get_and_apply or find_and_delete are writes.
 var writeToolVerbs = []string{"exec", "run", "delete", "remove", "apply", "fix", "install", "enroll", "restart", "write", "set", "create", "update", "and", "then"}
 
-// IsReadOnlyMachineTool reports whether tool, called on server, only reads.
+// IsReadOnlyMachineTool reports whether tool, called on server, only reads, going by its name alone.
 func IsReadOnlyMachineTool(server, tool string) bool {
+	return IsReadOnlyMachineToolWith(server, tool, nil)
+}
+
+// IsReadOnlyMachineToolWith classifies a machine tool, also using the upstream's
+// declared annotations when the tool is registered. Order, strictest first:
+//
+//  1. destructiveHint=true is a write.
+//  2. A write verb in any name segment is a write (get_and_apply, find_and_delete).
+//  3. readOnlyHint=true is a read. The server is a catalog-defined machine
+//     upstream (only those reach this check), so its declaration is trusted.
+//  4. A read verb as the first or the last name segment is a read, so both
+//     list_resources and resource_list are reads.
+//  5. Everything else is a write (fail-closed).
+func IsReadOnlyMachineToolWith(server, tool string, ann *mcpsdk.ToolAnnotations) bool {
 	name := strings.ToLower(tool)
 	name = strings.TrimPrefix(name, strings.ToLower(server)+"_")
 	name = strings.TrimPrefix(name, strings.ToLower(server)+".")
-	verb, _, _ := strings.Cut(name, "_")
-	if !slices.Contains(readToolVerbs, verb) {
+	segs := strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' })
+	if len(segs) == 0 {
 		return false
 	}
-	for _, seg := range strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' }) {
+	if ann != nil && ann.DestructiveHint != nil && *ann.DestructiveHint {
+		return false
+	}
+	for _, seg := range segs {
 		if slices.Contains(writeToolVerbs, seg) {
 			return false
 		}
 	}
-	return true
+	if ann != nil && ann.ReadOnlyHint {
+		return true
+	}
+	return slices.Contains(readToolVerbs, segs[0]) || slices.Contains(readToolVerbs, segs[len(segs)-1])
 }
 
 // MachineAuthorityMiddleware enforces the agent's machine access on every call
@@ -46,6 +66,8 @@ func IsReadOnlyMachineTool(server, tool string) bool {
 // decision as a durable event. Calls to other servers pass through untouched.
 type MachineAuthorityMiddleware struct {
 	pub events.Publisher
+	// registry, when set, supplies the upstream's declared annotations for a call.
+	registry *ToolRegistry
 	// Access is launch.MachineAccessReadOnly or ReadWrite; anything else is
 	// treated as read-only. Dev grants full access.
 	Access string
@@ -64,7 +86,13 @@ func (m *MachineAuthorityMiddleware) Handle(ctx context.Context, call ToolCall, 
 		return next(ctx, call)
 	}
 	class := "write"
-	if IsReadOnlyMachineTool(server, call.ToolName) {
+	var ann *mcpsdk.ToolAnnotations
+	if m.registry != nil {
+		if rt, ok := m.registry.Lookup(call.ToolName); ok && rt.Definition != nil {
+			ann = rt.Definition.Annotations
+		}
+	}
+	if IsReadOnlyMachineToolWith(server, call.ToolName, ann) {
 		class = "read"
 	}
 	mode := launch.MachineAccessReadOnly

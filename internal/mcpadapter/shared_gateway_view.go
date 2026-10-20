@@ -202,7 +202,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	// Outermost: a denied machine call is audited and never reaches the upstream
 	// or the call logger. The access mode is the caller's (ProxyOptions), not
 	// the daemon's env; unset is read-only.
-	viewMws := []ToolCallMiddleware{&MachineAuthorityMiddleware{pub: opts.Publisher, Access: opts.MachineAccess}}
+	viewMws := []ToolCallMiddleware{&MachineAuthorityMiddleware{pub: opts.Publisher, Access: opts.MachineAccess, registry: registry}}
 	if opts.Publisher != nil {
 		logging := NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(r.pool.entries))
 		logging.profile, logging.mode = opts.Profile.ID, string(selection.Mode)

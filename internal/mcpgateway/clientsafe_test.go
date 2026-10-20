@@ -98,3 +98,33 @@ func TestProtocolListHandsClientsValidSchemas(t *testing.T) {
 		t.Fatal("registry definition changed")
 	}
 }
+
+// The schemas rendered by tether_tool_list and tether_tool_search are clean too.
+func TestListAndSearchRenderClientSafeSchemas(t *testing.T) {
+	bad := &mcpsdk.Tool{Name: "caster_ls", Description: "List named items", InputSchema: nullRequiredSchema()}
+	snapshot := Snapshot{Entries: []Entry{{Tool: bad, Origin: "caster"}}, Origins: []OriginStatus{{ID: "caster", Status: "connected"}}}
+	service := &Service{Selection: Selection{Mode: Search}, Policy: &Policy{}, Snapshot: func() Snapshot { return snapshot }, Score: func(string, Entry) int { return 1 }}
+	byNames, err := service.List(Request{Names: []string{"caster_ls"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	searched, err := service.Search(Request{Query: "list", Detail: "schema"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, result := range map[string]Result{"list": byNames, "search": searched} {
+		if len(result.Items) != 1 {
+			t.Fatalf("%s: %d items", name, len(result.Items))
+		}
+		raw, _ := json.Marshal(result.Items[0].InputSchema)
+		if strings.Contains(string(raw), `"required":null`) || strings.Contains(string(raw), `"properties":null`) {
+			t.Errorf("%s: null keyword in %s", name, raw)
+		}
+		if problems := ValidateToolForClient(&mcpsdk.Tool{Name: "x", InputSchema: result.Items[0].InputSchema}); len(problems) != 0 {
+			t.Errorf("%s: %v", name, problems)
+		}
+	}
+	if !reflect.DeepEqual(bad.InputSchema, nullRequiredSchema()) {
+		t.Fatal("registry definition changed")
+	}
+}

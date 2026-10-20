@@ -141,6 +141,9 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 				err:  wrapped,
 			}
 		}
+		if err == nil {
+			result = objectStructuredContent(result)
+		}
 		return result, err
 	})
 

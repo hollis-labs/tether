@@ -386,7 +386,9 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 	}
 	// Outermost: a denied machine call is audited and never reaches the
 	// upstream or the call logger.
-	mws = append(mws, NewMachineAuthorityMiddleware(auditPub, os.Getenv))
+	machineAuthority := NewMachineAuthorityMiddleware(auditPub, os.Getenv)
+	machineAuthority.registry = registry
+	mws = append(mws, machineAuthority)
 	switch {
 	case opts.Bus != nil:
 		mws = append(mws, NewLoggingMiddleware(opts.Bus).RedactWith(proxyRedactionSet(entries)))

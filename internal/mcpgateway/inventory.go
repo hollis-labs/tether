@@ -156,7 +156,7 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 	out := Result{Items: []Item{}, Complete: len(unavailableServers) == 0, UnavailableServers: unavailableServers}
 	schema := !search || req.Detail == "schema"
 	itemFor := func(entry Entry, score *int) Item {
-		tool := entry.Tool
+		tool := ClientSafeTool(entry.Tool)
 		item := Item{Name: tool.Name, Origin: entry.Origin, Title: tool.Title, Description: tool.Description, Annotations: tool.Annotations, Icons: tool.Icons, Score: score}
 		if schema {
 			item.InputSchema = tool.InputSchema

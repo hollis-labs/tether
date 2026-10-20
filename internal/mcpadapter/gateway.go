@@ -162,8 +162,18 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, gateway *mcpgateway.Service)
 	}))
 }
 func (a *Adapter) registerGatewayStatus(s *gomcp.Server, gateway *mcpgateway.Service) {
-	a.addTool(s, gomcp.Tool{Name: "tether_gateway_status", Description: "Explain effective profile/mode and source, cataloged/eligible/available tool counts, exclusions by reason, upstream errors, collisions and metadata lint. An optional exact name reports its visibility and authored annotations. Cached or unexamined inventory never proves availability.", InputSchema: gomcp.InputSchema(gomcp.StringProp("name", "Optional exact tool name to explain", false)), Handler: func(_ context.Context, args map[string]any) (any, error) {
+	schema := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+		"name":   map[string]any{"type": "string", "description": "Optional exact tool name to explain"},
+		"detail": map[string]any{"type": "string", "enum": []string{"summary", "full"}, "default": "summary", "description": "summary (default): counts, connected/unavailable origins with reasons, lint totals by code. full: every lint finding (paged) and the raw origin records."},
+		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": mcpgateway.MaxStatusLint, "default": mcpgateway.DefaultStatusLint, "description": "detail=full only: lint findings per page"},
+		"cursor": map[string]any{"type": "string", "description": "detail=full only: next_cursor from the previous page"},
+	}}
+	a.addTool(s, gomcp.Tool{Name: "tether_gateway_status", Description: "Explain gateway mode and upstream health. Default is a compact summary (a few KB): effective profile/mode, cataloged/eligible/available tool counts, which origins are connected or unavailable and why, lint totals by code, collisions, and what complete means. An optional exact name reports that tool's visibility, authored annotations and its own lint findings. Use detail=full (with limit/cursor) for every lint finding. Cached or unexamined inventory never proves availability.", InputSchema: schema, Handler: func(_ context.Context, args map[string]any) (any, error) {
 		name, _ := args["name"].(string)
+		detail, _ := args["detail"].(string)
+		if detail != "" && detail != "summary" && detail != "full" {
+			return nil, toolError("invalid_request", "detail must be summary or full")
+		}
 		out := gateway.Status(name)
 		if isGatewayTool(name) {
 			visible := name == "tether_gateway_status" || gateway.Selection.Mode == mcpgateway.Search
@@ -173,7 +183,40 @@ func (a *Adapter) registerGatewayStatus(s *gomcp.Server, gateway *mcpgateway.Ser
 				out.Reason = "flat mode lists real tools directly and omits discovery/dispatch wrappers"
 			}
 		}
-		return out, nil
+		if detail != "full" && name != "" {
+			// An explanation of one tool keeps the full record shape, with the lint narrowed to that tool.
+			narrowed := []mcpgateway.NameFinding{}
+			for _, finding := range out.Lint {
+				if finding.Name == name || finding.Name == "" {
+					narrowed = append(narrowed, finding)
+				}
+			}
+			out.Lint = narrowed
+			return out, nil
+		}
+		if detail != "full" {
+			if _, set := args["limit"]; set {
+				return nil, toolError("invalid_request", "limit and cursor apply to detail=full")
+			}
+			if _, set := args["cursor"]; set {
+				return nil, toolError("invalid_request", "limit and cursor apply to detail=full")
+			}
+			return out.Summary(), nil
+		}
+		limit := 0
+		if v, ok := args["limit"]; ok {
+			n, isNum := v.(float64)
+			if !isNum || n < 1 {
+				return nil, toolError("invalid_request", "limit must be a positive integer")
+			}
+			limit = int(n)
+		}
+		cursor, _ := args["cursor"].(string)
+		page, err := out.Page(limit, cursor)
+		if err != nil {
+			return nil, toolError("invalid_request", err.Error())
+		}
+		return page, nil
 	}}, Reads("gateway mode and upstream status"))
 }
 func isGatewayTool(name string) bool {
