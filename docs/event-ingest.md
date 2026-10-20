@@ -116,8 +116,8 @@ app configures publishing the same way:
 
 | Variable | Meaning |
 |---|---|
-| `TETHER_EVENTS_URL` | Base URL of the hub's event ingest. Unset means publishing is off and the client is a no-op. |
-| `TETHER_EVENTS_SPOOL_DIR` | Optional directory for the bounded on-disk spool, so events survive a hub outage or a restart. |
+| `HOLLIS_EVENTS_URL` | Base URL of the hub's event ingest. Unset means publishing is off and the client is a no-op. |
+| `HOLLIS_EVENTS_SPOOL_DIR` | Optional directory for the bounded on-disk spool, so events survive a hub outage or a restart. |
 | `HOLLIS_AUTH_TOKEN_FILE_<APP>` | File holding the app's bearer credential (a service credential bound to `<APP>`). |
 
 The event's `app` must equal the app the credential is bound to; a mismatch makes
