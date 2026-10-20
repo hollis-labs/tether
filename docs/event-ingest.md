@@ -62,8 +62,9 @@ status:
 | Status | Meaning | Producer |
 |---|---|---|
 | 400 | body is not an event or `{"events":[...]}`, or the batch is empty | fix, do not retry |
-| 401 | no verified credential (enforce) | fix |
-| 403 | credential lacks `tether.events` (`scope_required`), or an event names an app the credential is not bound to (`app_mismatch`) | fix |
+| 401 | no verified credential (enforce) | retry with backoff: a credential may be rotated or not yet issued |
+| 403 `scope_required` | credential lacks `tether.events` | retry with backoff: the scope may be granted later |
+| 403 `app_mismatch` | an event names an app the credential is not bound to | terminal: drop, count and report; a retry can never succeed |
 | 413 | more than 100 events or 1 MiB | split |
 | 429 | rate limited; `Retry-After` seconds | back off |
 | 503 | the log could not be written; `Retry-After` | retry the same request (ids make it safe) |
@@ -120,7 +121,7 @@ app configures publishing the same way:
 
 | Variable | Meaning |
 |---|---|
-| `HOLLIS_EVENTS_URL` | Base URL of the hub's event ingest. Unset means publishing is off and the client is a no-op. |
+| `HOLLIS_EVENTS_URL` | Base URL of the hub (the client appends `/events`; a URL already ending in `/events` is left alone). Unset means publishing is off and the client is a no-op. |
 | `HOLLIS_EVENTS_SPOOL_DIR` | Optional directory for the bounded on-disk spool, so events survive a hub outage or a restart. |
 | `HOLLIS_AUTH_TOKEN_FILE_<APP>` | File holding the app's bearer credential (a service credential bound to `<APP>`). |
 
