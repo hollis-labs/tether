@@ -79,8 +79,9 @@ change.
 attacker can mint tokens for any service principal and any audience until the key
 is rotated and the old tokens are revoked (`rotate-key`, then `revoke --all`). The
 dev mitigation is the tailnet boundary around the hub, the 0600/0700 key
-directory, and that revoking is immediate in Tether and takes one poll interval
-elsewhere. A leaked **token** is limited to its own scopes and is revoked on its
+directory, and that revoking is immediate in Tether and reaches
+other verifiers within one poll interval after a successful poll (a verifier
+that cannot poll keeps accepting a newly revoked token until it can). A leaked **token** is limited to its own scopes and is revoked on its
 own.
 
 ## Revoking
