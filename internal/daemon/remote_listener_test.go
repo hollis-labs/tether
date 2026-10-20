@@ -449,10 +449,16 @@ func TestRemoteListenerIssuerReadsNeedNoProtocolHeader(t *testing.T) {
 	if w := do("GET", "/.well-known/jwks.json", "", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"OKP"`) || strings.Contains(w.Body.String(), `"d"`) {
 		t.Fatalf("public JWKS without header/bearer: %d %s", w.Code, w.Body.String())
 	}
-	// The deny-list read passes the protocol gate and is then judged on scope,
-	// not on the missing header: a read-only device is refused (403, not 409).
-	if w := do("GET", "/auth/denylist", "", read, ""); w.Code != 403 {
-		t.Fatalf("deny-list read without header returned %d, want 403 from the scope check", w.Code)
+	// The minimal deny-list read is public: no credential, no protocol header,
+	// ids only, so any verifier can honour a revocation. Writing it is not.
+	if w := do("GET", "/auth/denylist", "", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"jti"`) {
+		t.Fatalf("public deny-list read returned %d: %s", w.Code, w.Body.String())
+	}
+	if w := do("GET", "/auth/denylist", "", read, ""); w.Code != 200 {
+		t.Fatalf("deny-list read with a read-only device returned %d, want 200 (public)", w.Code)
+	}
+	if w := do("POST", "/auth/denylist", "1", read, `{"kind":"jti","value":"x"}`); w.Code != 403 && w.Code != 401 {
+		t.Fatalf("deny-list WRITE by a read-only device returned %d", w.Code)
 	}
 	// Minting is Tether-client traffic and still needs the header.
 	body := `{"audience":"tether","scopes":["tether.read"]}`

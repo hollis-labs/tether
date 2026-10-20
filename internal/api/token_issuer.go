@@ -61,6 +61,19 @@ type ServiceTokenResponse struct {
 	Record authissuer.ServiceRecord `json:"record"`
 }
 
+// ServiceTokenRevokeRequest is the body of POST /auth/service-tokens/revoke:
+// either one jti, or an app (and env) to revoke all of its live tokens.
+type ServiceTokenRevokeRequest struct {
+	JTI string `json:"jti,omitempty"`
+	App string `json:"app,omitempty"`
+	Env string `json:"env,omitempty"`
+}
+
+// ServiceTokenRevokeResponse lists what was revoked (metadata only).
+type ServiceTokenRevokeResponse struct {
+	Revoked []authissuer.ServiceRecord `json:"revoked"`
+}
+
 // ServiceTokenListResponse is the answer to GET /auth/service-tokens.
 type ServiceTokenListResponse struct {
 	Tokens []authissuer.ServiceRecord `json:"tokens"`
@@ -174,21 +187,45 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, ServiceTokenListResponse{Tokens: is.State.Services()})
 	})
-	mux.HandleFunc("GET /auth/denylist", func(w http.ResponseWriter, r *http.Request) {
-		if !denyListReader(r, false) {
-			writeError(w, http.StatusForbidden, "scope_required", "required scope: maintain")
+	mux.HandleFunc("POST /auth/service-tokens/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := serviceTokenOperator(w, r); !ok {
 			return
 		}
-		body, etag := is.State.DenyDoc()
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "no-cache")
-		if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
-			w.WriteHeader(http.StatusNotModified)
+		var req ServiceTokenRevokeRequest
+		if !decodeDeviceBody(w, r, &req) {
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		if (req.JTI == "") == (req.App == "") {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "give exactly one of jti or app")
+			return
+		}
+		var revoked []authissuer.ServiceRecord
+		var err error
+		if req.JTI != "" {
+			var rec authissuer.ServiceRecord
+			rec, err = is.RevokeService(req.JTI)
+			revoked = []authissuer.ServiceRecord{rec}
+		} else {
+			revoked, err = is.RevokeServicesFor(req.App, req.Env)
+		}
+		switch {
+		case errors.Is(err, authissuer.ErrServiceNotFound):
+			writeError(w, http.StatusNotFound, CodeNotFound, "no live service token matches")
+			return
+		case errors.Is(err, authissuer.ErrInvalid):
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, strings.TrimPrefix(err.Error(), "authissuer: "))
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "service token could not be revoked")
+			return
+		}
+		for _, rec := range revoked {
+			log.Printf("authissuer: revoked service token jti=%s sub=%s", rec.JTI, rec.Sub)
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, ServiceTokenRevokeResponse{Revoked: revoked})
 	})
+	mux.Handle("GET /auth/denylist", NewDenyListReadHandler(is))
 	mux.HandleFunc("POST /auth/denylist", func(w http.ResponseWriter, r *http.Request) {
 		if !denyListReader(r, true) {
 			writeError(w, http.StatusForbidden, "scope_required", "required scope: admin")
@@ -239,6 +276,29 @@ func serviceTokenOperator(w http.ResponseWriter, r *http.Request) (identity.Prin
 	return p, true
 }
 
+// NewDenyListReadHandler serves the minimal deny-list verifiers poll: jti, sub
+// and sid ids, nothing else. It is PUBLIC on purpose (no credential, no scope):
+// a verifier that cannot read the list cannot honor a revocation, and the
+// document holds only opaque ids, never a token. ETag and If-None-Match let a
+// poller revalidate cheaply. Writing the list stays admin-only.
+func NewDenyListReadHandler(is *authissuer.Issuer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		body, etag := is.State.DenyDoc()
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-cache")
+		if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+}
+
 func subOf(parent identity.Principal, sid string) string {
 	if sid != "" {
 		return authissuer.SessionPrincipalID(sid)
@@ -250,10 +310,10 @@ func localOperatorPrincipal(r *http.Request, p identity.Principal) bool {
 	return !identity.IsRemote(r.Context()) && identity.LocalConnection(r.Context()) && p.ID == identity.OperatorID
 }
 
-// denyListReader: the deny-list uses Tether's own auth, admin/maintain grade.
-// The local operator, a stored credential holding maintain or admin (write
-// needs admin), or an issued non-agent token holding the tether.maintain or
-// tether.admin scope may use it. Agent tokens never can.
+// denyListReader: WRITING the deny-list uses Tether's own auth, admin grade
+// (reading it is public, see NewDenyListReadHandler). The local operator, a
+// stored credential holding admin, or an issued non-agent token holding the
+// tether.admin scope may write. Agent tokens never can.
 func denyListReader(r *http.Request, write bool) bool {
 	p, ok := identity.FromContext(r.Context())
 	if !ok || !p.Verified || p.Kind == "agent" {

@@ -164,3 +164,33 @@ func serviceScopes(req ServiceRequest) ([]string, error) {
 	slices.Sort(out)
 	return out, nil
 }
+
+// RevokeService revokes one service token by jti. The verifiers that poll the
+// deny-list (30 s by default) stop accepting it within that interval; Tether's
+// own verifier shares the list and stops at once.
+func (i *Issuer) RevokeService(jti string) (ServiceRecord, error) {
+	if jti == "" {
+		return ServiceRecord{}, invalid("jti required")
+	}
+	rs, err := i.State.revokeServices(func(r ServiceRecord) bool { return r.JTI == jti })
+	if err != nil {
+		return ServiceRecord{}, err
+	}
+	return rs[0], nil
+}
+
+// RevokeServicesFor revokes every live service token of one principal
+// (msg://service/<app>/<env>).
+func (i *Issuer) RevokeServicesFor(app, env string) ([]ServiceRecord, error) {
+	if !audRe.MatchString(app) {
+		return nil, invalid("app must be one app id")
+	}
+	if env == "" {
+		env = DefaultServiceEnv
+	}
+	if !envRe.MatchString(env) {
+		return nil, invalid("env must be one lowercase id")
+	}
+	sub := ServicePrincipalID(app, env)
+	return i.State.revokeServices(func(r ServiceRecord) bool { return r.Sub == sub })
+}

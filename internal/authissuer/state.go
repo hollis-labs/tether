@@ -337,3 +337,46 @@ func (s *State) Services() []ServiceRecord {
 	})
 	return out
 }
+
+// ErrServiceNotFound means no live service token has that jti or principal.
+var ErrServiceNotFound = errors.New("authissuer: no such service token")
+
+// revokeServices denies every unexpired, unrevoked service token matched by
+// match: its jti goes on the deny-list until the token's own exp (a service
+// token lives ten years, so the entry is not pruned at the sid horizon), and the
+// record keeps the time. The deny-list is written first: if the record cannot
+// be saved the revocation is still in force. It returns the revoked records.
+func (s *State) revokeServices(match func(ServiceRecord) bool) ([]ServiceRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	now := s.now().UTC()
+	var out []ServiceRecord
+	for jti, r := range s.doc.Services {
+		if r.RevokedAt != nil || !match(r) {
+			continue
+		}
+		dup := false
+		for _, e := range s.doc.Deny {
+			if e.Kind == DenyJTI && e.Value == jti {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			s.doc.Deny = append(s.doc.Deny, denyEntry{DenyJTI, jti, r.ExpiresAt})
+		}
+		r.RevokedAt = &now
+		s.doc.Services[jti] = r
+		out = append(out, r)
+	}
+	if len(out) == 0 {
+		return nil, ErrServiceNotFound
+	}
+	s.rebuildLocked()
+	if err := s.saveLocked(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].JTI < out[b].JTI })
+	return out, nil
+}

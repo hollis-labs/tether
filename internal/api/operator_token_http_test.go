@@ -76,7 +76,6 @@ func TestOperatorMintedNarrowTokenCannotPairOverHTTP(t *testing.T) {
 	for _, c := range []struct{ method, path, body string }{
 		{"POST", "/auth/pair", `{"scopes":["admin"]}`},
 		{"POST", "/auth/pair/revoke", `{}`},
-		{"GET", DenyListPath, ""},
 		{"POST", DenyListPath, `{"sub":"x"}`},
 	} {
 		if code, b := do(c.method, c.path, tok.Token, c.body); code != 401 && code != 403 {

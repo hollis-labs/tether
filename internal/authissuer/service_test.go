@@ -166,3 +166,106 @@ func TestServiceTokenCountIsBounded(t *testing.T) {
 		t.Fatalf("limit not enforced: %v", err)
 	}
 }
+
+func TestRevokeServiceDeniesImmediatelyAndPersistsToExp(t *testing.T) {
+	is, dir := newIssuer(t)
+	tok, rec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := is.IssueService(operatorP, ServiceRequest{App: "nanite", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := NewVerifier(fakeStored{map[string]identity.Principal{}}, is)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Verify(context.Background(), tok.Token); err != nil {
+		t.Fatalf("before revoke: %v", err)
+	}
+	_, etagBefore := is.State.DenyDoc()
+	got, err := is.RevokeService(rec.JTI)
+	if err != nil || got.RevokedAt == nil || got.JTI != rec.JTI {
+		t.Fatalf("revoke: %+v %v", got, err)
+	}
+	// Tether's own verifier shares the list and refuses at once; the other token is untouched.
+	if _, err := v.Verify(context.Background(), tok.Token); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatalf("revoked token still verifies: %v", err)
+	}
+	if _, err := v.Verify(context.Background(), other.Token); err != nil {
+		t.Fatalf("another app's token was affected: %v", err)
+	}
+	body, etagAfter := is.State.DenyDoc()
+	if etagAfter == etagBefore || !strings.Contains(string(body), rec.JTI) {
+		t.Fatalf("deny-list did not change: %s", body)
+	}
+	// The entry lasts until the token's own exp, not the 65 minute sid horizon.
+	for _, e := range is.State.doc.Deny {
+		if e.Kind == DenyJTI && e.Value == rec.JTI && !e.Until.Equal(rec.ExpiresAt) {
+			t.Fatalf("until %v, want exp %v", e.Until, rec.ExpiresAt)
+		}
+	}
+	is.State.now = func() time.Time { return time.Now().Add(DenyHorizon + 24*time.Hour) }
+	if !is.State.Denied(DenyJTI, rec.JTI) {
+		t.Fatal("service token jti pruned from the deny-list at the sid horizon")
+	}
+	// It survives a restart; the record keeps the revocation time and the list shows it.
+	st2, err := OpenState(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st2.Denied(DenyJTI, rec.JTI) {
+		t.Fatal("revocation lost on restart")
+	}
+	var revoked int
+	for _, r := range st2.Services() {
+		if r.RevokedAt != nil {
+			revoked++
+		}
+	}
+	if revoked != 1 {
+		t.Fatalf("revoked records after restart: %d", revoked)
+	}
+	// Revoking again, or something unknown, is a clear not-found, not a silent success.
+	if _, err := is.RevokeService(rec.JTI); !errors.Is(err, ErrServiceNotFound) {
+		t.Fatalf("second revoke: %v", err)
+	}
+	if _, err := is.RevokeService("nope"); !errors.Is(err, ErrServiceNotFound) {
+		t.Fatalf("unknown jti: %v", err)
+	}
+	if _, err := is.RevokeService(""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("empty jti: %v", err)
+	}
+}
+
+func TestRevokeServicesForAPrincipalRevokesAllItsTokens(t *testing.T) {
+	is, _ := newIssuer(t)
+	var jtis []string
+	for i := 0; i < 3; i++ {
+		_, rec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		jtis = append(jtis, rec.JTI)
+	}
+	_, stag, _ := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Env: "staging", Audience: "tether", Scopes: []string{"events"}})
+	got, err := is.RevokeServicesFor("cerberus", "")
+	if err != nil || len(got) != 3 {
+		t.Fatalf("%d %v", len(got), err)
+	}
+	for _, j := range jtis {
+		if !is.State.Denied(DenyJTI, j) {
+			t.Errorf("%s not denied", j)
+		}
+	}
+	if is.State.Denied(DenyJTI, stag.JTI) {
+		t.Error("another env's token was revoked")
+	}
+	if _, err := is.RevokeServicesFor("cerberus", ""); !errors.Is(err, ErrServiceNotFound) {
+		t.Fatalf("nothing live left: %v", err)
+	}
+	if _, err := is.RevokeServicesFor("Bad App", ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("bad app: %v", err)
+	}
+}

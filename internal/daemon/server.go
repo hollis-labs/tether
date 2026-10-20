@@ -686,6 +686,14 @@ func (s *Server) handler(remote bool) http.Handler {
 			s.Environment.ServeHTTP(w, r)
 			return
 		}
+		// The minimal deny-list (opaque jti/sub/sid ids) is public so that any
+		// verifier can honor a revocation without a Tether credential. Only
+		// the exact path and the read methods; writing it stays admin-only and
+		// goes through the authenticated handler below.
+		if s.Issuer != nil && r.URL.Path == api.DenyListPath && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			api.NewDenyListReadHandler(s.Issuer).ServeHTTP(w, r)
+			return
+		}
 		protected.ServeHTTP(w, r)
 	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

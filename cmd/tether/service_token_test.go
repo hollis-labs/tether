@@ -84,3 +84,16 @@ func TestServiceTokenListShowsMetadataOnly(t *testing.T) {
 		t.Fatalf("%s", out.String())
 	}
 }
+
+func TestServiceTokenRevokeArgumentRules(t *testing.T) {
+	factory, _ := serviceTokenFake(t)
+	for _, args := range [][]string{{"revoke"}, {"revoke", "j1", "--app", "cerberus"}} {
+		cmd := newServiceTokenCommand(factory)
+		cmd.SetArgs(args)
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("%v accepted", args)
+		}
+	}
+}
