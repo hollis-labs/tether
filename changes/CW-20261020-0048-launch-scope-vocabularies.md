@@ -7,5 +7,5 @@
   (`identity.ScopeGranted`); it never adds or widens. The same comparison now
   applies to origin-session ceilings and replacement/native-only floors. A launch
   with no usable scope left is refused as `409 launch_scope_unavailable`, naming
-  only the profile's scopes. The hub-local device launch is unchanged (a device
-  child still gets no legacy scopes). See `docs/device-pairing.md`.
+  only the profile's scopes. The hub-local device launch is unchanged on purpose (a
+  device child still gets no legacy scopes). See `docs/device-pairing.md`.

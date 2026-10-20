@@ -85,6 +85,13 @@ already holds (CW-20261020-0048): its session ceiling is compared by containment
 and `ai.invoke`; `maintain` and `admin` hold `registry.write` and `catalog.write`),
 and anything the device does not hold is dropped, never added. If nothing the agent
 profile needs survives, the launch is refused with `409 launch_scope_unavailable`.
+
+The two launch paths therefore differ on purpose (architect ruling, CW-20261020-0048):
+a **worker-hosted** launch compares a paired device by containment as above, while a
+**hub-local** launch does not: its child credential still gets no legacy scopes from a
+device, exactly as before. Separately, on every path the origin-session ceiling and the
+replacement/native-only floors compare by vocabulary and containment; those steps only
+remove scopes from the ceiling, so they cannot grant more than the origin or floor holds.
 The ordinary child's seven-day expiry is not capped to the parent's device expiry.
 `CreatedBy` records provenance; parent device revocation does not revoke that child
 credential. Device request/stream cancellation does not establish child revocation.
