@@ -97,11 +97,11 @@ func TestLaunchCeilingComparesAcrossScopeVocabularies(t *testing.T) {
 		ctx  context.Context
 		want []string
 	}{
-		"canonical launcher, legacy ceiling": {launcher("tether.catalog", "tether.groups", "tether.messages", "tether.registry", "tether.sessions"), granted},
-		"canonical launcher without groups":  {launcher("tether.messages", "tether.registry"), []string{"message.write", "registry.write"}},
-		"operate contains the child scopes":  {launcher("tether.operate"), []string{"message.write", "groups.write"}},
-		"canonical launcher, nothing shared": {launcher("tether.sessions"), nil},
-		"device stays strict (CW-0173)":      {device, nil},
+		"canonical launcher, legacy ceiling":                  {launcher("tether.catalog", "tether.groups", "tether.messages", "tether.registry", "tether.sessions"), granted},
+		"canonical launcher without groups":                   {launcher("tether.messages", "tether.registry"), []string{"message.write", "registry.write"}},
+		"operate contains the child scopes":                   {launcher("tether.operate"), []string{"message.write", "groups.write"}},
+		"canonical launcher, nothing shared":                  {launcher("tether.sessions"), nil},
+		"device stays strict on the hub-local path (CW-0173)": {device, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, _, err := svc.launchCeiling(tc.ctx, granted)
@@ -204,13 +204,19 @@ func TestWorkerPathIsNeverBroaderThanTheHubPathForTheSameOrigin(t *testing.T) {
 			hub := r.storedScopes(hubID)
 
 			// Worker path.
+			var worker []string
 			spec, err := r.launchAs(ctx, "worker-"+origin, "")
-			if err != nil {
+			var noScope launchScopeError
+			switch {
+			case errors.As(err, &noScope):
+				// Nothing the profile needs is left: refused, and no credential.
+			case err != nil:
 				t.Fatal(err)
-			}
-			worker := r.storedScopes("worker-" + origin)
-			if !slices.Equal(spec.MCPScopes, worker) {
-				t.Fatalf("worker spec %v and credential %v disagree", spec.MCPScopes, worker)
+			default:
+				worker = r.storedScopes("worker-" + origin)
+				if !slices.Equal(spec.MCPScopes, worker) {
+					t.Fatalf("worker spec %v and credential %v disagree", spec.MCPScopes, worker)
+				}
 			}
 			if !slices.Contains(grant, "*") {
 				for _, scope := range append(slices.Clone(hub), worker...) {

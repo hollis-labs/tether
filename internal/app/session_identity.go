@@ -25,23 +25,42 @@ var workerScopes = []string{"session.write", "message.write", "catalog.write"}
 // granted is itself the ceiling. Both the hub-local and the worker credential
 // paths use this, so they cannot drift apart.
 //
-// A launcher that reached the hub with an issued agent or session JWT holds
-// canonical tether.* scopes, while the profile ceiling is written in the legacy
-// names (message.write ...): an exact string match emptied the ceiling, so an
-// agent-initiated worker launch got no session agent token and failed (the "hub
-// did not grant a session agent token" refusal). For those launchers the
-// comparison is vocabulary-aware (identity.ScopeGranted). Every other launcher,
-// device principals included, is still compared exactly: a device child gets no
-// legacy scopes (CW-20261010-0173).
+// The comparison is vocabulary-aware (identity.ScopeGranted) for a launcher that
+// reached the hub with an issued agent or session JWT, and, on the worker launch
+// path only (deviceVocab), for a paired device as well. A profile ceiling is
+// written in the legacy child names (message.write ...), while a launcher holds
+// canonical tether.* scopes or bare device scopes (operate, maintain), and an
+// exact string match emptied the ceiling: the worker got no session agent token
+// and the launch failed (#470 for agents; CW-20261020-0048 for a Tachyon device
+// launching a general worker). The match only ever keeps an entry of granted
+// that the launcher already holds, exactly or by the documented containment
+// (operate holds the messages, groups, sessions, teams and ai child scopes;
+// maintain holds registry and catalog), and legacy-to-canonical is one way, so
+// nothing is added or widened.
+//
+// The hub-local path keeps comparing a device exactly: its child gets no legacy
+// scopes (docs/device-pairing.md, CW-20261010-0173).
 func narrowToLauncher(ctx context.Context, granted []string) []string {
+	return narrowToLauncherAs(ctx, granted, false)
+}
+
+// narrowToLauncherWorker is narrowToLauncher for the worker launch path, where a
+// paired device's bare scopes are compared by containment.
+func narrowToLauncherWorker(ctx context.Context, granted []string) []string {
+	return narrowToLauncherAs(ctx, granted, true)
+}
+
+func narrowToLauncherAs(ctx context.Context, granted []string, deviceVocab bool) []string {
 	parent, ok := identity.FromContext(ctx)
 	if !ok || slices.Contains(parent.Scopes, "*") {
 		return slices.Clone(granted)
 	}
-	vocabAware := issuedAgentCredential(parent)
+	if issuedAgentCredential(parent) || deviceVocab && parent.Kind == "device" {
+		return retainHeld(granted, parent.Scopes)
+	}
 	var out []string
 	for _, scope := range granted {
-		if slices.Contains(parent.Scopes, scope) || (vocabAware && identity.ScopeGranted(parent.Scopes, scope)) {
+		if slices.Contains(parent.Scopes, scope) {
 			out = append(out, scope)
 		}
 	}
@@ -51,6 +70,25 @@ func narrowToLauncher(ctx context.Context, granted []string) []string {
 // issuedAgentCredential reports whether p is an agent or session principal authenticated by an issued JWT.
 func issuedAgentCredential(p identity.Principal) bool {
 	return p.TokenID != "" && (p.Kind == "agent" || p.Kind == "session")
+}
+
+// scopeHeld reports whether held already authorizes scope: the exact string, or
+// the same capability under another name or through a containing scope
+// (identity.ScopeGranted). It never answers true for a scope held may not use.
+func scopeHeld(held []string, scope string) bool {
+	return slices.Contains(held, scope) || identity.ScopeGranted(held, scope)
+}
+
+// retainHeld returns the entries of scopes that held authorizes, in order. It
+// returns a new slice (nil when nothing is held) and never adds an entry.
+func retainHeld(scopes, held []string) []string {
+	var out []string
+	for _, scope := range scopes {
+		if scopeHeld(held, scope) {
+			out = append(out, scope)
+		}
+	}
+	return out
 }
 
 func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (string, error) {
@@ -96,7 +134,7 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	p.Scopes, p.LaunchAttribution = ceiling, string(attribution)
 	if replacement {
 		if !slices.Contains(floor.Scopes, "*") {
-			p.Scopes = slices.DeleteFunc(p.Scopes, func(scope string) bool { return !slices.Contains(floor.Scopes, scope) })
+			p.Scopes = slices.DeleteFunc(p.Scopes, func(scope string) bool { return !scopeHeld(floor.Scopes, scope) })
 		}
 		if floor.ExpiresAt != nil && floor.ExpiresAt.Before(expires) {
 			p.ExpiresAt = floor.ExpiresAt
@@ -115,7 +153,7 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 			return "", err
 		}
 		if !slices.Contains(ceiling.scopes, "*") {
-			p.Scopes = slices.DeleteFunc(p.Scopes, func(scope string) bool { return !slices.Contains(ceiling.scopes, scope) })
+			p.Scopes = slices.DeleteFunc(p.Scopes, func(scope string) bool { return !scopeHeld(ceiling.scopes, scope) })
 		}
 		if ceiling.expires != nil && ceiling.expires.Before(*p.ExpiresAt) {
 			p.ExpiresAt = ceiling.expires
