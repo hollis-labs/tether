@@ -8,7 +8,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/libs/core/forums v0.3.0
-	github.com/hollis-labs/libs/harness/core v0.13.1-0.20261020020438-4ba932bc448d
+	github.com/hollis-labs/libs/harness/core v0.13.1-0.20261020020645-3818d83ab3c1
 	github.com/hollis-labs/libs/llm/core v0.2.0
 	github.com/hollis-labs/libs/mesh/core v0.6.0
 	github.com/hollis-labs/libs/security/policy v0.1.0
