@@ -52,7 +52,7 @@ func (s *Service) ProtocolList(registered []*mcpsdk.Tool, infrastructure func(st
 	tools := []*mcpsdk.Tool{}
 	next := ""
 	for _, entry := range entries[offset:end] {
-		tools = append(tools, entry.Tool)
+		tools = append(tools, ClientSafeTool(entry.Tool))
 	}
 	if end < len(entries) {
 		raw, _ := json.Marshal(pageCursor{binding, end})
