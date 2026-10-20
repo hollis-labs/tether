@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,8 @@ type Runtime struct {
 	Worker   *Worker
 	Executor *Executor
 	Mail     *outpostmail.Server
+	// Events is the optional loopback events relay; nil when not configured.
+	Events *EventsRelay
 }
 
 func NewRuntime(root, version string) (*Runtime, error) {
@@ -93,7 +96,11 @@ func NewRuntime(root, version string) (*Runtime, error) {
 		}
 		return executor.Command(ctx, f)
 	}
-	return &Runtime{Worker: w, Executor: executor, Mail: mail}, nil
+	rt := &Runtime{Worker: w, Executor: executor, Mail: mail}
+	if cfg.EventsRelay != "" {
+		rt.Events = &EventsRelay{Listen: cfg.EventsRelay, Hub: cfg.Hub, TokenFile: filepath.Join(root, "device.token"), Logf: log.Printf}
+	}
+	return rt, nil
 }
 
 // Run drains the worker and mail loops before returning. Ready is called only
@@ -105,8 +112,23 @@ func (r *Runtime) Run(ctx context.Context, ready func()) error {
 	done := make(chan error, 2)
 	go func() { done <- r.Mail.Serve(ctx) }()
 	go r.Executor.ReapLoop(ctx, HostReapInterval, OrphanGrace)
+	eventsDone := make(chan struct{})
+	if r.Events != nil {
+		// Not critical to sessions: a relay that cannot start is logged and the
+		// worker carries on. Run joins it below, so no hub call outlives Run.
+		go func() {
+			defer close(eventsDone)
+			if err := r.Events.Serve(ctx, nil); err != nil {
+				log.Printf("events-relay: not running: %v", err)
+			}
+		}()
+	} else {
+		close(eventsDone)
+	}
 	go func() { done <- r.Worker.Run(ctx) }()
 	err := <-done
 	cancel()
-	return errors.Join(err, <-done)
+	err = errors.Join(err, <-done)
+	<-eventsDone
+	return err
 }

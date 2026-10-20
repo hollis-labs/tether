@@ -166,3 +166,36 @@ app configures publishing the same way:
 
 The event's `app` must equal the app the credential is bound to; a mismatch makes
 the whole request a 403 `app_mismatch` and nothing is written.
+
+## Publishing from a worker host without a credential (events relay)
+
+A host that runs a `tether-worker` can offer its services a loopback front door
+to `POST /events`, so they hold no credential of their own:
+
+```json
+// <worker root>/config.json
+{ "events_relay": "127.0.0.1:7845" }
+```
+
+With that set (it is off by default) the worker listens on that loopback address
+and serves `POST /events` and `GET /health`. A request is checked against the
+contract limits (400/413 without reaching the hub), then forwarded byte for byte
+to `<hub>/events` with the worker's own device credential, re-read for every
+request because the worker renews it. The hub's status, `Retry-After` and body
+come back unchanged, so a client's retry rules are the same as against the hub.
+The relay answers `503` with `Retry-After` when the worker has no usable
+credential and `502` with `Retry-After` when the hub is unreachable. It binds to
+loopback only (any other address is refused), ignores any `Authorization` header
+the caller sends, and never logs a token or a body. A web page cannot use it:
+a request with an `Origin` header (403), a `Host` that is not a loopback name on the bound port (421,
+DNS rebinding) or a `Content-Type` other than `application/json` (415, which
+also closes the preflight-free cross-origin POST) is refused before the
+credential is read. Publishers using the libs `mesh/eventbus` client already
+send `application/json` and no `Origin`. Hub calls share one connection pool and
+end when the worker stops.
+
+Services then set `HOLLIS_EVENTS_URL=http://127.0.0.1:7845` and no token file.
+
+**Dev risk, accepted for now:** any local process on the host can publish as any
+registered app with the host's credential. The release fix is a per-device app
+allowlist stored with the grant (CW-20261020-0031).
