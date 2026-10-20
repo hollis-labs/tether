@@ -140,29 +140,46 @@ func TestFilteredStreamStillAdvancesCursor(t *testing.T) {
 		}
 		return bufio.NewReader(resp.Body)
 	}
+	// The stream repeats `synchronized` on every poll tick, so an idle repeat of
+	// the marker already seen is skipped; a changed marker or any event is not.
+	var lastSync int64 = -1
+	next := func(r *bufio.Reader) frame {
+		t.Helper()
+		for {
+			f := readFrame(t, r)
+			if f.kind == "synchronized" && f.id == lastSync {
+				continue
+			}
+			if f.kind == "synchronized" {
+				lastSync = f.id
+			}
+			return f
+		}
+	}
 	r := open("after_seq=0&kind=wanted.*")
-	f := readFrame(t, r)
+	f := next(r)
 	if f.kind != "wanted.one" || f.id != 2 {
 		t.Fatalf("first frame %+v", f)
 	}
-	f = readFrame(t, r)
+	f = next(r)
 	if f.kind != "synchronized" || f.id != 3 {
 		t.Fatalf("filtered-out tail did not advance the cursor: %+v", f)
 	}
 	// Live: a non-matching event moves the marker, a matching one is delivered.
 	publish("noise.three")
-	f = readFrame(t, r)
+	f = next(r)
 	if f.kind != "synchronized" || f.id != 4 {
 		t.Fatalf("live noise: %+v", f)
 	}
 	publish("wanted.two")
-	f = readFrame(t, r)
+	f = next(r)
 	if f.kind != "wanted.two" || f.id != 5 {
 		t.Fatalf("live match: %+v", f)
 	}
 	// A filter matching nothing still reports the head.
 	r2 := open("after_seq=0&kind=nothing.*")
-	f = readFrame(t, r2)
+	lastSync = -1
+	f = next(r2)
 	if f.kind != "synchronized" || f.id < 5 {
 		t.Fatalf("empty selection: %+v", f)
 	}
