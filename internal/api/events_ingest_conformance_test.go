@@ -27,7 +27,7 @@ import (
 type confHub struct {
 	srv *httptest.Server
 	db  *store.Store
-	bus events.Bus
+	bus events.OutboxBus
 }
 
 func newConfHub(t *testing.T, mode identity.Mode, principal *identity.Principal, cfg eventingest.Config, ingestOn bool) *confHub {
@@ -37,7 +37,8 @@ func newConfHub(t *testing.T, mode identity.Mode, principal *identity.Principal,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	bus := events.NewBus(events.BusOptions{Persister: db})
+	bus := events.NewBus(events.BusOptions{Persister: db}).(events.OutboxBus)
+	t.Cleanup(bus.StartOutbox(context.Background()))
 	s := &Server{EventsStore: db, EventIngestMode: mode}
 	if ingestOn {
 		svc, err := eventingest.New(bus, db, cfg)

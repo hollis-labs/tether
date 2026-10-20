@@ -32,10 +32,58 @@ func (s *Store) IngestDigest(ctx context.Context, eventID string) (digest string
 	return digest, err == nil, err
 }
 
-// RecordIngestDigest stores the digest for an ingested event id. A repeat of
-// the same id keeps the first digest.
-func (s *Store) RecordIngestDigest(ctx context.Context, eventID, digest, app string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO event_ingest_digests (event_id, digest, app, at) VALUES (?, ?, ?, ?)
-		ON CONFLICT(event_id) DO NOTHING`, eventID, digest, app, at.UTC().Format(time.RFC3339Nano))
-	return err
+// IngestOutcome is how IngestEvent settled an id.
+type IngestOutcome int
+
+const (
+	// IngestStored: the event and its digest were committed together.
+	IngestStored IngestOutcome = iota
+	// IngestDuplicate: the id is stored with the same digest.
+	IngestDuplicate
+	// IngestConflict: the id is stored with a different digest, or with no digest
+	// at all. Missing evidence is never taken for a verified duplicate.
+	IngestConflict
+)
+
+// IngestEvent writes e and the digest of what the producer sent in one
+// transaction, so an event never exists without its digest. The bus fans the
+// event out after the commit (its outbox drainer), not before the digest is
+// durable. A repeat of a stored id writes nothing: the same digest is a
+// duplicate, anything else a conflict. The returned event is the stored one.
+func (s *Store) IngestEvent(ctx context.Context, bus events.OutboxBus, e events.Event, digest, app string, at time.Time) (events.Event, IngestOutcome, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return events.Event{}, IngestStored, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	existing, err := scanEvent(tx.QueryRowContext(ctx, `SELECT `+eventReadColumns+` FROM events WHERE event_id = ?`, e.EventID))
+	switch {
+	case err == nil:
+		var recorded string
+		err := tx.QueryRowContext(ctx, `SELECT digest FROM event_ingest_digests WHERE event_id = ?`, e.EventID).Scan(&recorded)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && recorded != digest) {
+			return existing, IngestConflict, nil
+		}
+		if err != nil {
+			return events.Event{}, IngestStored, err
+		}
+		return existing, IngestDuplicate, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return events.Event{}, IngestStored, err
+	}
+
+	stored, err := bus.PublishTx(ctx, tx, e)
+	if err != nil {
+		return events.Event{}, IngestStored, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO event_ingest_digests (event_id, digest, app, at) VALUES (?, ?, ?, ?)`,
+		e.EventID, digest, app, at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return events.Event{}, IngestStored, err
+	}
+	if err := tx.Commit(); err != nil {
+		return events.Event{}, IngestStored, err
+	}
+	bus.KickOutbox()
+	return stored, IngestStored, nil
 }

@@ -19,7 +19,7 @@ import (
 type fixture struct {
 	svc *eventingest.Service
 	db  *store.Store
-	bus events.Bus
+	bus events.OutboxBus
 }
 
 func newFixture(t *testing.T, cfg eventingest.Config) fixture {
@@ -29,7 +29,8 @@ func newFixture(t *testing.T, cfg eventingest.Config) fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	bus := events.NewBus(events.BusOptions{Persister: db})
+	bus := events.NewBus(events.BusOptions{Persister: db}).(events.OutboxBus)
+	t.Cleanup(bus.StartOutbox(context.Background()))
 	svc, err := eventingest.New(bus, db, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -339,5 +340,56 @@ func TestLifecycleKindsAreAdmittedForTheirOwners(t *testing.T) {
 	e, _, _ := f.db.EventByEventID(context.Background(), "evt_00000000000000000000000000006001")
 	if !strings.Contains(e.PayloadJSON, `"to":"wedged"`) {
 		t.Fatalf("payload lost declared fields: %s", e.PayloadJSON)
+	}
+}
+
+// A write failure between the event and its digest must leave neither behind:
+// the event and the digest commit together.
+func TestDigestWriteFailureLeavesNoEvent(t *testing.T) {
+	f := newFixture(t, eventingest.Config{AllowUnknownKinds: true})
+	ctx := context.Background()
+	id := "evt_00000000000000000000000000000d01"
+	if _, err := f.db.DB().ExecContext(ctx, `CREATE TRIGGER fail_digest BEFORE INSERT ON event_ingest_digests BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	orig := raw(id, "torque", "task.state_changed", nil)
+	if _, err := f.svc.Ingest(ctx, operator, []json.RawMessage{orig}); err == nil {
+		t.Fatal("digest write failure was acknowledged")
+	}
+	if _, ok, _ := f.db.EventByEventID(ctx, id); ok {
+		t.Fatal("event stored without its digest")
+	}
+	if _, err := f.db.DB().ExecContext(ctx, `DROP TRIGGER fail_digest`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A different event reusing the id is not mistaken for a duplicate of the failed one.
+	other := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["payload"] = map[string]any{"to": "done"} })
+	res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{other})
+	if err != nil || res[0].Status != ingest.StatusAccepted {
+		t.Fatalf("first successful write: %+v %v", res, err)
+	}
+	res, _ = f.svc.Ingest(ctx, operator, []json.RawMessage{orig})
+	if res[0].Status != ingest.StatusRejected || res[0].Code != ingest.CodeIDConflict {
+		t.Fatalf("the original after the other was stored: %+v", res[0])
+	}
+}
+
+// An event with no digest on record (written before the ingest existed) is not
+// proof of a duplicate: the id is a conflict.
+func TestStoredEventWithoutDigestIsAConflict(t *testing.T) {
+	f := newFixture(t, eventingest.Config{AllowUnknownKinds: true})
+	ctx := context.Background()
+	id := "evt_00000000000000000000000000000d02"
+	if _, err := f.svc.Ingest(ctx, operator, []json.RawMessage{raw(id, "torque", "task.state_changed", nil)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.DB().ExecContext(ctx, `DELETE FROM event_ingest_digests WHERE event_id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	other := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["payload"] = map[string]any{"to": "done"} })
+	res, _ := f.svc.Ingest(ctx, operator, []json.RawMessage{other})
+	if res[0].Status != ingest.StatusRejected || res[0].Code != ingest.CodeIDConflict {
+		t.Fatalf("%+v", res[0])
 	}
 }

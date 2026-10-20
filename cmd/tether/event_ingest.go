@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
+
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/eventingest"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 const (
@@ -20,7 +23,11 @@ func newEventIngest(svc *app.Service, s daemon.EventIngestSettings) (*eventinges
 	if burst <= 0 {
 		burst = defaultEventIngestBurst
 	}
-	return eventingest.New(svc.Bus, svc.Store, eventingest.Config{
+	bus, ok := svc.Bus.(events.OutboxBus)
+	if !ok {
+		return nil, errors.New("event ingest: the daemon's event bus has no transactional outbox")
+	}
+	return eventingest.New(bus, svc.Store, eventingest.Config{
 		AllowUnknownKinds: s.AllowUnknownKinds,
 		RatePerSecond:     rate,
 		Burst:             burst,

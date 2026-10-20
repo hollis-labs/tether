@@ -21,6 +21,7 @@ import (
 	"github.com/hollis-labs/libs/security/redact"
 
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // ErrAppMismatch means a credential bound to one app published an event that
@@ -31,16 +32,14 @@ var ErrAppMismatch = errors.New("eventingest: event app does not match the crede
 // request; ids make that safe.
 var ErrUnavailable = errors.New("eventingest: event log unavailable")
 
-// Bus is the event log's writer.
-type Bus interface {
-	Publish(ctx context.Context, e events.Event) error
-}
+// Bus is the event log's writer: the ingest writes on the store's transaction
+// and the bus delivers after the commit.
+type Bus = events.OutboxBus
 
 // Store is the ingest's view of the event store.
 type Store interface {
-	EventByEventID(ctx context.Context, eventID string) (events.Event, bool, error)
-	IngestDigest(ctx context.Context, eventID string) (string, bool, error)
-	RecordIngestDigest(ctx context.Context, eventID, digest, app string, at time.Time) error
+	// IngestEvent commits the event and its digest together.
+	IngestEvent(ctx context.Context, bus events.OutboxBus, e events.Event, digest, app string, at time.Time) (events.Event, store.IngestOutcome, error)
 }
 
 // Caller is who is publishing. The API layer builds it from the verified
@@ -164,48 +163,24 @@ func (s *Service) one(ctx context.Context, c Caller, h head, raw json.RawMessage
 	}
 	digest := eventDigest(ev)
 
-	existing, found, err := s.store.EventByEventID(ctx, ev.ID)
+	stored, outcome, err := s.append(ctx, c, ev, digest)
 	if err != nil {
 		return ingest.Result{}, err
 	}
-	if found {
-		recorded, ok, err := s.store.IngestDigest(ctx, ev.ID)
-		if err != nil {
-			return ingest.Result{}, err
-		}
-		if ok && recorded != digest {
-			rej := &ingest.Rejection{Code: ingest.CodeIDConflict, Message: "id is already stored with a different event"}
-			return rej.Result(ev.ID), nil
-		}
-		return ingest.Result{ID: ev.ID, Status: ingest.StatusDuplicate, Cursor: cursor(existing.Seq)}, nil
-	}
-
-	stored, err := s.append(ctx, c, ev)
-	if err != nil {
-		return ingest.Result{}, err
-	}
-	if err := s.store.RecordIngestDigest(ctx, ev.ID, digest, ev.App, s.cfg.Now()); err != nil {
-		// The event is stored; without a digest a later conflict goes unnoticed
-		// but a retry still dedupes by id.
-		return ingest.Result{}, err
+	switch outcome {
+	case store.IngestConflict:
+		rej := &ingest.Rejection{Code: ingest.CodeIDConflict, Message: "id is already stored with a different event"}
+		return rej.Result(ev.ID), nil
+	case store.IngestDuplicate:
+		return ingest.Result{ID: ev.ID, Status: ingest.StatusDuplicate, Cursor: cursor(stored.Seq)}, nil
 	}
 	return ingest.Result{ID: ev.ID, Status: ingest.StatusAccepted, Cursor: cursor(stored.Seq)}, nil
 }
 
-func (s *Service) append(ctx context.Context, c Caller, ev runtimeevents.Event) (events.Event, error) {
+func (s *Service) append(ctx context.Context, c Caller, ev runtimeevents.Event, digest string) (events.Event, store.IngestOutcome, error) {
 	payload, class := s.sanitize(ev)
 	e := toEvent(ev, c.Actor, payload, class)
-	if err := s.bus.Publish(ctx, e); err != nil {
-		return events.Event{}, err
-	}
-	stored, ok, err := s.store.EventByEventID(ctx, ev.ID)
-	if err != nil {
-		return events.Event{}, err
-	}
-	if !ok {
-		return events.Event{}, errors.New("published event not found")
-	}
-	return stored, nil
+	return s.store.IngestEvent(ctx, s.bus, e, digest, ev.App, s.cfg.Now())
 }
 
 // sanitize is the hub's backstop: the producer sanitizes first, and the hub

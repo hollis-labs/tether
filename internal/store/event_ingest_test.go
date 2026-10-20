@@ -19,14 +19,18 @@ func TestIngestDigestRoundTripAndRetention(t *testing.T) {
 		t.Fatalf("empty store: %v %v", found, err)
 	}
 	old := time.Now().Add(-100 * 24 * time.Hour)
-	if err := db.RecordIngestDigest(ctx, "evt_1", "sha256:a", "torque", old); err != nil {
+	record := func(id, digest string, at time.Time) error {
+		_, err := db.db.ExecContext(ctx, `INSERT INTO event_ingest_digests (event_id, digest, app, at) VALUES (?, ?, 'torque', ?)`, id, digest, at.UTC().Format(time.RFC3339Nano))
+		return err
+	}
+	if err := record("evt_1", "sha256:a", old); err != nil {
 		t.Fatal(err)
 	}
-	// The first digest wins; a repeat does not replace it.
-	if err := db.RecordIngestDigest(ctx, "evt_1", "sha256:b", "torque", old); err != nil {
-		t.Fatal(err)
+	// One digest per id: a second is refused, never replaced.
+	if err := record("evt_1", "sha256:b", old); err == nil {
+		t.Fatal("a second digest for the same id was accepted")
 	}
-	if err := db.RecordIngestDigest(ctx, "evt_2", "sha256:c", "torque", time.Now()); err != nil {
+	if err := record("evt_2", "sha256:c", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if d, found, _ := db.IngestDigest(ctx, "evt_1"); !found || d != "sha256:a" {
