@@ -2,6 +2,8 @@ package environmentstream
 
 import (
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -194,12 +196,31 @@ func anyMatch(vals []string, f func(string) bool) bool {
 // events (identity.IsOperatorCredential: verified, operator kind and id, and not
 // an issued token). A paired device, a service, an agent, or an operator-minted
 // narrow token is not the operator, whatever scopes it carries, "*" included.
-// A request with no principal at all (authentication off on the local socket,
-// where there is no credential to check) is the local operator's own and is
-// treated as one. All other visibility values are delivered as before.
-func Visible(visibility string, p identity.Principal, hasPrincipal bool) bool {
-	if visibility != "operator" || !hasPrincipal {
+//
+// A request with no principal is the operator's own only when trustedLocal is
+// set (see TrustedLocal): identity mode off, on the local Unix-socket listener.
+// Anywhere else a missing or unverified principal fails closed to non-operator
+// visibility. All other visibility values are delivered as before.
+func Visible(visibility string, p identity.Principal, hasPrincipal, trustedLocal bool) bool {
+	if visibility != "operator" {
 		return true
 	}
+	if !hasPrincipal {
+		return trustedLocal
+	}
 	return identity.IsOperatorCredential(p)
+}
+
+// TrustedLocal reports whether a request with no principal may be treated as
+// the local operator: the local listener's identity mode is off (there is no
+// credential to check) and the request arrived over a Unix socket. It is false
+// for TCP and remote listeners, and for observe and enforce, where a missing or
+// unverified principal is a failure, not the operator.
+func TrustedLocal(mode identity.Mode, r *http.Request) bool {
+	// The empty mode is off, as in identity.Middleware.
+	if mode != identity.Off && mode != "" {
+		return false
+	}
+	addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	return ok && addr.Network() == "unix"
 }

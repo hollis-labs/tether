@@ -270,6 +270,7 @@ var daemonRunCmd = &cobra.Command{
 		var environmentStream *environmentstream.Server
 		if cfg.Modules.Enabled(environment.StreamAPI) {
 			environmentStream = eventProjection
+			environmentStream.LocalIdentityMode = cfg.IdentityModeFor("local_api")
 		}
 		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
 			Recorder:  svc.Store,

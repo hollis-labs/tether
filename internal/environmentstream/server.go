@@ -30,8 +30,12 @@ type Server struct {
 	WriteTimeout  time.Duration
 	// StoredIDs is nil in the compatibility constructor. NewStored selects
 	// it explicitly, with readiness checked before any response data.
-	StoredIDs        *StoredIDProjection
-	identityProgress func(context.Context) (store.EventIdentityProgress, error)
+	StoredIDs *StoredIDProjection
+	// LocalIdentityMode is the identity mode of the local listener this server
+	// is mounted on; it decides whether a request without a principal is the
+	// trusted local operator (TrustedLocal).
+	LocalIdentityMode identity.Mode
+	identityProgress  func(context.Context) (store.EventIdentityProgress, error)
 }
 
 func New(environmentID string, db *store.Store, bus events.Bus) *Server {
@@ -123,6 +127,7 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 		return
 	}
 	principal, hasPrincipal := identity.FromContext(r.Context())
+	trustedLocal := TrustedLocal(s.LocalIdentityMode, r)
 	liveBus, ok := s.Bus.(events.LiveSubscriber)
 	if !ok {
 		http.Error(w, "live stream unavailable", http.StatusServiceUnavailable)
@@ -228,7 +233,7 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 				}
 				// A filtered-out event is consumed like any other: the cursor
 				// below still advances past it.
-				if filter.Match(e) && Visible(e.Visibility, principal, hasPrincipal) {
+				if filter.Match(e) && Visible(e.Visibility, principal, hasPrincipal, trustedLocal) {
 					if emit(e.Kind, e.Seq, e) != nil {
 						return false
 					}
