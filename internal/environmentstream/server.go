@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -29,8 +30,12 @@ type Server struct {
 	WriteTimeout  time.Duration
 	// StoredIDs is nil in the compatibility constructor. NewStored selects
 	// it explicitly, with readiness checked before any response data.
-	StoredIDs        *StoredIDProjection
-	identityProgress func(context.Context) (store.EventIdentityProgress, error)
+	StoredIDs *StoredIDProjection
+	// LocalIdentityMode is the identity mode of the local listener this server
+	// is mounted on; it decides whether a request without a principal is the
+	// trusted local operator (TrustedLocal).
+	LocalIdentityMode identity.Mode
+	identityProgress  func(context.Context) (store.EventIdentityProgress, error)
 }
 
 func New(environmentID string, db *store.Store, bus events.Bus) *Server {
@@ -92,6 +97,8 @@ func (s *Server) checkWindowIDs(window store.EnvironmentWindow, after int64) err
 // emits a synchronized marker at the read's high-water, drains new windows,
 // and ignores duplicate notification sequences. Session filtering is applied
 // after checking the complete global window; sync markers advance its cursor.
+// Event filters (see Filter) and visibility apply the same way: they decide what
+// is written, never what is consumed.
 func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -114,6 +121,13 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 		http.Error(w, "invalid after_seq", http.StatusBadRequest)
 		return
 	}
+	filter, err := ParseFilter(r.URL.Query())
+	if err != nil {
+		http.Error(w, "invalid filter: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	principal, hasPrincipal := identity.FromContext(r.Context())
+	trustedLocal := TrustedLocal(s.LocalIdentityMode, r)
 	liveBus, ok := s.Bus.(events.LiveSubscriber)
 	if !ok {
 		http.Error(w, "live stream unavailable", http.StatusServiceUnavailable)
@@ -217,8 +231,12 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 					gap("restart", window)
 					return false
 				}
-				if emit(e.Kind, e.Seq, e) != nil {
-					return false
+				// A filtered-out event is consumed like any other: the cursor
+				// below still advances past it.
+				if filter.Match(e) && Visible(e.Visibility, principal, hasPrincipal, trustedLocal) {
+					if emit(e.Kind, e.Seq, e) != nil {
+						return false
+					}
 				}
 			}
 			after = stored.Seq

@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -359,6 +360,17 @@ func (a *Adapter) registerEventsWaitTool(s *gomcp.Server) {
 			gomcp.NumberProp("since_seq", "Only return events with seq greater than this value.", false),
 			gomcp.NumberProp("wait_ms", "Maximum time to wait for events in milliseconds (default 5000).", false),
 			gomcp.NumberProp("max_events", "Maximum matching events to return before stopping (default 1, max 100).", false),
+			gomcp.NumberProp("after_seq", "Environment-cursor mode: wait on GET /environment/events from this cursor and return full mesh events. Use the next_cursor of a previous call or the snapshot high_water_seq. When set, kind accepts exact kinds or a prefix ending in *, session_id filters scope.session_id, and since_seq/scope are not used.", false),
+			gomcp.StringProp("category", "Environment-cursor mode: class.category filter. Comma-separated for several.", false),
+			gomcp.StringProp("subject", "Environment-cursor mode: subject URN prefix. Comma-separated for several.", false),
+			gomcp.StringProp("app", "Environment-cursor mode: producer app filter. Comma-separated for several.", false),
+			gomcp.StringProp("severity_min", "Environment-cursor mode: minimum class.severity (debug, info, notice, warning, error, critical).", false),
+			gomcp.StringProp("task_id", "Environment-cursor mode: scope.task_id filter. Comma-separated for several.", false),
+			gomcp.StringProp("project_id", "Environment-cursor mode: scope.project_id filter. Comma-separated for several.", false),
+			gomcp.StringProp("workstream_id", "Environment-cursor mode: scope.workstream_id filter. Comma-separated for several.", false),
+			gomcp.StringProp("agent_urn", "Environment-cursor mode: scope.agent_urn filter. Comma-separated for several.", false),
+			gomcp.StringProp("run_id", "Environment-cursor mode: scope.run_id filter. Comma-separated for several.", false),
+			gomcp.StringProp("launch_id", "Environment-cursor mode: scope.launch_id filter. Comma-separated for several.", false),
 		),
 		Handler: a.handleEventsWait,
 	}, Reads("event stream subscription; consumes nothing"))
@@ -367,6 +379,10 @@ func (a *Adapter) registerEventsWaitTool(s *gomcp.Server) {
 func (a *Adapter) handleEventsWait(ctx context.Context, args map[string]any) (any, error) {
 	if a.client == nil {
 		return nil, toolError("daemon_unavailable", "tether_events_wait requires tetherd daemon routing; start tetherd and run tether mcp against that catalog")
+	}
+
+	if environmentWaitRequested(args) {
+		return a.handleEnvironmentEventsWait(ctx, args)
 	}
 
 	scopes, err := decodeEventScopes(args)
@@ -496,4 +512,135 @@ func stringScopes(scopes []events.Scope) []string {
 	out := make([]string, 0, len(scopes))
 	out = append(out, scopes...)
 	return out
+}
+
+// environmentFilterArgs are the tether_events_wait arguments that only the
+// environment-cursor mode understands.
+var environmentFilterArgs = []string{"category", "subject", "app", "severity_min", "task_id", "project_id", "workstream_id", "agent_urn", "run_id", "launch_id"}
+
+func environmentWaitRequested(args map[string]any) bool {
+	if _, ok := args["after_seq"]; ok {
+		return true
+	}
+	for _, k := range environmentFilterArgs {
+		if _, ok := args[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// handleEnvironmentEventsWait is tether_events_wait on the environment stream
+// (CW-20261020-0017). It returns the full mesh envelope of each matching event
+// and a next_cursor to resume from. Events a filter drops still advance the
+// cursor, so a quiet filter does not rescan the same range.
+func (a *Adapter) handleEnvironmentEventsWait(ctx context.Context, args map[string]any) (any, error) {
+	if _, ok := args["after_seq"]; !ok {
+		return nil, toolError("invalid_request", "after_seq is required with the environment filters; take it from a previous next_cursor or a snapshot high_water_seq")
+	}
+	after := int64(intArg(args, "after_seq", 0))
+	if after < 0 {
+		return nil, toolError("invalid_request", "after_seq must not be negative")
+	}
+	q := client.EnvironmentStreamQuery{
+		AfterSeq:    after,
+		Kinds:       splitCSVArg(args, "kind"),
+		Categories:  splitCSVArg(args, "category"),
+		Subjects:    splitCSVArg(args, "subject"),
+		Apps:        splitCSVArg(args, "app"),
+		SeverityMin: str(args, "severity_min"),
+		Scope:       map[string][]string{},
+	}
+	for _, dim := range []string{"task_id", "project_id", "workstream_id", "session_id", "agent_urn", "run_id", "launch_id"} {
+		if vals := splitCSVArg(args, dim); len(vals) > 0 {
+			q.Scope[dim] = vals
+		}
+	}
+	waitMS := intArg(args, "wait_ms", 5000)
+	if waitMS <= 0 {
+		waitMS = 5000
+	}
+	maxEvents := intArg(args, "max_events", 1)
+	if maxEvents <= 0 {
+		maxEvents = 1
+	}
+	if maxEvents > 100 {
+		maxEvents = 100
+	}
+	streamCtx, cancel := context.WithTimeout(ctx, time.Duration(waitMS)*time.Millisecond)
+	defer cancel()
+	frames, errCh, err := a.client.StreamEnvironmentEvents(streamCtx, q)
+	if err != nil {
+		return nil, classifyClientErr(err, "")
+	}
+	out := make([]json.RawMessage, 0, maxEvents)
+	cursor := after
+	var gap json.RawMessage
+	// take applies one frame and reports whether collection is finished. The
+	// cursor only ever moves past frames that are in out (or are markers), so a
+	// frame that is not read here is delivered by the next call.
+	take := func(f client.EnvironmentFrame) bool {
+		switch f.Kind {
+		case "synchronized":
+			if f.ID > cursor {
+				cursor = f.ID
+			}
+		case "gap":
+			gap = f.Data
+			return true
+		default:
+			out = append(out, f.Data)
+			if f.ID > cursor {
+				cursor = f.ID
+			}
+		}
+		return len(out) >= maxEvents
+	}
+	// frames is the only thing waited on: the stream goroutine closes errCh
+	// before frames, and a closed errCh is always ready, so selecting on it
+	// would end the wait ahead of frames that are still buffered. Its error, if
+	// any, is read after frames has closed.
+collect:
+	for {
+		select {
+		case f, ok := <-frames:
+			if !ok {
+				break collect
+			}
+			if take(f) {
+				break collect
+			}
+		case <-streamCtx.Done():
+			// Deadline or caller cancel: still hand back what already arrived.
+			for len(out) < maxEvents && gap == nil {
+				select {
+				case f, ok := <-frames:
+					if !ok || take(f) {
+						break collect
+					}
+				default:
+					break collect
+				}
+			}
+			break collect
+		}
+	}
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && len(out) == 0 && gap == nil {
+			return nil, toolError("internal_error", err.Error())
+		}
+	default:
+	}
+	res := map[string]any{
+		"ok":          true,
+		"events":      out,
+		"count":       len(out),
+		"timed_out":   errors.Is(streamCtx.Err(), context.DeadlineExceeded),
+		"next_cursor": cursor,
+	}
+	if gap != nil {
+		res["gap"] = gap
+	}
+	return toolJSON(res), nil
 }
