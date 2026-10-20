@@ -20,7 +20,7 @@ daemon:
 
 ## Request
 
-`POST /events` with a bearer credential. The body is one event, or
+`POST /events` with a bearer credential. The `Tether-Protocol` header is **not** required for this route (it is the one write on the remote listener's header-exempt list, behind authentication); it is accepted if sent. The body is one event, or
 `{"events":[...]}` with 1 to 100 events. At most 1 MiB per request and 64 KiB per
 payload.
 
