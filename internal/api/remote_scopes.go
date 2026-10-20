@@ -95,6 +95,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/auth/renew", "/auth/renew", map[string]string{"POST": selfScope}),
 	routeScope("/auth/token", "/auth/token", map[string]string{"POST": selfScope}),
 	routeScope(WorkloadTrustPath, WorkloadTrustPath, map[string]string{"POST": identity.WorkloadTrustScope}),
+	routeScope(ServiceTokensPath, ServiceTokensPath, map[string]string{"GET": localScope, "POST": localScope}),
 	routeScope("/auth/denylist", "/auth/denylist", map[string]string{"GET": maintainScope, "POST": adminScope}),
 	routeScope("/.well-known/jwks.json", "/.well-known/jwks.json", map[string]string{"GET": publicScope, "HEAD": publicScope}),
 	routeScope("/auth/context", "/auth/context", map[string]string{"GET": readScope}),
