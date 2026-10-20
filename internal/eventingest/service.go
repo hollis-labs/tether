@@ -67,10 +67,10 @@ type Config struct {
 
 // Service ingests events.
 type Service struct {
-	bus       Bus
-	store     Store
-	cfg       Config
-	sanitizer *redact.Sanitizer
+	bus      Bus
+	store    Store
+	cfg      Config
+	policies *policies
 
 	mu      sync.Mutex // serializes check, publish and record so a retry sees the first write
 	limiter *limiter
@@ -84,11 +84,11 @@ func New(bus Bus, store Store, cfg Config) (*Service, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	s, err := redact.NewSanitizer(redact.Policy{Mode: redact.Denylist, Sensitivity: redact.Private, MaxBytes: ingest.MaxPayloadBytes})
+	pol, err := newPolicies()
 	if err != nil {
 		return nil, err
 	}
-	svc := &Service{bus: bus, store: store, cfg: cfg, sanitizer: s}
+	svc := &Service{bus: bus, store: store, cfg: cfg, policies: pol}
 	if cfg.RatePerSecond > 0 && cfg.Burst > 0 {
 		svc.limiter = newLimiter(cfg.RatePerSecond, cfg.Burst, cfg.Now)
 	}
@@ -208,7 +208,14 @@ func (s *Service) sanitize(ev runtimeevents.Event) (string, events.Class) {
 	if len(ev.Payload) == 0 || string(ev.Payload) == "null" {
 		return "", class
 	}
-	out, rep := s.sanitizer.Sanitize(ev.Payload)
+	sanitizer, _, err := s.policies.forKind(string(ev.Kind))
+	if err != nil {
+		// A broken policy never degrades to a looser one: nothing of the
+		// payload is stored, and the failure is visible in the log.
+		log.Printf("%v; payload of %s not stored", err, ev.Kind)
+		return `{"sanitize_error":"policy_unavailable"}`, events.Class{Sanitized: false}
+	}
+	out, rep := sanitizer.Sanitize(ev.Payload)
 	if rep.ErrorClass != "" {
 		b, _ := json.Marshal(map[string]string{"sanitize_error": string(rep.ErrorClass)})
 		return string(b), events.Class{Sanitized: false}

@@ -97,14 +97,29 @@ accepted; with `enforce` they are rejected.
 ## What the hub does to a payload
 
 The producer sanitizes before sending. The hub scrubs again with the shared
-redaction engine (`security/redact`, denylist mode, private) and records the
-count in `class.redactions`. A payload that cannot be sanitized (oversized,
-opaque) is replaced with `{"sanitize_error":"<class>"}` and the event is stored
-with `class.sanitized=false`. The log never stores a secret-class event: a
-payload the producer calls `secret` is withheld.
+redaction engine (`security/redact`) and records the count in `class.redactions`:
 
-Per-kind payload-path allowlists replace the denylist as kinds are registered
-(CW-20261020-0012).
+- A kind whose catalog payload schema is a plain tree of declared properties gets
+  an **allowlist** derived from that schema: only the declared paths are kept and
+  anything else is removed, so a field the schema does not declare never reaches
+  the log. To carry a new field, add it to the kind's payload schema in the libs
+  catalog.
+- A kind with no schema, a free-form object (`data.emitted`), or a schema using
+  composition (`oneOf`, `$ref`, ...) cannot be reduced to a path list. It gets the
+  **denylist**: secrets and PII are scrubbed and the shape is kept. This
+  fallback is a DEV policy, to be revisited at release posture; secret and PII
+  scrubbing always applies.
+- A schema that is declared but cannot be read, parsed or compiled into a policy
+  is **not** a reason to fall back. The daemon builds every catalog kind's policy
+  at start and refuses to enable ingest, with an error naming the kind and the
+  schema. If a kind's policy is still unavailable when an event arrives, the
+  payload is not stored (`{"sanitize_error":"policy_unavailable"}`,
+  `class.sanitized=false`) and the daemon logs the cause.
+- A payload that cannot be sanitized (oversized, opaque) is replaced with
+  `{"sanitize_error":"<class>"}` and the event is stored with
+  `class.sanitized=false`.
+- The log never stores a secret-class event: a payload the producer calls
+  `secret` is withheld.
 
 ## Retries and ordering
 
