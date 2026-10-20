@@ -450,7 +450,7 @@ func TestRemoteListenerIssuerReadsNeedNoProtocolHeader(t *testing.T) {
 		t.Fatalf("public JWKS without header/bearer: %d %s", w.Code, w.Body.String())
 	}
 	// The minimal deny-list read is public: no credential, no protocol header,
-	// ids only, so any verifier can honour a revocation. Writing it is not.
+	// ids only, so any verifier can honor a revocation. Writing it is not.
 	if w := do("GET", "/auth/denylist", "", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"jti"`) {
 		t.Fatalf("public deny-list read returned %d: %s", w.Code, w.Body.String())
 	}
