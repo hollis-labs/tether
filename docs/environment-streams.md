@@ -21,6 +21,45 @@ members with those names remain nested payload members and cannot shadow the
 envelope coordinates. Original kinds and JSON payloads are retained, including
 unknown kinds. Invalid persisted JSON ends the stream with a resnapshot signal.
 
+## Server-side filters
+
+`GET /environment/events` and `GET /sessions/{id}/stream` accept filters as query
+parameters (CW-20261020-0017). Parameters combine with AND; a repeated parameter
+combines with OR. An unknown parameter value is a `400`, never a silent
+match-everything.
+
+| Parameter | Matches |
+| --- | --- |
+| `kind` | exact kind, or a prefix when it ends in `*` (`task.*`) |
+| `category` | `class.category` |
+| `subject` | prefix of the event `subject` URN |
+| `app` | producer `app` |
+| `severity_min` | `class.severity` at or above `debug`, `info`, `notice`, `warning`, `error` or `critical` (a missing severity counts as `info`) |
+| `scope.<dim>` | `task_id`, `project_id`, `workstream_id`, `session_id`, `agent_urn`, `run_id`, `launch_id` |
+
+Filters decide what is written, never what is consumed. An event that does not
+match is still read, so the cursor, the `synchronized` marker and gap handling
+behave exactly as on an unfiltered stream: a quiet filter reports the head in
+`synchronized`, and resuming from it replays nothing. `category`, `severity_min`
+and `scope.*` read the stored envelope, so they match events written with it
+(the daemon's stored-ID projection); a row without those blocks never matches
+them.
+
+Events whose `visibility` is `operator` are written only to the operator. A
+request with no verified principal (authentication off on the local socket) is
+treated as the operator; any other principal, including a paired device, does
+not receive them. No producer sets `operator` yet, so today this changes nothing.
+
+`tether_events_wait` reaches the same stream with `after_seq` (the cursor from a
+snapshot's `high_water_seq` or a previous `next_cursor`) and the filters as
+arguments: `kind` (comma-separated, `*` prefixes), `category`, `subject`, `app`,
+`severity_min`, `task_id`, `project_id`, `workstream_id`, `session_id`,
+`agent_urn`, `run_id` and `launch_id`. It returns the full mesh envelopes, a
+`next_cursor` that also advances past filtered-out events, and a `gap` object
+when the server reports one. Without `after_seq` and the filters the tool is the
+legacy `/events/stream` wait, unchanged, as are `GET /events` and
+`GET /events/stream`.
+
 The daemon uses the persisted producer envelope after the frozen-ID readiness
 step described below. IDs are opaque strings; log cursors and producer counters
 remain separate.
