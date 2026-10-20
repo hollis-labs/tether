@@ -133,12 +133,12 @@ func (i *Issuer) issueServiceFrom(parent identity.Principal, req ServiceRequest,
 	if err != nil {
 		return Token{}, ServiceRecord{}, fmt.Errorf("authissuer: service signing key: %w", err)
 	}
-	if i.afterServiceKeyChosen != nil {
-		i.afterServiceKeyChosen()
-	}
 	tok, kid, err := i.signWith(svcKID, svcKey, c)
 	if err != nil {
 		return Token{}, ServiceRecord{}, err
+	}
+	if i.afterServiceKeyChosen != nil {
+		i.afterServiceKeyChosen()
 	}
 	rec := ServiceRecord{JTI: c.JTI, Sub: sub, App: req.App, Env: env, Audience: req.Audience, Scopes: scopes, Label: req.Label,
 		IssuedBy: parent.ID, IssuedAt: now, ExpiresAt: exp, KID: kid, Replaces: replaces}

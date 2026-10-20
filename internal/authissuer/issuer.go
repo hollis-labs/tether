@@ -62,8 +62,8 @@ type Issuer struct {
 	// in-flight issuance is about to depend on. Order: keyLife, then the key store's
 	// and state's own locks.
 	keyLife sync.Mutex
-	// afterServiceKeyChosen is a test seam: it runs while keyLife is held, once the
-	// service key is chosen and before the record is written.
+	// afterServiceKeyChosen is a test seam: it runs while keyLife is held, after the
+	// token is signed and before its record is written.
 	afterServiceKeyChosen func()
 }
 

@@ -769,3 +769,53 @@ func TestIssueRotatePruneInterleavingKeepsTheKeyTheTokenNames(t *testing.T) {
 		t.Fatalf("the new token does not verify: %v", err)
 	}
 }
+
+// Two rotations and a prune inside the window: the key the in-flight token names
+// stays (and is published), a key nothing names is still pruned afterwards, and
+// the active key is untouched.
+func TestIssueTwoRotationsAndPruneInsideTheWindow(t *testing.T) {
+	is, _ := newIssuer(t)
+	_, first, err := is.IssueService(operatorP, ServiceRequest{App: "nanite", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := is.RevokeService(first.JTI); err != nil {
+		t.Fatal(err)
+	}
+	var middle, active string
+	var pruned sync.WaitGroup
+	is.afterServiceKeyChosen = func() {
+		var err error
+		if middle, err = is.Keys.RotateService(); err != nil {
+			t.Error(err)
+		}
+		if active, err = is.Keys.RotateService(); err != nil {
+			t.Error(err)
+		}
+		pruned.Add(1)
+		go func() {
+			defer pruned.Done()
+			is.pruneServiceKeys()
+		}()
+		time.Sleep(100 * time.Millisecond)
+	}
+	tok, rec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pruned.Wait()
+	is.pruneServiceKeys() // a later prune: now the record names rec.KID
+	jwks := string(is.Keys.JWKS())
+	if rec.KID != first.KID || !strings.Contains(jwks, rec.KID) {
+		t.Fatalf("the token's key %s is not published (first %s)", rec.KID, first.KID)
+	}
+	if !strings.Contains(jwks, active) {
+		t.Fatalf("the active service key %s is not published", active)
+	}
+	if strings.Contains(jwks, middle) {
+		t.Fatalf("the unused rotated-out key %s is still published", middle)
+	}
+	if _, err := verifierFor(t, is).Verify(context.Background(), tok.Token); err != nil {
+		t.Fatalf("the token does not verify: %v", err)
+	}
+}
