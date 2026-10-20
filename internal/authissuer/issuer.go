@@ -210,6 +210,12 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 
 func (i *Issuer) sign(c Claims) (token, kid string, err error) {
 	kid, priv := i.Keys.Active()
+	return i.signWith(kid, priv, c)
+}
+
+// signWith signs c with the given key (the session key for ordinary tokens, a
+// service key for service tokens).
+func (i *Issuer) signWith(kid string, priv ed25519.PrivateKey, c Claims) (token, kid2 string, err error) {
 	hdr, _ := json.Marshal(map[string]string{"alg": "EdDSA", "typ": "JWT", "kid": kid})
 	pl, err := json.Marshal(c)
 	if err != nil {
@@ -296,7 +302,7 @@ func (i *Issuer) Maintain(ctx context.Context, rotateEvery time.Duration) {
 				log.Printf("authissuer: key rotation failed: %v", err)
 			}
 		}
-		if _, err := i.Keys.Prune(); err != nil {
+		if _, err := i.Keys.PruneWith(i.ServiceKeyInUse); err != nil {
 			log.Printf("authissuer: key prune failed: %v", err)
 		}
 	}

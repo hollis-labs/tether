@@ -1,8 +1,10 @@
 package authissuer
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,6 +269,261 @@ func TestRevokeServicesForAPrincipalRevokesAllItsTokens(t *testing.T) {
 	}
 	if _, err := is.RevokeServicesFor("Bad App", ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("bad app: %v", err)
+	}
+}
+
+func verifierFor(t *testing.T, is *Issuer) *Verifier {
+	t.Helper()
+	v, err := NewVerifier(fakeStored{map[string]identity.Principal{}}, is)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func TestServiceTokensAreSignedByTheDedicatedKeyAndSurviveSessionKeyRotationAndPrune(t *testing.T) {
+	is, _ := newIssuer(t)
+	tok, rec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(rec.KID, ServiceKIDPrefix) || tok.KID != rec.KID {
+		t.Fatalf("kid %q / %q", rec.KID, tok.KID)
+	}
+	if sk, _ := is.Keys.Active(); strings.HasPrefix(sk, ServiceKIDPrefix) {
+		t.Fatalf("the session signing key is a service key: %s", sk)
+	}
+	// An ordinary token is never signed by the service key.
+	ord, err := is.Exchange(operatorP, Request{Audience: "tether", Scopes: []string{"read"}})
+	if err != nil || strings.HasPrefix(ord.KID, ServiceKIDPrefix) {
+		t.Fatalf("session token kid %q err %v", ord.KID, err)
+	}
+	// Normal key rotation, then the clock past the overlap window and a prune
+	// (what Maintain does hourly): the session keys go, the service token still verifies.
+	if err := is.Rotate(); err != nil {
+		t.Fatal(err)
+	}
+	is.Keys.now = func() time.Time { return time.Now().Add(DefaultKeyOverlap + time.Hour) }
+	is.Now = is.Keys.now
+	if _, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(is.Keys.KIDs()); got != 2 { // the new session key + the service key
+		t.Fatalf("keys after prune: %v", is.Keys.KIDs())
+	}
+	v := verifierFor(t, is)
+	if _, err := v.Verify(context.Background(), tok.Token); err != nil {
+		t.Fatalf("service token stopped verifying after a rotation and prune: %v", err)
+	}
+	if _, err := v.Verify(context.Background(), ord.Token); err == nil {
+		t.Fatal("the pruned session key's token still verifies")
+	}
+}
+
+func TestServiceKeyIsKeptWhileALiveRecordNamesItAndPrunableAfter(t *testing.T) {
+	is, dir := newIssuer(t)
+	_, rec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Prune with no source of truth must keep every service key.
+	if _, err := is.Keys.PruneWith(nil); err != nil {
+		t.Fatal(err)
+	}
+	// Rotate the service key: the old one is retired but stays while the record is live.
+	res, err := is.RotateServiceKey(operatorP, false)
+	if err != nil || res.NewKID == rec.KID || len(res.Pending) != 1 || res.Pending[0].JTI != rec.JTI {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if _, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil {
+		t.Fatal(err)
+	}
+	if !containsKID(is.Keys.KIDs(), rec.KID) || !containsKID(is.Keys.KIDs(), res.NewKID) {
+		t.Fatalf("old service key pruned while a live token needs it: %v", is.Keys.KIDs())
+	}
+	if _, err := os.Stat(filepath.Join(dir, rec.KID+".key")); err != nil {
+		t.Fatal(err)
+	}
+	// After the last record naming it is revoked, the old key may go; the active service key never does.
+	if _, err := is.RevokeService(rec.JTI); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil || !removed {
+		t.Fatalf("removed=%v err=%v", removed, err)
+	}
+	if containsKID(is.Keys.KIDs(), rec.KID) {
+		t.Fatal("old service key kept after its last record was revoked")
+	}
+	if _, err := os.Stat(filepath.Join(dir, rec.KID+".key")); !os.IsNotExist(err) {
+		t.Fatalf("old key file still on disk: %v", err)
+	}
+	if !containsKID(is.Keys.KIDs(), res.NewKID) {
+		t.Fatal("the active service key was pruned")
+	}
+	if removed, _ := is.Keys.PruneWith(is.ServiceKeyInUse); removed {
+		t.Fatal("pruned the active service key with no records")
+	}
+	// A reopened store has the same keys.
+	ks2, err := OpenKeyStore(dir, time.Hour)
+	if err != nil || !containsKID(ks2.KIDs(), res.NewKID) {
+		t.Fatalf("%v %v", ks2.KIDs(), err)
+	}
+}
+
+func containsKID(kids []string, kid string) bool {
+	for _, k := range kids {
+		if k == kid {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRotateServiceKeyKeepsOldTokensValidUntilRevokedAndReissuesOnRequest(t *testing.T) {
+	is, _ := newIssuer(t)
+	oldTok, oldRec, _ := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}, Label: "agent-os"})
+	other, otherRec, _ := is.IssueService(operatorP, ServiceRequest{App: "nanite", Env: "staging", Audience: "tether", Scopes: []string{"tether.read", "events"}})
+	revokedTok, revokedRec, _ := is.IssueService(operatorP, ServiceRequest{App: "hadron", Audience: "tether", Scopes: []string{"events"}})
+	if _, err := is.RevokeService(revokedRec.JTI); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := is.RotateServiceKey(identity.Principal{Verified: true, ID: "d", Kind: "device", Scopes: []string{"admin"}}, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a device rotated the service key: %v", err)
+	}
+	res, err := is.RotateServiceKey(operatorP, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Pending) != 2 || len(res.Reissued) != 2 {
+		t.Fatalf("pending %d reissued %d (revoked record must not be re-issued)", len(res.Pending), len(res.Reissued))
+	}
+	v := verifierFor(t, is)
+	ctx := context.Background()
+	for name, tk := range map[string]string{"old cerberus": oldTok.Token, "old nanite": other.Token} {
+		if _, err := v.Verify(ctx, tk); err != nil {
+			t.Errorf("%s stopped verifying after the rotation: %v", name, err)
+		}
+	}
+	if _, err := v.Verify(ctx, revokedTok.Token); err == nil {
+		t.Error("a revoked token verifies after the rotation")
+	}
+	byReplaces := map[string]ReissuedToken{}
+	for _, r := range res.Reissued {
+		byReplaces[r.Record.Replaces] = r
+		if r.Record.KID != res.NewKID || r.Record.JTI == r.Record.Replaces {
+			t.Errorf("replacement %+v", r.Record)
+		}
+		p, err := v.Verify(ctx, r.Token.Token)
+		if err != nil || p.ID != r.Record.Sub {
+			t.Errorf("replacement does not verify: %v", err)
+		}
+	}
+	if byReplaces[oldRec.JTI].Record.Label != "agent-os" || byReplaces[otherRec.JTI].Record.Sub != "msg://service/nanite/staging" ||
+		strings.Join(byReplaces[otherRec.JTI].Record.Scopes, " ") != "tether.events tether.read" {
+		t.Fatalf("replacements lost their identity: %+v", byReplaces)
+	}
+	// The operator delivers the new tokens, then revokes the old ones: old stop, new keep working.
+	for _, j := range []string{oldRec.JTI, otherRec.JTI} {
+		if _, err := is.RevokeService(j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := v.Verify(ctx, oldTok.Token); err == nil {
+		t.Error("old token verifies after being revoked")
+	}
+	for _, r := range res.Reissued {
+		if _, err := v.Verify(ctx, r.Token.Token); err != nil {
+			t.Errorf("replacement stopped working: %v", err)
+		}
+	}
+	// Rotate without re-issue only reports what needs re-delivery and mints nothing.
+	again, err := is.RotateServiceKey(operatorP, false)
+	if err != nil || len(again.Reissued) != 0 || len(again.Pending) != 2 {
+		t.Fatalf("%+v %v", again, err)
+	}
+}
+
+func TestRevokeAllIsTheEmergencyStop(t *testing.T) {
+	is, _ := newIssuer(t)
+	var toks []string
+	for _, a := range []string{"cerberus", "cerberus", "nanite", "hadron"} {
+		tk, _, err := is.IssueService(operatorP, ServiceRequest{App: a, Audience: "tether", Scopes: []string{"events"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		toks = append(toks, tk.Token)
+	}
+	got, err := is.RevokeAllServices("cerberus")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("%d %v", len(got), err)
+	}
+	v := verifierFor(t, is)
+	for i, tk := range toks {
+		_, err := v.Verify(context.Background(), tk)
+		if (i < 2) == (err == nil) {
+			t.Errorf("token %d verifies=%v", i, err == nil)
+		}
+	}
+	got, err = is.RevokeAllServices("")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("revoke all: %d %v", len(got), err)
+	}
+	for i, tk := range toks {
+		if _, err := v.Verify(context.Background(), tk); err == nil {
+			t.Errorf("token %d still verifies after revoke --all", i)
+		}
+	}
+	if _, err := is.RevokeAllServices(""); !errors.Is(err, ErrServiceNotFound) {
+		t.Fatalf("nothing left: %v", err)
+	}
+	if _, err := is.RevokeAllServices("Bad App"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("bad app: %v", err)
+	}
+}
+
+func TestNoKeyMaterialInStateDumpsOrLogs(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	is, dir := newIssuer(t)
+	if _, _, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := is.RotateServiceKey(operatorP, true); err != nil {
+		t.Fatal(err)
+	}
+	var seeds []string
+	files, _ := os.ReadDir(dir)
+	for _, f := range files {
+		if strings.HasSuffix(f.Name(), ".key") {
+			b, _ := os.ReadFile(filepath.Join(dir, f.Name()))
+			seeds = append(seeds, strings.TrimSpace(string(b)))
+			if fi, _ := f.Info(); fi.Mode().Perm() != 0o600 {
+				t.Errorf("%s mode %v", f.Name(), fi.Mode().Perm())
+			}
+		}
+	}
+	if len(seeds) < 3 {
+		t.Fatalf("expected session + 2 service key files, got %d", len(seeds))
+	}
+	for _, name := range []string{"keys.json", "jwks.json", "state.json"} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, seed := range seeds {
+			if strings.Contains(string(b), seed) {
+				t.Errorf("%s holds private key material", name)
+			}
+		}
+		if fi, _ := os.Stat(filepath.Join(dir, name)); fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode %v", name, fi.Mode().Perm())
+		}
+	}
+	for _, seed := range seeds {
+		if strings.Contains(logs.String(), seed) {
+			t.Error("a private seed reached the log")
+		}
 	}
 }
 

@@ -62,11 +62,27 @@ type ServiceTokenResponse struct {
 }
 
 // ServiceTokenRevokeRequest is the body of POST /auth/service-tokens/revoke:
-// either one jti, or an app (and env) to revoke all of its live tokens.
+// one jti, or an app (and env) to revoke all of its live tokens, or All (with an
+// optional App, any env) as the emergency stop.
 type ServiceTokenRevokeRequest struct {
 	JTI string `json:"jti,omitempty"`
 	App string `json:"app,omitempty"`
 	Env string `json:"env,omitempty"`
+	All bool   `json:"all,omitempty"`
+}
+
+// ServiceKeyRotateRequest is the body of POST /auth/service-tokens/rotate-key.
+type ServiceKeyRotateRequest struct {
+	// Reissue also mints a replacement token for every live record under the new key.
+	Reissue bool `json:"reissue,omitempty"`
+}
+
+// ServiceKeyRotateResponse reports the rotation. Reissued tokens, if asked for,
+// appear here once; Pending lists the live records still on an older key.
+type ServiceKeyRotateResponse struct {
+	NewKID   string                     `json:"new_kid"`
+	Pending  []authissuer.ServiceRecord `json:"pending"`
+	Reissued []ServiceTokenResponse     `json:"reissued,omitempty"`
 }
 
 // ServiceTokenRevokeResponse lists what was revoked (metadata only).
@@ -195,13 +211,21 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		if !decodeDeviceBody(w, r, &req) {
 			return
 		}
-		if (req.JTI == "") == (req.App == "") {
-			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "give exactly one of jti or app")
+		selectors := 0
+		for _, set := range []bool{req.JTI != "", req.App != "" && !req.All, req.All} {
+			if set {
+				selectors++
+			}
+		}
+		if selectors != 1 || (req.All && (req.JTI != "" || req.Env != "")) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "give exactly one of jti, app (with optional env), or all (with optional app)")
 			return
 		}
 		var revoked []authissuer.ServiceRecord
 		var err error
-		if req.JTI != "" {
+		if req.All {
+			revoked, err = is.RevokeAllServices(req.App)
+		} else if req.JTI != "" {
 			var rec authissuer.ServiceRecord
 			rec, err = is.RevokeService(req.JTI)
 			revoked = []authissuer.ServiceRecord{rec}
@@ -224,6 +248,41 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, ServiceTokenRevokeResponse{Revoked: revoked})
+	})
+	mux.HandleFunc("POST /auth/service-tokens/rotate-key", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := serviceTokenOperator(w, r)
+		if !ok {
+			return
+		}
+		var req ServiceKeyRotateRequest
+		if !decodeDeviceBody(w, r, &req) {
+			return
+		}
+		res, err := is.RotateServiceKey(p, req.Reissue)
+		switch {
+		case errors.Is(err, authissuer.ErrForbidden):
+			writeError(w, http.StatusForbidden, CodeForbidden, strings.TrimPrefix(err.Error(), "authissuer: "))
+			return
+		case err != nil && len(res.Reissued) == 0 && res.NewKID == "":
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "service signing key could not be rotated")
+			return
+		}
+		out := ServiceKeyRotateResponse{NewKID: res.NewKID, Pending: res.Pending}
+		if out.Pending == nil {
+			out.Pending = []authissuer.ServiceRecord{}
+		}
+		for _, rt := range res.Reissued {
+			out.Reissued = append(out.Reissued, ServiceTokenResponse{Token: rt.Token, Record: rt.Record})
+			log.Printf("authissuer: re-issued service token jti=%s replaces=%s sub=%s kid=%s", rt.Record.JTI, rt.Record.Replaces, rt.Record.Sub, rt.Record.KID)
+		}
+		log.Printf("authissuer: service signing key rotated; new kid=%s, %d live record(s) on an older key", res.NewKID, len(res.Pending))
+		if err != nil { // some re-issues failed: report what was done and why it stopped
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusConflict, out)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, out)
 	})
 	mux.Handle("GET /auth/denylist", NewDenyListReadHandler(is))
 	mux.HandleFunc("POST /auth/denylist", func(w http.ResponseWriter, r *http.Request) {
