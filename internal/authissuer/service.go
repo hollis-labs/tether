@@ -58,14 +58,20 @@ type ServiceRequest struct {
 // ServiceRecord is the issuer's metadata for one service token. It never holds
 // the token.
 type ServiceRecord struct {
-	JTI       string     `json:"jti"`
-	Sub       string     `json:"sub"`
-	App       string     `json:"app"`
-	Env       string     `json:"env"`
-	Audience  string     `json:"aud"`
-	Scopes    []string   `json:"scopes"`
-	Label     string     `json:"label,omitempty"`
-	IssuedBy  string     `json:"issued_by"`
+	JTI      string   `json:"jti"`
+	Sub      string   `json:"sub"`
+	App      string   `json:"app"`
+	Env      string   `json:"env"`
+	Audience string   `json:"aud"`
+	Scopes   []string `json:"scopes"`
+	Label    string   `json:"label,omitempty"`
+	IssuedBy string   `json:"issued_by"`
+	// KID is the service signing key that signed the token; the key is kept
+	// while any live record names it.
+	KID string `json:"kid,omitempty"`
+	// Replaces is the jti of the token this one was re-issued for after a
+	// service key rotation.
+	Replaces  string     `json:"replaces,omitempty"`
 	IssuedAt  time.Time  `json:"issued_at"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
@@ -79,6 +85,12 @@ func ServicePrincipalID(app, env string) string { return "msg://service/" + app 
 // local socket). The record is persisted before the token is returned: if it
 // cannot be recorded, nothing is minted.
 func (i *Issuer) IssueService(parent identity.Principal, req ServiceRequest) (Token, ServiceRecord, error) {
+	return i.issueServiceFrom(parent, req, "", false)
+}
+
+// issueServiceFrom is IssueService; replaces names the jti being re-issued, and
+// reissue lets a rotation exceed the live-record bound (checked by the caller).
+func (i *Issuer) issueServiceFrom(parent identity.Principal, req ServiceRequest, replaces string, reissue bool) (Token, ServiceRecord, error) {
 	if !parent.Verified || parent.Kind != "operator" || parent.TokenID != "" {
 		return Token{}, ServiceRecord{}, forbidden("only the operator issues service tokens")
 	}
@@ -106,19 +118,30 @@ func (i *Issuer) IssueService(parent identity.Principal, req ServiceRequest) (To
 	if identity.ReservedIssuerSubject(sub) {
 		return Token{}, ServiceRecord{}, forbidden("issuer protocol subjects cannot be service principals")
 	}
-	if n := i.State.serviceCount(); n >= maxServiceRecords {
+	if n := i.State.serviceCount(); n >= maxServiceRecords && !reissue {
 		return Token{}, ServiceRecord{}, forbidden("too many live service tokens (%d); revoke unused ones", n)
 	}
 	now := i.Now().UTC()
 	exp := now.Add(ServiceTokenLifetime)
 	c := Claims{Iss: i.Name, Sub: sub, Aud: req.Audience, Scope: strings.Join(scopes, " "), Exp: exp.Unix(), Iat: now.Unix(),
 		JTI: uuid.NewString(), Kind: KindService, Par: parent.ID}
-	tok, kid, err := i.sign(c)
+	// Hold keyLife from choosing the key until the record that names it is saved, so
+	// a concurrent rotate + prune cannot delete the key in between.
+	i.keyLife.Lock()
+	defer i.keyLife.Unlock()
+	svcKID, svcKey, err := i.Keys.ActiveService()
+	if err != nil {
+		return Token{}, ServiceRecord{}, fmt.Errorf("authissuer: service signing key: %w", err)
+	}
+	tok, kid, err := i.signWith(svcKID, svcKey, c)
 	if err != nil {
 		return Token{}, ServiceRecord{}, err
 	}
+	if i.afterServiceKeyChosen != nil {
+		i.afterServiceKeyChosen()
+	}
 	rec := ServiceRecord{JTI: c.JTI, Sub: sub, App: req.App, Env: env, Audience: req.Audience, Scopes: scopes, Label: req.Label,
-		IssuedBy: parent.ID, IssuedAt: now, ExpiresAt: exp}
+		IssuedBy: parent.ID, IssuedAt: now, ExpiresAt: exp, KID: kid, Replaces: replaces}
 	if err := i.State.addService(rec); err != nil {
 		return Token{}, ServiceRecord{}, fmt.Errorf("authissuer: cannot record the service token: %w", err)
 	}
@@ -178,6 +201,7 @@ func (i *Issuer) RevokeService(jti string) (ServiceRecord, error) {
 	if err != nil {
 		return ServiceRecord{}, err
 	}
+	i.pruneServiceKeys()
 	return rs[0], nil
 }
 
@@ -194,5 +218,96 @@ func (i *Issuer) RevokeServicesFor(app, env string) ([]ServiceRecord, error) {
 		return nil, invalid("env must be one lowercase id")
 	}
 	sub := ServicePrincipalID(app, env)
-	return i.State.revokeServices(func(r ServiceRecord) bool { return r.Sub == sub })
+	rs, err := i.State.revokeServices(func(r ServiceRecord) bool { return r.Sub == sub })
+	if err == nil {
+		i.pruneServiceKeys()
+	}
+	return rs, err
 }
+
+// RotateResult is what RotateServiceKey did.
+type RotateResult struct {
+	// NewKID is the service signing key now in use.
+	NewKID string
+	// Pending are the live records still signed by an older service key: their
+	// owners need a replacement token (re-delivery), and the older key stays
+	// published until they are revoked or expire.
+	Pending []ServiceRecord
+	// Reissued are replacement tokens minted under the new key when asked, one per
+	// pending record. The tokens are shown once, here; the old ones stay valid
+	// until they are revoked.
+	Reissued []ReissuedToken
+}
+
+// ReissuedToken pairs a replacement token with its record.
+type ReissuedToken struct {
+	Token  Token
+	Record ServiceRecord
+}
+
+// RotateServiceKey makes a new service signing key active. Tokens signed by the
+// previous key keep verifying: it stays published until no live record names it.
+// With reissue, a replacement token is also minted for every live record under
+// the new key (same principal, audience, scopes and label; the record notes what
+// it replaces). Nothing is redistributed and the old tokens are not revoked here:
+// the operator delivers the new ones, then revokes the old ones.
+func (i *Issuer) RotateServiceKey(parent identity.Principal, reissue bool) (RotateResult, error) {
+	if !parent.Verified || parent.Kind != "operator" || parent.TokenID != "" {
+		return RotateResult{}, forbidden("only the operator rotates the service signing key")
+	}
+	newKID, err := i.Keys.RotateService()
+	if err != nil {
+		return RotateResult{}, fmt.Errorf("authissuer: rotate service key: %w", err)
+	}
+	res := RotateResult{NewKID: newKID}
+	for _, r := range i.State.Services() {
+		if r.RevokedAt != nil || r.KID == newKID {
+			continue
+		}
+		res.Pending = append(res.Pending, r)
+	}
+	if !reissue {
+		return res, nil
+	}
+	if live := i.State.serviceCount(); live+len(res.Pending) > 2*maxServiceRecords {
+		return res, forbidden("too many live service tokens to re-issue; revoke unused ones first")
+	}
+	for _, old := range res.Pending {
+		tok, rec, err := i.issueServiceFrom(parent, ServiceRequest{App: old.App, Env: old.Env, Audience: old.Audience, Scopes: old.Scopes, Label: old.Label}, old.JTI, true)
+		if err != nil {
+			return res, err
+		}
+		res.Reissued = append(res.Reissued, ReissuedToken{Token: tok, Record: rec})
+	}
+	return res, nil
+}
+
+// RevokeAllServices is the emergency stop: it revokes every live service token,
+// or every live token of one app (any env) when app is set. Deny-list entries are
+// the usual ones (jti until the token's exp).
+func (i *Issuer) RevokeAllServices(app string) ([]ServiceRecord, error) {
+	if app != "" && !audRe.MatchString(app) {
+		return nil, invalid("app must be one app id")
+	}
+	rs, err := i.State.revokeServices(func(r ServiceRecord) bool { return app == "" || r.App == app })
+	if err == nil {
+		i.pruneServiceKeys()
+	}
+	return rs, err
+}
+
+// pruneServiceKeys drops a rotated-out service key as soon as the last live
+// record naming it is gone, so the JWKS stops publishing it at once rather than
+// at the next hourly Maintain. Consumers that replace their key set on every
+// refresh therefore see exactly the keys live tokens still need.
+func (i *Issuer) pruneServiceKeys() {
+	i.keyLife.Lock()
+	defer i.keyLife.Unlock()
+	if _, err := i.Keys.PruneWith(i.ServiceKeyInUse); err != nil {
+		log.Printf("authissuer: service key prune failed: %v", err)
+	}
+}
+
+// ServiceKeyInUse reports whether a live (unrevoked, unexpired) service token
+// record names the service key kid. The key store keeps such keys.
+func (i *Issuer) ServiceKeyInUse(kid string) bool { return i.State.serviceKeyInUse(kid, i.Now()) }

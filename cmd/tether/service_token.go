@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -66,14 +67,18 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 	issue.Flags().BoolVar(&asJSON, "json", false, "print the token and its metadata as JSON")
 	cmd.AddCommand(issue)
 	var revokeApp, revokeEnv string
-	revoke := &cobra.Command{Use: "revoke [jti]", Short: "Revoke one service token by jti, or all of an app's with --app", Args: cobra.MaximumNArgs(1),
+	var revokeAll bool
+	revoke := &cobra.Command{Use: "revoke [jti]", Short: "Revoke one service token by jti, all of an app's with --app, or everything with --all", Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			req := api.ServiceTokenRevokeRequest{App: revokeApp, Env: revokeEnv}
+			req := api.ServiceTokenRevokeRequest{App: revokeApp, Env: revokeEnv, All: revokeAll}
 			if len(args) == 1 {
 				req.JTI = args[0]
 			}
-			if (req.JTI == "") == (req.App == "") {
-				return fmt.Errorf("give exactly one of a jti argument or --app")
+			switch {
+			case revokeAll && (req.JTI != "" || req.Env != ""):
+				return fmt.Errorf("--all takes no jti and no --env (use --app to limit it to one app)")
+			case !revokeAll && (req.JTI == "") == (req.App == ""):
+				return fmt.Errorf("give exactly one of a jti argument, --app, or --all")
 			}
 			client, err := factory()
 			if err != nil {
@@ -89,9 +94,62 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 			fmt.Fprintln(cmd.ErrOrStderr(), "other verifiers stop accepting it within one deny-list poll interval (30s by default) after a successful poll; one that cannot poll keeps its last list")
 			return nil
 		}}
-	revoke.Flags().StringVar(&revokeApp, "app", "", "revoke every live token of this app instead of one jti")
+	revoke.Flags().StringVar(&revokeApp, "app", "", "revoke every live token of this app instead of one jti (with --all: of this app, any env)")
+	revoke.Flags().BoolVar(&revokeAll, "all", false, "emergency stop: revoke every live service token (or all of --app's)")
 	revoke.Flags().StringVar(&revokeEnv, "env", "", "environment of --app (default dev)")
 	cmd.AddCommand(revoke)
+	var reissue bool
+	var outDir string
+	rotate := &cobra.Command{Use: "rotate-key", Short: "Rotate the service signing key; optionally re-issue every live token into 0600 files", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if outDir != "" && !reissue {
+				return fmt.Errorf("--out-dir only applies with --reissue")
+			}
+			if reissue && outDir == "" {
+				return fmt.Errorf("--reissue needs --out-dir: the replacement tokens are shown once and are never printed")
+			}
+			if outDir != "" {
+				if err := os.MkdirAll(outDir, 0o700); err != nil {
+					return err
+				}
+			}
+			client, err := factory()
+			if err != nil {
+				return err
+			}
+			var out api.ServiceKeyRotateResponse
+			if err := client.call(cmd.Context(), http.MethodPost, api.ServiceTokensPath+"/rotate-key", api.ServiceKeyRotateRequest{Reissue: reissue}, &out); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "service signing key rotated; new kid %s\n", out.NewKID)
+			written := map[string]bool{}
+			for _, rt := range out.Reissued {
+				name := filepath.Join(outDir, fmt.Sprintf("%s-%s-%.8s.token", rt.Record.App, rt.Record.Env, rt.Record.JTI))
+				f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: the operator chose this directory for their own credential files
+				if err != nil {
+					return fmt.Errorf("token file %s: %w", name, err)
+				}
+				if _, err := fmt.Fprintln(f, rt.Token.Token); err != nil {
+					_ = f.Close()
+					return err
+				}
+				if err := f.Close(); err != nil {
+					return err
+				}
+				written[rt.Record.Replaces] = true
+				fmt.Fprintf(cmd.OutOrStdout(), "re-issued %s -> %s (jti %s, replaces %s)\n", rt.Record.Sub, name, rt.Record.JTI, rt.Record.Replaces)
+			}
+			for _, p := range out.Pending {
+				if !written[p.JTI] {
+					fmt.Fprintf(cmd.OutOrStdout(), "needs re-delivery: %s jti %s (%s)\n", p.Sub, p.JTI, p.Label)
+				}
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "the old tokens stay valid, and the old key stays published, until you revoke them (tether service-token revoke); nothing was redistributed")
+			return nil
+		}}
+	rotate.Flags().BoolVar(&reissue, "reissue", false, "also mint a replacement token for every live token under the new key")
+	rotate.Flags().StringVar(&outDir, "out-dir", "", "directory (created 0700) for the replacement tokens, one new 0600 file each")
+	cmd.AddCommand(rotate)
 	var listJSON bool
 	cmd.AddCommand(&cobra.Command{Use: "list", Short: "List service token metadata (never the tokens)", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

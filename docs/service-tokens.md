@@ -42,6 +42,48 @@ is refused. The issuer logs ids and scopes, never the token. Its metadata (jti,
 principal, audience, scopes, label, issuer, times; never the token) is kept in the
 issuer's state file (0600) and survives a restart.
 
+## The dedicated service signing key
+
+Service tokens live ten years, so they are signed by their own key, not by the
+15-minute session/exchange key. Its kid starts `svc-`, it is created on first use,
+and it lives with the other signing keys (the issuer's 0600 key files in a 0700
+directory; never logged, never in `keys.json`, `jwks.json` or the state file). The
+JWKS publishes its public half like any other key, so external verifiers need no
+change.
+
+- **The JWKS publishes exactly the service keys live tokens need.** Consumers
+  built on go-auth (Torque, Tesseract, Tachyon producers, ...) *replace* their key
+  set on every JWKS refresh; they do not merge. So `/.well-known/jwks.json` always
+  contains the active `svc-` key and every rotated-out `svc-` key that a live
+  (unrevoked, unexpired) service token record still names, so a ten-year token
+  keeps verifying across any number of ordinary key rotations and service key
+  rotations. A rotated-out key leaves the JWKS as soon as the last record on it is
+  revoked (revoking prunes at once) or, for an expired record, at the next hourly
+  maintenance pass. Tests use the real go-auth `JWTVerifier` refreshing after a
+  session-key rotation and prune.
+- Ordinary key rotation and the hourly prune never touch it. A service key is
+  deleted only when it has been rotated out **and** no live (unrevoked, unexpired)
+  service token record names it. The active service key is never deleted.
+- `tether service-token rotate-key` makes a new service key active. Tokens signed
+  by the old key keep verifying (the old key stays published). It reports which
+  live records are still on an older key and need re-delivery.
+- `tether service-token rotate-key --reissue --out-dir DIR` also mints a
+  replacement for every such record under the new key (same principal, audience,
+  scopes, label; the record notes the jti it replaces) into one new `0600` file
+  each in `DIR` (never printed). Nothing is redistributed and the old tokens are
+  not revoked: deliver the new ones, then `tether service-token revoke` the old.
+- `tether service-token revoke --all [--app A]` is the emergency stop: every live
+  service token (or every one of an app, any env) goes on the deny-list.
+
+**Blast radius.** The service key can mint any service token. If it leaks, an
+attacker can mint tokens for any service principal and any audience until the key
+is rotated and the old tokens are revoked (`rotate-key`, then `revoke --all`). The
+dev mitigation is the tailnet boundary around the hub, the 0600/0700 key
+directory, and that revoking is immediate in Tether and reaches
+other verifiers within one poll interval after a successful poll (a verifier
+that cannot poll keeps accepting a newly revoked token until it can). A leaked **token** is limited to its own scopes and is revoked on its
+own.
+
 ## Revoking
 
 ```sh

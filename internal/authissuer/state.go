@@ -386,3 +386,16 @@ func (s *State) revokeServices(match func(ServiceRecord) bool) ([]ServiceRecord,
 	sort.Slice(out, func(a, b int) bool { return out[a].JTI < out[b].JTI })
 	return out, nil
 }
+
+// serviceKeyInUse reports whether any live service token record names kid.
+func (s *State) serviceKeyInUse(kid string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	for _, r := range s.doc.Services {
+		if r.KID == kid && r.RevokedAt == nil && now.Before(r.ExpiresAt) {
+			return true
+		}
+	}
+	return false
+}

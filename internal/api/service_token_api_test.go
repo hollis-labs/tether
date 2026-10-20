@@ -258,3 +258,85 @@ func TestPublicDenyListReadHandler(t *testing.T) {
 		t.Fatalf("deny-list document keys: %v", raw)
 	}
 }
+
+func callRotate(h http.Handler, body string, p *identity.Principal, local bool) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, ServiceTokensPath+"/rotate-key", strings.NewReader(body))
+	ctx := r.Context()
+	if local {
+		ctx = identity.ConnectionContext(ctx, &net.UnixConn{})
+	}
+	if p != nil {
+		ctx = identity.WithPrincipal(ctx, *p)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r.WithContext(ctx))
+	return w
+}
+
+func TestServiceKeyRotationAndRevokeAllAreOperatorLocalOnly(t *testing.T) {
+	h, is := serviceTokenHandler(t)
+	issue := func(app string) ServiceTokenResponse {
+		w := callServiceTokens(h, http.MethodPost, `{"app":"`+app+`","audience":"tether","scopes":["events"]}`, &opP, true)
+		var out ServiceTokenResponse
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
+		return out
+	}
+	a, b := issue("cerberus"), issue("nanite")
+	device := identity.Principal{Verified: true, ID: "msg://device/d", Kind: "device", Scopes: []string{"admin", "maintain"}}
+	for _, c := range []struct {
+		name  string
+		p     *identity.Principal
+		local bool
+		want  int
+	}{{"anonymous", nil, true, 401}, {"remote operator", &opP, false, 403}, {"device admin", &device, true, 403}} {
+		if w := callRotate(h, `{}`, c.p, c.local); w.Code != c.want {
+			t.Errorf("rotate %s: %d", c.name, w.Code)
+		}
+		if w := callRevoke(h, `{"all":true}`, c.p, c.local); w.Code != c.want {
+			t.Errorf("revoke all %s: %d", c.name, w.Code)
+		}
+	}
+	if is.State.Denied("jti", a.Record.JTI) {
+		t.Fatal("a refused request revoked a token")
+	}
+
+	// Rotate without re-issue: reports what needs re-delivery, mints and prints nothing secret.
+	w := callRotate(h, `{}`, &opP, true)
+	var rot ServiceKeyRotateResponse
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &rot) != nil || !strings.HasPrefix(rot.NewKID, "svc-") || len(rot.Pending) != 2 || len(rot.Reissued) != 0 ||
+		strings.Contains(w.Body.String(), a.Token.Token) {
+		t.Fatalf("rotate: %d %s", w.Code, w.Body)
+	}
+	// Rotate with re-issue: replacement tokens appear once, in this response only.
+	w = callRotate(h, `{"reissue":true}`, &opP, true)
+	rot = ServiceKeyRotateResponse{}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &rot) != nil || len(rot.Reissued) != 2 || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("reissue: %d %s", w.Code, w.Body)
+	}
+	if list := callServiceTokens(h, http.MethodGet, "", &opP, true); strings.Contains(list.Body.String(), rot.Reissued[0].Token.Token) {
+		t.Fatal("the listing exposes a re-issued token")
+	}
+
+	// revoke: all/app are exclusive selectors.
+	for _, bad := range []string{`{"all":true,"jti":"x"}`, `{"all":true,"env":"dev"}`, `{"all":true,"app":"Bad App"}`, `{"jti":"x","app":"y"}`, `{}`} {
+		if w := callRevoke(h, bad, &opP, true); w.Code != 400 {
+			t.Errorf("%s: %d", bad, w.Code)
+		}
+	}
+	w = callRevoke(h, `{"all":true,"app":"cerberus"}`, &opP, true)
+	var rv ServiceTokenRevokeResponse
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &rv) != nil || len(rv.Revoked) != 2 { // cerberus: the original and its re-issue
+		t.Fatalf("cerberus revoke: %d %s", w.Code, w.Body)
+	}
+	if !is.State.Denied("jti", a.Record.JTI) || is.State.Denied("jti", b.Record.JTI) {
+		t.Fatal("revoke --all --app cerberus did not stop exactly cerberus")
+	}
+	if w := callRevoke(h, `{"all":true}`, &opP, true); w.Code != 200 || !is.State.Denied("jti", b.Record.JTI) {
+		t.Fatalf("revoke all: %d", w.Code)
+	}
+	if w := callRevoke(h, `{"all":true}`, &opP, true); w.Code != 404 {
+		t.Fatalf("nothing left: %d", w.Code)
+	}
+}
