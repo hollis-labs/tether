@@ -401,3 +401,89 @@ func TestRelayStopCancelsAHubCallThatIsBlocked(t *testing.T) {
 	}
 	<-reply
 }
+
+// A client that sends headers and then stalls mid-body holds its handler and
+// connection. Stopping the relay must cut it off after the grace, not leave it
+// running behind a Serve that has already returned.
+func TestRelayStopClosesASlowUploadAfterTheGrace(t *testing.T) {
+	old := relayShutdownGrace
+	relayShutdownGrace = 200 * time.Millisecond
+	t.Cleanup(func() { relayShutdownGrace = old })
+	hub := newHub(t)
+	tf, _ := tokenFile(t)
+	r := relayFor(t, hub, tf, nil)
+	r.port = ""
+	ctx, cancel := context.WithCancel(context.Background())
+	addr := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() { done <- r.Serve(ctx, func(a net.Addr) { addr <- a.String() }) }()
+	a := <-addr
+	conn, err := net.Dial("tcp", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Declares 1000 bytes, sends one, then goes quiet.
+	if _, err := fmt.Fprintf(conn, "POST /events HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{", a); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for r.inflight.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("handler never started")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve did not return with a stalled upload")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Serve took %v", d)
+	}
+	if n := r.inflight.Load(); n != 0 {
+		t.Fatalf("%d handlers still running after Serve returned", n)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadAll(conn); err != nil && !errors.Is(err, io.EOF) {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Fatal("the stalled connection is still open after Serve returned")
+		}
+	}
+}
+
+type failingListener struct{ net.Listener }
+
+func (failingListener) Accept() (net.Conn, error) { return nil, errors.New("accept failed") }
+
+// If the server fails on its own, Serve still cancels the relay's context and
+// joins the shutdown watcher; nothing is left waiting on the caller's context.
+func TestRelayServeErrorCancelsItsContextAndJoins(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := newHub(t)
+	tf, _ := tokenFile(t)
+	r := relayFor(t, hub, tf, nil)
+	done := make(chan error, 1)
+	go func() { done <- r.serve(context.Background(), failingListener{ln}, nil) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "accept failed") {
+			t.Fatalf("serve error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not return after the listener failed (watcher not released)")
+	}
+	if life := r.lifeCtx(); life == nil || life.Err() == nil {
+		t.Fatal("the relay's context was not canceled on a failed Serve")
+	}
+}

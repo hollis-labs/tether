@@ -51,6 +51,8 @@ type EventsRelay struct {
 	Logf func(format string, args ...any)
 
 	inflight atomic.Int32
+	// active counts handlers that are running, so serve can wait for them.
+	active sync.WaitGroup
 
 	// One client, and so one connection pool, for the life of the relay.
 	clientOnce sync.Once
@@ -161,6 +163,10 @@ func (r *EventsRelay) browserSafe(req *http.Request) (int, string, string) {
 	return 0, "", ""
 }
 
+// relayShutdownGrace is how long Serve lets in-flight requests finish before it
+// closes their connections.
+var relayShutdownGrace = 5 * time.Second
+
 // Serve binds Listen and relays until ctx is canceled. ready, if set, receives
 // the bound address once the listener is up.
 func (r *EventsRelay) Serve(ctx context.Context, ready func(net.Addr)) error {
@@ -171,11 +177,21 @@ func (r *EventsRelay) Serve(ctx context.Context, ready func(net.Addr)) error {
 	if err != nil {
 		return fmt.Errorf("events relay: %w", err)
 	}
+	return r.serve(ctx, ln, ready)
+}
+
+// serve runs the relay on ln. Whichever way it exits, the relay's own context is
+// canceled (so no hub call survives), the server is shut down, forced closed if
+// the grace runs out, and every handler has returned.
+func (r *EventsRelay) serve(ctx context.Context, ln net.Listener, ready func(net.Addr)) error {
 	srv := &http.Server{Handler: r.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second}
-	// Outbound hub calls hang off ctx, so canceling it aborts a request that is
-	// blocked on the hub instead of letting Shutdown wait out its 5s.
+	// life is owned here and canceled on every exit; outbound hub calls hang off
+	// it, so canceling aborts a request blocked on the hub instead of letting
+	// Shutdown wait out the grace.
+	life, cancelLife := context.WithCancel(ctx)
+	defer cancelLife()
 	r.lifeMu.Lock()
-	r.life = ctx
+	r.life = life
 	if _, p, perr := net.SplitHostPort(ln.Addr().String()); perr == nil {
 		r.port = p
 	}
@@ -183,30 +199,27 @@ func (r *EventsRelay) Serve(ctx context.Context, ready func(net.Addr)) error {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		<-life.Done()
+		grace, cancel := context.WithTimeout(context.WithoutCancel(ctx), relayShutdownGrace)
 		defer cancel()
-		_ = srv.Shutdown(shutdown)
+		if err := srv.Shutdown(grace); err != nil {
+			// A request that will not finish (a slow upload holding its
+			// connection) is cut off rather than left running.
+			_ = srv.Close()
+		}
 		r.client().CloseIdleConnections()
 	}()
 	if ready != nil {
 		ready(ln.Addr())
 	}
-	err = srv.Serve(ln)
+	err := srv.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) {
 		err = nil
 	}
-	if err != nil {
-		// Serve failed on its own: stop the shutdown goroutine and join it.
-		// Without this a failed Serve would leave it waiting on ctx.
-		_ = srv.Close()
-		r.client().CloseIdleConnections()
-		return err
-	}
-	// ErrServerClosed returns as soon as Shutdown begins; wait for it to finish
-	// (in-flight calls drained, idle connections closed) before returning.
+	cancelLife() // also when Serve failed on its own: the watcher is waiting on life
 	<-stopped
-	return nil
+	r.active.Wait()
+	return err
 }
 
 // Handler is the relay's HTTP surface: POST /events and GET /health.
@@ -234,6 +247,8 @@ func relayError(w http.ResponseWriter, status int, code, msg, retryAfter string)
 }
 
 func (r *EventsRelay) handleEvents(w http.ResponseWriter, req *http.Request) {
+	r.active.Add(1)
+	defer r.active.Done()
 	if req.Method != http.MethodPost {
 		relayError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "")
 		return
