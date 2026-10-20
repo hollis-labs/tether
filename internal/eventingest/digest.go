@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // digestExcluded are the envelope fields the hub or the transport owns, which
@@ -26,6 +28,9 @@ var digestExcluded = []string{"recorded_at", "cursor", "actor"}
 // matter); any producer-controlled difference under the same id is a
 // different event.
 func eventDigest(raw []byte) (string, error) {
+	if err := strictJSON(raw); err != nil {
+		return "", err
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var v map[string]any
@@ -172,4 +177,123 @@ func jcsNumber(f float64) (string, error) {
 		return sign + digits + "e" + es + strconv.Itoa(ex), nil
 	}
 	return sign + digits[:1] + "." + digits[1:] + "e" + es + strconv.Itoa(ex), nil
+}
+
+// strictJSON refuses what RFC 8785 (section 3.1 and 3.2.2.2) forbids and what
+// encoding/json would silently repair: invalid UTF-8, a lone surrogate escape,
+// and a repeated property name at any depth. It runs on the raw bytes, before any
+// lossy decode, and keeps U+FFFD written as itself and valid surrogate pairs.
+func strictJSON(raw []byte) error {
+	if !utf8.Valid(raw) {
+		return errors.New("digest: invalid UTF-8")
+	}
+	if err := checkEscapes(raw); err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	// keys holds the member names seen so far in each open object; nil marks an array.
+	var keys []map[string]bool
+	var expectKey []bool
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("digest: %w", err)
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				keys = append(keys, map[string]bool{})
+				expectKey = append(expectKey, true)
+				continue
+			case '[':
+				keys = append(keys, nil)
+				expectKey = append(expectKey, false)
+				continue
+			default: // '}' or ']'
+				keys = keys[:len(keys)-1]
+				expectKey = expectKey[:len(expectKey)-1]
+			}
+		case string:
+			if n := len(keys); n > 0 && keys[n-1] != nil && expectKey[n-1] {
+				if keys[n-1][t] {
+					return fmt.Errorf("digest: duplicate property %q", t)
+				}
+				keys[n-1][t] = true
+				expectKey[n-1] = false
+				continue
+			}
+		}
+		// A value (or a closed container) was consumed: the next token in an object is a name.
+		if n := len(keys); n > 0 && keys[n-1] != nil {
+			expectKey[n-1] = true
+		}
+	}
+}
+
+// checkEscapes walks the string literals of raw and rejects a \u escape that is a
+// lone surrogate.
+func checkEscapes(raw []byte) error {
+	in := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if !in {
+			in = c == '"'
+			continue
+		}
+		switch c {
+		case '"':
+			in = false
+		case '\\':
+			i++
+			if i >= len(raw) {
+				return errors.New("digest: truncated escape")
+			}
+			if raw[i] != 'u' {
+				continue
+			}
+			r, ok := hex4(raw, i+1)
+			if !ok {
+				return errors.New("digest: bad unicode escape")
+			}
+			i += 4
+			switch {
+			case r >= 0xDC00 && r <= 0xDFFF:
+				return errors.New("digest: lone surrogate escape")
+			case r >= 0xD800 && r <= 0xDBFF:
+				lo, ok := rune(0), false
+				if i+6 < len(raw) && raw[i+1] == '\\' && raw[i+2] == 'u' {
+					lo, ok = hex4(raw, i+3)
+				}
+				if !ok || lo < 0xDC00 || lo > 0xDFFF {
+					return errors.New("digest: lone surrogate escape")
+				}
+				i += 6
+			}
+		}
+	}
+	return nil
+}
+
+func hex4(b []byte, at int) (rune, bool) {
+	if at+4 > len(b) {
+		return 0, false
+	}
+	var r rune
+	for _, c := range b[at : at+4] {
+		switch {
+		case c >= '0' && c <= '9':
+			r = r<<4 | rune(c-'0')
+		case c >= 'a' && c <= 'f':
+			r = r<<4 | rune(c-'a'+10)
+		case c >= 'A' && c <= 'F':
+			r = r<<4 | rune(c-'A'+10)
+		default:
+			return 0, false
+		}
+	}
+	return r, true
 }

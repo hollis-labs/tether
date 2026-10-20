@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -438,6 +439,30 @@ func TestEnvelopeDifferencesUnderOneIDConflict(t *testing.T) {
 		res, _ = f.svc.Ingest(ctx, operator, []json.RawMessage{mk(mut)})
 		if res[0].Status != ingest.StatusRejected || res[0].Code != ingest.CodeIDConflict {
 			t.Errorf("%s: %+v", name, res[0])
+		}
+	}
+}
+
+// Strict JSON at ingest: an envelope whose payload repeats a name or holds a lone
+// surrogate is schema_invalid and stores nothing; U+FFFD and surrogate pairs stay valid.
+func TestIngestRejectsDuplicateNamesAndBrokenUnicode(t *testing.T) {
+	f := newFixture(t, eventingest.Config{AllowUnknownKinds: true})
+	ctx := context.Background()
+	for i, payload := range []string{`{"a":1,"a":2}`, `{"x":{"a":1,"a":2}}`, `{"a":"\ud800"}`, `{"a":"\udc00"}`} {
+		id := fmt.Sprintf("evt_%032x", 0xe00+i)
+		res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{raw(id, "torque", "task.state_changed", func(m map[string]any) { m["payload"] = json.RawMessage(payload) })})
+		if err != nil || res[0].Status != ingest.StatusRejected || res[0].Code != ingest.CodeSchemaInvalid {
+			t.Errorf("%s: %+v %v", payload, res, err)
+		}
+		if _, ok, _ := f.db.EventByEventID(ctx, id); ok {
+			t.Errorf("%s: stored", payload)
+		}
+	}
+	for i, payload := range []string{`{"a":"\ud83d\ude00"}`, "{\"a\":\"\ufffd\"}"} {
+		id := fmt.Sprintf("evt_%032x", 0xe10+i)
+		res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{raw(id, "torque", "task.state_changed", func(m map[string]any) { m["payload"] = json.RawMessage(payload) })})
+		if err != nil || res[0].Status != ingest.StatusAccepted {
+			t.Errorf("%s: %+v %v", payload, res, err)
 		}
 	}
 }

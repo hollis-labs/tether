@@ -67,3 +67,37 @@ func TestDigestIgnoresOnlyServerOwnedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestStrictJSONRejectsWhatEncodingJSONRepairs(t *testing.T) {
+	bad := map[string]string{
+		"duplicate":         `{"a":1,"a":2}`,
+		"nested duplicate":  `{"p":{"x":[{"k":1,"k":2}]}}`,
+		"escaped duplicate": `{"a":1,"\u0061":2}`,
+		"lone high":         `{"a":"\ud800"}`,
+		"lone low":          `{"a":"\udc00"}`,
+		"high then other":   `{"a":"\ud800\u0041"}`,
+		"lone in key":       `{"\ud800":1}`,
+		"invalid utf8":      "{\"a\":\"\xff\"}",
+	}
+	for name, in := range bad {
+		if err := strictJSON([]byte(in)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+		if _, err := eventDigest([]byte(in)); err == nil {
+			t.Errorf("%s: digest accepted", name)
+		}
+	}
+	good := map[string]string{
+		"same name in sibling objects": `{"a":{"x":1},"b":{"x":2},"c":[{"x":1},{"x":2}]}`,
+		"surrogate pair":               `{"a":"\ud83d\ude00"}`,
+		"replacement char as itself":   "{\"a\":\"\ufffd\"}",
+		"escaped replacement":          `{"a":"\ufffd"}`,
+		"escaped backslash then u":     `{"a":"\\ud800"}`,
+		"nesting after a scalar":       `{"a":1,"b":{"a":2},"c":[1,2],"d":{"a":3}}`,
+	}
+	for name, in := range good {
+		if err := strictJSON([]byte(in)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

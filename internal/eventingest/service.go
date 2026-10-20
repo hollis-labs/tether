@@ -152,6 +152,11 @@ func (s *Service) one(ctx context.Context, c Caller, h head, raw json.RawMessage
 		rej := &ingest.Rejection{Code: ingest.CodeSchemaInvalid, Message: "app is required at ingest"}
 		return rej.Result(h.ID), nil
 	}
+	// Before any decode that repairs what it reads (duplicate names, bad Unicode).
+	if err := strictJSON(raw); err != nil {
+		rej := &ingest.Rejection{Code: ingest.CodeSchemaInvalid, Message: "event is not strict JSON (duplicate property, invalid UTF-8 or lone surrogate)"}
+		return rej.Result(h.ID), nil
+	}
 	ev, rej := ingest.CheckItem(app, raw, ingest.Options{AllowUnknownKinds: s.cfg.AllowUnknownKinds})
 	if rej != nil {
 		return rej.Result(h.ID), nil
