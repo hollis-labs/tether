@@ -6,11 +6,10 @@ package eventingest
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -161,13 +160,22 @@ func (s *Service) one(ctx context.Context, c Caller, h head, raw json.RawMessage
 		rej := &ingest.Rejection{Code: ingest.CodeSchemaInvalid, Message: "app is required at ingest"}
 		return rej.Result(ev.ID), nil
 	}
-	digest := eventDigest(ev)
+	digest, err := eventDigest(raw)
+	if err != nil {
+		rej := &ingest.Rejection{Code: ingest.CodeSchemaInvalid, Message: "event cannot be canonicalized"}
+		return rej.Result(ev.ID), nil
+	}
 
 	stored, outcome, err := s.append(ctx, c, ev, digest)
 	if err != nil {
 		return ingest.Result{}, err
 	}
 	switch outcome {
+	case store.IngestUnverifiable:
+		// Stored, but with no digest on record: never acknowledged as a duplicate.
+		log.Printf("eventingest: event %s is stored without an ingest digest; refusing the id (not a duplicate)", ev.ID)
+		rej := &ingest.Rejection{Code: ingest.CodeIDConflict, Message: "id is stored without verifiable evidence; not acknowledged"}
+		return rej.Result(ev.ID), nil
 	case store.IngestConflict:
 		rej := &ingest.Rejection{Code: ingest.CodeIDConflict, Message: "id is already stored with a different event"}
 		return rej.Result(ev.ID), nil
@@ -297,28 +305,6 @@ func sensitivityRank(s string) int {
 		return 1
 	}
 	return 0
-}
-
-// eventDigest identifies the event as the producer sent it: the same event
-// retried has the same digest, a different event reusing the id does not.
-// Payload key order and whitespace do not change it.
-func eventDigest(ev runtimeevents.Event) string {
-	h := sha256.New()
-	payload := string(ev.Payload)
-	var v any
-	dec := json.NewDecoder(strings.NewReader(payload))
-	dec.UseNumber()
-	if err := dec.Decode(&v); err == nil {
-		if b, err := json.Marshal(v); err == nil { // map keys are sorted
-			payload = string(b)
-		}
-	}
-	for _, part := range []string{string(ev.Kind), ev.App, ev.Subject, ev.SessionID, string(ev.Source.Channel),
-		strconv.FormatUint(ev.Sequence, 10), strconv.FormatUint(ev.Generation, 10), payload} {
-		h.Write([]byte(part))
-		h.Write([]byte{0})
-	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
 func cursor(seq int64) string { return strconv.FormatInt(seq, 10) }

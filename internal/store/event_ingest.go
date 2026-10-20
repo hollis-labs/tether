@@ -40,9 +40,11 @@ const (
 	IngestStored IngestOutcome = iota
 	// IngestDuplicate: the id is stored with the same digest.
 	IngestDuplicate
-	// IngestConflict: the id is stored with a different digest, or with no digest
-	// at all. Missing evidence is never taken for a verified duplicate.
+	// IngestConflict: the id is stored with a different digest.
 	IngestConflict
+	// IngestUnverifiable: the id is stored but no digest is on record (legacy or
+	// partial). Missing evidence is never taken for a verified duplicate.
+	IngestUnverifiable
 )
 
 // IngestEvent writes e and the digest of what the producer sent in one
@@ -62,7 +64,10 @@ func (s *Store) IngestEvent(ctx context.Context, bus events.OutboxBus, e events.
 	case err == nil:
 		var recorded string
 		err := tx.QueryRowContext(ctx, `SELECT digest FROM event_ingest_digests WHERE event_id = ?`, e.EventID).Scan(&recorded)
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && recorded != digest) {
+		if errors.Is(err, sql.ErrNoRows) {
+			return existing, IngestUnverifiable, nil
+		}
+		if err == nil && recorded != digest {
 			return existing, IngestConflict, nil
 		}
 		if err != nil {

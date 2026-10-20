@@ -262,3 +262,34 @@ func TestClientDeliverSettlesEachItemAgainstTheRealHandler(t *testing.T) {
 		t.Errorf("event after an app_mismatch: %+v", res)
 	}
 }
+
+// The client resends the stored bytes of an item, so a retry, a spool replay or a
+// repeated Deliver is a duplicate, never an id_conflict; a different envelope
+// under the same id is quarantined with the hub's code.
+func TestClientResendOfTheSameBytesIsADuplicateAndAChangeIsAConflict(t *testing.T) {
+	hub := newConfHub(t, identity.Off, nil, eventingest.Config{}, true)
+	c := newConfClient(t, hub.srv.URL, func(cfg *eventbus.Config) { cfg.SpoolDir = t.TempDir() })
+	it := confEvent(t, "cerberus", "alert.raised")
+	if res := c.Deliver(context.Background(), []eventbus.Item{it}); res[0].Disposition != eventbus.DispositionSent || res[0].Duplicate {
+		t.Fatalf("first: %+v", res[0])
+	}
+	for i := 0; i < 2; i++ {
+		if res := c.Deliver(context.Background(), []eventbus.Item{it}); !res[0].Duplicate {
+			t.Fatalf("resend %d: %+v", i, res[0])
+		}
+	}
+	dups := c.Stats().Duplicates
+	c.Publish(it)
+	waitFor(t, "queue resend is a duplicate", func() bool { return c.Stats().Duplicates == dups+1 })
+
+	var m map[string]any
+	if err := json.Unmarshal(it.Body, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["scope"] = map[string]any{"project_id": "other"}
+	changed, _ := json.Marshal(m)
+	res := c.Deliver(context.Background(), []eventbus.Item{{ID: it.ID, Priority: it.Priority, Body: changed}})
+	if res[0].Disposition != eventbus.DispositionQuarantined || res[0].Code != "id_conflict" {
+		t.Fatalf("changed envelope: %+v", res[0])
+	}
+}

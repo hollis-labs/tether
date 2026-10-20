@@ -59,16 +59,16 @@ func TestAcceptThenDuplicateThenConflict(t *testing.T) {
 	ctx := context.Background()
 	id := "evt_00000000000000000000000000000c01"
 
-	res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{raw(id, "torque", "task.state_changed", nil)})
+	event := raw(id, "torque", "task.state_changed", nil)
+	res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{event})
 	if err != nil || len(res) != 1 || res[0].Status != ingest.StatusAccepted || res[0].Cursor == "" {
 		t.Fatalf("first: %+v %v", res, err)
 	}
 	first := res[0].Cursor
 
-	// A retry of the same event is a duplicate carrying the original cursor,
-	// even though only the time field differs.
-	retry := raw(id, "torque", "task.state_changed", nil)
-	res, err = f.svc.Ingest(ctx, operator, []json.RawMessage{retry})
+	// A retry of the same event (the same bytes, as the client resends them) is a
+	// duplicate carrying the original cursor.
+	res, err = f.svc.Ingest(ctx, operator, []json.RawMessage{event})
 	if err != nil || res[0].Status != ingest.StatusDuplicate || res[0].Cursor != first {
 		t.Fatalf("retry: %+v %v", res, err)
 	}
@@ -89,8 +89,9 @@ func TestPayloadKeyOrderIsNotAConflict(t *testing.T) {
 	f := newFixture(t, eventingest.Config{})
 	ctx := context.Background()
 	id := "evt_00000000000000000000000000000c02"
-	a := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["payload"] = json.RawMessage(`{"a":1,"b":2}`) })
-	b := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["payload"] = json.RawMessage(`{ "b": 2, "a": 1 }`) })
+	at := "2026-10-20T10:00:00Z"
+	a := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["time"] = at; m["payload"] = json.RawMessage(`{"a":1,"b":2}`) })
+	b := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["time"] = at; m["payload"] = json.RawMessage(`{ "b": 2, "a": 1 }`) })
 	if _, err := f.svc.Ingest(ctx, operator, []json.RawMessage{a}); err != nil {
 		t.Fatal(err)
 	}
@@ -391,5 +392,52 @@ func TestStoredEventWithoutDigestIsAConflict(t *testing.T) {
 	res, _ := f.svc.Ingest(ctx, operator, []json.RawMessage{other})
 	if res[0].Status != ingest.StatusRejected || res[0].Code != ingest.CodeIDConflict {
 		t.Fatalf("%+v", res[0])
+	}
+}
+
+// Any producer-controlled difference under one id is a different event claiming
+// the id; the fields the hub assigns are not part of the event's identity.
+func TestEnvelopeDifferencesUnderOneIDConflict(t *testing.T) {
+	f := newFixture(t, eventingest.Config{AllowUnknownKinds: true})
+	ctx := context.Background()
+	id := "evt_00000000000000000000000000000d03"
+	at := "2026-10-20T10:00:00Z"
+	mk := func(mut func(map[string]any)) json.RawMessage {
+		return raw(id, "torque", "task.state_changed", func(m map[string]any) {
+			m["time"] = at
+			m["scope"] = map[string]any{"project_id": "p1"}
+			m["corr"] = map[string]any{"correlation_id": "c1"}
+			m["process"] = map[string]any{"pid": 7}
+			if mut != nil {
+				mut(m)
+			}
+		})
+	}
+	res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{mk(nil)})
+	if err != nil || res[0].Status != ingest.StatusAccepted {
+		t.Fatalf("first: %+v %v", res, err)
+	}
+	first := res[0].Cursor
+
+	res, _ = f.svc.Ingest(ctx, operator, []json.RawMessage{mk(func(m map[string]any) {
+		m["recorded_at"] = "2030-01-01T00:00:00Z"
+		m["cursor"] = "999"
+	})})
+	if res[0].Status != ingest.StatusDuplicate || res[0].Cursor != first {
+		t.Fatalf("hub-owned fields changed the identity: %+v", res[0])
+	}
+
+	for name, mut := range map[string]func(map[string]any){
+		"scope":   func(m map[string]any) { m["scope"] = map[string]any{"project_id": "p2"} },
+		"corr":    func(m map[string]any) { m["corr"] = map[string]any{"correlation_id": "c2"} },
+		"class":   func(m map[string]any) { m["class"] = map[string]any{"sensitivity": "private"} },
+		"time":    func(m map[string]any) { m["time"] = "2026-10-20T10:00:01Z" },
+		"process": func(m map[string]any) { m["process"] = map[string]any{"pid": 8} },
+		"payload": func(m map[string]any) { m["payload"] = map[string]any{"to": "done"} },
+	} {
+		res, _ = f.svc.Ingest(ctx, operator, []json.RawMessage{mk(mut)})
+		if res[0].Status != ingest.StatusRejected || res[0].Code != ingest.CodeIDConflict {
+			t.Errorf("%s: %+v", name, res[0])
+		}
 	}
 }

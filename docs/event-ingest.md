@@ -108,11 +108,28 @@ Per-kind payload-path allowlists replace the denylist as kinds are registered
 
 ## Retries and ordering
 
-The event `id` is the only dedupe key. The hub remembers a digest of the event as
-sent (kind, app, subject, session, channel, sequence, generation, payload with
-sorted keys) beside the id, so a retry is a `duplicate` and a different event
-reusing the id is an `id_conflict`. Ordering across producers is the log cursor,
-never `sequence`.
+The event `id` is the only dedupe key. The hub commits the event and a digest of
+it in one transaction, so an event never exists without its digest, and the
+event is acknowledged and fanned out only after that commit. A failed or
+interrupted write stores nothing and is not acknowledged; the producer retries.
+
+The digest is the SHA-256 of the whole producer-supplied envelope in canonical
+form (RFC 8785, JCS). A retry that resends the same event is a `duplicate`
+carrying the original cursor. The same id with any producer-controlled
+difference (kind, app, subject, scope including `project_id`, correlation,
+class as sent, `time`, process, source, payload, and the rest) is a different
+event claiming the id: `rejected` with `id_conflict`.
+
+Excluded from the digest, because the hub or the transport owns them and they
+may differ between two sends of one event: `recorded_at`, `cursor`, `actor`.
+Key order and whitespace do not matter. The `mesh/eventbus` client resends the
+stored bytes of an item unchanged (retries, spool replay, repeated `Deliver`),
+so its retries are always duplicates.
+
+An id that is stored but has no digest on record (written before the ingest
+existed, or partially) is never acknowledged as a duplicate: it is `rejected`
+with `id_conflict` ("stored without verifiable evidence") and the hub logs it.
+Ordering across producers is the log cursor, never `sequence`.
 
 ## Client configuration (apps)
 
