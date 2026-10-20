@@ -1,0 +1,278 @@
+package workerruntime
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/ingest"
+
+	"github.com/hollis-labs/tether/internal/identity"
+)
+
+type hubStub struct {
+	srv    *httptest.Server
+	mu     sync.Mutex
+	calls  int
+	auth   string
+	path   string
+	method string
+	proto  string
+	body   []byte
+	status int
+	reply  string
+	retry  string
+}
+
+func newHub(t *testing.T) *hubStub {
+	t.Helper()
+	h := &hubStub{status: 200, reply: `{"results":[],"accepted":0,"duplicate":0,"rejected":0}`}
+	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		h.mu.Lock()
+		h.calls++
+		h.auth, h.path, h.method, h.proto, h.body = r.Header.Get("Authorization"), r.URL.Path, r.Method, r.Header.Get("Tether-Protocol"), b
+		status, reply, retry := h.status, h.reply, h.retry
+		h.mu.Unlock()
+		if retry != "" {
+			w.Header().Set("Retry-After", retry)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, reply)
+	}))
+	t.Cleanup(h.srv.Close)
+	return h
+}
+
+func (h *hubStub) snapshot() (calls int, auth, path string, body []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls, h.auth, h.path, h.body
+}
+
+func tokenFile(t *testing.T) (path, token string) {
+	t.Helper()
+	tok, err := identity.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path = filepath.Join(t.TempDir(), "device.token")
+	if err := os.WriteFile(path, []byte(tok+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, tok
+}
+
+func relayFor(t *testing.T, hub *hubStub, token string, _ *bytes.Buffer) *EventsRelay {
+	t.Helper()
+	return &EventsRelay{Listen: "127.0.0.1:0", Hub: hub.srv.URL, TokenFile: token}
+}
+
+const oneEvent = `{"schema_version":"1","id":"evt_00000000000000000000000000000001","kind":"alert.raised","app":"cerberus","sequence":1,"time":"2026-10-20T01:00:00Z","source":{"channel":"t"},"subject":"msg://alert/cerberus/1"}`
+
+func post(h http.Handler, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestRelayForwardsVerbatimWithTheWorkersCredential(t *testing.T) {
+	hub := newHub(t)
+	tf, tok := tokenFile(t)
+	r := relayFor(t, hub, tf, nil)
+	// A caller-supplied Authorization header is ignored, never forwarded.
+	w := post(r.Handler(), "/events", oneEvent, map[string]string{"Authorization": "Bearer attacker"})
+	if w.Code != 200 || w.Body.String() != hub.reply {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	calls, auth, path, body := hub.snapshot()
+	if calls != 1 || path != "/events" || auth != "Bearer "+tok || string(body) != oneEvent {
+		t.Fatalf("calls=%d path=%q auth-ok=%v body-ok=%v", calls, path, auth == "Bearer "+tok, string(body) == oneEvent)
+	}
+	if hub.proto != "1" || hub.method != http.MethodPost {
+		t.Errorf("proto=%q method=%q", hub.proto, hub.method)
+	}
+}
+
+func TestRelayPassesHubStatusRetryAfterAndBodyThrough(t *testing.T) {
+	for _, c := range []struct {
+		status int
+		retry  string
+		body   string
+	}{
+		{429, "3", `{"error":{"code":"rate_limited"}}`},
+		{503, "1", `{"error":{"code":"events_unavailable"}}`},
+		{403, "", `{"error":{"code":"app_mismatch"}}`},
+		{401, "", `{"error":{"code":"unauthorized"}}`},
+		{405, "", `{"error":{"code":"method_not_allowed"}}`},
+	} {
+		hub := newHub(t)
+		hub.status, hub.retry, hub.reply = c.status, c.retry, c.body
+		tf, _ := tokenFile(t)
+		w := post(relayFor(t, hub, tf, nil).Handler(), "/events", oneEvent, nil)
+		if w.Code != c.status || w.Body.String() != c.body || w.Header().Get("Retry-After") != c.retry {
+			t.Errorf("%d: got %d %q retry=%q", c.status, w.Code, w.Body, w.Header().Get("Retry-After"))
+		}
+	}
+}
+
+func TestRelayRefusesWithoutACredentialAndDoesNotCallTheHub(t *testing.T) {
+	hub := newHub(t)
+	r := relayFor(t, hub, filepath.Join(t.TempDir(), "missing.token"), nil)
+	w := post(r.Handler(), "/events", oneEvent, nil)
+	if w.Code != 503 || w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "relay_no_credential") {
+		t.Fatalf("%d %s retry=%q", w.Code, w.Body, w.Header().Get("Retry-After"))
+	}
+	if calls, _, _, _ := hub.snapshot(); calls != 0 {
+		t.Fatal("hub was called without a credential")
+	}
+}
+
+func TestRelayAppliesTheContractLimitsItselfAndNeverCallsTheHubForBadRequests(t *testing.T) {
+	hub := newHub(t)
+	tf, _ := tokenFile(t)
+	r := relayFor(t, hub, tf, nil).Handler()
+	many := `{"events":[` + strings.Repeat(`{},`, ingest.MaxBatchEvents) + `{}]}`
+	big := `{"id":"` + strings.Repeat("a", ingest.MaxRequestBytes) + `"}`
+	for _, c := range []struct {
+		name, body string
+		want       int
+	}{
+		{"not json", "nope", 400}, {"empty batch", `{"events":[]}`, 400}, {"array body", `[{}]`, 400},
+		{"too many", many, 413}, {"too big", big, 413},
+	} {
+		if w := post(r, "/events", c.body, nil); w.Code != c.want {
+			t.Errorf("%s: %d %s", c.name, w.Code, w.Body)
+		}
+	}
+	if calls, _, _, _ := hub.snapshot(); calls != 0 {
+		t.Fatalf("hub called %d times for bad requests", calls)
+	}
+}
+
+func TestRelaySurface(t *testing.T) {
+	hub := newHub(t)
+	tf, _ := tokenFile(t)
+	h := relayFor(t, hub, tf, nil).Handler()
+	if w := post(h, "/other", oneEvent, nil); w.Code != 404 {
+		t.Errorf("other path: %d", w.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 405 {
+		t.Errorf("GET /events: %d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "ok") {
+		t.Errorf("health: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestRelayHubDownIsRetryable(t *testing.T) {
+	hub := newHub(t)
+	tf, _ := tokenFile(t)
+	r := relayFor(t, hub, tf, nil)
+	hub.srv.Close()
+	w := post(r.Handler(), "/events", oneEvent, nil)
+	if w.Code != 502 || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("%d retry=%q", w.Code, w.Header().Get("Retry-After"))
+	}
+}
+
+func TestRelayNeverLogsTokensOrBodies(t *testing.T) {
+	hub := newHub(t)
+	tf, tok := tokenFile(t)
+	var logs bytes.Buffer
+	r := &EventsRelay{Listen: "127.0.0.1:0", Hub: hub.srv.URL, TokenFile: tf, Logf: func(f string, a ...any) {
+		logs.WriteString(fmt.Sprintf(f, a...) + "\n")
+	}}
+	post(r.Handler(), "/events", oneEvent, nil)
+	hub.mu.Lock()
+	hub.status = 500
+	hub.mu.Unlock()
+	post(r.Handler(), "/events", oneEvent, nil)
+	if !strings.Contains(logs.String(), "forwarded 1 event(s), hub status 200") {
+		t.Fatalf("expected a diagnostic line, got %q", logs.String())
+	}
+	for _, leak := range []string{tok, "alert.raised", "cerberus", "evt_"} {
+		if strings.Contains(logs.String(), leak) {
+			t.Fatalf("log leaks %q: %s", leak, logs.String())
+		}
+	}
+}
+
+func TestRelayConfigValidation(t *testing.T) {
+	good := &EventsRelay{Listen: "127.0.0.1:0", Hub: "https://hub.example"}
+	if err := good.validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range [][2]string{
+		{"0.0.0.0:7845", "https://hub.example"},
+		{":7845", "https://hub.example"},
+		{"192.168.1.5:7845", "https://hub.example"},
+		{"7845", "https://hub.example"},
+		{"127.0.0.1:7845", "http://hub.example"},
+		{"127.0.0.1:7845", "https://user:pw@hub.example"},
+		{"127.0.0.1:7845", ""},
+	} {
+		r := &EventsRelay{Listen: c[0], Hub: c[1]}
+		if err := r.validate(); !errors.Is(err, ErrEventsRelayConfig) {
+			t.Errorf("listen=%q hub=%q accepted: %v", c[0], c[1], err)
+		}
+	}
+	if err := (&EventsRelay{Listen: "127.0.0.1:0", Hub: "http://127.0.0.1:8000"}).validate(); err != nil {
+		t.Errorf("loopback http hub: %v", err)
+	}
+}
+
+func TestRelayServesOnLoopbackAndStops(t *testing.T) {
+	hub := newHub(t)
+	tf, tok := tokenFile(t)
+	r := relayFor(t, hub, tf, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	addr := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() { done <- r.Serve(ctx, func(a net.Addr) { addr <- a.String() }) }()
+	var a string
+	select {
+	case a = <-addr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("relay did not start")
+	}
+	res, err := http.Post("http://"+a+"/events", "application/json", strings.NewReader(oneEvent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if _, auth, _, _ := hub.snapshot(); res.StatusCode != 200 || auth != "Bearer "+tok {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("relay did not stop")
+	}
+}
