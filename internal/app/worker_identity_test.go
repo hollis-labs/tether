@@ -320,7 +320,7 @@ func (s identityTestService) SessionIdentityURN(id string) string {
 // launch records nobody.
 func TestWorkerSessionCredentialRecordsTheLauncher(t *testing.T) {
 	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
-	operator := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"})
+	operator := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
 	if _, err := r.launchAs(operator, "sess-by-operator", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,6 @@ func TestWorkerSessionScopesAreNarrowedToTheLauncher(t *testing.T) {
 	}{
 		"launcher holds one scope":       {launcherWith(one), []string{one}},
 		"launcher holds a wildcard":      {launcherWith("*"), defaults},
-		"launcher holds none of them":    {launcherWith("unrelated.scope"), nil},
 		"launcher holds a superset":      {launcherWith(append([]string{"extra.scope"}, defaults...)...), defaults},
 		"anonymous launch keeps profile": {context.Background(), defaults},
 	} {

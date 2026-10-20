@@ -79,6 +79,12 @@ with HTTP 409 before allocating a destination or executing its runtime. An
 ordinary device-initiated launch inherits no legacy
 `session.write`, `message.write` or `catalog.write` scope in its child credential;
 the five independent device scopes are not translated into worker/MCP grants.
+A **worker-hosted** launch is the one exception, and only for scopes the device
+already holds (CW-20261020-0048): its session ceiling is compared by containment
+(`operate` holds `message.write`, `groups.write`, `session.write`, `team.write`
+and `ai.invoke`; `maintain` and `admin` hold `registry.write` and `catalog.write`),
+and anything the device does not hold is dropped, never added. If nothing the agent
+profile needs survives, the launch is refused with `409 launch_scope_unavailable`.
 The ordinary child's seven-day expiry is not capped to the parent's device expiry.
 `CreatedBy` records provenance; parent device revocation does not revoke that child
 credential. Device request/stream cancellation does not establish child revocation.

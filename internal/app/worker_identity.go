@@ -129,9 +129,15 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		scopes = slices.Clone(launchprofile.DefaultMCPScopes)
 	}
 	// A worker session may not hold more than the principal that launched it.
-	scopes, attribution, err := s.launchCeiling(ctx, scopes)
+	wanted := scopes
+	scopes, attribution, err := s.launchCeilingFor(ctx, wanted, narrowToLauncherWorker)
 	if err == nil {
 		err = s.refuseUnboundedWhenEnforced(attribution)
+	}
+	if err == nil && len(scopes) == 0 {
+		// Nothing the profile needs survives the launcher's authority. Say so
+		// here, as a refusal; the worker would only see "no agent token".
+		err = launchScopeError{wanted: wanted}
 	}
 	if err != nil {
 		revokeBinding()

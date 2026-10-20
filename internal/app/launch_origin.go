@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
@@ -49,6 +50,18 @@ type LaunchGrant struct {
 // may hand out could not be established. It is never downgraded to an
 // anonymous launch, in any identity mode.
 var ErrLaunchRefused = errors.New("launch refused")
+
+// launchScopeError is a launch whose authority ceiling left no usable scope: the
+// launching credential holds none of the scopes the agent profile needs. It is a
+// launch refusal with its own code (the API answers 409 launch_scope_unavailable),
+// not an internal error, and it names only the profile's scope names.
+type launchScopeError struct{ wanted []string }
+
+func (e launchScopeError) Error() string {
+	return "launch refused: the launching credential holds none of the scopes this agent needs (" + strings.Join(e.wanted, ", ") + "); launch from a credential that holds them"
+}
+func (launchScopeError) ErrorCode() string { return "launch_scope_unavailable" }
+func (launchScopeError) Unwrap() error     { return ErrLaunchRefused }
 
 // Attribution says what vouched for a launch's scopes.
 type Attribution string
@@ -110,7 +123,13 @@ func (s *Service) LaunchInternal(ctx context.Context, sessionID string, o Intern
 // launch with no origin, the case is logged, and it is classed
 // internal_unattributed.
 func (s *Service) launchCeiling(ctx context.Context, granted []string) ([]string, Attribution, error) {
-	scopes := narrowToLauncher(ctx, granted)
+	return s.launchCeilingFor(ctx, granted, narrowToLauncher)
+}
+
+// launchCeilingFor is launchCeiling with the launcher comparison chosen by the
+// path: narrowToLauncher (hub-local) or narrowToLauncherWorker.
+func (s *Service) launchCeilingFor(ctx context.Context, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, error) {
+	scopes := narrow(ctx, granted)
 	_, hasPrincipal := identity.FromContext(ctx)
 	origin, internal := launchOriginFrom(ctx)
 	bounded := false
@@ -124,26 +143,14 @@ func (s *Service) launchCeiling(ctx context.Context, granted []string) ([]string
 		} else {
 			bounded = true
 			if !slices.Contains(held, "*") {
-				var narrowed []string
-				for _, scope := range scopes {
-					if slices.Contains(held, scope) {
-						narrowed = append(narrowed, scope)
-					}
-				}
-				scopes = narrowed
+				scopes = retainHeld(scopes, held)
 			}
 		}
 	}
 	if internal && origin.Grant != nil {
 		bounded = true
 		if !slices.Contains(origin.Grant.Scopes, "*") {
-			var narrowed []string
-			for _, scope := range scopes {
-				if slices.Contains(origin.Grant.Scopes, scope) {
-					narrowed = append(narrowed, scope)
-				}
-			}
-			scopes = narrowed
+			scopes = retainHeld(scopes, origin.Grant.Scopes)
 		}
 	}
 	switch {
