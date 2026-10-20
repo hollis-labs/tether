@@ -155,7 +155,7 @@ func (s *Service) one(ctx context.Context, c Caller, h head, raw json.RawMessage
 	// Before any decode that repairs what it reads (duplicate names, bad Unicode).
 	if err := strictJSON(raw); err != nil {
 		rej := &ingest.Rejection{Code: ingest.CodeSchemaInvalid, Message: "event is not strict JSON (duplicate property, invalid UTF-8 or lone surrogate)"}
-		return rej.Result(h.ID), nil
+		return rej.Result(h.ID), nil //nolint:nilerr // a malformed event is that item's schema_invalid result; only a failure to store is a request error
 	}
 	ev, rej := ingest.CheckItem(app, raw, ingest.Options{AllowUnknownKinds: s.cfg.AllowUnknownKinds})
 	if rej != nil {
@@ -168,7 +168,7 @@ func (s *Service) one(ctx context.Context, c Caller, h head, raw json.RawMessage
 	digest, err := eventDigest(raw)
 	if err != nil {
 		rej := &ingest.Rejection{Code: ingest.CodeSchemaInvalid, Message: "event cannot be canonicalized"}
-		return rej.Result(ev.ID), nil
+		return rej.Result(ev.ID), nil //nolint:nilerr // an event that cannot be canonicalized is that item's schema_invalid result, not a request error
 	}
 
 	stored, outcome, err := s.append(ctx, c, ev, digest)
@@ -176,6 +176,8 @@ func (s *Service) one(ctx context.Context, c Caller, h head, raw json.RawMessage
 		return ingest.Result{}, err
 	}
 	switch outcome {
+	case store.IngestStored:
+		return ingest.Result{ID: ev.ID, Status: ingest.StatusAccepted, Cursor: cursor(stored.Seq)}, nil
 	case store.IngestUnverifiable:
 		// Stored, but with no digest on record: never acknowledged as a duplicate.
 		log.Printf("eventingest: event %s is stored without an ingest digest; refusing the id (not a duplicate)", ev.ID)
@@ -187,7 +189,8 @@ func (s *Service) one(ctx context.Context, c Caller, h head, raw json.RawMessage
 	case store.IngestDuplicate:
 		return ingest.Result{ID: ev.ID, Status: ingest.StatusDuplicate, Cursor: cursor(stored.Seq)}, nil
 	}
-	return ingest.Result{ID: ev.ID, Status: ingest.StatusAccepted, Cursor: cursor(stored.Seq)}, nil
+	// An outcome this code does not know is not acknowledged: the producer retries.
+	return ingest.Result{}, fmt.Errorf("eventingest: unknown ingest outcome %d", outcome)
 }
 
 func (s *Service) append(ctx context.Context, c Caller, ev runtimeevents.Event, digest string) (events.Event, store.IngestOutcome, error) {
