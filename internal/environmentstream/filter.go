@@ -2,7 +2,6 @@ package environmentstream
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -213,14 +212,17 @@ func Visible(visibility string, p identity.Principal, hasPrincipal, trustedLocal
 
 // TrustedLocal reports whether a request with no principal may be treated as
 // the local operator: the local listener's identity mode is off (there is no
-// credential to check) and the request arrived over a Unix socket. It is false
-// for TCP and remote listeners, and for observe and enforce, where a missing or
-// unverified principal is a failure, not the operator.
+// credential to check), the connection was accepted on a Unix socket
+// (identity.LocalConnection, recorded by the server, never a request field) and
+// the request is not marked remote (identity.IsRemote). It is false for TCP and
+// remote listeners, for a proxied or unmarked connection, and for observe,
+// permissive and enforce, where a missing or unverified principal is a failure,
+// not the operator.
 func TrustedLocal(mode identity.Mode, r *http.Request) bool {
 	// The empty mode is off, as in identity.Middleware.
 	if mode != identity.Off && mode != "" {
 		return false
 	}
-	addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
-	return ok && addr.Network() == "unix"
+	ctx := r.Context()
+	return identity.LocalConnection(ctx) && !identity.IsRemote(ctx)
 }

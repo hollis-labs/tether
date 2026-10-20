@@ -216,7 +216,8 @@ func TestStreamRejectsInvalidFilter(t *testing.T) {
 	}
 }
 
-// The no-principal fallback needs identity mode off AND a Unix-socket listener.
+// The no-principal fallback needs identity mode off, a connection accepted on a
+// Unix socket (server-recorded, identity.LocalConnection) and no remote marker.
 func TestTrustedLocal(t *testing.T) {
 	dir, err := os.MkdirTemp("", "tl")
 	if err != nil {
@@ -225,44 +226,67 @@ func TestTrustedLocal(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	var got atomic.Bool
 	var mode atomic.Value
+	var remote atomic.Bool
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if remote.Load() {
+			r = r.WithContext(identity.WithRemoteContext(r.Context()))
+		}
 		got.Store(TrustedLocal(mode.Load().(identity.Mode), r))
 	})
-	unixSrv := httptest.NewUnstartedServer(handler)
-	ln, err := net.Listen("unix", filepath.Join(dir, "s"))
+	start := func(ln net.Listener, connCtx bool) *httptest.Server {
+		srv := httptest.NewUnstartedServer(handler)
+		if ln != nil {
+			srv.Listener = ln
+		}
+		if connCtx {
+			srv.Config.ConnContext = func(ctx context.Context, c net.Conn) context.Context { return identity.ConnectionContext(ctx, c) }
+		}
+		srv.Start()
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	sock := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unixSrv.Listener = ln
-	unixSrv.Start()
-	t.Cleanup(unixSrv.Close)
-	tcpSrv := httptest.NewServer(handler)
-	t.Cleanup(tcpSrv.Close)
-	unixClient := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(dir, "s"))
-	}}}
+	unixSrv := start(ln, true)
+	plainLn, err := net.Listen("unix", filepath.Join(dir, "p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unmarkedSrv := start(plainLn, false) // a Unix socket the server did not mark
+	tcpSrv := start(nil, true)
+	dial := func(path string) *http.Client {
+		return &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", path)
+		}}}
+	}
+	_ = unixSrv
+	_ = unmarkedSrv
 	cases := []struct {
-		name string
-		unix bool
-		mode identity.Mode
-		want bool
+		name   string
+		client *http.Client
+		url    string
+		mode   identity.Mode
+		remote bool
+		want   bool
 	}{
-		{"off on the socket", true, identity.Off, true},
-		{"unset mode on the socket is off", true, "", true},
-		{"off over TCP", false, identity.Off, false},
-		{"observe on the socket", true, identity.Observe, false},
-		{"permissive on the socket", true, identity.Permissive, false},
-		{"enforce on the socket", true, identity.Enforce, false},
-		{"observe over TCP", false, identity.Observe, false},
+		{"off on the marked socket", dial(sock), "http://unix/", identity.Off, false, true},
+		{"unset mode on the marked socket is off", dial(sock), "http://unix/", "", false, true},
+		{"off on the socket but marked remote", dial(sock), "http://unix/", identity.Off, true, false},
+		{"off on a socket the server did not mark LocalConnection", dial(filepath.Join(dir, "p")), "http://unix/", identity.Off, false, false},
+		{"off over TCP", http.DefaultClient, tcpSrv.URL, identity.Off, false, false},
+		{"observe on the socket", dial(sock), "http://unix/", identity.Observe, false, false},
+		{"permissive on the socket", dial(sock), "http://unix/", identity.Permissive, false, false},
+		{"enforce on the socket", dial(sock), "http://unix/", identity.Enforce, false, false},
+		{"observe over TCP", http.DefaultClient, tcpSrv.URL, identity.Observe, false, false},
 	}
 	for _, c := range cases {
 		mode.Store(c.mode)
+		remote.Store(c.remote)
 		got.Store(!c.want)
-		cl, url := http.DefaultClient, tcpSrv.URL
-		if c.unix {
-			cl, url = unixClient, "http://unix/"
-		}
-		resp, err := cl.Get(url)
+		resp, err := c.client.Get(c.url)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -302,24 +326,55 @@ func TestOperatorVisibleEventsReachOnlyTheOperator(t *testing.T) {
 	cases := []struct {
 		name      string
 		principal *identity.Principal
+		local     bool // accepted on a Unix socket the server marks as a local connection
+		remote    bool
 		want      []string
 	}{
-		{"no principal over TCP", nil, []string{"plain.one"}},
-		{"device holding *", &identity.Principal{ID: "msg://device/abc", Kind: "device", Verified: true, Scopes: []string{"*"}}, []string{"plain.one"}},
-		{"service holding *", &identity.Principal{ID: "msg://service/x/prod", Kind: "service", Verified: true, Scopes: []string{"*"}}, []string{"plain.one"}},
-		{"verified operator", &identity.Principal{ID: identity.OperatorID, Kind: "operator", Verified: true, Scopes: []string{"*"}}, []string{"secret.one", "plain.one"}},
+		{"no principal on the local socket (mode off)", nil, true, false, []string{"secret.one", "plain.one"}},
+		{"no principal on the local socket but marked remote", nil, true, true, []string{"plain.one"}},
+		{"no principal over TCP", nil, false, false, []string{"plain.one"}},
+		{"device holding *", &identity.Principal{ID: "msg://device/abc", Kind: "device", Verified: true, Scopes: []string{"*"}}, true, false, []string{"plain.one"}},
+		{"service holding *", &identity.Principal{ID: "msg://service/x/prod", Kind: "service", Verified: true, Scopes: []string{"*"}}, false, false, []string{"plain.one"}},
+		{"verified operator", &identity.Principal{ID: identity.OperatorID, Kind: "operator", Verified: true, Scopes: []string{"*"}}, false, false, []string{"secret.one", "plain.one"}},
 	}
 	for _, c := range cases {
 		s := newServer()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.LocalIdentityMode = identity.Off
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if c.principal != nil {
 				r = r.WithContext(identity.WithPrincipal(r.Context(), *c.principal))
 			}
+			if c.remote {
+				r = r.WithContext(identity.WithRemoteContext(r.Context()))
+			}
 			s.Stream(w, r, "")
 		}))
+		client := http.DefaultClient
+		if c.local {
+			dir, err := os.MkdirTemp("", "ov")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			sock := filepath.Join(dir, "s")
+			ln, err := net.Listen("unix", sock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv.Listener = ln
+			srv.Config.ConnContext = func(ctx context.Context, cn net.Conn) context.Context { return identity.ConnectionContext(ctx, cn) }
+			client = &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+			}}}
+		}
+		srv.Start()
+		url := srv.URL
+		if c.local {
+			url = "http://unix"
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"?after_seq=0", nil)
-		resp, err := srv.Client().Do(req)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url+"?after_seq=0", nil)
+		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
