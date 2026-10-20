@@ -39,6 +39,8 @@ func (s *Store) DeleteEventHistoryBefore(ctx context.Context, table string, cuto
 		query = `DELETE FROM identity_audit WHERE id IN (SELECT id FROM identity_audit WHERE at < ? ORDER BY at, id LIMIT ?)`
 	case "events":
 		query = `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE at < ? ORDER BY at, id LIMIT ?)`
+	case "event_ingest_digests":
+		query = `DELETE FROM event_ingest_digests WHERE event_id IN (SELECT event_id FROM event_ingest_digests WHERE at < ? ORDER BY at, event_id LIMIT ?)`
 	case "proxy_events":
 		query = `DELETE FROM proxy_events WHERE id IN (SELECT id FROM proxy_events WHERE timestamp < ? ORDER BY timestamp, id LIMIT ?)`
 	case "ai_events":

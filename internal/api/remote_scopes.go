@@ -168,7 +168,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/messages/", "/messages/{id}/redrive", map[string]string{"POST": maintainScope}),
 	routeScope("/messages/", "/messages/{id}/purge", map[string]string{"POST": maintainScope}),
 	routeScope("/messages/retention/candidates", "/messages/retention/candidates", map[string]string{"GET": maintainScope}),
-	routeScope("/events", "/events", map[string]string{"GET": readScope}),
+	routeScope("/events", "/events", map[string]string{"GET": readScope, "POST": identity.ScopeEvents}),
 	routeScope("/events/stream", "/events/stream", map[string]string{"GET": readScope}),
 	routeScope("/events/tool-metrics", "/events/tool-metrics", map[string]string{"GET": readScope}),
 	routeScope("/proxy/events", "/proxy/events", map[string]string{"GET": readScope, "POST": localScope}),

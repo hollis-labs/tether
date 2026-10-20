@@ -68,6 +68,8 @@ github.com/hollis-labs/libs/core/util v0.4.0 h1:UUEeCV0Zi5zynlgPh/Jw/bqgfmqD3NTp
 github.com/hollis-labs/libs/core/util v0.4.0/go.mod h1:CpS3EUj+MHivKVnGWJj8Vtq1+J3TN1uPyPCbLzhQLh0=
 github.com/hollis-labs/libs/harness/core v0.13.0 h1:JIiIr+B6qcsG2vbB+CJb6dHUlJVzp7cVjGR0CmS9TF0=
 github.com/hollis-labs/libs/harness/core v0.13.0/go.mod h1:hj9S3Chzguss5UkJs4vFK7wz9WL+CyOa50/wEn56tNs=
+github.com/hollis-labs/libs/harness/core v0.13.1-0.20261020014101-b9e7e08f7c85 h1:oSRNEf/ZOZ0XtHvZiPqq0A+815ZCEzGsHKvCkBHVpWY=
+github.com/hollis-labs/libs/harness/core v0.13.1-0.20261020014101-b9e7e08f7c85/go.mod h1:hj9S3Chzguss5UkJs4vFK7wz9WL+CyOa50/wEn56tNs=
 github.com/hollis-labs/libs/llm/core v0.2.0 h1:jYjfC4gsLbxsUG5mQ4ougbmUB0b9rQpqb85Vmb4CwQg=
 github.com/hollis-labs/libs/llm/core v0.2.0/go.mod h1:Hl8R2j3sR/mxfX8S/XBSxqcm7VM+RSVzH924gYXTyGw=
 github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0 h1:m9rCjLop6UCALCTF9Ssh/bZe/Y/0Xl/qvAPim4ZK67U=

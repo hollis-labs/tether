@@ -37,7 +37,9 @@ type Config struct {
 	TeamsEnabled   bool
 	IdentityMode   identity.Mode
 	// IdentityPoints overrides IdentityMode per enforcement point (CW-20261010-0268).
-	IdentityPoints  map[string]identity.Mode
+	IdentityPoints map[string]identity.Mode
+	// EventIngest is the POST /events configuration.
+	EventIngest     EventIngestSettings
 	ListenAddr      string
 	PIDFile         string
 	ShutdownTimeout time.Duration
@@ -96,6 +98,8 @@ type Server struct {
 	Bus events.Bus
 	// EventsStore is optional; when set, GET /sessions/{id}/events works.
 	EventsStore api.EventsStore
+	// EventIngest is optional; when set, POST /events publishes app events.
+	EventIngest api.EventIngestService
 	// Catalog is optional; when set, GET /catalog/<type> endpoints are
 	// mounted. Nil in tests that only exercise the session surface.
 	Catalog api.CatalogLoader
@@ -609,6 +613,8 @@ func (s *Server) handler(remote bool) http.Handler {
 			Broker:              s.Broker,
 			Bus:                 s.Bus,
 			EventsStore:         s.EventsStore,
+			EventIngest:         s.EventIngest,
+			EventIngestMode:     s.Config.IdentityModeFor("local_api"),
 			Catalog:             s.Catalog,
 			GroupStore:          s.GroupStore,
 			Workstreams:         s.Workstreams,
@@ -1033,6 +1039,15 @@ func (s *Server) apiMounts() []apiMount {
 		{"/fs/validate", true},
 		{"/fs/detect", true},
 	}
+}
+
+// EventIngestSettings is the resolved POST /events configuration.
+type EventIngestSettings struct {
+	Enabled bool
+	// AllowUnknownKinds accepts kinds missing from the catalog (event_stage_mode shadow).
+	AllowUnknownKinds bool
+	RatePerSecond     float64
+	Burst             int
 }
 
 // IdentityModeFor is the identity mode of one enforcement point.

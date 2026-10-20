@@ -1708,6 +1708,16 @@ Response (200):
 }
 ```
 
+### `POST /events`
+
+Publish events from an app (off until `daemon.event_ingest.enabled`). The body is
+one runtimeevents v1.1 envelope or `{"events":[...]}` (1 to 100 events, 1 MiB).
+`200` carries one result per event: `accepted` (with the log `cursor`),
+`duplicate` (same id, same event; original cursor) or `rejected` (with a `code`).
+Whole-request failures: 400, 401, 403 (`scope_required`, `app_mismatch`), 413,
+429 (`Retry-After`), 503 (`Retry-After`). Requires `tether.events` when identity
+is enforced. See `docs/event-ingest.md`.
+
 ### `GET /events/tool-metrics`
 
 Counters and cumulative latency histograms over retained completed-call events,
