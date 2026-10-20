@@ -11,7 +11,10 @@ token class beside the operator's and a paired device's (security direction v1).
 A service token has no expiry in the sense that matters: its `exp` is ten years
 out (go-auth rejects `exp: 0`, so "no expiry" is implemented as a very distant
 `exp`). It is ended by **revoking** it: its `jti` goes on the deny-list until its
-`exp`, and every verifier honours that within the library's poll interval (30 s).
+`exp`. A verifier stops accepting it within one poll interval (30 s in the library)
+after a successful poll of the deny-list. If polling fails, the verifier keeps the
+last list it learned: it still rejects every revocation it already knew, but a
+newly revoked token can keep being accepted until a poll succeeds.
 The 60 minute issuer cap applies to every other token and is not changed; only
 `kind: "service"` escapes it, and only through this issuing path. A service token
 cannot mint other tokens.
