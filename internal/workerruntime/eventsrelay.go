@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,7 +31,10 @@ import (
 //
 // DEV risk, recorded on purpose: any local process on the host can publish as
 // any registered app with the host's credential. The release fix is a per-device
-// app allowlist stored with the grant (CW-20261020-0031). The relay binds to a
+// app allowlist stored with the grant (CW-20261020-0031). A web page is not a
+// local process the DEV decision accepted: the relay refuses a request with an
+// Origin header, a non-loopback Host (DNS rebinding) or a Content-Type other
+// than application/json (so no preflight-free cross-origin POST). It binds to a
 // loopback address only, never logs a token or a body, applies the contract's
 // size limits itself, and refuses to forward when the worker has no credential.
 type EventsRelay struct {
@@ -46,6 +51,14 @@ type EventsRelay struct {
 	Logf func(format string, args ...any)
 
 	inflight atomic.Int32
+
+	// One client, and so one connection pool, for the life of the relay.
+	clientOnce sync.Once
+	hubClient  *http.Client
+	// life is canceled when Serve is asked to stop; it bounds every outbound
+	// call so none outlives the relay. Nil (a bare Handler) means no bound.
+	lifeMu sync.Mutex
+	life   context.Context
 }
 
 const (
@@ -91,13 +104,48 @@ func (r *EventsRelay) logf(format string, args ...any) {
 }
 
 func (r *EventsRelay) client() *http.Client {
-	if r.Client != nil {
-		c := *r.Client
-		c.CheckRedirect = noRedirect
-		return &c
+	r.clientOnce.Do(func() {
+		if r.Client != nil {
+			c := *r.Client
+			c.CheckRedirect = noRedirect
+			r.hubClient = &c
+			return
+		}
+		r.hubClient = &http.Client{Timeout: relayHubTimeout, CheckRedirect: noRedirect,
+			Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: relayHubTimeout, TLSHandshakeTimeout: 15 * time.Second,
+				IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 4}}
+	})
+	return r.hubClient
+}
+
+func (r *EventsRelay) lifeCtx() context.Context {
+	r.lifeMu.Lock()
+	defer r.lifeMu.Unlock()
+	return r.life
+}
+
+// browserSafe refuses what a web page could send to a loopback port. A page can
+// make a "simple" cross-origin POST (text/plain, no preflight) and can reach
+// 127.0.0.1 through a rebound DNS name, so the relay requires a JSON content
+// type (which forces a preflight the relay never answers), no Origin header
+// (non-browser publishers send none) and a loopback Host.
+func browserSafe(req *http.Request) (int, string, string) {
+	if req.Header.Get("Origin") != "" {
+		return http.StatusForbidden, "origin_forbidden", "cross-origin requests are not accepted"
 	}
-	return &http.Client{Timeout: relayHubTimeout, CheckRedirect: noRedirect,
-		Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: relayHubTimeout, TLSHandshakeTimeout: 15 * time.Second}}
+	host := req.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); (ip == nil || !ip.IsLoopback()) && host != "localhost" {
+		return http.StatusForbidden, "host_forbidden", "request host is not loopback"
+	}
+	mt, _, _ := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	if mt != "application/json" {
+		return http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json"
+	}
+	return 0, "", ""
 }
 
 // Serve binds Listen and relays until ctx is canceled. ready, if set, receives
@@ -111,18 +159,37 @@ func (r *EventsRelay) Serve(ctx context.Context, ready func(net.Addr)) error {
 		return fmt.Errorf("events relay: %w", err)
 	}
 	srv := &http.Server{Handler: r.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second}
+	// Outbound hub calls hang off ctx, so canceling it aborts a request that is
+	// blocked on the hub instead of letting Shutdown wait out its 5s.
+	r.lifeMu.Lock()
+	r.life = ctx
+	r.lifeMu.Unlock()
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
+		r.client().CloseIdleConnections()
 	}()
 	if ready != nil {
 		ready(ln.Addr())
 	}
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
+	if err != nil {
+		// Serve failed on its own: stop the shutdown goroutine and join it.
+		// Without this a failed Serve would leave it waiting on ctx.
+		_ = srv.Close()
+		r.client().CloseIdleConnections()
 		return err
 	}
+	// ErrServerClosed returns as soon as Shutdown begins; wait for it to finish
+	// (in-flight calls drained, idle connections closed) before returning.
+	<-stopped
 	return nil
 }
 
@@ -153,6 +220,10 @@ func relayError(w http.ResponseWriter, status int, code, msg, retryAfter string)
 func (r *EventsRelay) handleEvents(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		relayError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "")
+		return
+	}
+	if status, code, msg := browserSafe(req); status != 0 {
+		relayError(w, status, code, msg, "")
 		return
 	}
 	if r.inflight.Add(1) > relayMaxInflight {
@@ -189,7 +260,13 @@ func (r *EventsRelay) handleEvents(w http.ResponseWriter, req *http.Request) {
 		relayError(w, http.StatusServiceUnavailable, "relay_no_credential", "worker has no usable hub credential", relayRetryAfter)
 		return
 	}
-	out, err := http.NewRequestWithContext(req.Context(), http.MethodPost, strings.TrimRight(r.Hub, "/")+"/events", bytes.NewReader(body))
+	// The hub call ends when the caller goes away or the relay is stopped.
+	callCtx, stopCall := context.WithCancel(req.Context())
+	defer stopCall()
+	if life := r.lifeCtx(); life != nil {
+		defer context.AfterFunc(life, stopCall)()
+	}
+	out, err := http.NewRequestWithContext(callCtx, http.MethodPost, strings.TrimRight(r.Hub, "/")+"/events", bytes.NewReader(body))
 	if err != nil {
 		relayError(w, http.StatusInternalServerError, "relay_error", "cannot build hub request", "")
 		return

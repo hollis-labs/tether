@@ -171,7 +171,13 @@ come back unchanged, so a client's retry rules are the same as against the hub.
 The relay answers `503` with `Retry-After` when the worker has no usable
 credential and `502` with `Retry-After` when the hub is unreachable. It binds to
 loopback only (any other address is refused), ignores any `Authorization` header
-the caller sends, and never logs a token or a body.
+the caller sends, and never logs a token or a body. A web page cannot use it:
+a request with an `Origin` header (403), a `Host` that is not loopback (403,
+DNS rebinding) or a `Content-Type` other than `application/json` (415, which
+also closes the preflight-free cross-origin POST) is refused before the
+credential is read. Publishers using the libs `mesh/eventbus` client already
+send `application/json` and no `Origin`. Hub calls share one connection pool and
+end when the worker stops.
 
 Services then set `HOLLIS_EVENTS_URL=http://127.0.0.1:7845` and no token file.
 

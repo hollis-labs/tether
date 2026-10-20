@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -83,7 +84,8 @@ func relayFor(t *testing.T, hub *hubStub, token string, _ *bytes.Buffer) *Events
 const oneEvent = `{"schema_version":"1","id":"evt_00000000000000000000000000000001","kind":"alert.raised","app":"cerberus","sequence":1,"time":"2026-10-20T01:00:00Z","source":{"channel":"t"},"subject":"msg://alert/cerberus/1"}`
 
 func post(h http.Handler, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7845"+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
@@ -275,4 +277,118 @@ func TestRelayServesOnLoopbackAndStops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("relay did not stop")
 	}
+}
+
+// A web page can reach a loopback port with a "simple" POST (text/plain, no
+// preflight) or through a rebound DNS name; neither may use the device credential.
+func TestRelayRefusesWhatAWebPageCanSend(t *testing.T) {
+	hub := newHub(t)
+	tf, _ := tokenFile(t)
+	r := relayFor(t, hub, tf, nil)
+	cases := []struct {
+		name string
+		host string
+		hdr  map[string]string
+		want int
+	}{
+		{"text/plain simple POST", "127.0.0.1:7845", map[string]string{"Content-Type": "text/plain"}, http.StatusUnsupportedMediaType},
+		{"form POST", "127.0.0.1:7845", map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, http.StatusUnsupportedMediaType},
+		{"cross-origin json", "127.0.0.1:7845", map[string]string{"Origin": "https://evil.example"}, http.StatusForbidden},
+		{"rebound DNS name", "evil.example:7845", nil, http.StatusForbidden},
+		{"json to localhost", "localhost:7845", nil, http.StatusOK},
+		{"json to ipv6 loopback", "[::1]:7845", nil, http.StatusOK},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodPost, "http://"+c.host+"/events", strings.NewReader(oneEvent))
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range c.hdr {
+			req.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		r.Handler().ServeHTTP(w, req)
+		if w.Code != c.want {
+			t.Errorf("%s: %d, want %d", c.name, w.Code, c.want)
+		}
+	}
+	if calls, _, _, _ := hub.snapshot(); calls != 2 {
+		t.Errorf("hub was called %d times; only the two same-host JSON requests may reach it", calls)
+	}
+}
+
+// Ten sequential requests ride one pooled connection, not ten.
+func TestRelayReusesOneHubConnection(t *testing.T) {
+	var conns atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	tf, _ := tokenFile(t)
+	r := &EventsRelay{Listen: "127.0.0.1:0", Hub: srv.URL, TokenFile: tf}
+	for i := 0; i < 10; i++ {
+		if w := post(r.Handler(), "/events", oneEvent, nil); w.Code != 200 {
+			t.Fatalf("request %d: %d", i, w.Code)
+		}
+	}
+	if n := conns.Load(); n != 1 {
+		t.Fatalf("%d hub connections for 10 sequential requests, want 1", n)
+	}
+}
+
+// A request blocked on the hub must not outlive the relay: stopping Serve
+// cancels the outbound call and Serve returns well inside the 5s drain.
+func TestRelayStopCancelsAHubCallThatIsBlocked(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	hubSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		close(entered)
+		select {
+		case <-release:
+		case <-req.Context().Done():
+		}
+	}))
+	t.Cleanup(hubSrv.Close)
+	t.Cleanup(func() { close(release) })
+	tf, _ := tokenFile(t)
+	r := &EventsRelay{Listen: "127.0.0.1:0", Hub: hubSrv.URL, TokenFile: tf}
+	ctx, cancel := context.WithCancel(context.Background())
+	addr := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() { done <- r.Serve(ctx, func(a net.Addr) { addr <- a.String() }) }()
+	a := <-addr
+	reply := make(chan int, 1)
+	go func() {
+		res, err := http.Post("http://"+a+"/events", "application/json", strings.NewReader(oneEvent))
+		if err != nil {
+			reply <- 0
+			return
+		}
+		_ = res.Body.Close()
+		reply <- res.StatusCode
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request never reached the hub")
+	}
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("Serve did not return while a hub call was blocked")
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("Serve took %v to stop", d)
+	}
+	<-reply
 }
