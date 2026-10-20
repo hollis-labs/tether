@@ -97,6 +97,16 @@ func New(bus Bus, store Store, cfg Config) (*Service, error) {
 	return svc, nil
 }
 
+// warm runs the ingest check once on an empty event, which compiles the schema.
+// The event is rejected as expected; only an unavailable schema is an error.
+func warm() error {
+	_, rej := ingest.CheckItem("warmup", json.RawMessage(`{}`), ingest.Options{})
+	if rej == nil || strings.Contains(rej.Message, "schema unavailable") {
+		return errors.New("eventingest: ingest schema unavailable")
+	}
+	return nil
+}
+
 // RateLimited carries the wait a producer should observe before retrying.
 type RateLimited struct{ RetryAfter time.Duration }
 
