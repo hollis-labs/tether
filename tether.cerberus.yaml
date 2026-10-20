@@ -10,6 +10,9 @@ resources:
     type: process
     project: tether
     connector: local
+    env: dev
+    owner: self
+    admin: self
     config:
       build_strategy:
         kind: make_standard
@@ -79,6 +82,9 @@ resources:
     type: process
     project: tether
     connector: local
+    env: dev
+    owner: self
+    admin: self
     config:
       auto_restart: false
       auto_start: true
@@ -101,6 +107,9 @@ resources:
     type: process
     project: tether
     connector: local
+    env: dev
+    owner: self
+    admin: self
     config:
       auto_restart: false
       auto_start: false
