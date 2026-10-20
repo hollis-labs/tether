@@ -137,8 +137,19 @@ type operationStallStore struct {
 	timedOut  atomic.Bool
 }
 
+// stallBudget bounds only the call being stalled. The test used to get it by
+// shortening turnOutputTimeout to 25ms for the whole service, but that budget
+// also bounds every other store and bus call in each attempt and retry
+// (PublishedTurnOutput, GetSessionContext, Publish, ...). On a loaded runner any
+// of them can outlast 25ms, time out again and keep the backoff (100ms, 200ms,
+// ...) running past the test's 3s wait, though nothing is stalled by then. Here
+// the stall alone is short; everything else keeps the normal persistence budget.
+const stallBudget = 25 * time.Millisecond
+
 func (s *operationStallStore) SessionRoute(ctx context.Context, id string) (*launchprofile.Route, error) {
 	if s.operation == "route" && s.calls.Add(1) == 1 {
+		ctx, cancel := context.WithTimeout(ctx, stallBudget)
+		defer cancel()
 		conn, err := s.DB().Conn(ctx)
 		if err != nil {
 			return nil, err
@@ -152,6 +163,8 @@ func (s *operationStallStore) SessionRoute(ctx context.Context, id string) (*lau
 }
 func (s *operationStallStore) StageTurnOutput(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
 	if s.operation == "stage" && s.calls.Add(1) <= 2 {
+		ctx, cancel := context.WithTimeout(ctx, stallBudget)
+		defer cancel()
 		conn, err := s.DB().Conn(ctx)
 		if err != nil {
 			return messaging.Envelope{}, err
@@ -167,7 +180,6 @@ func TestOutputRetriesIsolatedRouteAndStageStalls(t *testing.T) {
 	for _, operation := range []string{"route", "stage"} {
 		t.Run(operation, func(t *testing.T) {
 			svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
-			svc.turnOutputTimeout = 25 * time.Millisecond
 			storage := &operationStallStore{Store: svc.Store, operation: operation}
 			svc.turnOutputStore = storage
 			if operation == "route" {
