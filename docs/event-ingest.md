@@ -106,7 +106,15 @@ redaction engine (`security/redact`) and records the count in `class.redactions`
   catalog.
 - A kind with no schema, a free-form object (`data.emitted`), or a schema using
   composition (`oneOf`, `$ref`, ...) cannot be reduced to a path list. It gets the
-  **denylist**: secrets and PII are scrubbed and the shape is kept.
+  **denylist**: secrets and PII are scrubbed and the shape is kept. This
+  fallback is a DEV policy, to be revisited at release posture; secret and PII
+  scrubbing always applies.
+- A schema that is declared but cannot be read, parsed or compiled into a policy
+  is **not** a reason to fall back. The daemon builds every catalog kind's policy
+  at start and refuses to enable ingest, with an error naming the kind and the
+  schema. If a kind's policy is still unavailable when an event arrives, the
+  payload is not stored (`{"sanitize_error":"policy_unavailable"}`,
+  `class.sanitized=false`) and the daemon logs the cause.
 - A payload that cannot be sanitized (oversized, opaque) is replaced with
   `{"sanitize_error":"<class>"}` and the event is stored with
   `class.sanitized=false`.

@@ -208,7 +208,13 @@ func (s *Service) sanitize(ev runtimeevents.Event) (string, events.Class) {
 	if len(ev.Payload) == 0 || string(ev.Payload) == "null" {
 		return "", class
 	}
-	sanitizer, _ := s.policies.forKind(string(ev.Kind))
+	sanitizer, _, err := s.policies.forKind(string(ev.Kind))
+	if err != nil {
+		// A broken policy never degrades to a looser one: nothing of the
+		// payload is stored, and the failure is visible in the log.
+		log.Printf("%v; payload of %s not stored", err, ev.Kind)
+		return `{"sanitize_error":"policy_unavailable"}`, events.Class{Sanitized: false}
+	}
 	out, rep := sanitizer.Sanitize(ev.Payload)
 	if rep.ErrorClass != "" {
 		b, _ := json.Marshal(map[string]string{"sanitize_error": string(rep.ErrorClass)})
