@@ -42,6 +42,34 @@ is refused. The issuer logs ids and scopes, never the token. Its metadata (jti,
 principal, audience, scopes, label, issuer, times; never the token) is kept in the
 issuer's state file (0600) and survives a restart.
 
+## Revoking
+
+```sh
+tether service-token revoke <jti>               # one token
+tether service-token revoke --app cerberus      # every live token of that app (--env, default dev)
+```
+
+HTTP: `POST /auth/service-tokens/revoke` with `{"jti": ...}` or `{"app": ..., "env": ...}`
+(local operator only; revoking something unknown or already revoked is a 404).
+The `jti` goes on the deny-list **until the token's own `exp`**, so a service token
+is never pruned from the list at the 65 minute session horizon, and the listing
+keeps the revocation time. Tether's own verifier shares the list and refuses the
+token at once; any other verifier stops accepting it within one poll interval
+(30 s by default, the library's) after a successful poll. A verifier that cannot
+poll keeps its last known list: it still rejects what it already learned, but a
+newly revoked token can be accepted until a poll succeeds.
+
+## The deny-list is public (minimal)
+
+`GET /auth/denylist` (and `HEAD`) needs no credential, no scope and no protocol
+header, on the local and the remote listener. It returns exactly three arrays of
+opaque ids, `jti`, `sub` and `sid`, with an `ETag` and `If-None-Match` support;
+never a token, never a label, never a scope. A verifier that cannot read the list
+cannot honor a revocation, and nothing in it is secret. **Writing** it
+(`POST /auth/denylist`) is unchanged and needs `tether.admin` (or the operator
+over the local socket). Earlier, reading it needed `tether.maintain`; a poller that
+still sends a bearer is unaffected.
+
 ## Scope rules
 
 - Explicit verbs by default. `<audience>.*` is accepted only with
@@ -55,6 +83,6 @@ issuer's state file (0600) and survives a restart.
 
 ## What it is not (yet)
 
-Revoking, the public minimal deny-list and reachability from other hosts over the
-remote listener are separate changes under CW-20261019-0044. A service token does
-not yet authenticate on the remote listener, which accepts only paired devices.
+Reachability from other hosts over the remote listener is a separate change under
+CW-20261019-0044. A service token does not yet authenticate on the remote
+listener, which accepts only paired devices.

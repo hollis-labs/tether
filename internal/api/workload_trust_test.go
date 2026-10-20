@@ -124,8 +124,9 @@ func TestWorkloadTrustHTTP(t *testing.T) {
 					t.Fatal("unauthorized reader accepted")
 				}
 			}
-			// Scoped reader has no inventory, deny-list or workload mint authority.
-			for _, path := range []string{DenyListPath, "/auth/keys"} {
+			// Scoped reader has no inventory or workload mint authority (the minimal
+			// deny-list is public, so it is not an authority a reader could gain).
+			for _, path := range []string{"/auth/keys"} {
 				if out := call(h, "GET", path, reader.Token, ""); out.Code < 400 {
 					t.Fatal("reader expanded authority")
 				}

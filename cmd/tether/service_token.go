@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/spf13/cobra"
 )
 
@@ -64,6 +65,33 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 	issue.Flags().StringVar(&outFile, "out-file", "", "write the token to this new 0600 file instead of stdout")
 	issue.Flags().BoolVar(&asJSON, "json", false, "print the token and its metadata as JSON")
 	cmd.AddCommand(issue)
+	var revokeApp, revokeEnv string
+	revoke := &cobra.Command{Use: "revoke [jti]", Short: "Revoke one service token by jti, or all of an app's with --app", Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := api.ServiceTokenRevokeRequest{App: revokeApp, Env: revokeEnv}
+			if len(args) == 1 {
+				req.JTI = args[0]
+			}
+			if (req.JTI == "") == (req.App == "") {
+				return fmt.Errorf("give exactly one of a jti argument or --app")
+			}
+			client, err := factory()
+			if err != nil {
+				return err
+			}
+			var out api.ServiceTokenRevokeResponse
+			if err := client.call(cmd.Context(), http.MethodPost, api.ServiceTokensPath+"/revoke", req, &out); err != nil {
+				return err
+			}
+			for _, r := range out.Revoked {
+				fmt.Fprintf(cmd.OutOrStdout(), "revoked %s (%s)\n", r.JTI, r.Sub)
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "other verifiers stop accepting it within one deny-list poll interval (30s by default) after a successful poll; one that cannot poll keeps its last list")
+			return nil
+		}}
+	revoke.Flags().StringVar(&revokeApp, "app", "", "revoke every live token of this app instead of one jti")
+	revoke.Flags().StringVar(&revokeEnv, "env", "", "environment of --app (default dev)")
+	cmd.AddCommand(revoke)
 	var listJSON bool
 	cmd.AddCommand(&cobra.Command{Use: "list", Short: "List service token metadata (never the tokens)", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -81,7 +109,7 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 			fmt.Fprintln(tw, "JTI\tPRINCIPAL\tAUDIENCE\tSCOPES\tISSUED\tEXPIRES\tLABEL")
 			for _, r := range out.Tokens {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\t%s\t%s\n", r.JTI, r.Sub, r.Audience, r.Scopes, r.IssuedAt.Format(time.RFC3339), r.ExpiresAt.Format("2006-01-02"), r.Label)
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\t%s\t%s\n", r.JTI, r.Sub, r.Audience, r.Scopes, r.IssuedAt.Format(time.RFC3339), r.ExpiresAt.Format("2006-01-02"), r.Label+revokedMark(r))
 			}
 			return tw.Flush()
 		}})
@@ -90,3 +118,10 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 }
 
 func writeJSONLine(w io.Writer, v any) error { return json.NewEncoder(w).Encode(v) }
+
+func revokedMark(r authissuer.ServiceRecord) string {
+	if r.RevokedAt == nil {
+		return ""
+	}
+	return " [revoked " + r.RevokedAt.Format(time.RFC3339) + "]"
+}
