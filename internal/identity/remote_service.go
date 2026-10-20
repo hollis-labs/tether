@@ -153,7 +153,7 @@ func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string
 	// One unit is reserved before the expensive verification and kept only if the
 	// attempt is a refused credential (401). Everything else gives it back, on
 	// every path including a panic, so a success, a 403 scope refusal, a 503 and
-	// a cancelled verification never cost the budget.
+	// a canceled verification never cost the budget.
 	if !c.Failures.Reserve() {
 		w.Header().Set("Retry-After", "1")
 		authError(w, http.StatusTooManyRequests, "rate_limited")

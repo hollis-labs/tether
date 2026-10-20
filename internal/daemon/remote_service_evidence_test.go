@@ -165,7 +165,7 @@ func TestRemoteServiceJWTCannotSpoofAppOrActor(t *testing.T) {
 		}
 	}
 
-	// A body-supplied actor is not honoured: the stored actor is the service.
+	// A body-supplied actor is not honored: the stored actor is the service.
 	w := postEventsAs(h, token, event("evt_00000000000000000000000000000a03", "cerberus", map[string]any{
 		"actor": map[string]any{"kind": "user", "urn": "msg://user/local/operator", "role": "operator"},
 	}))

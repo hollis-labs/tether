@@ -276,11 +276,11 @@ func TestConcurrentRefusedJWTsCannotExceedTheFailureBudget(t *testing.T) {
 }
 
 // Only a refused credential keeps its reserved unit. A success, a scope
-// refusal, an unavailable or cancelled verifier and a panic all give it back.
+// refusal, an unavailable or canceled verifier and a panic all give it back.
 func TestFailureBudgetReservationIsReturnedOnEveryNonFailurePath(t *testing.T) {
 	scopeless := goodService()
 	scopeless.Scopes = []string{"tether.read"}
-	cancelled := func() verifierFunc {
+	canceled := func() verifierFunc {
 		return func(ctx context.Context, _ string) (Principal, error) { return Principal{}, context.Canceled }
 	}()
 	panicking := verifierFunc(func(context.Context, string) (Principal, error) { panic("verifier blew up") })
@@ -292,7 +292,7 @@ func TestFailureBudgetReservationIsReturnedOnEveryNonFailurePath(t *testing.T) {
 		{"success", stubJWT{p: goodService()}, 204},
 		{"scope refusal", stubJWT{p: scopeless}, 403},
 		{"verifier unavailable", stubJWT{err: errors.New("keys unreadable")}, 503},
-		{"cancelled verification", cancelled, 503},
+		{"canceled verification", canceled, 503},
 	} {
 		lim := NewAttemptLimiter(0.001, 2)
 		h, _, _ := remoteWith(ServiceJWT{Verify: c.v, Known: live("jti-live-1"), Failures: lim}, nil)
@@ -311,7 +311,8 @@ func TestFailureBudgetReservationIsReturnedOnEveryNonFailurePath(t *testing.T) {
 			do(h, "POST", "/events", testJWT)
 		}()
 	}
-	if !lim.Reserve() || !lim.Reserve() || lim.Reserve() {
+	first, second, third := lim.Reserve(), lim.Reserve(), lim.Reserve()
+	if !first || !second || third {
 		t.Fatal("a panicking verifier leaked or double-returned a reservation")
 	}
 
