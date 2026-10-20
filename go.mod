@@ -26,7 +26,10 @@ require (
 	modernc.org/sqlite v1.60.1
 )
 
-require github.com/hollis-labs/libs/security/redact v0.2.0
+require (
+	github.com/hollis-labs/libs/mesh/eventbus v0.1.0
+	github.com/hollis-labs/libs/security/redact v0.2.0
+)
 
 require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 
