@@ -328,6 +328,14 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		defer stopReport()
+		var eventIngest api.EventIngestService
+		if cfg.EventIngest.Enabled {
+			ing, err := newEventIngest(svc, cfg.EventIngest)
+			if err != nil {
+				return err
+			}
+			eventIngest = ing
+		}
 		server := &daemon.Server{
 			Environment:              environmentDescriptor,
 			EnvironmentReport:        environmentReport,
@@ -357,6 +365,7 @@ var daemonRunCmd = &cobra.Command{
 			Broker:              &brokerAdapter{write: svc.Broker, read: svc.Store},
 			Bus:                 svc.Bus,
 			EventsStore:         svc.Store,
+			EventIngest:         eventIngest,
 			Catalog:             &catalogLoader{root: svc.CatalogRoot},
 			GroupStore:          svc.Store,
 			Workstreams:         svc.Store,
@@ -1377,11 +1386,17 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		return daemon.Config{}, fmt.Errorf("remote listener requires modules.remote_listener")
 	}
 	return daemon.Config{
-		RemoteListener:  remote,
-		Modules:         profile,
-		TeamsEnabled:    profile.Enabled(environment.Teams),
-		IdentityMode:    mode,
-		IdentityPoints:  identityPointModes(cat.Global.Identity),
+		RemoteListener: remote,
+		Modules:        profile,
+		TeamsEnabled:   profile.Enabled(environment.Teams),
+		IdentityMode:   mode,
+		IdentityPoints: identityPointModes(cat.Global.Identity),
+		EventIngest: daemon.EventIngestSettings{
+			Enabled:           d.EventIngest.Enabled,
+			AllowUnknownKinds: d.EventStageMode != "enforce",
+			RatePerSecond:     d.EventIngest.RatePerSecond,
+			Burst:             d.EventIngest.Burst,
+		},
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),
 		ShutdownTimeout: timeout,

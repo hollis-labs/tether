@@ -36,17 +36,21 @@ type SessionUsageStore interface {
 type Deps struct {
 	Forums ForumService
 	// Teams is populated only when the host enables teams; nil leaves routes absent.
-	Teams             TeamOps
-	Docs              DocsService
-	Service           LaunchService
-	AI                AIService
-	AIAudit           AIAuditStore
-	AIUsage           AIUsageStore
-	Checkpoints       CheckpointStore
-	SessionUsage      SessionUsageStore
-	Broker            BrokerService
-	Bus               events.Bus
-	EventsStore       EventsStore
+	Teams        TeamOps
+	Docs         DocsService
+	Service      LaunchService
+	AI           AIService
+	AIAudit      AIAuditStore
+	AIUsage      AIUsageStore
+	Checkpoints  CheckpointStore
+	SessionUsage SessionUsageStore
+	Broker       BrokerService
+	Bus          events.Bus
+	EventsStore  EventsStore
+	// EventIngest, when non-nil, enables POST /events. EventIngestMode is the
+	// identity mode the publish check follows (off, observe, enforce).
+	EventIngest       EventIngestService
+	EventIngestMode   identity.Mode
 	EnvironmentStream *environmentstream.Server
 	Catalog           CatalogLoader
 	GroupStore        SessionGroupStore
@@ -177,6 +181,8 @@ type Server struct {
 	Broker              BrokerService
 	Bus                 events.Bus
 	EventsStore         EventsStore
+	EventIngest         EventIngestService
+	EventIngestMode     identity.Mode
 	EnvironmentStream   *environmentstream.Server
 	Catalog             CatalogLoader
 	GroupStore          SessionGroupStore
@@ -233,6 +239,8 @@ func NewHandler(deps Deps) http.Handler {
 		Broker:              deps.Broker,
 		Bus:                 deps.Bus,
 		EventsStore:         deps.EventsStore,
+		EventIngest:         deps.EventIngest,
+		EventIngestMode:     deps.EventIngestMode,
 		EnvironmentStream:   deps.EnvironmentStream,
 		Catalog:             deps.Catalog,
 		GroupStore:          deps.GroupStore,
