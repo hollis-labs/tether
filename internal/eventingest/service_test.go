@@ -309,3 +309,35 @@ func TestDeviceCallerPublishesForRegisteredAppsOnly(t *testing.T) {
 		t.Fatalf("stored actor/app: %+v", e.Envelope)
 	}
 }
+
+// The lifecycle kinds added in harness/core v0.14.1 are admitted for the apps
+// that own them (Cerberus resources and deploys) and not for others.
+func TestLifecycleKindsAreAdmittedForTheirOwners(t *testing.T) {
+	f := newFixture(t, eventingest.Config{})
+	res, err := f.svc.Ingest(context.Background(), operator, []json.RawMessage{
+		raw("evt_00000000000000000000000000006001", "cerberus", "resource.state_changed", func(m map[string]any) {
+			m["subject"] = "msg://resource/cerberus/hub-hadron"
+			m["payload"] = map[string]any{"entity": map[string]any{"type": "resource", "id": "hub-hadron"}, "from": "running", "to": "wedged", "trigger": map[string]any{"kind": "system"}}
+		}),
+		raw("evt_00000000000000000000000000006002", "cerberus", "deploy.state_changed", func(m map[string]any) {
+			m["subject"] = "msg://deployment/cerberus/d1"
+			m["payload"] = map[string]any{"entity": map[string]any{"type": "deployment", "id": "d1"}, "resource": map[string]any{"id": "hub-hadron"}, "to": "started", "trigger": map[string]any{"kind": "human"}}
+		}),
+		raw("evt_00000000000000000000000000006003", "tesseract", "resource.state_changed", func(m map[string]any) {
+			m["subject"] = "msg://resource/tesseract/x"
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Status != ingest.StatusAccepted || res[1].Status != ingest.StatusAccepted {
+		t.Fatalf("owners: %+v %+v", res[0], res[1])
+	}
+	if res[2].Code != ingest.CodeForbiddenKind {
+		t.Fatalf("non-owner: %+v", res[2])
+	}
+	e, _, _ := f.db.EventByEventID(context.Background(), "evt_00000000000000000000000000006001")
+	if !strings.Contains(e.PayloadJSON, `"to":"wedged"`) {
+		t.Fatalf("payload lost declared fields: %s", e.PayloadJSON)
+	}
+}
