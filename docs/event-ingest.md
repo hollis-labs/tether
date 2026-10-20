@@ -108,7 +108,10 @@ Per-kind payload-path allowlists replace the denylist as kinds are registered
 
 ## Retries and ordering
 
-The event `id` is the only dedupe key. The hub commits the event and a digest of
+The event `id` is the only dedupe key, and ids are one global namespace: the
+key is the id alone, never (producer, id). An event with an id that is already
+stored but a different app is a different event claiming the id, so it is an
+`id_conflict`, whoever sends it. The hub commits the event and a digest of
 it in one transaction, so an event never exists without its digest, and the
 event is acknowledged and fanned out only after that commit. A failed or
 interrupted write stores nothing and is not acknowledged; the producer retries.
