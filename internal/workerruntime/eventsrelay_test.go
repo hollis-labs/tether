@@ -78,7 +78,9 @@ func tokenFile(t *testing.T) (path, token string) {
 
 func relayFor(t *testing.T, hub *hubStub, token string, _ *bytes.Buffer) *EventsRelay {
 	t.Helper()
-	return &EventsRelay{Listen: "127.0.0.1:0", Hub: hub.srv.URL, TokenFile: token}
+	// port stands in for the bound port when a test drives Handler directly;
+	// Serve replaces it with the real one.
+	return &EventsRelay{Listen: "127.0.0.1:0", Hub: hub.srv.URL, TokenFile: token, port: "7845"}
 }
 
 const oneEvent = `{"schema_version":"1","id":"evt_00000000000000000000000000000001","kind":"alert.raised","app":"cerberus","sequence":1,"time":"2026-10-20T01:00:00Z","source":{"channel":"t"},"subject":"msg://alert/cerberus/1"}`
@@ -204,7 +206,7 @@ func TestRelayNeverLogsTokensOrBodies(t *testing.T) {
 	hub := newHub(t)
 	tf, tok := tokenFile(t)
 	var logs bytes.Buffer
-	r := &EventsRelay{Listen: "127.0.0.1:0", Hub: hub.srv.URL, TokenFile: tf, Logf: func(f string, a ...any) {
+	r := &EventsRelay{Listen: "127.0.0.1:7845", Hub: hub.srv.URL, TokenFile: tf, Logf: func(f string, a ...any) {
 		logs.WriteString(fmt.Sprintf(f, a...) + "\n")
 	}}
 	post(r.Handler(), "/events", oneEvent, nil)
@@ -294,7 +296,9 @@ func TestRelayRefusesWhatAWebPageCanSend(t *testing.T) {
 		{"text/plain simple POST", "127.0.0.1:7845", map[string]string{"Content-Type": "text/plain"}, http.StatusUnsupportedMediaType},
 		{"form POST", "127.0.0.1:7845", map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, http.StatusUnsupportedMediaType},
 		{"cross-origin json", "127.0.0.1:7845", map[string]string{"Origin": "https://evil.example"}, http.StatusForbidden},
-		{"rebound DNS name", "evil.example:7845", nil, http.StatusForbidden},
+		{"rebound DNS name", "evil.example:7845", nil, http.StatusMisdirectedRequest},
+		{"loopback name on another port", "127.0.0.1:9999", nil, http.StatusMisdirectedRequest},
+		{"loopback name without a port", "127.0.0.1", nil, http.StatusMisdirectedRequest},
 		{"json to localhost", "localhost:7845", nil, http.StatusOK},
 		{"json to ipv6 loopback", "[::1]:7845", nil, http.StatusOK},
 	}
@@ -308,6 +312,11 @@ func TestRelayRefusesWhatAWebPageCanSend(t *testing.T) {
 		r.Handler().ServeHTTP(w, req)
 		if w.Code != c.want {
 			t.Errorf("%s: %d, want %d", c.name, w.Code, c.want)
+		}
+		for k := range w.Header() {
+			if strings.HasPrefix(strings.ToLower(k), "access-control-") {
+				t.Errorf("%s: CORS header %s set", c.name, k)
+			}
 		}
 	}
 	if calls, _, _, _ := hub.snapshot(); calls != 2 {
@@ -330,7 +339,7 @@ func TestRelayReusesOneHubConnection(t *testing.T) {
 	srv.Start()
 	t.Cleanup(srv.Close)
 	tf, _ := tokenFile(t)
-	r := &EventsRelay{Listen: "127.0.0.1:0", Hub: srv.URL, TokenFile: tf}
+	r := &EventsRelay{Listen: "127.0.0.1:0", Hub: srv.URL, TokenFile: tf, port: "7845"}
 	for i := 0; i < 10; i++ {
 		if w := post(r.Handler(), "/events", oneEvent, nil); w.Code != 200 {
 			t.Fatalf("request %d: %d", i, w.Code)

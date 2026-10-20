@@ -33,7 +33,7 @@ import (
 // any registered app with the host's credential. The release fix is a per-device
 // app allowlist stored with the grant (CW-20261020-0031). A web page is not a
 // local process the DEV decision accepted: the relay refuses a request with an
-// Origin header, a non-loopback Host (DNS rebinding) or a Content-Type other
+// Origin header, a Host that is not a loopback name on the bound port (DNS rebinding) or a Content-Type other
 // than application/json (so no preflight-free cross-origin POST). It binds to a
 // loopback address only, never logs a token or a body, applies the contract's
 // size limits itself, and refuses to forward when the worker has no credential.
@@ -59,6 +59,8 @@ type EventsRelay struct {
 	// call so none outlives the relay. Nil (a bare Handler) means no bound.
 	lifeMu sync.Mutex
 	life   context.Context
+	// port is the bound port, set by Serve; a request's Host must name it.
+	port string
 }
 
 const (
@@ -118,6 +120,17 @@ func (r *EventsRelay) client() *http.Client {
 	return r.hubClient
 }
 
+// boundPort is the port Serve bound, else the configured one.
+func (r *EventsRelay) boundPort() string {
+	r.lifeMu.Lock()
+	defer r.lifeMu.Unlock()
+	if r.port != "" {
+		return r.port
+	}
+	_, p, _ := net.SplitHostPort(r.Listen)
+	return p
+}
+
 func (r *EventsRelay) lifeCtx() context.Context {
 	r.lifeMu.Lock()
 	defer r.lifeMu.Unlock()
@@ -129,17 +142,17 @@ func (r *EventsRelay) lifeCtx() context.Context {
 // 127.0.0.1 through a rebound DNS name, so the relay requires a JSON content
 // type (which forces a preflight the relay never answers), no Origin header
 // (non-browser publishers send none) and a loopback Host.
-func browserSafe(req *http.Request) (int, string, string) {
+func (r *EventsRelay) browserSafe(req *http.Request) (int, string, string) {
 	if req.Header.Get("Origin") != "" {
 		return http.StatusForbidden, "origin_forbidden", "cross-origin requests are not accepted"
 	}
-	host := req.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
+	// Host must be a loopback name on the bound port, so a rebound DNS name
+	// (evil.example:7845) and a wrong port are both refused.
+	host, port, err := net.SplitHostPort(req.Host)
 	host = strings.Trim(host, "[]")
-	if ip := net.ParseIP(host); (ip == nil || !ip.IsLoopback()) && host != "localhost" {
-		return http.StatusForbidden, "host_forbidden", "request host is not loopback"
+	ip := net.ParseIP(host)
+	if err != nil || ((ip == nil || !ip.IsLoopback()) && host != "localhost") || port != r.boundPort() {
+		return http.StatusMisdirectedRequest, "host_forbidden", "request host is not the relay's loopback address"
 	}
 	mt, _, _ := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	if mt != "application/json" {
@@ -163,6 +176,9 @@ func (r *EventsRelay) Serve(ctx context.Context, ready func(net.Addr)) error {
 	// blocked on the hub instead of letting Shutdown wait out its 5s.
 	r.lifeMu.Lock()
 	r.life = ctx
+	if _, p, perr := net.SplitHostPort(ln.Addr().String()); perr == nil {
+		r.port = p
+	}
 	r.lifeMu.Unlock()
 	stopped := make(chan struct{})
 	go func() {
@@ -222,7 +238,7 @@ func (r *EventsRelay) handleEvents(w http.ResponseWriter, req *http.Request) {
 		relayError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "")
 		return
 	}
-	if status, code, msg := browserSafe(req); status != 0 {
+	if status, code, msg := r.browserSafe(req); status != 0 {
 		relayError(w, status, code, msg, "")
 		return
 	}
