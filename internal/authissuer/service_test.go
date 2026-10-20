@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -723,5 +724,48 @@ func TestRevokeServiceExtendsAnEarlierShorterDenial(t *testing.T) {
 		if e.Kind == DenyJTI && e.Value == rec2.JTI && !e.Until.Equal(long) {
 			t.Fatalf("a longer denial was shortened to %v", e.Until)
 		}
+	}
+}
+
+// A rotate and a prune that land between choosing the service key and saving the
+// record that names it must not delete the key: the token would name a key the
+// JWKS no longer publishes. The test seam rotates and starts a prune in that
+// window; the prune has to wait for the record.
+func TestIssueRotatePruneInterleavingKeepsTheKeyTheTokenNames(t *testing.T) {
+	is, _ := newIssuer(t)
+	// A first token pins the current key; revoking it leaves that key unused, so only the
+	// in-flight issuance can keep it alive.
+	_, first, err := is.IssueService(operatorP, ServiceRequest{App: "nanite", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := is.RevokeService(first.JTI); err != nil {
+		t.Fatal(err)
+	}
+	var pruned sync.WaitGroup
+	is.afterServiceKeyChosen = func() {
+		if _, err := is.Keys.RotateService(); err != nil {
+			t.Error(err)
+		}
+		pruned.Add(1)
+		go func() {
+			defer pruned.Done()
+			is.pruneServiceKeys()
+		}()
+		time.Sleep(100 * time.Millisecond) // the unlocked prune would have run by now
+	}
+	tok, rec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pruned.Wait()
+	if rec.KID != first.KID {
+		t.Fatalf("the in-flight issuance used %s, expected the key it chose before the rotation (%s)", rec.KID, first.KID)
+	}
+	if !containsKID(is.Keys.KIDs(), rec.KID) || !strings.Contains(string(is.Keys.JWKS()), rec.KID) {
+		t.Fatalf("the key %s named by the new token was pruned", rec.KID)
+	}
+	if _, err := verifierFor(t, is).Verify(context.Background(), tok.Token); err != nil {
+		t.Fatalf("the new token does not verify: %v", err)
 	}
 }

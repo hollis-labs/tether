@@ -125,9 +125,16 @@ func (i *Issuer) issueServiceFrom(parent identity.Principal, req ServiceRequest,
 	exp := now.Add(ServiceTokenLifetime)
 	c := Claims{Iss: i.Name, Sub: sub, Aud: req.Audience, Scope: strings.Join(scopes, " "), Exp: exp.Unix(), Iat: now.Unix(),
 		JTI: uuid.NewString(), Kind: KindService, Par: parent.ID}
+	// Hold keyLife from choosing the key until the record that names it is saved, so
+	// a concurrent rotate + prune cannot delete the key in between.
+	i.keyLife.Lock()
+	defer i.keyLife.Unlock()
 	svcKID, svcKey, err := i.Keys.ActiveService()
 	if err != nil {
 		return Token{}, ServiceRecord{}, fmt.Errorf("authissuer: service signing key: %w", err)
+	}
+	if i.afterServiceKeyChosen != nil {
+		i.afterServiceKeyChosen()
 	}
 	tok, kid, err := i.signWith(svcKID, svcKey, c)
 	if err != nil {
@@ -294,6 +301,8 @@ func (i *Issuer) RevokeAllServices(app string) ([]ServiceRecord, error) {
 // at the next hourly Maintain. Consumers that replace their key set on every
 // refresh therefore see exactly the keys live tokens still need.
 func (i *Issuer) pruneServiceKeys() {
+	i.keyLife.Lock()
+	defer i.keyLife.Unlock()
 	if _, err := i.Keys.PruneWith(i.ServiceKeyInUse); err != nil {
 		log.Printf("authissuer: service key prune failed: %v", err)
 	}
