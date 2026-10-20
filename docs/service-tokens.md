@@ -54,8 +54,10 @@ HTTP: `POST /auth/service-tokens/revoke` with `{"jti": ...}` or `{"app": ..., "e
 The `jti` goes on the deny-list **until the token's own `exp`**, so a service token
 is never pruned from the list at the 65 minute session horizon, and the listing
 keeps the revocation time. Tether's own verifier shares the list and refuses the
-token at once; any other verifier stops accepting it within its poll interval
-(30 s by default, the library's).
+token at once; any other verifier stops accepting it within one poll interval
+(30 s by default, the library's) after a successful poll. A verifier that cannot
+poll keeps its last known list: it still rejects what it already learned, but a
+newly revoked token can be accepted until a poll succeeds.
 
 ## The deny-list is public (minimal)
 

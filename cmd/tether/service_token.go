@@ -86,7 +86,7 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 			for _, r := range out.Revoked {
 				fmt.Fprintf(cmd.OutOrStdout(), "revoked %s (%s)\n", r.JTI, r.Sub)
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(), "verifiers stop accepting it within their deny-list poll interval (30s by default)")
+			fmt.Fprintln(cmd.ErrOrStderr(), "other verifiers stop accepting it within one deny-list poll interval (30s by default) after a successful poll; one that cannot poll keeps its last list")
 			return nil
 		}}
 	revoke.Flags().StringVar(&revokeApp, "app", "", "revoke every live token of this app instead of one jti")
