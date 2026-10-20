@@ -125,6 +125,10 @@ event claiming the id: `rejected` with `id_conflict`.
 
 Excluded from the digest, because the hub or the transport owns them and they
 may differ between two sends of one event: `recorded_at`, `cursor`, `actor`.
+Because `actor` is not in the digest, a byte-identical resend from another
+principal under the same app is a `duplicate` (no new event; the original cursor
+is returned). Service tokens are bound to one app, so this only concerns the
+unbound credentials (the local operator and paired devices).
 Key order and whitespace do not matter. The `mesh/eventbus` client resends the
 stored bytes of an item unchanged (retries, spool replay, repeated `Deliver`),
 so its retries are always duplicates.
