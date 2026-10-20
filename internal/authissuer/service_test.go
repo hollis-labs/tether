@@ -3,13 +3,18 @@ package authissuer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	auth "github.com/hollis-labs/libs/security/auth"
 
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -348,8 +353,9 @@ func TestServiceKeyIsKeptWhileALiveRecordNamesItAndPrunableAfter(t *testing.T) {
 	if _, err := is.RevokeService(rec.JTI); err != nil {
 		t.Fatal(err)
 	}
-	if removed, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil || !removed {
-		t.Fatalf("removed=%v err=%v", removed, err)
+	// Revoking prunes at once: nothing is left for the hourly pass to do.
+	if removed, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil || removed {
+		t.Fatalf("the revoke should already have dropped the key: removed=%v err=%v", removed, err)
 	}
 	if containsKID(is.Keys.KIDs(), rec.KID) {
 		t.Fatal("old service key kept after its last record was revoked")
@@ -524,6 +530,150 @@ func TestNoKeyMaterialInStateDumpsOrLogs(t *testing.T) {
 		if strings.Contains(logs.String(), seed) {
 			t.Error("a private seed reached the log")
 		}
+	}
+}
+
+func jwksKIDs(t *testing.T, is *Issuer) []string {
+	t.Helper()
+	var doc struct {
+		Keys []struct {
+			Kid string `json:"kid"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(is.Keys.JWKS(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, k := range doc.Keys {
+		out = append(out, k.Kid)
+	}
+	return out
+}
+
+// Consumers built on go-auth REPLACE their key set on every JWKS refresh, so a
+// ten-year service token works only if /.well-known/jwks.json keeps publishing
+// its key for as long as a live record needs it, and the active service key
+// always, and stops publishing a rotated-out one once nothing needs it.
+func TestJWKSPublishesExactlyTheServiceKeysLiveTokensNeed(t *testing.T) {
+	is, _ := newIssuer(t)
+	_, recA, _ := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	// (1) the active svc- key is published, with the session key.
+	if got := jwksKIDs(t, is); !containsKID(got, recA.KID) || len(got) != 2 {
+		t.Fatalf("jwks %v, want the session key and %s", got, recA.KID)
+	}
+	// Rotate: the new active key is published AND the rotated-out one, still named by a live record.
+	res, err := is.RotateServiceKey(operatorP, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := jwksKIDs(t, is); !containsKID(got, res.NewKID) || !containsKID(got, recA.KID) || len(got) != 3 {
+		t.Fatalf("after rotate: %v", got)
+	}
+	// An hourly Maintain pass in the meantime changes nothing while the record is live.
+	if _, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil {
+		t.Fatal(err)
+	}
+	if got := jwksKIDs(t, is); !containsKID(got, recA.KID) {
+		t.Fatalf("a prune dropped a key a live token needs: %v", got)
+	}
+	// (2) once the last record on the rotated-out key is revoked it drops out of the JWKS at once.
+	if _, err := is.RevokeService(recA.JTI); err != nil {
+		t.Fatal(err)
+	}
+	if got := jwksKIDs(t, is); containsKID(got, recA.KID) || !containsKID(got, res.NewKID) || len(got) != 2 {
+		t.Fatalf("after the last record on the old key was revoked: %v", got)
+	}
+	// ...and an EXPIRED record frees its key at the next Maintain pass.
+	_, recB, _ := is.IssueService(operatorP, ServiceRequest{App: "nanite", Audience: "tether", Scopes: []string{"events"}})
+	res2, _ := is.RotateServiceKey(operatorP, false)
+	if got := jwksKIDs(t, is); !containsKID(got, recB.KID) {
+		t.Fatalf("%v", got)
+	}
+	is.Now = func() time.Time { return time.Now().Add(ServiceTokenLifetime + time.Hour) }
+	is.State.now = is.Now
+	if _, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil {
+		t.Fatal(err)
+	}
+	if got := jwksKIDs(t, is); containsKID(got, recB.KID) || !containsKID(got, res2.NewKID) {
+		t.Fatalf("after expiry: %v", got)
+	}
+}
+
+// (3) The real library verifier, as every external app runs it, refreshing its
+// JWKS after a session-key rotation + prune, still verifies a service token.
+func TestExternalGoAuthVerifierStillVerifiesAServiceTokenAfterRotationAndPrune(t *testing.T) {
+	is, _ := newIssuer(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(is.Keys.JWKS())
+	}))
+	t.Cleanup(srv.Close)
+	svc, svcRec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := is.Exchange(operatorP, Request{Audience: "tether", Scopes: []string{"read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jv, err := auth.NewJWTVerifier(auth.JWTConfig{Issuer: is.Name, Audience: "tether", JWKSURL: srv.URL, MinRefresh: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := jv.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for name, tk := range map[string]string{"service": svc.Token, "session": sess.Token} {
+		if _, err := jv.Verify(ctx, tk); err != nil {
+			t.Fatalf("%s token before rotation: %v", name, err)
+		}
+	}
+	// Ordinary key rotation, then past the overlap and the hourly prune.
+	if err := is.Rotate(); err != nil {
+		t.Fatal(err)
+	}
+	is.Keys.now = func() time.Time { return time.Now().Add(DefaultKeyOverlap + time.Hour) }
+	is.Now = is.Keys.now
+	if _, err := is.Keys.PruneWith(is.ServiceKeyInUse); err != nil {
+		t.Fatal(err)
+	}
+	// The consumer replaces its key set on refresh (the library does not merge).
+	if err := jv.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := jv.Verify(ctx, svc.Token); err != nil || p.Kind != "service" || p.TokenID != svcRec.JTI {
+		t.Fatalf("service token after rotation + prune + refresh: %+v %v", p, err)
+	}
+	if _, err := jv.Verify(ctx, sess.Token); err == nil {
+		t.Fatal("the pruned session key's token still verifies on the consumer")
+	}
+	// A service-key rotation: the old token keeps verifying on the consumer after its refresh.
+	res, err := is.RotateServiceKey(operatorP, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jv.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jv.Verify(ctx, svc.Token); err != nil {
+		t.Fatalf("old service token after a service key rotation: %v", err)
+	}
+	if _, err := jv.Verify(ctx, res.Reissued[0].Token.Token); err != nil {
+		t.Fatalf("replacement token: %v", err)
+	}
+	// After the old token is revoked its key is gone from the JWKS; the consumer's next refresh drops it.
+	if _, err := is.RevokeService(svcRec.JTI); err != nil {
+		t.Fatal(err)
+	}
+	if err := jv.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jv.Verify(ctx, svc.Token); err == nil {
+		t.Fatal("revoked token still verifies on a consumer with no deny-list")
+	}
+	if _, err := jv.Verify(ctx, res.Reissued[0].Token.Token); err != nil {
+		t.Fatalf("replacement after the old key was dropped: %v", err)
 	}
 }
 

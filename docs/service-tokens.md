@@ -51,6 +51,16 @@ directory; never logged, never in `keys.json`, `jwks.json` or the state file). T
 JWKS publishes its public half like any other key, so external verifiers need no
 change.
 
+- **The JWKS publishes exactly the service keys live tokens need.** Consumers
+  built on go-auth (Torque, Tesseract, Tachyon producers, ...) *replace* their key
+  set on every JWKS refresh; they do not merge. So `/.well-known/jwks.json` always
+  contains the active `svc-` key and every rotated-out `svc-` key that a live
+  (unrevoked, unexpired) service token record still names, so a ten-year token
+  keeps verifying across any number of ordinary key rotations and service key
+  rotations. A rotated-out key leaves the JWKS as soon as the last record on it is
+  revoked (revoking prunes at once) or, for an expired record, at the next hourly
+  maintenance pass. Tests use the real go-auth `JWTVerifier` refreshing after a
+  session-key rotation and prune.
 - Ordinary key rotation and the hourly prune never touch it. A service key is
   deleted only when it has been rotated out **and** no live (unrevoked, unexpired)
   service token record names it. The active service key is never deleted.

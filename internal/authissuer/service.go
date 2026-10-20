@@ -194,6 +194,7 @@ func (i *Issuer) RevokeService(jti string) (ServiceRecord, error) {
 	if err != nil {
 		return ServiceRecord{}, err
 	}
+	i.pruneServiceKeys()
 	return rs[0], nil
 }
 
@@ -210,7 +211,11 @@ func (i *Issuer) RevokeServicesFor(app, env string) ([]ServiceRecord, error) {
 		return nil, invalid("env must be one lowercase id")
 	}
 	sub := ServicePrincipalID(app, env)
-	return i.State.revokeServices(func(r ServiceRecord) bool { return r.Sub == sub })
+	rs, err := i.State.revokeServices(func(r ServiceRecord) bool { return r.Sub == sub })
+	if err == nil {
+		i.pruneServiceKeys()
+	}
+	return rs, err
 }
 
 // RotateResult is what RotateServiceKey did.
@@ -277,7 +282,21 @@ func (i *Issuer) RevokeAllServices(app string) ([]ServiceRecord, error) {
 	if app != "" && !audRe.MatchString(app) {
 		return nil, invalid("app must be one app id")
 	}
-	return i.State.revokeServices(func(r ServiceRecord) bool { return app == "" || r.App == app })
+	rs, err := i.State.revokeServices(func(r ServiceRecord) bool { return app == "" || r.App == app })
+	if err == nil {
+		i.pruneServiceKeys()
+	}
+	return rs, err
+}
+
+// pruneServiceKeys drops a rotated-out service key as soon as the last live
+// record naming it is gone, so the JWKS stops publishing it at once rather than
+// at the next hourly Maintain. Consumers that replace their key set on every
+// refresh therefore see exactly the keys live tokens still need.
+func (i *Issuer) pruneServiceKeys() {
+	if _, err := i.Keys.PruneWith(i.ServiceKeyInUse); err != nil {
+		log.Printf("authissuer: service key prune failed: %v", err)
+	}
 }
 
 // ServiceKeyInUse reports whether a live (unrevoked, unexpired) service token
