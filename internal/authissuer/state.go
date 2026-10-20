@@ -356,14 +356,20 @@ func (s *State) revokeServices(match func(ServiceRecord) bool) ([]ServiceRecord,
 		if r.RevokedAt != nil || !match(r) {
 			continue
 		}
-		dup := false
-		for _, e := range s.doc.Deny {
+		found := false
+		for k, e := range s.doc.Deny {
 			if e.Kind == DenyJTI && e.Value == jti {
-				dup = true
+				found = true
+				// An earlier denial (an admin's, for the normal horizon) may end before
+				// the token does: extend it to the token's exp, never shorten it. A zero
+				// Until never expires.
+				if !e.Until.IsZero() && (r.ExpiresAt.IsZero() || r.ExpiresAt.After(e.Until)) {
+					s.doc.Deny[k].Until = r.ExpiresAt
+				}
 				break
 			}
 		}
-		if !dup {
+		if !found {
 			s.doc.Deny = append(s.doc.Deny, denyEntry{DenyJTI, jti, r.ExpiresAt})
 		}
 		r.RevokedAt = &now

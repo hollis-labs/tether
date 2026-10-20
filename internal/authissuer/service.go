@@ -165,9 +165,11 @@ func serviceScopes(req ServiceRequest) ([]string, error) {
 	return out, nil
 }
 
-// RevokeService revokes one service token by jti. The verifiers that poll the
-// deny-list (30 s by default) stop accepting it within that interval; Tether's
-// own verifier shares the list and stops at once.
+// RevokeService revokes one service token by jti. Tether's own verifier shares
+// the list and stops at once. A verifier that polls the deny-list (30 s by
+// default) stops accepting it within one interval after a successful poll; one
+// that cannot poll keeps its last known list, so it can accept the newly revoked
+// token until a poll succeeds.
 func (i *Issuer) RevokeService(jti string) (ServiceRecord, error) {
 	if jti == "" {
 		return ServiceRecord{}, invalid("jti required")

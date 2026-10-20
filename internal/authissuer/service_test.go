@@ -269,3 +269,52 @@ func TestRevokeServicesForAPrincipalRevokesAllItsTokens(t *testing.T) {
 		t.Fatalf("bad app: %v", err)
 	}
 }
+
+// An earlier denial of the same jti (an admin's, for the normal horizon) must not
+// cut the revocation short: the entry is extended to the token's exp, survives a
+// restart, and a longer entry is never shortened.
+func TestRevokeServiceExtendsAnEarlierShorterDenial(t *testing.T) {
+	is, dir := newIssuer(t)
+	_, rec, err := is.IssueService(operatorP, ServiceRequest{App: "cerberus", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := is.State.Deny(DenyJTI, rec.JTI, time.Now().Add(DenyHorizon)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := is.RevokeService(rec.JTI); err != nil {
+		t.Fatal(err)
+	}
+	later := func() time.Time { return time.Now().Add(DenyHorizon + 24*time.Hour) }
+	is.State.now = later
+	if !is.State.Denied(DenyJTI, rec.JTI) {
+		t.Fatal("the revoked token verifies again after the earlier denial's horizon")
+	}
+	st2, err := OpenState(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st2.now = later
+	if !st2.Denied(DenyJTI, rec.JTI) {
+		t.Fatal("the extended denial was lost on restart")
+	}
+
+	// A denial that already outlasts the token is not shortened.
+	is2, _ := newIssuer(t)
+	_, rec2, err := is2.IssueService(operatorP, ServiceRequest{App: "nanite", Audience: "tether", Scopes: []string{"events"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := rec2.ExpiresAt.Add(24 * time.Hour)
+	if err := is2.State.Deny(DenyJTI, rec2.JTI, long); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := is2.RevokeService(rec2.JTI); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range is2.State.doc.Deny {
+		if e.Kind == DenyJTI && e.Value == rec2.JTI && !e.Until.Equal(long) {
+			t.Fatalf("a longer denial was shortened to %v", e.Until)
+		}
+	}
+}
