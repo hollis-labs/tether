@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -224,5 +225,102 @@ func TestAuditLineNeverContainsTheToken(t *testing.T) {
 	}
 	if strings.Contains(rec[0].Event+rec[0].Route+rec[0].PrincipalID, testJWT) {
 		t.Fatal("token in the audit row")
+	}
+}
+
+// The budget is reserved before the expensive verification, so concurrent
+// unauthenticated requests cannot all enter Verify before any is charged
+// (Reviewer's probe on tether#483, with a barrier instead of timing).
+func TestConcurrentRefusedJWTsCannotExceedTheFailureBudget(t *testing.T) {
+	const n, burst = 40, 3
+	var mu sync.Mutex
+	entered := 0
+	arrived := make(chan struct{}, n)
+	release := make(chan struct{})
+	v := verifierFunc(func(context.Context, string) (Principal, error) {
+		mu.Lock()
+		entered++
+		mu.Unlock()
+		arrived <- struct{}{}
+		<-release
+		return Principal{}, ErrInvalidToken
+	})
+	h, _, _ := remoteWith(ServiceJWT{Verify: v, Known: live(), Failures: NewAttemptLimiter(0.001, burst)}, nil)
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); codes <- do(h, "POST", "/events", testJWT).Code }()
+	}
+	// Every request beyond the budget is answered 429 without reaching Verify,
+	// so the others finish while the admitted ones are still held in Verify.
+	rejected := 0
+	for rejected < n-burst {
+		select {
+		case c := <-codes:
+			if c != 429 {
+				t.Fatalf("a request finished with %d before the verifier was released", c)
+			}
+			rejected++
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of %d over-budget requests were refused with 429", rejected, n-burst)
+		}
+	}
+	close(release)
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if entered != burst {
+		t.Fatalf("%d concurrent verifications entered with a budget of %d", entered, burst)
+	}
+}
+
+// Only a refused credential keeps its reserved unit. A success, a scope
+// refusal, an unavailable or cancelled verifier and a panic all give it back.
+func TestFailureBudgetReservationIsReturnedOnEveryNonFailurePath(t *testing.T) {
+	scopeless := goodService()
+	scopeless.Scopes = []string{"tether.read"}
+	cancelled := func() verifierFunc {
+		return func(ctx context.Context, _ string) (Principal, error) { return Principal{}, context.Canceled }
+	}()
+	panicking := verifierFunc(func(context.Context, string) (Principal, error) { panic("verifier blew up") })
+	for _, c := range []struct {
+		name string
+		v    Verifier
+		want int
+	}{
+		{"success", stubJWT{p: goodService()}, 204},
+		{"scope refusal", stubJWT{p: scopeless}, 403},
+		{"verifier unavailable", stubJWT{err: errors.New("keys unreadable")}, 503},
+		{"cancelled verification", cancelled, 503},
+	} {
+		lim := NewAttemptLimiter(0.001, 2)
+		h, _, _ := remoteWith(ServiceJWT{Verify: c.v, Known: live("jti-live-1"), Failures: lim}, nil)
+		for i := 0; i < 25; i++ {
+			if w := do(h, "POST", "/events", testJWT); w.Code != c.want {
+				t.Fatalf("%s request %d: %d, want %d (the reservation leaked)", c.name, i, w.Code, c.want)
+			}
+		}
+	}
+
+	lim := NewAttemptLimiter(0.001, 2)
+	h, _, _ := remoteWith(ServiceJWT{Verify: panicking, Known: live(), Failures: lim}, nil)
+	for i := 0; i < 5; i++ {
+		func() {
+			defer func() { _ = recover() }()
+			do(h, "POST", "/events", testJWT)
+		}()
+	}
+	if !lim.Reserve() || !lim.Reserve() || lim.Reserve() {
+		t.Fatal("a panicking verifier leaked or double-returned a reservation")
+	}
+
+	// A refused credential, including one the issuer no longer knows, is charged.
+	lim = NewAttemptLimiter(0.001, 2)
+	h, _, _ = remoteWith(ServiceJWT{Verify: stubJWT{p: goodService()}, Known: live(), Failures: lim}, nil)
+	for i, want := range []int{401, 401, 429} {
+		if w := do(h, "POST", "/events", testJWT); w.Code != want {
+			t.Fatalf("not-live request %d: %d, want %d", i, w.Code, want)
+		}
 	}
 }

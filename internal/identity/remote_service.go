@@ -92,27 +92,34 @@ func (l *AttemptLimiter) refillLocked() {
 	l.at = n
 }
 
-// Blocked reports whether the failure budget is exhausted.
-func (l *AttemptLimiter) Blocked() bool {
+// Reserve takes one unit of the budget before the work it bounds, atomically,
+// and reports whether there was one. Checking and charging in one step is what
+// bounds concurrent unauthenticated work: N simultaneous requests cannot all
+// pass a "not exhausted" check before any of them is charged.
+func (l *AttemptLimiter) Reserve() bool {
 	if l == nil {
-		return false
+		return true
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.refillLocked()
-	return l.tokens < 1
+	if l.tokens < 1 {
+		return false
+	}
+	l.tokens--
+	return true
 }
 
-// Fail charges one failed attempt.
-func (l *AttemptLimiter) Fail() {
+// Refund returns a unit taken by Reserve when the attempt turned out not to be
+// a failure (a verified request, a scope refusal, an unavailable verifier).
+func (l *AttemptLimiter) Refund() {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.refillLocked()
-	if l.tokens >= 1 {
-		l.tokens--
+	if l.tokens++; l.tokens > l.burst {
+		l.tokens = l.burst
 	}
 }
 
@@ -143,19 +150,29 @@ func serviceJWTRequest(r *http.Request) (string, bool) {
 // refusal itself, or calls next with the verified principal.
 func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string, record func(context.Context, Observation) error, next http.Handler) {
 	obs := Observation{At: time.Now().UTC(), Mode: Enforce, Method: r.Method, Route: ServiceJWTPath, Authentication: "invalid"}
-	refuse := func(status int, code string) {
-		if status == http.StatusUnauthorized {
-			c.Failures.Fail()
+	// One unit is reserved before the expensive verification and kept only if the
+	// attempt is a refused credential (401). Everything else gives it back, on
+	// every path including a panic, so a success, a 403 scope refusal, a 503 and
+	// a cancelled verification never cost the budget.
+	if !c.Failures.Reserve() {
+		w.Header().Set("Retry-After", "1")
+		authError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	charged, settled := false, false
+	settle := func() {
+		if !charged && !settled {
+			settled = true
+			c.Failures.Refund()
 		}
+	}
+	defer settle()
+	refuse := func(status int, code string) {
+		charged = status == http.StatusUnauthorized
 		if record != nil {
 			_ = record(r.Context(), obs)
 		}
 		authError(w, status, code)
-	}
-	if c.Failures.Blocked() {
-		w.Header().Set("Retry-After", "1")
-		authError(w, http.StatusTooManyRequests, "rate_limited")
-		return
 	}
 	p, err := c.Verify.Verify(r.Context(), token)
 	switch {
@@ -195,6 +212,9 @@ func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string
 		obs.Event = "service_jwt_accepted"
 		_ = record(r.Context(), obs)
 	}
+	// Give the unit back before the handler runs: a slow publish must not hold
+	// a failure-budget unit for its whole duration.
+	settle()
 	ctx := context.WithValue(WithPrincipal(r.Context(), p), serviceEventsKey{}, true)
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
