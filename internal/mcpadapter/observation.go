@@ -576,35 +576,61 @@ func (a *Adapter) handleEnvironmentEventsWait(ctx context.Context, args map[stri
 	out := make([]json.RawMessage, 0, maxEvents)
 	cursor := after
 	var gap json.RawMessage
+	// take applies one frame and reports whether collection is finished. The
+	// cursor only ever moves past frames that are in out (or are markers), so a
+	// frame that is not read here is delivered by the next call.
+	take := func(f client.EnvironmentFrame) bool {
+		switch f.Kind {
+		case "synchronized":
+			if f.ID > cursor {
+				cursor = f.ID
+			}
+		case "gap":
+			gap = f.Data
+			return true
+		default:
+			out = append(out, f.Data)
+			if f.ID > cursor {
+				cursor = f.ID
+			}
+		}
+		return len(out) >= maxEvents
+	}
+	// frames is the only thing waited on: the stream goroutine closes errCh
+	// before frames, and a closed errCh is always ready, so selecting on it
+	// would end the wait ahead of frames that are still buffered. Its error, if
+	// any, is read after frames has closed.
 collect:
-	for len(out) < maxEvents {
+	for {
 		select {
 		case f, ok := <-frames:
 			if !ok {
 				break collect
 			}
-			switch f.Kind {
-			case "synchronized":
-				if f.ID > cursor {
-					cursor = f.ID
-				}
-			case "gap":
-				gap = f.Data
+			if take(f) {
 				break collect
-			default:
-				out = append(out, f.Data)
-				if f.ID > cursor {
-					cursor = f.ID
+			}
+		case <-streamCtx.Done():
+			// Deadline or caller cancel: still hand back what already arrived.
+			for len(out) < maxEvents && gap == nil {
+				select {
+				case f, ok := <-frames:
+					if !ok || take(f) {
+						break collect
+					}
+				default:
+					break collect
 				}
 			}
-		case err := <-errCh:
-			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				return nil, toolError("internal_error", err.Error())
-			}
-			break collect
-		case <-streamCtx.Done():
 			break collect
 		}
+	}
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && len(out) == 0 && gap == nil {
+			return nil, toolError("internal_error", err.Error())
+		}
+	default:
 	}
 	res := map[string]any{
 		"ok":          true,

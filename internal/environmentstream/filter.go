@@ -190,21 +190,16 @@ func anyMatch(vals []string, f func(string) bool) bool {
 }
 
 // Visible reports whether a subscriber may receive an event with the given
-// class.visibility. Only the operator sees "operator" events. A request with no
-// verified principal (authentication off on the local socket) is the local
-// operator's own and is treated as one; every other principal, including a
-// paired device, is not. All other visibility values are delivered as before.
+// class.visibility. Only the real local operator credential sees "operator"
+// events (identity.IsOperatorCredential: verified, operator kind and id, and not
+// an issued token). A paired device, a service, an agent, or an operator-minted
+// narrow token is not the operator, whatever scopes it carries, "*" included.
+// A request with no principal at all (authentication off on the local socket,
+// where there is no credential to check) is the local operator's own and is
+// treated as one. All other visibility values are delivered as before.
 func Visible(visibility string, p identity.Principal, hasPrincipal bool) bool {
 	if visibility != "operator" || !hasPrincipal {
 		return true
 	}
-	if p.ID == identity.OperatorID {
-		return true
-	}
-	for _, s := range p.Scopes {
-		if s == "*" {
-			return true
-		}
-	}
-	return false
+	return identity.IsOperatorCredential(p)
 }

@@ -84,7 +84,10 @@ func TestParseFilterRejectsTypos(t *testing.T) {
 }
 
 func TestVisible(t *testing.T) {
-	operator := identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	operator := identity.Principal{ID: identity.OperatorID, Kind: "operator", Verified: true, Scopes: []string{"*"}}
+	wildcardDevice := identity.Principal{ID: "msg://device/abc", Kind: "device", Verified: true, Scopes: []string{"*"}}
+	wildcardService := identity.Principal{ID: "msg://service/cerberus/prod", Kind: "service", Verified: true, Scopes: []string{"*"}}
+	mintedOperator := identity.Principal{ID: identity.OperatorID, Kind: "operator", Verified: true, TokenID: "jti1", Scopes: []string{"*"}}
 	device := identity.Principal{ID: "msg://device/abc", Kind: "device", Scopes: []string{"read"}}
 	cases := []struct {
 		name       string
@@ -97,6 +100,9 @@ func TestVisible(t *testing.T) {
 		{"empty visibility to device", "", device, true, true},
 		{"operator event to operator", "operator", operator, true, true},
 		{"operator event to device", "operator", device, true, false},
+		{"operator event to a device holding *", "operator", wildcardDevice, true, false},
+		{"operator event to a service holding *", "operator", wildcardService, true, false},
+		{"operator event to an operator-minted narrow token", "operator", mintedOperator, true, false},
 		{"operator event with no principal (auth off)", "operator", identity.Principal{}, false, true},
 	}
 	for _, c := range cases {
