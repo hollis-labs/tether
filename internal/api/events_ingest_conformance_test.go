@@ -211,3 +211,53 @@ func TestClientHonoursRateLimitRetryAfter(t *testing.T) {
 		}
 	}
 }
+
+// Client.Deliver (mesh/eventbus v0.2.0) is for an outbox relay that keeps its own
+// durable record and must not move past an event until the hub settled it. Against
+// the real handler: a new event is Sent, a repeat is Sent+Duplicate, a rejected
+// kind is Quarantined with the hub's code, a good event after a rejected one is
+// still Sent, and an app_mismatch quarantines the item without blocking the next.
+func TestClientDeliverSettlesEachItemAgainstTheRealHandler(t *testing.T) {
+	cerberus := &identity.Principal{Verified: true, ID: "msg://service/cerberus/dev", Kind: "service", Scopes: []string{"tether.events"}}
+	hub := newConfHub(t, identity.Enforce, cerberus, eventingest.Config{}, true)
+	c := newConfClient(t, hub.srv.URL, func(cfg *eventbus.Config) { cfg.SpoolDir = t.TempDir(); cfg.BatchSize = 10 })
+	good := confEvent(t, "cerberus", "alert.raised")
+	rejected := confEvent(t, "cerberus", "task.state_changed") // torque's kind
+	mismatch := confEvent(t, "torque", "task.state_changed")   // the credential is bound to cerberus
+	after := confEvent(t, "cerberus", "alert.cleared")
+	res := c.Deliver(context.Background(), []eventbus.Item{good, rejected, after})
+	if len(res) != 3 {
+		t.Fatalf("%d results", len(res))
+	}
+	if res[0].Disposition != eventbus.DispositionSent || res[0].Duplicate {
+		t.Errorf("new event: %+v", res[0])
+	}
+	if res[1].Disposition != eventbus.DispositionQuarantined || res[1].Code != "forbidden_kind" {
+		t.Errorf("rejected kind: %+v", res[1])
+	}
+	if res[2].Disposition != eventbus.DispositionSent {
+		t.Errorf("event behind a rejected one: %+v", res[2])
+	}
+	for _, it := range []eventbus.Item{good, after} {
+		if _, ok, _ := hub.db.EventByEventID(context.Background(), it.ID); !ok {
+			t.Errorf("%s not stored", it.ID)
+		}
+	}
+	if _, ok, _ := hub.db.EventByEventID(context.Background(), rejected.ID); ok {
+		t.Error("a rejected event was stored")
+	}
+	// A repeat of an event the hub already has is settled as Sent + Duplicate.
+	res = c.Deliver(context.Background(), []eventbus.Item{good})
+	if len(res) != 1 || res[0].Disposition != eventbus.DispositionSent || !res[0].Duplicate {
+		t.Errorf("repeat: %+v", res)
+	}
+	// app_mismatch (a 403 for the whole request) is final for the item, never retried forever.
+	more := confEvent(t, "cerberus", "alert.raised")
+	res = c.Deliver(context.Background(), []eventbus.Item{mismatch})
+	if len(res) != 1 || res[0].Disposition != eventbus.DispositionQuarantined || res[0].Reason != "app_mismatch" {
+		t.Errorf("app_mismatch: %+v", res)
+	}
+	if res = c.Deliver(context.Background(), []eventbus.Item{more}); len(res) != 1 || res[0].Disposition != eventbus.DispositionSent {
+		t.Errorf("event after an app_mismatch: %+v", res)
+	}
+}
