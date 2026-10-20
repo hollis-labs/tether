@@ -83,7 +83,7 @@ func TestIngestModes(t *testing.T) {
 	}
 }
 
-func TestIngestBindsServiceAndDeviceToApp(t *testing.T) {
+func TestIngestBindsServiceToAppAndLeavesDevicesUnbound(t *testing.T) {
 	f := &fakeIngest{}
 	s := &Server{EventIngest: f, EventIngestMode: identity.Enforce}
 	postEvents(t, s, svcPrincipal("cerberus", "tether.events"), oneEvent)
@@ -91,7 +91,7 @@ func TestIngestBindsServiceAndDeviceToApp(t *testing.T) {
 		t.Fatalf("%+v", f.caller)
 	}
 	postEvents(t, s, &identity.Principal{Verified: true, ID: "msg://device/w1", Kind: "device", Scopes: []string{"worker"}}, oneEvent)
-	if f.caller.App != "tether" || f.caller.Actor.Kind != "device" {
+	if f.caller.App != "" || f.caller.Actor.Kind != "device" || f.caller.Actor.URN != "msg://device/w1" || f.caller.Actor.Verified != "token" {
 		t.Fatalf("%+v", f.caller)
 	}
 	postEvents(t, s, &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}, oneEvent)

@@ -22,9 +22,6 @@ type EventIngestService interface {
 	Ingest(ctx context.Context, c eventingest.Caller, items []json.RawMessage) ([]ingest.Result, error)
 }
 
-// ingestDeviceApp is the app a paired worker device publishes as.
-const ingestDeviceApp = "tether"
-
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		if s.EventIngest == nil {
@@ -94,8 +91,7 @@ func (s *Server) handleEventsIngest(w http.ResponseWriter, r *http.Request) {
 // The publish scope (tether.events) follows the identity mode of the local
 // API: enforce refuses a caller without it, observe allows and logs, off
 // allows. An issued session (agent) token never publishes in enforce mode.
-// The binding of a service or device credential to an app holds in every mode
-// where the credential verified.
+// A service credential is bound to its app in every mode where it verified.
 func (s *Server) ingestCaller(r *http.Request) (c eventingest.Caller, status int, code, msg string) {
 	p, has := identity.FromContext(r.Context())
 	verified := has && p.Verified
@@ -126,9 +122,12 @@ func (s *Server) ingestCaller(r *http.Request) (c eventingest.Caller, status int
 				return c, http.StatusForbidden, "app_mismatch", "service credential has no app"
 			}
 			c.App = app
-		case "device":
-			c.App = ingestDeviceApp
 		}
+		// A paired worker device is a host credential (DEV decision): it is
+		// not bound to one app and may publish as any registered app, so the
+		// services on a host can relay through it. Kind ownership is still
+		// checked per event app and the actor is the device. Release posture
+		// needs a per-device app allowlist stored with the grant (CW-20261020-0031).
 		return c, 0, "", ""
 	}
 	if mode == identity.Enforce {

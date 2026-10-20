@@ -81,8 +81,12 @@ The publish check follows the local API's identity mode (`off`, `observe`,
 
 A service credential (`msg://service/<app>/<env>`) is bound to its `<app>`: an
 event with another `app` makes the whole request a 403. A paired worker device
-publishes as app `tether`. The local operator and anonymous callers (observe/off)
-may publish any app. The kinds an app may publish are the libs catalog
+is a host credential and is not bound to one app (dev decision: it can publish as
+any registered app, so the services on a host can relay through it; a per-device
+app allowlist stored with the grant is the release posture, CW-20261020-0031).
+The local operator and anonymous callers (observe/off) may also publish any app.
+For every caller the kind must be owned by the event's own app, and the stored
+actor is the credential (a device is `msg://device/...`, `verified: token`). The kinds an app may publish are the libs catalog
 `producers.json`; a kind outside it is `forbidden_kind`, and a kind outside the
 catalog is `unknown_kind`.
 

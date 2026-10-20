@@ -284,3 +284,28 @@ func TestProducerSecretClaimIsWithheldNotRefused(t *testing.T) {
 		t.Fatalf("stored %q as %q", e.PayloadJSON, e.Envelope.Class.Sensitivity)
 	}
 }
+
+// A paired worker device is a host credential: no single app (App ""), so it
+// can relay events for any registered app, but kind ownership is still checked
+// against each event's own app, and the stored actor is the device.
+func TestDeviceCallerPublishesForRegisteredAppsOnly(t *testing.T) {
+	f := newFixture(t, eventingest.Config{})
+	device := eventingest.Caller{Key: "msg://device/w1", Actor: events.Actor{Kind: "device", URN: "msg://device/w1", Verified: "token", Role: "system"}}
+	ok := raw("evt_00000000000000000000000000005001", "cerberus", "alert.raised", func(m map[string]any) { m["subject"] = "msg://alert/cerberus/1" })
+	notOwned := raw("evt_00000000000000000000000000005002", "cerberus", "task.state_changed", nil) // torque's kind
+	noApp := raw("evt_00000000000000000000000000005003", "nobody", "alert.raised", func(m map[string]any) { m["subject"] = "msg://alert/nobody/1" })
+	res, err := f.svc.Ingest(context.Background(), device, []json.RawMessage{ok, notOwned, noApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Status != ingest.StatusAccepted {
+		t.Errorf("owned kind: %+v", res[0])
+	}
+	if res[1].Code != ingest.CodeForbiddenKind || res[2].Code != ingest.CodeForbiddenKind {
+		t.Errorf("not owned %+v, unregistered %+v", res[1], res[2])
+	}
+	e, found, _ := f.db.EventByEventID(context.Background(), "evt_00000000000000000000000000005001")
+	if !found || e.Envelope.Actor.Kind != "device" || e.Envelope.Actor.URN != "msg://device/w1" || e.Envelope.Actor.Verified != "token" || e.Envelope.App != "cerberus" {
+		t.Fatalf("stored actor/app: %+v", e.Envelope)
+	}
+}
