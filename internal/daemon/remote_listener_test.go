@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/core/util/localdaemon"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/ingest"
 	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/environment"
+	"github.com/hollis-labs/tether/internal/eventingest"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -483,5 +485,67 @@ func TestRemoteListenerIssuerReadsNeedNoProtocolHeader(t *testing.T) {
 	s.RemoteHandler("127.0.0.1:7331").ServeHTTP(w, r)
 	if w.Code != 403 {
 		t.Fatalf("unlisted Host reached the JWKS: %d", w.Code)
+	}
+}
+
+type fakeRemoteIngest struct{ calls int }
+
+func (f *fakeRemoteIngest) Ingest(_ context.Context, c eventingest.Caller, items []json.RawMessage) ([]ingest.Result, error) {
+	f.calls++
+	out := make([]ingest.Result, len(items))
+	for i := range items {
+		out[i] = ingest.Result{ID: "evt_x", Status: ingest.StatusAccepted, Cursor: "1"}
+	}
+	return out, nil
+}
+
+// An app publishes events with a plain HTTP client that cannot send the
+// Tether-Protocol header (libs mesh/eventbus). POST /events is on the closed
+// exemption list, behind authentication; nothing else a device can call is.
+func TestRemoteListenerEventsPostNeedsNoProtocolHeaderButStillNeedsAuth(t *testing.T) {
+	s, read, _ := remoteTestServer(t)
+	ing := &fakeRemoteIngest{}
+	s.EventIngest = ing
+	expires := time.Now().Add(time.Hour)
+	worker, err := s.Identity.Mint(context.Background(), identity.Principal{ID: "remote-worker", Kind: "device", Scopes: []string{"worker"}, ExpiresAt: &expires})
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(method, path, version, token, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://localhost:9000"+path, strings.NewReader(body))
+		if version != "" {
+			r.Header.Set(environment.ProtocolHeader, version)
+		}
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		s.RemoteHandler("127.0.0.1:7331").ServeHTTP(w, r)
+		return w
+	}
+	const event = `{"schema_version":"1","id":"evt_00000000000000000000000000000001"}`
+	if w := do("POST", "/events", "", worker, event); w.Code != 200 || ing.calls != 1 {
+		t.Fatalf("worker device, no protocol header: %d %s (ingest calls %d)", w.Code, w.Body.String(), ing.calls)
+	}
+	if w := do("POST", "/events", "1", worker, event); w.Code != 200 {
+		t.Fatalf("worker device with the header: %d", w.Code)
+	}
+	// Still authenticated and scoped: no credential, or a read-only device, never reaches the ingest.
+	before := ing.calls
+	if w := do("POST", "/events", "", "", event); w.Code != 401 {
+		t.Fatalf("anonymous POST /events: %d", w.Code)
+	}
+	if w := do("POST", "/events", "", read, event); w.Code != 403 {
+		t.Fatalf("read-only device POST /events: %d", w.Code)
+	}
+	if ing.calls != before {
+		t.Fatal("an unauthenticated or unscoped request reached the ingest")
+	}
+	// The exemption is for this one route: a device still needs the header elsewhere.
+	if w := do("POST", "/messages", "", worker, "{}"); w.Code != 409 {
+		t.Fatalf("POST /messages without the header: %d, want 409", w.Code)
+	}
+	if w := do("GET", "/events", "", worker, ""); w.Code != 409 {
+		t.Fatalf("GET /events without the header: %d, want 409", w.Code)
 	}
 }

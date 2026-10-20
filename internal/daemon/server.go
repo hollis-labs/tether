@@ -599,7 +599,7 @@ func (s *Server) handler(remote bool) http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || api.HasTeamOps(teams) {
+	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || s.EventIngest != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
 			Forums:              s.Forums,
 			EnvironmentStream:   s.EnvironmentStream,
@@ -986,7 +986,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/messages/thread/", s.MessageStore != nil},
 		{"/messages/retention/candidates", s.MessageStore != nil},
 
-		{"/events", s.EventsStore != nil},
+		{"/events", s.EventsStore != nil || s.EventIngest != nil},
 		{"/events/stream", s.Bus != nil},
 		{"/proxy/events", s.ProxyEvents != nil},
 

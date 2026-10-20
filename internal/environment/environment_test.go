@@ -215,6 +215,17 @@ func TestProtocolGateIssuerExemptionsAreExact(t *testing.T) {
 		{http.MethodGet, "/auth/token"},
 		{http.MethodGet, "/auth/denylist/x"},
 		{http.MethodGet, "/.well-known/jwks.json/x"},
+		// POST /events is exempt; no variant of it is.
+		{http.MethodGet, "/events"},
+		{http.MethodPut, "/events"},
+		{http.MethodDelete, "/events"},
+		{http.MethodHead, "/events"},
+		{http.MethodPost, "/events/"},
+		{http.MethodPost, "/events/x"},
+		{http.MethodPost, "//events"},
+		{http.MethodPost, "/Events"},
+		{http.MethodPost, "/events/stream"},
+		{http.MethodPost, "/proxy/events"},
 	} {
 		r := httptest.NewRequest(tc.method, tc.path, nil)
 		w := httptest.NewRecorder()
@@ -222,5 +233,44 @@ func TestProtocolGateIssuerExemptionsAreExact(t *testing.T) {
 		if w.Code != 409 {
 			t.Errorf("%s %s without the protocol header returned %d, want 409", tc.method, tc.path, w.Code)
 		}
+	}
+}
+
+// POST /events is third-party publisher traffic (libs mesh/eventbus sends no
+// Tether-Protocol header). It is the only write on the closed exemption list;
+// every other route and method still demands the header on a remote listener.
+func TestProtocolGateExemptsExactlyTheThirdPartyList(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
+	req := func(method, path string) int {
+		w := httptest.NewRecorder()
+		ProtocolGate(true, ok).ServeHTTP(w, httptest.NewRequest(method, path, nil))
+		return w.Code
+	}
+	for _, e := range []struct{ method, path string }{
+		{http.MethodGet, "/.well-known/jwks.json"}, {http.MethodHead, "/.well-known/jwks.json"},
+		{http.MethodGet, "/auth/denylist"}, {http.MethodPost, "/events"},
+	} {
+		if got := req(e.method, e.path); got != 204 {
+			t.Errorf("%s %s without the header returned %d, want 204 (exempt)", e.method, e.path, got)
+		}
+	}
+	// Everything else a remote client can call still demands the header.
+	for _, e := range []struct{ method, path string }{
+		{http.MethodPost, "/sessions"}, {http.MethodGet, "/sessions"}, {http.MethodPost, "/messages"},
+		{http.MethodGet, "/events/stream"}, {http.MethodGet, "/environment/events"},
+		{http.MethodPost, "/auth/token"}, {http.MethodPost, "/auth/pair"}, {http.MethodPost, "/auth/renew"},
+		{http.MethodPost, "/worker/v1/connect"}, {http.MethodPost, "/proxy/events"}, {http.MethodPost, "/broker/envelopes"},
+	} {
+		if got := req(e.method, e.path); got != 409 {
+			t.Errorf("%s %s without the header returned %d, want 409", e.method, e.path, got)
+		}
+	}
+	// With the header, POST /events passes as before.
+	r := httptest.NewRequest(http.MethodPost, "/events", nil)
+	r.Header.Set(ProtocolHeader, "1")
+	w := httptest.NewRecorder()
+	ProtocolGate(true, ok).ServeHTTP(w, r)
+	if w.Code != 204 {
+		t.Errorf("POST /events with the header returned %d", w.Code)
 	}
 }

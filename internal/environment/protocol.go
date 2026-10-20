@@ -19,11 +19,14 @@ type ProtocolError struct {
 	UpdateHint       string `json:"update_hint"`
 }
 
-// thirdPartyRead reports the reads that non-Tether verifiers perform with a
-// plain HTTP client and a bearer only (go-auth fetches the issuer's JWKS and
-// polls its deny-list): they cannot send the Tether-Protocol header, so the
-// gate must not demand it. Both stay behind their own authentication, and
-// every other issuer route (notably POST /auth/token) still needs the header.
+// thirdPartyRead reports the requests that non-Tether programs make with a
+// plain HTTP client and, at most, a bearer: go-auth fetches the issuer's JWKS and
+// polls its deny-list, and any app publishes events with POST /events (the
+// libs mesh/eventbus client). They cannot send the Tether-Protocol header, so the
+// gate must not demand it. The closed list is exactly: GET/HEAD the JWKS, GET the
+// deny-list, POST /events. The deny-list and JWKS reads are public; POST /events
+// stays behind authentication and its own versioned contract (the libs ingest
+// schema). Every other route (notably POST /auth/token) still needs the header.
 //
 // The hub's remote MCP gateway (exactly POST, GET and DELETE /mcp for a bound agent token, see internal/daemon/remote_mcp.go)
 // is likewise served without the header, but it is exempt by sitting outside this gate, not by an entry here: Tether-Protocol
@@ -36,6 +39,8 @@ func thirdPartyRead(r *http.Request) bool {
 		return r.Method == http.MethodGet || r.Method == http.MethodHead
 	case "/auth/denylist":
 		return r.Method == http.MethodGet
+	case "/events":
+		return r.Method == http.MethodPost
 	}
 	return false
 }
