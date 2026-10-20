@@ -123,8 +123,41 @@ still sends a bearer is unaffected.
   refused.
 - At most 256 live service tokens; revoke unused ones.
 
-## What it is not (yet)
+## Reaching the hub from another host (remote listener)
 
-Reachability from other hosts over the remote listener is a separate change under
-CW-20261019-0044. A service token does not yet authenticate on the remote
-listener, which accepts only paired devices.
+The hub's remote listener (behind Tailscale Serve, the URL the workers already
+use) accepts a service token on **exactly one route: `POST /events`**, so a
+service on agent-os or worker-1 publishes events with its own token and no device
+pairing. Paired worker devices keep working on the same route.
+
+How it is checked, in this order, all required:
+
+1. The request is exactly `POST /events`: no query string (not even a bare `?`),
+   no trailing slash, no subpath, no other case, no encoded or doubled slash, no
+   other method. Anything else, with the same token, is refused 401 as before.
+2. The bearer is a three-part JWT (a `tth_` device credential never takes this
+   path, and a JWT never takes the device path).
+3. The token verifies like it does for any external app: Ed25519 signature
+   against the issuer's keys, `iss` pinned, `aud` = `tether`, `exp`, and the
+   shared deny-list (`jti`, `sub`, `sid`), so a revocation applies at once.
+4. `kind` is `service`, the principal is `msg://service/<app>/<env>`, a `jti` is
+   present, and that `jti` is a **live record of IssueService** (not revoked, not
+   expired): a token the issuer minted any other way is not accepted here.
+5. The scope `tether.events` is granted (else 403 `scope_required`).
+
+Then the ingest rules apply: the service is bound to its app (an event naming
+another app is 403 `app_mismatch`), the actor is the service principal, and the
+per-principal rate limit applies like for devices. The `Tether-Protocol` header is
+not required for this route. The whole path exists only while
+`daemon.event_ingest.enabled` is on and this daemon is the issuer; otherwise a
+JWT is refused like any other non-device bearer.
+
+Failures: bad, unknown, expired, wrong-audience or revoked token -> 401; missing
+scope -> 403; the verifier cannot read its keys -> 503 with `Retry-After` (never
+an accept). Refused tokens are charged to one shared failure budget
+(`daemon.event_ingest.failed_auth_per_second`, default 50, and
+`failed_auth_burst`, default 100); when it is spent the listener answers 429
+without verifying further, so a flood of garbage bearers cannot burn CPU.
+Successful requests are never charged to it. Accepted requests are logged as
+`remote service JWT accepted sub=... jti=<8 chars>` and recorded in the identity
+audit; the token is never logged.

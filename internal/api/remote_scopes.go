@@ -321,6 +321,14 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		p, ok := identity.FromContext(r.Context())
+		// A service JWT admitted by the identity middleware's one-route path is
+		// judged by its own scopes, and only for exactly POST /events; the marker
+		// is set nowhere else, so no other request reaches this branch.
+		if ok && identity.ServiceEventsRequest(r.Context()) && p.Kind == "service" &&
+			r.Method == identity.ServiceJWTMethod && r.URL.Path == identity.ServiceJWTPath {
+			applyRouteScopes(w, r, next, true, false, func(scope string) bool { return identity.ScopeGranted(p.Scopes, scope) })
+			return
+		}
 		applyRouteScopes(w, r, next, ok && p.Kind == "device" && p.ID != identity.OperatorID, true, func(scope string) bool { return identity.HasDeviceScope(p, scope) })
 	})
 }
