@@ -679,7 +679,26 @@ func (s *Server) handler(remote bool) http.Handler {
 	}
 	protected := identity.MiddlewareWithScopes(s.Config.IdentityModeFor("local_api"), verifier, s.recordIdentityObservation, identity.ScopePolicy{Observe: api.ObserveLocalScope}, s.Config.Modules.ModuleGate(protocolHandler))
 	if remote {
-		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
+		var remoteOpts []identity.RemoteOption
+		// A service JWT may POST /events remotely, and only when the event
+		// ingest is on and this daemon is the issuer (fail closed otherwise).
+		if s.Issuer != nil && s.EventIngest != nil {
+			if composite, err := authissuer.NewVerifier(s.Identity, s.Issuer); err == nil {
+				rate, burst := s.Config.EventIngest.FailedAuthPerSecond, s.Config.EventIngest.FailedAuthBurst
+				if rate <= 0 {
+					rate = 50
+				}
+				if burst <= 0 {
+					burst = 100
+				}
+				remoteOpts = append(remoteOpts, identity.WithServiceJWT(identity.ServiceJWT{
+					Verify: composite, Known: s.Issuer.LiveService, Failures: identity.NewAttemptLimiter(rate, burst),
+				}))
+			} else {
+				log.Printf("daemon: remote service JWT path unavailable: %v", err)
+			}
+		}
+		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler), remoteOpts...)
 	}
 	ordinary := otelprop.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.Environment != nil && r.URL.Path == environment.DescriptorPath {
@@ -1056,6 +1075,9 @@ type EventIngestSettings struct {
 	AllowUnknownKinds bool
 	RatePerSecond     float64
 	Burst             int
+	// FailedAuthPerSecond and FailedAuthBurst bound refused service JWTs on the remote listener.
+	FailedAuthPerSecond float64
+	FailedAuthBurst     int
 }
 
 // IdentityModeFor is the identity mode of one enforcement point.

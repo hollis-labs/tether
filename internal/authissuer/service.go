@@ -311,3 +311,10 @@ func (i *Issuer) pruneServiceKeys() {
 // ServiceKeyInUse reports whether a live (unrevoked, unexpired) service token
 // record names the service key kid. The key store keeps such keys.
 func (i *Issuer) ServiceKeyInUse(kid string) bool { return i.State.serviceKeyInUse(kid, i.Now()) }
+
+// LiveService reports whether jti is a service token this issuer recorded that
+// is neither revoked nor expired. The remote listener accepts a service JWT only
+// if it is live here, so only tokens minted through IssueService qualify.
+func (i *Issuer) LiveService(jti string) bool {
+	return i.State.liveService(jti, i.Now())
+}

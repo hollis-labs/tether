@@ -277,6 +277,11 @@ type EventIngestConfig struct {
 	// the defaults (200 per second, burst 1000).
 	RatePerSecond float64 `yaml:"rate_per_second,omitempty"`
 	Burst         int     `yaml:"burst,omitempty"`
+	// FailedAuthPerSecond and FailedAuthBurst bound the unauthenticated work a
+	// flood of bad service JWTs can cause on the remote listener (one shared
+	// budget, charged only to refused tokens). Zero uses 50 per second, burst 100.
+	FailedAuthPerSecond float64 `yaml:"failed_auth_per_second,omitempty"`
+	FailedAuthBurst     int     `yaml:"failed_auth_burst,omitempty"`
 }
 
 type RemoteListenerConfig struct {

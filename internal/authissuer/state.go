@@ -399,3 +399,11 @@ func (s *State) serviceKeyInUse(kid string, now time.Time) bool {
 	}
 	return false
 }
+
+func (s *State) liveService(jti string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	r, ok := s.doc.Services[jti]
+	return ok && r.RevokedAt == nil && now.Before(r.ExpiresAt)
+}
