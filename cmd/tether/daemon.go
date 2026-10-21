@@ -995,6 +995,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		BootProfileFile:      in.BootProfileFile,
 		Override:             in.Override,
 		BootPromptAppend:     in.PromptAppend,
+		PromptInput:          in.PromptInput,
 		Route:                in.Route,
 		Injection:            in.Injection,
 		IdempotencyKey:       in.IdempotencyKey,

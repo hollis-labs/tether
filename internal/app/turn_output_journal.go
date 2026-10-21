@@ -28,6 +28,8 @@ type outputRetryRecord struct {
 	Result            turnoutput.Output    `json:"result"`
 	TextTruncated     bool                 `json:"text_truncated,omitempty"`
 	FreshConversation bool                 `json:"fresh_conversation,omitempty"`
+	// Audience is who asked for the turn; a replay republishes it unchanged.
+	Audience *store.TurnAudience `json:"audience,omitempty"`
 }
 
 func (w *turnOutputWrite) journal(s *Service) error {
@@ -54,7 +56,7 @@ func (w *turnOutputWrite) journal(s *Service) error {
 	}
 	record := outputRetryRecord{Version: 1, WithheldReason: w.withheldReason, WithheldSize: w.withheldSize, Origin: w.origin, SessionID: w.row.ID, LogicalAgentID: w.row.LogicalAgentID,
 		ProjectID: w.row.ProjectID, ProviderResultID: w.providerResultID, Route: w.route, RouteUnread: w.routeUnread,
-		Result: w.result, TextTruncated: w.textTruncated, FreshConversation: w.freshConversation}
+		Result: w.result, TextTruncated: w.textTruncated, FreshConversation: w.freshConversation, Audience: w.audience}
 	if !w.routeUnread && (w.route == nil || !slices.Contains(w.route.Kinds, string(w.result.Kind))) {
 		record.Result.Text, record.TextTruncated = turnOutputExcerpt(w.result.Text)
 		record.TextTruncated = record.TextTruncated || w.textTruncated
@@ -112,7 +114,7 @@ func readOutputRetry(s *Service, id string) (*turnOutputWrite, error) {
 	job := &turnOutputWrite{withheldReason: record.WithheldReason, withheldSize: record.WithheldSize, origin: record.Origin, row: store.SessionRow{ID: record.SessionID, LogicalAgentID: record.LogicalAgentID,
 		ProjectID: record.ProjectID}, providerResultID: record.ProviderResultID, route: record.Route,
 		routeUnread: record.RouteUnread, result: record.Result, textTruncated: record.TextTruncated,
-		freshConversation: record.FreshConversation, journalID: id, journaled: true}
+		freshConversation: record.FreshConversation, audience: record.Audience, journalID: id, journaled: true}
 	withheldID := store.WithheldTurnOutputID(job.row.ID, job.result.TurnID, string(job.result.Kind), job.providerResultID)
 	if (job.origin != nil && job.origin.Envelope.Class.Sensitivity == "secret") || (job.withheldReason == "secret_withheld" && id != withheldID) {
 		// Scrub the body and replace its old content-derived name before this

@@ -556,7 +556,7 @@ func (a *Adapter) handleSessionSendTurn(ctx context.Context, args map[string]any
 		}
 		return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(text)}), nil
 	}
-	if err := a.svc.SendTurn(ctx, id, text); err != nil {
+	if err := a.svc.SendTurn(identity.WithInputSource(ctx, "mcp_send_turn"), id, text); err != nil {
 		if isNotFound(err) {
 			return nil, toolError("not_found", "session not found: "+id)
 		}

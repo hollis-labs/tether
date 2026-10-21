@@ -259,7 +259,7 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	job := &turnOutputWrite{origin: o.runtimeOrigins[result.TurnID], storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID, freshConversation: o.freshConversationTurn != "" && o.freshConversationTurn == o.turnID}
+	job := &turnOutputWrite{audience: o.service.audienceFor(o.row.ID, result.TurnID), origin: o.runtimeOrigins[result.TurnID], storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID, freshConversation: o.freshConversationTurn != "" && o.freshConversationTurn == o.turnID}
 	// Claim under the retry lock while committing the journal, so a replay
 	// sweep cannot race the synchronous publication of this same output.
 	r := &o.service.outputRetries
@@ -320,6 +320,8 @@ type turnOutputWrite struct {
 	routeUnread        bool
 	result             turnoutput.Output
 	messageID          string
+	// audience is who asked for this output's turn; nil means unrecorded (unknown).
+	audience *store.TurnAudience
 }
 
 func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
@@ -370,18 +372,30 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 		StopReason: result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
 		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, TaskID: taskID, WorkstreamID: workstream, MessageID: w.messageID,
 		Reason: w.withheldReason, Size: w.withheldSize}
+	if a := w.audience; a != nil {
+		payload.Audience, payload.AudienceBasis, payload.InputIDs, payload.InputClasses = a.Audience, a.Basis, a.InputIDs, a.Classes
+	}
 	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
 			Text string `json:"text"`
 		}{result.Text})
 		ctx, cancel = s.outputPersistenceContextFrom(parent)
+		meta := map[string]string{"session_id": w.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
+			"stop_reason": result.StopReason, "confidence": string(result.Confidence), "runtime": result.Runtime,
+			"logical_agent_id": w.row.LogicalAgentID, "project_id": w.row.ProjectID, "workstream_id": workstream, "task_id": taskID,
+			"output_id": w.journalID, "fresh_conversation": fmt.Sprint(w.freshConversation), "provider_result_id": w.providerResultID}
+		if a := w.audience; a != nil {
+			meta["audience"], meta["audience_basis"] = a.Audience, a.Basis
+			if len(a.InputIDs) > 0 {
+				meta["input_ids"] = strings.Join(a.InputIDs, ",")
+			}
+			if len(a.Classes) > 0 {
+				meta["input_classes"] = strings.Join(a.Classes, ",")
+			}
+		}
 		env, stageErr := storage.StageTurnOutput(ctx, messaging.Envelope{
 			From:     messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: w.row.ID},
-			ThreadID: w.row.ID, Payload: text, ContentType: "application/json",
-			Metadata: map[string]string{"session_id": w.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
-				"stop_reason": result.StopReason, "confidence": string(result.Confidence), "runtime": result.Runtime,
-				"logical_agent_id": w.row.LogicalAgentID, "project_id": w.row.ProjectID, "workstream_id": workstream, "task_id": taskID,
-				"output_id": w.journalID, "fresh_conversation": fmt.Sprint(w.freshConversation), "provider_result_id": w.providerResultID},
+			ThreadID: w.row.ID, Payload: text, ContentType: "application/json", Metadata: meta,
 		})
 		cancel()
 		if stageErr != nil {

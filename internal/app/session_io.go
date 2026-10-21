@@ -56,6 +56,14 @@ func (s *Service) subprocessTurn(id string, send func() error) error {
 // intended for callers that want lifecycle-aware framing without
 // hand-rolling the per-mode envelope.
 func (s *Service) SendTurn(ctx context.Context, id, text string) error {
+	// Record who asked before the text reaches the runtime (CW-20261021-0010).
+	settle := s.beginTurnInput(ctx, id)
+	err := s.sendTurn(ctx, id, text)
+	settle(err)
+	return err
+}
+
+func (s *Service) sendTurn(ctx context.Context, id, text string) error {
 	if row, worker := s.workerSession(id); worker {
 		plan, err := s.Store.GetLaunchPlan(id)
 		if err != nil {

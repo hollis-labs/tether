@@ -17,6 +17,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/bootgen"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -41,6 +42,8 @@ import (
 type CreateSessionInput struct {
 	Worker string
 	Route  *launchprofile.Route
+	// PromptInput records who asked for BootPromptAppend (CW-20261021-0010).
+	PromptInput *identity.InputOrigin
 	// LaunchID resolves the base launch profile from the catalog. Required.
 	LaunchID string
 

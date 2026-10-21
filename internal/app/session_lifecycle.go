@@ -105,6 +105,14 @@ func (s *Service) CreateSession(launchID string) (*Launched, error) {
 // For Tier 2 (caller-provided), populate AgentFile / AgentInline /
 // BootProfileFile / Override as needed. See CreateSessionInput for precedence.
 func (s *Service) CreateSessionWithInput(in CreateSessionInput) (*Launched, error) {
+	l, err := s.createSessionWithInput(in)
+	if err == nil && l != nil && !l.Replayed && in.PromptInput != nil && in.BootPromptAppend != "" {
+		s.recordLaunchPromptInput(l.SessionID, in.PromptInput)
+	}
+	return l, err
+}
+
+func (s *Service) createSessionWithInput(in CreateSessionInput) (*Launched, error) {
 	if in.Worker != "" {
 		return s.createWorkerSession(in)
 	}
@@ -248,7 +256,9 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		return nil, err
 	}
 	defer unlock()
-	return s.launchSessionWithContext(ctx, sessionID)
+	l, err := s.launchSessionWithContext(ctx, sessionID)
+	s.settleLaunchPromptInput(sessionID, err == nil)
+	return l, err
 }
 
 // launchSessionWithContext requires the caller to hold the canonical launch

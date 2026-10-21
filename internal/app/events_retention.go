@@ -48,7 +48,7 @@ func (s *Service) SweepEventRetention(ctx context.Context) (RetentionSweep, erro
 		return result, nil
 	}
 	result.Cutoff = time.Now().Add(-window)
-	for _, table := range []string{"events", "event_ingest_digests", "proxy_events", "ai_events", "identity_audit", "a2a_tasks"} {
+	for _, table := range []string{"events", "event_ingest_digests", "turn_inputs", "proxy_events", "ai_events", "identity_audit", "a2a_tasks"} {
 		result.Removed[table] = 0
 		for {
 			batch, err := s.Store.DeleteEventHistoryBefore(ctx, table, result.Cutoff, eventsRetentionBatch)

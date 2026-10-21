@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
@@ -283,7 +284,7 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 			if h.Health.State != agentsessions.LiveStateIdle {
 				return resp, http.StatusConflict, CodeAgentWorking, "agent is mid-turn"
 			}
-			if err := s.Service.SendTurn(r.Context(), row.ID, req.Text); err != nil {
+			if err := s.Service.SendTurn(identity.WithInputSource(r.Context(), "chat_send"), row.ID, req.Text); err != nil {
 				switch {
 				case errors.Is(err, agentsessions.ErrTurnInFlight):
 					return resp, http.StatusConflict, CodeAgentWorking, "agent is mid-turn"
@@ -305,6 +306,7 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 		Worker:               worker,
 		LaunchID:             launchID,
 		PromptAppend:         req.Text,
+		PromptInput:          chatPromptInput(r),
 		IdempotencyKey:       "chat:" + launchID + ":" + req.IdempotencyKey,
 		IdempotencyPrincipal: principal,
 	})
@@ -381,4 +383,12 @@ func chatEnabled(cat *config.Catalog, l config.Launch) bool {
 	}
 	a, ok := cat.Agents[l.Agent]
 	return !ok || a.IsEnabled()
+}
+
+// chatPromptInput records who sent the text that starts a new chat session: the
+// authenticated caller, classified like any other input. Never taken from the body.
+func chatPromptInput(r *http.Request) *identity.InputOrigin {
+	p, ok := identity.FromContext(r.Context())
+	urn, class, basis := identity.ClassifyInputSender(p, ok)
+	return &identity.InputOrigin{Source: "chat_send", SenderURN: urn, Class: class, Basis: basis}
 }
