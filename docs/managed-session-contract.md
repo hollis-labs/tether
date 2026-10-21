@@ -1,6 +1,6 @@
 # Managed-session snapshot and event contract
 
-Status: **DRAFT v1** for CW-20261021-0001 (managed-agent-capacity workstream).
+Status: **v2** (review requests of 2026-10-21 folded in) for CW-20261021-0001 (managed-agent-capacity workstream).
 Consumers: the Tachyon session (capacity view). Reviewer of the contract: Portfolio Architect.
 Anything not marked otherwise is read from the code on `main` (`524bcd5a`); nothing here is invented.
 
@@ -40,7 +40,7 @@ On the remote listener every request carries `Tether-Protocol: 1`. A paired devi
   - `event: gap`, `id: <after_seq>`, `data: {"environment_id","reason","earliest_available","high_water_seq","snapshot_required","retry_after_seconds"?}`: the server cannot continue from the cursor and **closes the stream**. The cursor is not advanced. `snapshot_required: true` means take a new snapshot and resume from its `high_water_seq`.
 - `gap` reasons: `ahead` (cursor is beyond the head), `purged` (history before `earliest_available`, or an interior hole, was retained away), `too_large` (more than the catch-up window, 2048 events, is missing), `restart` (the server could not map an event or its live feed ended), `event_id_invariant` (a stored row has no usable event id), `backfill_in_progress` (not a snapshot case: `snapshot_required: false`, retry after `retry_after_seconds`).
 - Duplicate delivery is possible across reconnects. `seq` is the dedupe key; applying an event with `seq <= last_applied` is a no-op.
-- The server also re-reads the durable log on a timer (default 1 s) as a safety net next to the live wake-ups. Its disposition is CW-20261021-0005; clients add **no polling** of their own.
+- The server also re-reads the durable log on a timer (default 1 s) as a safety net next to the live wake-ups, and sends a `synchronized` frame after every drain, so an idle stream carries about one `synchronized` frame per second. Treat it as a keepalive and a cursor advance, not as a signal to poll. Its disposition (documented safety net or change-driven) is CW-20261021-0005; clients add **no polling** of their own.
 
 ## 4. Event envelope (SHIPPED)
 
@@ -152,7 +152,7 @@ Lifecycle rules (SHIPPED, from the reducer): `created`/`launching`/`starting` ma
 
 `session.projection_changed` carries the **whole** session projection (5.2), identical in shape to a snapshot item, produced by the **same function** as the snapshot. A client replaces its copy of that session; it never merges deltas and never runs a pending-request reducer. It is idempotent by `seq`.
 
-It is emitted on any change of: lifecycle, work-state, pending flags, connectivity, provider/worker/project, or operations. **Coalescing applies ONLY to `last_activity_at` / heartbeat-only changes.** Initial session appearance, idle/processing edges, pending question/approval, lifecycle terminal, capability and connectivity changes publish immediately. A change of `last_activity_at` alone is coalesced with trailing-edge semantics: at most one event per 10 s per session, and the last value is always delivered (no lost final update).
+Its payload is the snapshot item **without `route`** (see 7.1); everything else is identical. It is emitted on any change of: lifecycle, work-state, pending flags, connectivity, provider/worker/project, or operations. **Coalescing applies ONLY to `last_activity_at` / heartbeat-only changes.** Initial session appearance, idle/processing edges, pending question/approval, lifecycle terminal, capability and connectivity changes publish immediately. A change of `last_activity_at` alone is coalesced with trailing-edge semantics: at most one event per 10 s per session, and the last value is always delivered (no lost final update).
 
 It is emitted on any change of: lifecycle, work-state, pending flags, connectivity, provider/worker/project, or operations (all immediately), and on an activity-only change as above. Raw events (`session.state_changed`, `session.request_status`, ...) stay available and unchanged.
 
@@ -188,11 +188,38 @@ on `/environment/events` and `/sessions/{id}/stream`, and repeats it in every `s
 
 Cursor behaviour is identical to the raw stream (section 3): excluded events are consumed, `seq` stays global, `synchronized` advances the cursor, `gap` is unchanged. **This is a leak-prevention view, not access control.** Any `tether.read` holder can still ask for the raw feed. The Tachyon backend must therefore request `view=projection` server-side and must **not** hand the credential to the browser. A projection-only scope would be the real control; it is deferred (CW-20261020-0047, low priority). The view grants nothing the raw stream does not already require: the same `tether.read`, the same visibility rules (operator-class events stay operator-only), no new scope, the raw stream is unchanged. The existing `kind=`, `app=`, `scope.*` filters still apply on top (AND); they can only narrow the view further.
 
-## 8. Schemas and fixtures
+### 7.1 Privacy audit of the projection (CW-20261021-0001)
+
+Every field of the session projection was checked for what it can carry, in the code and in the production data (581 sessions). Fields that go to a browser through `view=projection` are only those below.
+
+| Field | What it can contain | In the projection event / view |
+|---|---|---|
+| `id` | session UUID | yes (join key) |
+| `route` | `{"channel": <validated channel name>, "kinds": [subset of final, question, approval, failure]}`, produced by `ResolveRoute`; in production only `channel` and `kinds` occur (73 sessions with a route, none with other keys). No host, path, address or token can be stored in it, but the channel name is an operator-chosen workflow label | **omitted**: the capacity view does not need it. The snapshot item keeps it (SHIPPED); the Tachyon backend must not forward it to the browser |
+| `logical_agent_id` | a catalog agent id (`general`, `portfolio-manager`, ...), an identifier the operator chose; not a secret | yes (needed to label capacity) |
+| `kind` | provider kind (`cli`, `api`); may be the empty string for sessions created without one | yes |
+| `session_state`, `instance_status` | closed enums | yes |
+| `instance_detail` | closed enums only (`waiting`: approval/input; `stopped`: completed/failed/canceled); no free text | yes |
+| `last_activity`, `pending_*` | a time and booleans | yes |
+| `work_state` | closed enum and a time | yes |
+| `provider_id`, `worker_id`, `project_id` (PROPOSED) | catalog/provider id, worker id and project id strings; identifiers, not secrets; **no workspace path, repo root, host or URL is ever added** to the projection | yes |
+| `session.state_changed` payload in the view | `from`, `to`, `exit_code` only; the free-text `detail` is dropped | reduced |
+| `session.health_changed` payload | `reasons` are closed codes (`session_running`, `repeated_tool_denials`, `provider_session_lost`, `runtime_failed`, `runtime_orphaned`, ...), never text | yes |
+| `session.stalled` payload | `reason` is a closed code, `denied` a count | yes |
+
+Rule: a field with free text, a path, a host, an address or a credential is never added to the projection. Adding any field to it is a contract change that repeats this audit.
+
+## 8. Known issues of the SHIPPED endpoints
+
+- **`GET /environment/snapshot` can be slow and can fail under write load until CW-20261021-0002 is deployed.** Measured on the production hub: 10.1 s on the first call, 1.9 s warm (216 KB, 581 sessions), because the per-session last-event lookup sorted every event of every session. The fix (an index lookup, about 4x faster on a copy of the production data) and a classified answer (a transient failure becomes `503` with `Retry-After`, not an opaque `500`) are in review. Until it is deployed a client treats `500`/`503` as retryable with backoff. The cause of the observed 500s is not proven.
+- **The 1 s durable-log sweep** (section 3) is a documented safety net today; whether it is replaced by change-driven delivery is CW-20261021-0005.
+- **`work_state`, connectivity and capabilities are not on the hub yet** (section 10).
+
+## 9. Schemas and fixtures
 
 `docs/fixtures/managed-session` (added with the CW-20261021-0003 work-state slice) holds JSON Schema 2020-12 for the session (`schema/session.schema.json`), the snapshot and the event envelope, and fixtures: the snapshot with one session per lifecycle / work-state / pending variant, a single session, one event per kind, and the exact SSE frames (`synchronized`, `gap`: purged, too_large, ahead, restart). Everything marked SHIPPED is **generated from the real types and handler by golden tests** (`UPDATE_FIXTURES=1` regenerates), so the examples cannot drift from the code. The PROPOSED additions are schema-valid examples under `proposed/` until their tasks ship. Read `README.md` there for which files are code-backed.
 
-## 9. Populated and unpopulated, today
+## 10. Populated and unpopulated, today
 
 | Item | Today |
 |---|---|
