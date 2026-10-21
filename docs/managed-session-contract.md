@@ -136,7 +136,7 @@ Lifecycle rules (SHIPPED, from the reducer): `created`/`launching`/`starting` ma
 
 `value` is one of `idle`, `processing`, `awaiting_approval`, `awaiting_input`, `unknown`. `awaiting_*` is derived from the open request flags, so it cannot disagree with `pending_*`. `unknown` (with `known: false`) is reported while no worker state has been observed since the session started or since the owning worker disconnected; it is never defaulted to `idle`.
 
-**Known gap this fixes:** a worker's `idle` frame is normalized to the persisted lifecycle state `running` before `session.state_changed` is written (`worker_ingest.go`), so that event is always `running -> running` and carries no work-state. The fix emits a durable `session.work_state_changed` **before** the normalization: `{"from","to","at"}` with the values above. A snapshot reads the latest such event per session, so a client that reconnects reconstructs `work_state` from the snapshot alone, with no `/sessions/{id}/health` call. `/sessions/{id}/health` `live_state` stays the live source for health and is not part of this contract.
+**Known gap this fixes:** a worker's `idle` frame is normalized to the persisted lifecycle state `running` before `session.state_changed` is written (`worker_ingest.go`), so that event is always `running -> running` and carries no work-state. The fix emits a durable `session.work_state_changed` **before** the normalization, **only on an actual change** of value: `{"from","to","at"}` with the values above. It is retained like the other session state events. A snapshot reads the latest such event per session, so a client that reconnects reconstructs `work_state` from the snapshot alone, with no `/sessions/{id}/health` call. `/sessions/{id}/health` `live_state` stays the live source for health and is not part of this contract.
 
 ### 5.4 Connectivity and freshness (PROPOSED, CW-20261021-0003)
 
@@ -151,7 +151,7 @@ Lifecycle rules (SHIPPED, from the reducer): `created`/`launching`/`starting` ma
 
 `session.projection_changed` carries the **whole** session projection (5.2), identical in shape to a snapshot item, produced by the **same function** as the snapshot. A client replaces its copy of that session; it never merges deltas and never runs a pending-request reducer. It is idempotent by `seq`.
 
-It is emitted on any change of: lifecycle, work-state, pending flags, connectivity, provider/worker/project, or operations. A change of `last_activity` alone is coalesced to at most one event per 10 s per session (proposed; to be confirmed). Raw events (`session.state_changed`, `session.request_status`, ...) stay available and unchanged.
+It is emitted on any change of: lifecycle, work-state, pending flags, connectivity, provider/worker/project, or operations. A change of `last_activity` alone is coalesced with **trailing-edge** semantics: at most one event per 10 s per session, and the last value is always delivered (no lost final update; `last_activity_at` ends at its final value). Every other change is emitted immediately. Raw events (`session.state_changed`, `session.request_status`, ...) stay available and unchanged.
 
 ## 6. Operation capabilities (PROPOSED, CW-20261021-0004)
 
@@ -161,7 +161,7 @@ It is emitted on any change of: lifecycle, work-state, pending flags, connectivi
 
 Each value is `true`, `false`, or `null` (not known). It states what the **runtime supports for this session**. It says nothing about whether the caller is allowed: authorization is the caller's own scopes (section 2) and is never embedded in the session item. `streaming_stdio: false` on the health endpoint must not be read as "read-only": JSON-RPC providers are interactive. The exact mapping is verified per provider (claude-code, codex-app-server, antigravity) in CW-20261021-0004 and published before it ships. Lifecycle control semantics (start/stop/end) are out of scope of this contract.
 
-## 7. Payload-light view (PROPOSED, ruling pending)
+## 7. Payload-light view (PROPOSED, approved by the architect)
 
 `GET /environment/events?view=projection` (and `/sessions/{id}/stream?view=projection`) delivers only a **server-defined allowlist** of kinds, and for each of them only an allowlisted set of payload paths. It is built on the mechanism the event pipeline already has (`internal/events/pipeline_registry.go`): kinds admitted as class `Metadata` carry a per-kind payload allowlist (`redact.Allowlist`), while `Compatibility` kinds are passed through whole. The view never delivers a `Compatibility` or unregistered kind in full.
 
@@ -173,9 +173,9 @@ Each value is `true`, `false`, or `null` (not known). It states what the **runti
 | `session.health_changed` | `from`, `to`, `reasons`, `since` |
 | `session.stalled` | `reason`, `denied` |
 
-Never delivered: `session.output`, `session.turn_output`, `session.request_status` (its content is already reduced into the projection), `tool.call.*` and `tool_call_*` (tool names and attribution), `message.*`, `wake.*`, `session.turn_routed` (channel and message ids), and any kind not listed. A new kind is excluded until it is added here deliberately (fail closed).
+Never delivered: `session.output`, `session.turn_output`, `session.request_status` (its content is already reduced into the projection), `tool.call.*` and `tool_call_*` (tool names, error classes and attribution; they are metadata-class today but nothing in the capacity view needs them), `message.*`, `wake.*`, `session.turn_routed` (channel and message ids), and any kind not listed. A new kind is excluded until it is added here deliberately (fail closed).
 
-Cursor behaviour is identical to the raw stream (section 3): excluded events are consumed, `seq` stays global, `synchronized` advances the cursor, `gap` is unchanged. The view grants nothing the raw stream does not already require: the same `tether.read`, the same visibility rules (operator-class events stay operator-only), no new scope, the raw stream is unchanged. The existing `kind=`, `app=`, `scope.*` filters still apply on top (AND); they can only narrow the view further.
+Cursor behaviour is identical to the raw stream (section 3): excluded events are consumed, `seq` stays global, `synchronized` advances the cursor, `gap` is unchanged. **This is a leak-prevention view, not access control.** Any `tether.read` holder can still ask for the raw feed. The Tachyon backend must therefore request `view=projection` server-side and must **not** hand the credential to the browser. A projection-only scope would be the real control; it is deferred (CW-20261020-0047, low priority). The view grants nothing the raw stream does not already require: the same `tether.read`, the same visibility rules (operator-class events stay operator-only), no new scope, the raw stream is unchanged. The existing `kind=`, `app=`, `scope.*` filters still apply on top (AND); they can only narrow the view further.
 
 ## 8. Populated and unpopulated, today
 
