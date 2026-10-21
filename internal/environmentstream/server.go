@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
@@ -53,7 +55,7 @@ func (s *Server) Snapshot(w http.ResponseWriter, r *http.Request, sessionID stri
 	}
 	base, err := s.Store.EnvironmentSnapshot(r.Context(), sessionID)
 	if err != nil {
-		http.Error(w, "snapshot unavailable", http.StatusInternalServerError)
+		writeReadFailure(w, "snapshot", err)
 		return
 	}
 	if sessionID != "" && len(base.Sessions) == 0 {
@@ -63,6 +65,44 @@ func (s *Server) Snapshot(w http.ResponseWriter, r *http.Request, sessionID stri
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(snapshot(s.EnvironmentID, base))
+}
+
+// readFailureClass names why a durable read failed, for the answer and the log.
+// "busy" and "timeout" are transient (SQLite could not take its lock in time, or
+// the caller's deadline or connection ended the read): the caller retries.
+// Anything else is an internal failure.
+func readFailureClass(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "database is locked") || strings.Contains(msg, "sqlite_busy") || strings.Contains(msg, "database table is locked") {
+		return "busy"
+	}
+	return "internal"
+}
+
+// writeReadFailure answers a failed durable read. A transient failure is a 503
+// with Retry-After and a body that says to retry; an internal one stays a 500
+// with the generic body. The real error is logged (the class and the driver's
+// message, which carries no request values), never sent to the caller.
+func writeReadFailure(w http.ResponseWriter, what string, err error) {
+	class := readFailureClass(err)
+	detail := err.Error()
+	if len(detail) > 200 {
+		detail = detail[:200]
+	}
+	log.Printf("environment %s read failed: class=%s err=%q", what, class, detail)
+	switch class {
+	case "busy", "timeout", "canceled":
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, what+" unavailable: temporarily busy, retry", http.StatusServiceUnavailable)
+	default:
+		http.Error(w, what+" unavailable", http.StatusInternalServerError)
+	}
 }
 
 type Gap struct {
@@ -140,7 +180,7 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 	if sessionID != "" {
 		base, readErr := s.Store.EnvironmentSnapshot(r.Context(), sessionID)
 		if readErr != nil {
-			http.Error(w, "snapshot unavailable", http.StatusInternalServerError)
+			writeReadFailure(w, "snapshot", readErr)
 			return
 		}
 		if len(base.Sessions) == 0 {
@@ -160,7 +200,7 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, sessionID string
 	}
 	window, err := s.Store.EnvironmentEvents(r.Context(), after, limit)
 	if err != nil {
-		http.Error(w, "event tail unavailable", http.StatusInternalServerError)
+		writeReadFailure(w, "event tail", err)
 		return
 	}
 	// Validate the whole global window before session filtering or committing

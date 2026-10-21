@@ -494,10 +494,14 @@ func TestRemoteListenerIssuerReadsNeedNoProtocolHeader(t *testing.T) {
 	}
 }
 
-type fakeRemoteIngest struct{ calls int }
+type fakeRemoteIngest struct {
+	calls  int
+	caller eventingest.Caller
+}
 
 func (f *fakeRemoteIngest) Ingest(_ context.Context, c eventingest.Caller, items []json.RawMessage) ([]ingest.Result, error) {
 	f.calls++
+	f.caller = c
 	out := make([]ingest.Result, len(items))
 	for i := range items {
 		out[i] = ingest.Result{ID: "evt_x", Status: ingest.StatusAccepted, Cursor: "1"}
@@ -553,5 +557,99 @@ func TestRemoteListenerEventsPostNeedsNoProtocolHeaderButStillNeedsAuth(t *testi
 	}
 	if w := do("GET", "/events", "", worker, ""); w.Code != 409 {
 		t.Fatalf("GET /events without the header: %d, want 409", w.Code)
+	}
+}
+
+// A service JWT issued by this daemon's issuer may POST /events on the remote
+// listener and nowhere else; a device credential keeps working on the same route.
+func TestRemoteListenerAcceptsAServiceJWTOnlyOnPostEvents(t *testing.T) {
+	s, read, _ := remoteTestServer(t)
+	dir := filepath.Join(t.TempDir(), "auth")
+	keys, err := authissuer.OpenKeyStore(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := authissuer.OpenState(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Issuer = authissuer.New("tether", keys, state)
+	ing := &fakeRemoteIngest{}
+	s.EventIngest = ing
+	op := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	issue := func(app string, scopes ...string) (string, authissuer.ServiceRecord) {
+		t.Helper()
+		tok, rec, err := s.Issuer.IssueService(op, authissuer.ServiceRequest{App: app, Audience: "tether", Scopes: scopes})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tok.Token, rec
+	}
+	svc, rec := issue("cerberus", "events")
+	readOnly, _ := issue("nanite", "tether.read")
+	exp := time.Now().Add(time.Hour)
+	worker, err := s.Identity.Mint(context.Background(), identity.Principal{ID: "remote-worker", Kind: "device", Scopes: []string{"worker"}, ExpiresAt: &exp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(method, target, version, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://localhost:9000"+target, strings.NewReader(`{"schema_version":"1"}`))
+		if version != "" {
+			r.Header.Set(environment.ProtocolHeader, version)
+		}
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		s.RemoteHandler("127.0.0.1:7331").ServeHTTP(w, r)
+		return w
+	}
+
+	// Accepted: no protocol header needed, bound to its app, actor is the service.
+	if w := do("POST", "/events", "", svc); w.Code != 200 || ing.calls != 1 {
+		t.Fatalf("service JWT POST /events: %d %s (calls %d)", w.Code, w.Body.String(), ing.calls)
+	}
+	if ing.caller.App != "cerberus" {
+		t.Fatalf("caller app %q", ing.caller.App)
+	}
+	if ing.caller.Actor.URN != "msg://service/cerberus/dev" || ing.caller.Actor.Verified != "token" || ing.caller.Actor.Kind != "service" {
+		t.Fatalf("actor %+v", ing.caller.Actor)
+	}
+	// And the device credential still works on the same route.
+	if w := do("POST", "/events", "", worker); w.Code != 200 || ing.calls != 2 {
+		t.Fatalf("device POST /events: %d (calls %d)", w.Code, ing.calls)
+	}
+	before := ing.calls
+	// Wrong scope: 403. Revoked: 401 at once.
+	if w := do("POST", "/events", "", readOnly); w.Code != 403 {
+		t.Fatalf("service JWT without tether.events: %d", w.Code)
+	}
+	if _, err := s.Issuer.RevokeService(rec.JTI); err != nil {
+		t.Fatal(err)
+	}
+	if w := do("POST", "/events", "", svc); w.Code != 401 {
+		t.Fatalf("revoked service JWT: %d", w.Code)
+	}
+	// Everywhere else the (other, live) service JWT is refused, with and without the header.
+	live, _ := issue("cerberus", "events")
+	for _, c := range []struct{ method, target string }{
+		{"GET", "/events"}, {"POST", "/events/"}, {"POST", "/events?x=1"}, {"POST", "/messages"}, {"GET", "/sessions"},
+		{"GET", "/environment/events"}, {"POST", "/auth/token"}, {"POST", "/auth/pair"}, {"GET", "/auth/denylist/x"}, {"POST", "/mcp"},
+	} {
+		for _, v := range []string{"", "1"} {
+			if w := do(c.method, c.target, v, live); w.Code != 401 && w.Code != 404 && w.Code != 409 {
+				t.Errorf("%s %s (header %q) with a service JWT returned %d", c.method, c.target, v, w.Code)
+			} else if w.Code == 200 || w.Code == 204 {
+				t.Errorf("%s %s reached a handler", c.method, c.target)
+			}
+		}
+	}
+	if ing.calls != before {
+		t.Fatal("a refused service JWT reached the ingest")
+	}
+	_ = read
+
+	// Without the ingest on, a service JWT is just another refused bearer.
+	s.EventIngest = nil
+	if w := do("POST", "/events", "", live); w.Code != 401 {
+		t.Fatalf("service JWT with the ingest off: %d", w.Code)
 	}
 }

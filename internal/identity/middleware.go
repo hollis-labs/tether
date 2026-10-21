@@ -104,8 +104,8 @@ func MiddlewareWithScopes(mode Mode, verifier Verifier, record func(context.Cont
 
 // RemoteMiddleware always enforces verified device credentials. Unlike
 // the local listener, A2A does not bypass caller authentication here.
-func RemoteMiddleware(verifier Verifier, record func(context.Context, Observation) error, next http.Handler) http.Handler {
-	return remoteMiddleware(verifier, record, next)
+func RemoteMiddleware(verifier Verifier, record func(context.Context, Observation) error, next http.Handler, opts ...RemoteOption) http.Handler {
+	return remoteMiddleware(verifier, record, next, opts...)
 }
 
 // middleware is the pre-go-auth implementation. The local listener moved to

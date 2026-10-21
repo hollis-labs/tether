@@ -30,7 +30,11 @@ func WithRemoteContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, remoteKey{}, true)
 }
 
-func remoteMiddleware(verifier Verifier, record func(context.Context, Observation) error, next http.Handler) http.Handler {
+func remoteMiddleware(verifier Verifier, record func(context.Context, Observation) error, next http.Handler, opts ...RemoteOption) http.Handler {
+	var cfg remoteConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		r = r.WithContext(WithRemoteContext(r.Context()))
@@ -45,6 +49,14 @@ func remoteMiddleware(verifier Verifier, record func(context.Context, Observatio
 		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == JWKSPath {
 			next.ServeHTTP(w, r)
 			return
+		}
+		// The one route a service JWT may use remotely: exactly POST /events.
+		// Any other request, including every variant of this one, never enters.
+		if cfg.service != nil {
+			if token, ok := serviceJWTRequest(r); ok {
+				cfg.service.handle(w, r, token, record, next)
+				return
+			}
 		}
 		guard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/health" {

@@ -1181,8 +1181,11 @@ Cancel a pending message.
 | `message_id` | string | ✓ | Message ID |
 
 #### `tether_message_reply` _(message.write)_
-Reply to the session that sent a routed message; delivered as its next turn at
-the next idle boundary (`POST /messages/{id}/reply`).
+Reply to the session that sent a routed message (one a session published to a
+channel); delivered as its next turn at the next idle boundary
+(`POST /messages/{id}/reply`). For an ordinary mailbox message (from a user,
+device or agent address) it fails with `reply_target_not_a_session`: answer it
+with `tether_message_send` to its sender and `in_reply_to=<message_id>`.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
