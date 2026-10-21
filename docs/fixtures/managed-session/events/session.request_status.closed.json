@@ -1,0 +1,36 @@
+{
+  "schema_version": "1",
+  "id": "5b3a1f0e-8c2d-4e6a-9f10-2d7c4b8a6e01:1312313",
+  "kind": "session.request_status",
+  "time": "2026-10-21T00:12:30Z",
+  "app": "tether",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "process": {
+    "scope": "session"
+  },
+  "source": {
+    "channel": "tether.events",
+    "confidence": 1
+  },
+  "actor": {
+    "urn": "msg://service/tether/5b3a1f0e-8c2d-4e6a-9f10-2d7c4b8a6e01",
+    "kind": "service"
+  },
+  "subject": "urn:session:00000000-0000-4000-8000-000000000001",
+  "generation": 1,
+  "source_sequence": 1312313,
+  "cursor": "1312313",
+  "trace": {},
+  "content_type": "application/json",
+  "visibility": "local",
+  "truncated": false,
+  "payload": {
+    "turn_id": "t1",
+    "request_id": "r1",
+    "request_kind": "approval",
+    "open": false,
+    "source_sequence": 8
+  },
+  "environment_id": "5b3a1f0e-8c2d-4e6a-9f10-2d7c4b8a6e01",
+  "seq": 1312313
+}

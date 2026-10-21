@@ -1,0 +1,234 @@
+{
+  "environment_id": "5b3a1f0e-8c2d-4e6a-9f10-2d7c4b8a6e01",
+  "high_water_seq": 1312309,
+  "earliest_available": 23836,
+  "sessions": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "running",
+      "instance_status": "running",
+      "instance_detail": {},
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": false,
+      "pending_question_known": false,
+      "pending_approval_known": false,
+      "work_state": {
+        "value": "idle",
+        "since": "2026-10-21T00:12:00Z",
+        "known": true
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "running",
+      "instance_status": "running",
+      "instance_detail": {},
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": false,
+      "pending_question_known": false,
+      "pending_approval_known": false,
+      "work_state": {
+        "value": "processing",
+        "since": "2026-10-21T00:12:00Z",
+        "known": true
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "logical_agent_id": "portfolio-manager",
+      "kind": "cli",
+      "session_state": "running",
+      "instance_status": "waiting",
+      "instance_detail": {
+        "waiting": "approval"
+      },
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": true,
+      "pending_known": true,
+      "pending_question_known": true,
+      "pending_approval_known": true,
+      "work_state": {
+        "value": "awaiting_approval",
+        "since": "2026-10-21T00:12:00Z",
+        "known": true
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "logical_agent_id": "portfolio-manager",
+      "kind": "cli",
+      "session_state": "running",
+      "instance_status": "waiting",
+      "instance_detail": {
+        "waiting": "input"
+      },
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": true,
+      "pending_approval": false,
+      "pending_known": true,
+      "pending_question_known": true,
+      "pending_approval_known": true,
+      "work_state": {
+        "value": "awaiting_input",
+        "since": "2026-10-21T00:12:00Z",
+        "known": true
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "route": {
+        "channel": "ops",
+        "kinds": [
+          "final"
+        ]
+      },
+      "session_state": "starting",
+      "instance_status": "starting",
+      "instance_detail": {},
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": false,
+      "pending_question_known": false,
+      "pending_approval_known": false,
+      "work_state": {
+        "value": "unknown",
+        "known": false
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "detached",
+      "instance_status": "running",
+      "instance_detail": {},
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": false,
+      "pending_question_known": false,
+      "pending_approval_known": false,
+      "work_state": {
+        "value": "idle",
+        "since": "2026-10-21T00:12:00Z",
+        "known": true
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "orphaned",
+      "instance_status": "running",
+      "instance_detail": {},
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": false,
+      "pending_question_known": false,
+      "pending_approval_known": false,
+      "work_state": {
+        "value": "idle",
+        "since": "2026-10-21T00:12:00Z",
+        "known": true
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000008",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "running",
+      "instance_status": "stopping",
+      "instance_detail": {},
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": false,
+      "pending_question_known": false,
+      "pending_approval_known": false,
+      "work_state": {
+        "value": "processing",
+        "since": "2026-10-21T00:12:00Z",
+        "known": true
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000009",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "ended",
+      "instance_status": "stopped",
+      "instance_detail": {
+        "stopped": "completed"
+      },
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": true,
+      "pending_question_known": true,
+      "pending_approval_known": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000010",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "ended",
+      "instance_status": "stopped",
+      "instance_detail": {
+        "stopped": "failed"
+      },
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": true,
+      "pending_question_known": true,
+      "pending_approval_known": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000011",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "ended",
+      "instance_status": "stopped",
+      "instance_detail": {
+        "stopped": "canceled"
+      },
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": true,
+      "pending_question_known": true,
+      "pending_approval_known": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "logical_agent_id": "general",
+      "kind": "cli",
+      "session_state": "running",
+      "instance_status": "running",
+      "instance_detail": {},
+      "last_activity": "2026-10-21T00:12:30Z",
+      "pending_question": false,
+      "pending_approval": false,
+      "pending_known": false,
+      "pending_question_known": false,
+      "pending_approval_known": false,
+      "work_state": {
+        "value": "unknown",
+        "known": false
+      }
+    }
+  ]
+}

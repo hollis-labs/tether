@@ -1,0 +1,68 @@
+{
+  "schema_version": "1",
+  "id": "5b3a1f0e-8c2d-4e6a-9f10-2d7c4b8a6e01:1312315",
+  "kind": "session.projection_changed",
+  "time": "2026-10-21T00:12:30Z",
+  "app": "tether",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "process": {
+    "scope": "session"
+  },
+  "source": {
+    "channel": "tether.events",
+    "confidence": 1
+  },
+  "actor": {
+    "urn": "msg://service/tether/5b3a1f0e-8c2d-4e6a-9f10-2d7c4b8a6e01",
+    "kind": "service"
+  },
+  "subject": "urn:session:00000000-0000-4000-8000-000000000001",
+  "generation": 1,
+  "source_sequence": 1312315,
+  "cursor": "1312315",
+  "trace": {},
+  "content_type": "application/json",
+  "visibility": "local",
+  "truncated": false,
+  "payload": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "logical_agent_id": "general",
+    "kind": "cli",
+    "session_state": "running",
+    "instance_status": "running",
+    "instance_detail": {},
+    "last_activity": "2026-10-21T00:12:30Z",
+    "last_activity_at": "2026-10-21T00:12:30Z",
+    "pending_question": false,
+    "pending_approval": false,
+    "pending_known": false,
+    "pending_question_known": false,
+    "pending_approval_known": false,
+    "work_state": {
+      "value": "idle",
+      "since": "2026-10-21T00:12:00Z",
+      "known": true
+    },
+    "provider_id": "claude-code",
+    "worker_id": "worker_5d99a741da24606f7730eacb",
+    "project_id": "agent-os",
+    "connectivity": {
+      "value": "connected",
+      "since": "2026-10-21T00:00:05Z"
+    },
+    "freshness": {
+      "observed_at": "2026-10-21T00:12:31Z",
+      "last_event_at": "2026-10-21T00:12:30Z",
+      "work_state_at": "2026-10-21T00:12:00Z"
+    },
+    "operations": {
+      "send_turn": true,
+      "send_input": null,
+      "attach": false,
+      "stop": true,
+      "resize": false
+    }
+  },
+  "environment_id": "5b3a1f0e-8c2d-4e6a-9f10-2d7c4b8a6e01",
+  "seq": 1312315
+}

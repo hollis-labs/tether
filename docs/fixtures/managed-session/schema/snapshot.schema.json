@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tether.local/schemas/managed-session/snapshot.schema.json",
+  "title": "Environment snapshot (GET /environment/snapshot; GET /sessions/{id}/snapshot has exactly one session)",
+  "type": "object",
+  "required": ["environment_id", "high_water_seq", "earliest_available", "sessions"],
+  "properties": {
+    "environment_id": {"type": "string", "minLength": 1},
+    "high_water_seq": {"type": "integer", "minimum": 0, "description": "resume the stream with after_seq=this"},
+    "earliest_available": {"type": "integer", "minimum": 0},
+    "sessions": {"type": "array", "items": {"$ref": "session.schema.json"}}
+  }
+}

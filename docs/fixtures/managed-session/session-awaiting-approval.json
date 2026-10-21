@@ -1,0 +1,21 @@
+{
+  "id": "00000000-0000-4000-8000-000000000003",
+  "logical_agent_id": "portfolio-manager",
+  "kind": "cli",
+  "session_state": "running",
+  "instance_status": "waiting",
+  "instance_detail": {
+    "waiting": "approval"
+  },
+  "last_activity": "2026-10-21T00:12:30Z",
+  "pending_question": false,
+  "pending_approval": true,
+  "pending_known": true,
+  "pending_question_known": true,
+  "pending_approval_known": true,
+  "work_state": {
+    "value": "awaiting_approval",
+    "since": "2026-10-21T00:12:00Z",
+    "known": true
+  }
+}

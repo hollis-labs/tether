@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tether.local/schemas/managed-session/session.schema.json",
+  "title": "Managed-session projection (one session)",
+  "description": "SHIPPED fields are emitted today; fields marked PROPOSED arrive with CW-20261021-0003/0004 and are optional here. instance_id is dropped and must not appear.",
+  "type": "object",
+  "required": ["id", "kind", "session_state", "instance_status", "instance_detail", "last_activity", "pending_question", "pending_approval", "pending_known", "pending_question_known", "pending_approval_known"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1, "description": "session UUID, the only join key"},
+    "instance_id": false,
+    "logical_agent_id": {"type": "string"},
+    "kind": {"type": "string", "description": "provider kind, e.g. cli, api"},
+    "route": {"type": "object"},
+    "session_state": {"enum": ["starting", "running", "detached", "paused", "orphaned", "ended"], "description": "lifecycle"},
+    "instance_status": {"enum": ["starting", "running", "waiting", "stopping", "stopped", "rejected"]},
+    "instance_detail": {
+      "type": "object",
+      "properties": {
+        "waiting": {"enum": ["approval", "input"]},
+        "stopped": {"enum": ["completed", "failed", "canceled"]}
+      },
+      "additionalProperties": false
+    },
+    "last_activity": {"type": "string", "format": "date-time", "description": "zero time 0001-01-01T00:00:00Z means unknown"},
+    "pending_question": {"type": "boolean"},
+    "pending_approval": {"type": "boolean"},
+    "pending_known": {"type": "boolean"},
+    "pending_question_known": {"type": "boolean"},
+    "pending_approval_known": {"type": "boolean"},
+    "work_state": {
+      "type": "object",
+      "required": ["value", "known"],
+      "properties": {
+        "value": {"enum": ["idle", "processing", "awaiting_approval", "awaiting_input", "unknown"]},
+        "since": {"type": "string", "format": "date-time"},
+        "known": {"type": "boolean"}
+      },
+      "additionalProperties": false,
+      "description": "absent once the lifecycle has ended; value unknown iff known is false"
+    },
+    "last_activity_at": {"type": "string", "format": "date-time", "description": "PROPOSED: same value as last_activity"},
+    "provider_id": {"type": ["string", "null"], "description": "PROPOSED (CW-20261021-0004)"},
+    "worker_id": {"type": ["string", "null"], "description": "PROPOSED (CW-20261021-0004)"},
+    "project_id": {"type": ["string", "null"], "description": "PROPOSED (CW-20261021-0004)"},
+    "connectivity": {
+      "type": "object",
+      "required": ["value"],
+      "properties": {
+        "value": {"enum": ["connected", "disconnected", "local", "unknown"]},
+        "since": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false,
+      "description": "PROPOSED (CW-20261021-0003)"
+    },
+    "freshness": {
+      "type": "object",
+      "required": ["observed_at"],
+      "properties": {
+        "observed_at": {"type": "string", "format": "date-time"},
+        "last_event_at": {"type": "string", "format": "date-time"},
+        "work_state_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false,
+      "description": "PROPOSED (CW-20261021-0003): timestamps only, no server-computed stale flag"
+    },
+    "operations": {
+      "type": "object",
+      "properties": {
+        "send_turn": {"type": ["boolean", "null"]},
+        "send_input": {"type": ["boolean", "null"]},
+        "attach": {"type": ["boolean", "null"]},
+        "stop": {"type": ["boolean", "null"]},
+        "resize": {"type": ["boolean", "null"]}
+      },
+      "additionalProperties": false,
+      "description": "PROPOSED (CW-20261021-0004): runtime support for the session, never the caller's authorization; null = not known"
+    }
+  }
+}

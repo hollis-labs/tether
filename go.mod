@@ -31,7 +31,7 @@ require (
 	github.com/hollis-labs/libs/security/redact v0.2.0
 )
 
-require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

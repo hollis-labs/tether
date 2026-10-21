@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tether.local/schemas/managed-session/event.schema.json",
+  "title": "Environment event envelope (one SSE data: object)",
+  "type": "object",
+  "required": ["schema_version", "id", "kind", "time", "source", "actor", "subject", "generation", "source_sequence", "cursor", "content_type", "visibility", "truncated", "payload", "environment_id", "seq"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "id": {"type": "string", "description": "<environment_id>:<seq>"},
+    "environment_id": {"type": "string"},
+    "seq": {"type": "integer", "minimum": 1, "description": "environment-global durable event id; the dedupe key and resume cursor"},
+    "kind": {"type": "string"},
+    "time": {"type": "string", "format": "date-time"},
+    "app": {"type": "string"},
+    "session_id": {"type": "string"},
+    "subject": {"type": "string"},
+    "source": {"type": "object", "required": ["channel"], "properties": {"channel": {"type": "string"}, "confidence": {"type": "number"}}},
+    "actor": {"type": "object", "required": ["urn", "kind"]},
+    "generation": {"type": "integer"},
+    "source_sequence": {"type": "integer"},
+    "cursor": {"type": "string"},
+    "content_type": {"type": "string"},
+    "visibility": {"type": "string"},
+    "truncated": {"type": "boolean"},
+    "payload": {}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "session.work_state_changed"}}, "required": ["kind"]},
+     "then": {"properties": {"payload": {"type": "object", "required": ["from", "to", "at"], "properties": {"from": {"enum": ["idle", "processing", "unknown"]}, "to": {"enum": ["idle", "processing"]}, "at": {"type": "string", "format": "date-time"}}}}}},
+    {"if": {"properties": {"kind": {"const": "session.state_changed"}}, "required": ["kind"]},
+     "then": {"properties": {"payload": {"type": "object", "required": ["from", "to"], "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "exit_code": {"type": ["integer", "null"]}, "detail": {"type": "string"}}}}}},
+    {"if": {"properties": {"kind": {"const": "session.request_status"}}, "required": ["kind"]},
+     "then": {"properties": {"payload": {"type": "object", "required": ["turn_id", "open", "source_sequence"], "properties": {"turn_id": {"type": "string"}, "request_id": {"type": "string"}, "request_kind": {"enum": ["approval", "question"]}, "open": {"type": "boolean"}, "source_sequence": {"type": "integer"}, "terminal": {"type": "boolean"}}}}}},
+    {"if": {"properties": {"kind": {"const": "session.health_changed"}}, "required": ["kind"]},
+     "then": {"properties": {"payload": {"type": "object", "required": ["from", "to"], "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "reasons": {"type": "array", "items": {"type": "string"}}, "since": {"type": "string"}}}}}},
+    {"if": {"properties": {"kind": {"const": "session.projection_changed"}}, "required": ["kind"]},
+     "then": {"properties": {"payload": {"$ref": "session.schema.json"}}}}
+  ]
+}
