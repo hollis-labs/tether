@@ -102,9 +102,32 @@ type EnvironmentSnapshot struct {
 	Requests          []EnvironmentRequest
 }
 
+// environmentSessionsSQL is the snapshot's session query; a test asserts its
+// plan, so the text lives in one place.
+const environmentSessionsSQL = `SELECT id,logical_agent_id,provider_kind,state,updated_at,COALESCE(route_json,''),COALESCE((SELECT MAX(at) FROM events WHERE session_id=sessions.id),'') FROM sessions WHERE (?='' OR id=?) ORDER BY id`
+
 // EnvironmentSnapshot reads rows and their cursor in the same SQLite read
 // transaction. Lifecycle state writes and subsequent event publication remain
 // separate existing operations; a reducer must make state assignments idempotent.
+// The last-event time of a session is MAX(at) over idx_events_session
+// (session_id, at): a min/max lookup of a few pages. The earlier "ORDER BY id
+// DESC LIMIT 1" form could not use that ordering (both session indexes are
+// ordered by time, not id), so SQLite read and sorted every event of every
+// session on each call: seconds on a cold cache with ~600 sessions and over a
+// million events (CW-20261021-0002). The two forms name the same row unless a
+// session has an event stamped earlier than one inserted before it; then MAX(at)
+// is the later time, which is what "last activity" means. On a copy of the
+// production database all 579 rows were identical.
+// EnvironmentSnapshot reads rows and their cursor in the same SQLite read
+// transaction. Lifecycle state writes and subsequent event publication remain
+// separate existing operations; a reducer must make state assignments idempotent.
+// The last-event time of a session is MAX(at) over idx_events_session
+// (session_id, at): a min/max lookup of a few pages. The earlier "ORDER BY id
+// DESC LIMIT 1" form could not use that ordering (both session indexes are
+// ordered by time, not id), so SQLite read and sorted every event of every
+// session on each call: seconds on a cold cache with ~600 sessions and over a
+// million events (CW-20261021-0002). Events are written with a monotonic
+// time, so the newest id and the newest time name the same row.
 func (s *Store) EnvironmentSnapshot(ctx context.Context, sessionID string) (EnvironmentSnapshot, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -116,7 +139,7 @@ func (s *Store) EnvironmentSnapshot(ctx context.Context, sessionID string) (Envi
 	if err != nil {
 		return snap, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,logical_agent_id,provider_kind,state,updated_at,COALESCE(route_json,''),COALESCE((SELECT at FROM events WHERE session_id=sessions.id ORDER BY id DESC LIMIT 1),'') FROM sessions WHERE (?='' OR id=?) ORDER BY id`, sessionID, sessionID)
+	rows, err := tx.QueryContext(ctx, environmentSessionsSQL, sessionID, sessionID)
 	if err != nil {
 		return snap, err
 	}
