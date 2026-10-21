@@ -172,7 +172,7 @@ Each value is `true`, `false`, or `null` (not known). It states what the **runti
 
 | Kind in the view | Payload paths delivered |
 |---|---|
-| `session.projection_changed` (PROPOSED) | the whole session projection (5.2) |
+| `session.projection_changed` (PROPOSED) | the session projection (5.2) **without `route`** (5.5); an explicit allowlist of fields |
 | `session.work_state_changed` (PROPOSED) | `from`, `to`, `at` |
 | `session.state_changed` | `from`, `to`, `exit_code` only (free-text `detail` and the `reason` code are dropped) |
 | `session.health_changed` | `from`, `to`, `reasons`, `since` |
