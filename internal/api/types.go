@@ -10,6 +10,7 @@ import (
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -244,6 +245,9 @@ type CreateSessionInput struct {
 	TaskID string
 	// App is the validated, operator-asserted app. See LaunchRequest.App.
 	App string
+	// PromptInput records who asked for PromptAppend (server-set from the
+	// authenticated request; CW-20261021-0010). Nil means not recorded (unknown).
+	PromptInput *identity.InputOrigin
 }
 
 type LaunchResponse struct {

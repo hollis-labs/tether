@@ -24,7 +24,7 @@ func (s *Service) persistHostedTurnOutput(ctx context.Context, sessionID string,
 	if err != nil {
 		return "", "", err
 	}
-	job := &turnOutputWrite{row: *row, route: route, result: result, providerResultID: providerResultID}
+	job := &turnOutputWrite{row: *row, route: route, result: result, providerResultID: providerResultID, audience: s.audienceFor(sessionID, result.TurnID)}
 	var output *sessionTurnOutput
 	if value, ok := s.turnOutputs.Load(sessionID); ok {
 		output = value.(*sessionTurnOutput)

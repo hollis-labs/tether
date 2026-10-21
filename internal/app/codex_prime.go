@@ -43,7 +43,7 @@ func (s *Service) primeAppServerSession(ctx context.Context, id string) error {
 		if h.Health.State == agentsessions.LiveStateProcessing {
 			return nil // a real turn got there first
 		}
-		if err = s.SendTurn(ctx, id, codexPrimeText); err == nil {
+		if err = s.SendTurn(withTurnInput(ctx, systemInput("codex_prime")), id, codexPrimeText); err == nil {
 			return nil
 		}
 		if errors.Is(err, agentsessions.ErrSessionNotRunning) {

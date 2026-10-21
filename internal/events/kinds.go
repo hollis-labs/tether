@@ -95,6 +95,14 @@ const (
 	//   {"action":"<string>","display_name":"<string>"}
 	KindProviderPermissionDenied = "provider.permission_denied"
 
+	// KindSessionWorkStateChanged reports a change of what a session's runtime is
+	// doing, separate from its lifecycle: "idle" (waiting for input) or
+	// "processing" (working on a turn). It is emitted before the worker's idle
+	// frame is normalized to the persisted lifecycle state "running", only when the
+	// value actually changes (CW-20261021-0003). Payload schema:
+	//   {"from":"<idle|processing|unknown>","to":"<idle|processing>","at":"<RFC 3339>"}
+	KindSessionWorkStateChanged = "session.work_state_changed"
+
 	// KindSessionStalled fires once when a session's refused tool actions
 	// since its last turn output reach the stall threshold, so a worker that
 	// is silently making no progress is visible to operators. Payload schema:

@@ -150,13 +150,16 @@ var insertEventSQL = `INSERT INTO events (scope, session_id, at, kind, payload_j
 
 // InsertEventEnvelope implements events.EnvelopePersister: it writes e with its
 // envelope blocks, a D6 id and a log-assigned recorded_at, and returns the stored
-// event. The environment-request kind keeps its own bookkeeping path.
+// event. The environment-request and work-state kinds keep their own bookkeeping paths.
 func (s *Store) InsertEventEnvelope(ctx context.Context, e events.Event) (events.Event, error) {
 	if e.Scope == "" {
 		return events.Event{}, fmt.Errorf("event scope required")
 	}
 	if e.Kind == EnvironmentRequestKind {
 		return s.insertEnvironmentRequestEnvelope(ctx, e)
+	}
+	if e.Kind == events.KindSessionWorkStateChanged {
+		return s.insertWorkStateEnvelope(ctx, e)
 	}
 	at := time.Now().UTC()
 	stored, _, err := insertEventEnvelopeRow(ctx, s.db, e, at, "", false)

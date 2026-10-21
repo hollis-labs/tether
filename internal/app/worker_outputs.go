@@ -70,7 +70,7 @@ func (s *Service) workerTurnOutput(row *store.SessionRow, f workerwire.Frame) er
 		if err != nil {
 			return err
 		}
-		job := &turnOutputWrite{row: *row, route: route, providerResultID: result.UUID, result: turnoutput.Output{SessionID: row.ID, TurnID: turn, Kind: kind, Text: text, Runtime: result.Provider, StopReason: "end_turn", Confidence: turnoutput.ConfidenceExact}}
+		job := &turnOutputWrite{audience: s.audienceFor(row.ID, turn), row: *row, route: route, providerResultID: result.UUID, result: turnoutput.Output{SessionID: row.ID, TurnID: turn, Kind: kind, Text: text, Runtime: result.Provider, StopReason: "end_turn", Confidence: turnoutput.ConfidenceExact}}
 		if err := job.persist(context.Background(), s); err != nil {
 			return err
 		}

@@ -43,6 +43,7 @@ func TestPipelineMetadataGoldensAndCompatibilityBytes(t *testing.T) {
 		catalog.KindToolCallStarted:       `{"tool":"read","server":"fixture","args_bytes":2,"args_schema_fp":"1234"}`,
 		catalog.KindToolCallFinished:      `{"tool":"read","server":"fixture","args_bytes":2,"args_schema_fp":"1234","ok":true,"error_class":"none","duration_ms":2,"gateway_ms":1,"forward_ms":1,"result_bytes":2}`,
 		KindSessionStalled:                `{"reason":"repeated_tool_denials","denied":3}`,
+		KindSessionWorkStateChanged:       `{"from":"processing","to":"idle","at":"2026-10-21T00:00:00Z"}`,
 		EventTypeMachineAuthorityDecision: `{"server":"fixture","tool":"write","class":"write","mode":"dev","allowed":true,"session_id":"s1","timestamp":"2026-10-19T00:00:00Z"}`,
 	}
 	for kind, policy := range pipelinePolicies() {
