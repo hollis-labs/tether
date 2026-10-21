@@ -119,7 +119,7 @@ type RoutingReplyDelivery struct {
 // turn of the SESSION that published a message to a channel; a mailbox message
 // (from a user, a device, an agent address, or a session that sent it to a
 // mailbox) is answered with a message to its sender.
-const replyNotSessionHint = "; this reply only answers a message a session published to a channel. To answer a mailbox message, send a message to its sender with tether_message_send (in_reply_to=<message_id>)"
+const replyNotSessionHint = "; the message is a mailbox message, not a channel message from a session; answer it with tether_message_send to its sender with in_reply_to=<message_id>"
 
 func writeReplyError(w http.ResponseWriter, err error) {
 	switch {
