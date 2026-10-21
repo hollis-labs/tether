@@ -614,7 +614,7 @@ returns 409 `idempotency_conflict`.
 | Refusal | Meaning |
 |---|---|
 | 404 `not_found` | Unknown parent/reply id; a staged parent remains hidden until attachment |
-| 400 `reply_target_not_a_session` | Parent is not a canonical channel publication from a local session |
+| 400 `reply_target_not_a_session` | Parent is not a canonical channel publication from a local session. A mailbox message is answered with a message to its sender (`tether_message_send`, `in_reply_to=<id>`) |
 | 413 `payload_too_large` | Reply text exceeds 128 KiB or dedicated JSON request exceeds 1 MiB |
 | 400 `invalid_request` | Blank/invalid UTF-8 body, or unknown field in dedicated reply JSON (only `body` and `interrupt` are accepted) |
 | 409 `turn_feed_unavailable` | Running PTY target reports no turn lifecycle; nothing queued |
