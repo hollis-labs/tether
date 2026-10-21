@@ -39,11 +39,25 @@ destination are never evidence. **Any doubt resolves to `unknown`, never to `ope
 | any other device (read-only, admin-only), a principal of unknown kind | `unknown` |
 | a session or agent principal | `agent` |
 | a service principal | `system` |
-| mail or a reply stamped `stamped`/`verified` by the daemon: sender kind `user` | `operator` |
-| ... sender kind `agent` or `session` | `agent` |
-| ... sender kind `service` | `system` |
+| mail or a reply stored with a daemon stamp: the **verified principal that wrote it** is a session or agent principal | `agent` |
+| ... a service principal | `system` |
+| ... the **shared operator credential** (the operator token, including the operator-authorized MCP connection agents use) | `unknown` (basis `shared_operator_credential`) |
+| ... a device principal (its scopes are not in the stamp) | `unknown` |
 | no verified principal (anonymous, identity off, observe-mode `?as=`), an unstamped or `unverified` message | `unknown` |
 | a Tether-made injection | `system` |
+
+### Why mail is classified by the verified principal, not by its From
+
+A message's `From` is a claim. A principal holding `*` or `message.send_as` (the operator
+credential does) may author **any** From, and the daemon then stamps the message
+`verified`: that proves only that the credential was *allowed* to claim the address, not
+who wrote the mail. An agent that sends mail through the shared operator-authorized
+connection with an agent `From` (or, equally, with a user `From`) is stamped
+`verified` with the operator as the verified principal. So the class comes from the
+verified principal recorded with the message (`from_principal`), and the shared
+operator credential is `unknown`, never `operator` and never `agent`: nothing
+distinguishes a human from an agent behind it. Operator audience therefore comes only
+from authenticated direct routes (see the table above).
 
 ## Binding an input to an output
 
@@ -58,6 +72,7 @@ another unbound input, and no other input is waiting. Otherwise the audience is
 |---|---|
 | `authenticated_principal`, `stamped_message_sender`, `system_injection` | proven; the class is the input's class |
 | `none` | the input's sender is unknown |
+| `shared_operator_credential` | mail written through the shared operator credential, which a human or an agent may hold |
 | `no_input` | no recorded input (history, a provider-initiated turn) |
 | `submission_unsettled` | the output arrived before the runtime confirmed the input |
 | `queued_input` | the input was queued behind another |

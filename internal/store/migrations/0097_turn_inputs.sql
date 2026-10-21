@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS turn_inputs (
     source         TEXT NOT NULL CHECK (source IN ('chat_send','session_turn','mcp_send_turn','mail_wake','routing_reply','system')),
     sender_urn     TEXT,
     sender_class   TEXT NOT NULL CHECK (sender_class IN ('operator','agent','system','unknown')),
-    basis          TEXT NOT NULL CHECK (basis IN ('authenticated_principal','stamped_message_sender','system_injection','none')),
+    basis          TEXT NOT NULL CHECK (basis IN ('authenticated_principal','stamped_message_sender','shared_operator_credential','system_injection','none')),
     ref_id         TEXT,
     state          TEXT NOT NULL CHECK (state IN ('submitting','accepted','failed')),
     queued         INTEGER NOT NULL DEFAULT 0,

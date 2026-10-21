@@ -25,11 +25,14 @@ const (
 	ClassUnknown       = "unknown"
 	BasisPrincipal     = "authenticated_principal"
 	BasisStampedSender = "stamped_message_sender"
-	BasisSystem        = "system_injection"
-	BasisNone          = "none"
-	InputSubmitting    = "submitting"
-	InputAccepted      = "accepted"
-	InputFailed        = "failed"
+	// BasisSharedOperator marks mail authored through the shared operator credential:
+	// a human and an agent are indistinguishable behind it, so it proves nothing.
+	BasisSharedOperator = "shared_operator_credential"
+	BasisSystem         = "system_injection"
+	BasisNone           = "none"
+	InputSubmitting     = "submitting"
+	InputAccepted       = "accepted"
+	InputFailed         = "failed"
 )
 
 // TurnInput is one input handed to a session.

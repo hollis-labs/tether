@@ -2,8 +2,9 @@
   input handed to a session (chat send, `/turn`, MCP send-turn, mail wake, routing
   reply, the codex prime, and the text that starts a chat session) is recorded in the
   new `turn_inputs` table (migration 0097) with a sender class (`operator`, `agent`,
-  `system`, `unknown`) derived from the verified principal or the daemon-stamped
-  sender, never from prose or timestamps. The oldest accepted input is bound to the
+  `system`, `unknown`) derived from the verified principal, or for mail from the verified principal
+  recorded with the message (never its claimed From, which the shared operator
+  credential can set to anything), never from prose or timestamps. The oldest accepted input is bound to the
   turn that answers it, and the routed message and `session.turn_output` gain
   `audience`, `audience_basis`, `input_ids` and `input_classes`; any doubt (queued or
   possibly merged inputs, an unsettled submission, an unverified sender) is `unknown`,

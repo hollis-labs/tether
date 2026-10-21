@@ -10,8 +10,10 @@ import (
 	"sort"
 	"testing"
 
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
+
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
@@ -28,10 +30,13 @@ type audienceCase struct {
 	setup func(t *testing.T, s *Service)
 }
 
-func acceptInput(t *testing.T, s *Service, note turnInputNote, queuedBehind bool) {
+func mailFixture(t *testing.T, s *Service, from string, meta map[string]string) string {
 	t.Helper()
-	ctx := withTurnInput(context.Background(), note)
-	s.beginTurnInput(ctx, "s1")(nil)
+	env, err := s.Store.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindNotice, From: addr(t, from), To: addr(t, "msg://agent/agent-mux/agt_target"), Payload: []byte(`{"body":"hi"}`), Metadata: meta})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env.ID
 }
 
 func TestReplyAudienceFixtures(t *testing.T) {
@@ -39,7 +44,17 @@ func TestReplyAudienceFixtures(t *testing.T) {
 	cases := []audienceCase{
 		{"operator", func(t *testing.T, s *Service) { s.beginTurnInput(op, "s1")(nil) }},
 		{"agent", func(t *testing.T, s *Service) {
-			acceptInput(t, s, turnInputNote{Source: store.InputMailWake, SenderURN: "msg://agent/agent-mux/agt_example", Class: store.ClassAgent, Basis: store.BasisStampedSender, RefID: "msg_example"}, false)
+			// A session principal wrote the mail from its own address; the wake path
+			// classifies it from the stored stamp.
+			id := mailFixture(t, s, "msg://session/local/s9", map[string]string{api.MetaFromVerification: "stamped", api.MetaFromPrincipal: "msg://session/local/s9"})
+			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
+		}},
+		{"unknown_shared_operator_credential", func(t *testing.T, s *Service) {
+			// An agent-authored mail sent through the shared operator-authorized MCP
+			// connection: From is an agent address, the verified principal is the
+			// operator credential, which a human or an agent may hold.
+			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
+			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
 		}},
 		{"system", func(t *testing.T, s *Service) { s.beginTurnInput(deviceCtx("worker"), "s1")(nil) }},
 		{"unknown_anonymous", func(t *testing.T, s *Service) { s.beginTurnInput(context.Background(), "s1")(nil) }},

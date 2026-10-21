@@ -26,36 +26,51 @@ func addr(t *testing.T, urn string) messaging.Address {
 	return a
 }
 
-// Only the sender the daemon stamped counts. Unstamped or "unverified" is unknown.
+// The author of a stored message is the principal the daemon verified, never the From
+// it claims: the shared operator credential may claim any From, so it proves nothing.
 func TestClassifyStampedSender(t *testing.T) {
-	stamp := func(state string) map[string]string { return map[string]string{api.MetaFromVerification: state} }
+	meta := func(state, principal string) map[string]string {
+		m := map[string]string{api.MetaFromVerification: state}
+		if principal != "" {
+			m[api.MetaFromPrincipal] = principal
+		}
+		return m
+	}
+	const op = "msg://user/local/operator"
 	for name, tc := range map[string]struct {
 		from  string
 		meta  map[string]string
 		class string
+		basis string
 	}{
-		"user, stamped":              {"msg://user/local/alice", stamp("stamped"), store.ClassOperator},
-		"user, verified":             {"msg://user/local/alice", stamp("verified"), store.ClassOperator},
-		"user, unverified":           {"msg://user/local/alice", stamp("unverified"), store.ClassUnknown},
-		"user, no stamp at all":      {"msg://user/local/alice", nil, store.ClassUnknown},
-		"user, empty stamp":          {"msg://user/local/alice", stamp(""), store.ClassUnknown},
-		"agent, verified":            {"msg://agent/agent-mux/agt_x", stamp("verified"), store.ClassAgent},
-		"session, stamped":           {"msg://session/local/s1", stamp("stamped"), store.ClassAgent},
-		"service, verified":          {"msg://service/cerberus/dev", stamp("verified"), store.ClassSystem},
-		"unlisted kind but verified": {"msg://group/local/g", stamp("verified"), store.ClassUnknown},
+		// Tachyon's own case: an agent From sent through the shared operator credential.
+		"agent From via the shared operator credential, verified": {"msg://agent/agent-mux/agt_bl3jn0l3oq", meta("verified", op), store.ClassUnknown, store.BasisSharedOperator},
+		"user From, stamped by the shared operator credential":    {op, meta("stamped", op), store.ClassUnknown, store.BasisSharedOperator},
+		"user From claimed by the shared operator credential":     {"msg://user/local/alice", meta("verified", op), store.ClassUnknown, store.BasisSharedOperator},
+		"session principal, its own address":                      {"msg://session/local/s9", meta("stamped", "msg://session/local/s9"), store.ClassAgent, store.BasisStampedSender},
+		"agent principal":                                         {"msg://agent/agent-mux/agt_x", meta("verified", "msg://agent/agent-mux/agt_x"), store.ClassAgent, store.BasisStampedSender},
+		"service principal":                                       {"msg://service/cerberus/dev", meta("verified", "msg://service/cerberus/dev"), store.ClassSystem, store.BasisStampedSender},
+		"device principal (scopes unknown here)":                  {"msg://user/local/alice", meta("verified", "msg://device/tachyon"), store.ClassUnknown, store.BasisNone},
+		"unverified stamp":                                        {"msg://agent/agent-mux/agt_x", meta("unverified", "msg://agent/agent-mux/agt_x"), store.ClassUnknown, store.BasisNone},
+		"no stamp at all":                                         {"msg://agent/agent-mux/agt_x", nil, store.ClassUnknown, store.BasisNone},
+		"verified but no recorded principal":                      {"msg://agent/agent-mux/agt_x", meta("verified", ""), store.ClassUnknown, store.BasisNone},
+		"unparseable principal":                                   {"msg://agent/agent-mux/agt_x", meta("verified", "garbage"), store.ClassUnknown, store.BasisNone},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, class, _ := classifyStampedSender(addr(t, tc.from), tc.meta)
-			if class != tc.class {
-				t.Fatalf("class %q, want %q", class, tc.class)
+			_, class, basis := classifyStampedSender(addr(t, tc.from), tc.meta)
+			if class != tc.class || basis != tc.basis {
+				t.Fatalf("class %q basis %q, want %q %q", class, basis, tc.class, tc.basis)
 			}
 		})
 	}
-	// Negative sweep: no sender kind is operator without a verified stamp.
+	// Negative sweep: no combination of From kind, stamp state and principal yields
+	// operator. Operator audience comes from authenticated routes only.
 	for _, kind := range []string{"user", "agent", "session", "service", "group"} {
-		for _, meta := range []map[string]string{nil, {}, stamp("unverified"), stamp("bogus")} {
-			if _, class, _ := classifyStampedSender(addr(t, "msg://"+kind+"/local/x"), meta); class == store.ClassOperator {
-				t.Fatalf("kind=%s meta=%v classified operator", kind, meta)
+		for _, state := range []string{"", "stamped", "verified", "unverified"} {
+			for _, principal := range []string{"", op, "msg://session/local/x", "msg://agent/a/b", "msg://service/s/e", "msg://device/d"} {
+				if _, class, _ := classifyStampedSender(addr(t, "msg://"+kind+"/local/x"), meta(state, principal)); class == store.ClassOperator {
+					t.Fatalf("From kind %s stamp %q principal %q classified operator", kind, state, principal)
+				}
 			}
 		}
 	}
@@ -209,8 +224,9 @@ func TestJournalReplayKeepsTheAudience(t *testing.T) {
 	}
 }
 
-// A mail wake is classified from the sender the hub stamped on the stored message.
-func TestMailWakeInputContextUsesTheStampedSender(t *testing.T) {
+// A mail wake is classified from the principal the hub verified when it stored the
+// message, not from the From it claims.
+func TestMailWakeInputContextUsesTheVerifiedPrincipal(t *testing.T) {
 	s := workerOutputService(t)
 	ctx := context.Background()
 	send := func(from string, meta map[string]string) string {
@@ -220,20 +236,24 @@ func TestMailWakeInputContextUsesTheStampedSender(t *testing.T) {
 		}
 		return env.ID
 	}
+	stamp := func(state, principal string) map[string]string {
+		return map[string]string{api.MetaFromVerification: state, api.MetaFromPrincipal: principal}
+	}
 	for name, tc := range map[string]struct {
 		id    string
 		class string
+		basis string
 	}{
-		"verified user":     {send("msg://user/local/alice", map[string]string{api.MetaFromVerification: "verified"}), store.ClassOperator},
-		"unverified user":   {send("msg://user/local/alice", map[string]string{api.MetaFromVerification: "unverified"}), store.ClassUnknown},
-		"unstamped user":    {send("msg://user/local/alice", nil), store.ClassUnknown},
-		"verified agent":    {send("msg://agent/agent-mux/agt_y", map[string]string{api.MetaFromVerification: "verified"}), store.ClassAgent},
-		"message not found": {"no-such-message", store.ClassUnknown},
+		"agent From through the shared operator credential": {send("msg://agent/agent-mux/agt_bl3jn0l3oq", stamp("verified", "msg://user/local/operator")), store.ClassUnknown, store.BasisSharedOperator},
+		"session sending from its own address":              {send("msg://session/local/s9", stamp("stamped", "msg://session/local/s9")), store.ClassAgent, store.BasisStampedSender},
+		"unverified":                                        {send("msg://user/local/alice", stamp("unverified", "msg://user/local/operator")), store.ClassUnknown, store.BasisNone},
+		"unstamped":                                         {send("msg://user/local/alice", nil), store.ClassUnknown, store.BasisNone},
+		"message not found":                                 {"no-such-message", store.ClassUnknown, store.BasisNone},
 	} {
 		t.Run(name, func(t *testing.T) {
 			note, ok := turnInputFrom(s.mailWakeInputContext(ctx, tc.id))
-			if !ok || note.Source != store.InputMailWake || note.Class != tc.class || note.RefID != tc.id {
-				t.Fatalf("%+v ok=%v, want class %s", note, ok, tc.class)
+			if !ok || note.Source != store.InputMailWake || note.Class != tc.class || note.Basis != tc.basis || note.RefID != tc.id {
+				t.Fatalf("%+v ok=%v, want class %s basis %s", note, ok, tc.class, tc.basis)
 			}
 		})
 	}

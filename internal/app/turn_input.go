@@ -48,26 +48,45 @@ func systemInput(ref string) turnInputNote {
 	return turnInputNote{Source: store.InputSystem, Class: store.ClassSystem, Basis: store.BasisSystem, RefID: ref}
 }
 
-// classifyStampedSender classifies the sender of a stored message (a mail wake, a
-// routing reply). It trusts only what the daemon stamped: a message with no
-// stamp, or one stamped "unverified", is unknown. Otherwise the sender's address
-// kind decides: user is operator, agent and session are agent, service is system.
+// classifyStampedSender classifies the author of a stored message (a mail wake, a
+// routing reply) from what the daemon verified, not from what the message claims.
+//
+// The From address is a claim: a principal holding "*" or message.send_as (the
+// shared operator credential, for one) may author ANY From, so "verified" proves
+// only that the credential was allowed to claim it, never who wrote the mail. The
+// evidence is therefore the verified principal the daemon recorded
+// (from_principal), and:
+//
+//   - a session or agent principal: agent (it can only author its own addresses
+//     unless it holds send_as, and either way the author is that agent);
+//   - a service principal: system;
+//   - the shared operator credential: unknown. A human at the CLI and an agent on the
+//     shared operator-authorized MCP connection are indistinguishable behind it, so
+//     the credential's scope is never taken as evidence of a human;
+//   - a device principal: unknown (its scopes are not in the message stamp);
+//   - no stamp, an "unverified" stamp, or no recorded principal: unknown.
+//
+// Anything not proven is unknown, never operator.
 func classifyStampedSender(from messaging.Address, meta map[string]string) (urn, class, basis string) {
 	switch meta[api.MetaFromVerification] {
 	case "stamped", "verified":
 	default: // absent or "unverified"
 		return "", store.ClassUnknown, store.BasisNone
 	}
-	urn = from.URN()
-	switch from.Kind {
-	case messaging.KindUser:
-		return urn, store.ClassOperator, store.BasisStampedSender
-	case messaging.KindAgent, messaging.KindSession:
+	principal, err := messaging.ParseURN(meta[api.MetaFromPrincipal])
+	if err != nil {
+		return "", store.ClassUnknown, store.BasisNone
+	}
+	urn = principal.URN()
+	switch {
+	case urn == identity.OperatorID:
+		return urn, store.ClassUnknown, store.BasisSharedOperator
+	case principal.Kind == messaging.KindAgent || principal.Kind == messaging.KindSession:
 		return urn, store.ClassAgent, store.BasisStampedSender
-	case messaging.KindService:
+	case principal.Kind == messaging.KindService:
 		return urn, store.ClassSystem, store.BasisStampedSender
 	}
-	return urn, store.ClassUnknown, store.BasisStampedSender
+	return urn, store.ClassUnknown, store.BasisNone
 }
 
 // beginTurnInput records the input about to be submitted to sessionID and returns
