@@ -1,6 +1,6 @@
 # Managed-session snapshot and event contract
 
-Status: **v2** (review requests of 2026-10-21 folded in) for CW-20261021-0001 (managed-agent-capacity workstream).
+Status: **v3** (Archie and Portfolio Architect review requests of 2026-10-21 folded in) for CW-20261021-0001 (managed-agent-capacity workstream).
 Consumers: the Tachyon session (capacity view). Reviewer of the contract: Portfolio Architect.
 Anything not marked otherwise is read from the code on `main` (`524bcd5a`); nothing here is invented.
 
@@ -36,10 +36,10 @@ On the remote listener every request carries `Tether-Protocol: 1`. A paired devi
 - **Resume rule:** take a snapshot, apply it, then open the stream with `after_seq=<high_water_seq>` (or `Last-Event-ID: <seq>`; `after_seq` wins). `after_seq` is required: without it the stream answers `400 after_seq required; take a snapshot first`.
 - The stream registers for live wake-ups **before** reading the durable catch-up, so nothing is lost between them. Every delivered event is read from the durable log; a live notification is only a hint.
 - SSE frames: `id: <seq>`, `event: <kind>`, `data: <json>`. Two control frames exist:
-  - `event: synchronized`, `data: {"environment_id","seq"}`: sent after every drain, at the cursor the server has reached. **A client that sees it may advance its stored resume cursor to `seq`** even if no data event was delivered (this is what makes a filtered stream resumable). In the payload-light view (section 7) its data also carries `"view":"projection"`.
+  - `event: synchronized`, `data: {"environment_id","seq"}`: sent after every drain, at the cursor the server has reached. **A client that sees it may advance its stored resume cursor to `seq`** even if no data event was delivered (this is what makes a filtered stream resumable). In the payload-light view (section 7) its data also carries `"view":"projection"`. It is sent after **every drain**, whether or not the cursor moved, so an idle stream carries about one per `PollInterval` (default 1 s). **There are no SSE comment keepalives.** A client detects a dead stream by the connection closing or erroring (an `EventSource` error is the expected signal) or by the absence of any frame for several `PollInterval`s, and then reconnects with its last `seq`; the interval is the server's setting and is not announced in the stream.
   - `event: gap`, `id: <after_seq>`, `data: {"environment_id","reason","earliest_available","high_water_seq","snapshot_required","retry_after_seconds"?}`: the server cannot continue from the cursor and **closes the stream**. The cursor is not advanced. `snapshot_required: true` means take a new snapshot and resume from its `high_water_seq`.
 - `gap` reasons: `ahead` (cursor is beyond the head), `purged` (history before `earliest_available`, or an interior hole, was retained away), `too_large` (more than the catch-up window, 2048 events, is missing), `restart` (the server could not map an event or its live feed ended), `event_id_invariant` (a stored row has no usable event id), `backfill_in_progress` (not a snapshot case: `snapshot_required: false`, retry after `retry_after_seconds`).
-- Duplicate delivery is possible across reconnects. `seq` is the dedupe key; applying an event with `seq <= last_applied` is a no-op.
+- Duplicate delivery is possible across reconnects. **Clients compare by `seq` only**: apply an event iff its `seq` is greater than the last applied `seq` of the environment, and a snapshot only if its `high_water_seq` is greater. Never compare `observed_at` or any other time inside a projection: a projection event is built **at emission** (when the change happened) and a snapshot item is built **at read**, so the two differ by construction in time fields such as `freshness.observed_at`.
 - The server also re-reads the durable log on a timer (default 1 s) as a safety net next to the live wake-ups, and sends a `synchronized` frame after every drain, so an idle stream carries about one `synchronized` frame per second. Treat it as a keepalive and a cursor advance, not as a signal to poll. Its disposition (documented safety net or change-driven) is CW-20261021-0005; clients add **no polling** of their own.
 
 ## 4. Event envelope (SHIPPED)
@@ -77,7 +77,7 @@ Kinds a capacity view uses (SHIPPED unless marked):
 
 | `kind` | `payload` |
 |---|---|
-| `session.state_changed` | `{"from","to","exit_code","detail"?}`: **lifecycle** only, see 5.2. The persisted state never says `idle` (see the known gap in 5.3) |
+| `session.state_changed` | `{"from","to","exit_code"?,"detail"?,"reason"?}` (`reason` is an internal recovery code such as `process_missing`; `detail` is free text from a worker): **lifecycle** only, see 5.2. The persisted state never says `idle` (see the known gap in 5.3) |
 | `session.health_changed` | `{"from","to","reasons":[...],"since"}` where `to` is `healthy`/`degraded`/`unhealthy`/`unknown`: **runtime health, not work-state** |
 | `session.request_status` | `{"turn_id","request_id","request_kind":"approval"\|"question","open","source_sequence","terminal"?}`: the durable record of an interactive request; the pending flags are reduced from these |
 | `session.turn_routed` | routing record for a turn |
@@ -89,7 +89,7 @@ Kinds a capacity view uses (SHIPPED unless marked):
 
 ## 5. Snapshot and session projection
 
-### 5.1 Environment snapshot (SHIPPED)
+### 5.1 Environment snapshot (SHIPPED, but slow and failing under load on the deployed hub until CW-20261021-0002 is verified live)
 
 ```json
 {
@@ -100,7 +100,7 @@ Kinds a capacity view uses (SHIPPED unless marked):
 }
 ```
 
-`sessions` holds every session row, ended ones included (a client filters on `session_state`). It is ordered by session id, which is not an activity order.
+**Do not treat `GET /environment/snapshot` as available** until CW-20261021-0002 is deployed and verified (section 8): on the deployed hub it took 10.1 s on a cold call and has returned `500`. The per-session snapshot `GET /sessions/{id}/snapshot` has answered `200`. `sessions` holds every session row, ended ones included (a client filters on `session_state`). It is ordered by session id, which is not an activity order.
 
 ### 5.2 Session projection
 
@@ -127,6 +127,8 @@ Fields are grouped by what they mean. **Lifecycle, work-state and connectivity a
 
 Lifecycle rules (SHIPPED, from the reducer): `created`/`launching`/`starting` map to `starting`; `completed`/`failed`/`killed` map to `ended` with `instance_detail.stopped` `completed`/`failed`/`canceled`; an ended session has all pending flags `false` and all `*_known` flags `true`; an unrecognised stored state maps to `orphaned` (connectivity unknown cannot imply an outcome). A disconnected worker never turns a session into a successful terminal state by itself.
 
+Meaning of the non-terminal values: **`detached`** describes the daemon's connection to a still-live runtime, **not** a client detach: it is set when the daemon restarts or a recovery start fails while the child is not proven gone, and the shim reconciler later reattaches it (the retained workspace and credentials are kept). **`orphaned`** means the process identity vanished (reaper `process_missing`, reconcile disabled) or the stored state is unrecognised: its credentials and bindings are revoked, it is non-terminal, and it is a **diagnostic value, not an outcome**. **`paused`** is part of the mesh vocabulary but Tether has no paused state: it is **never emitted today**. `starting` covers the stored states `created`, `launching` and `starting`. (`ready` is defined but never stored on a session; if it ever were, the reducer would show it as `orphaned`, the unrecognised-state value.) **Clients must ignore unknown values** of `session_state`, `instance_status`, `instance_detail.*`, `work_state.value` and `connectivity.value`: the vocabularies grow additively, and an unknown value is rendered as unknown, never as an error or as idle.
+
 ### 5.3 Work-state (PROPOSED, CW-20261021-0003)
 
 `work_state` is what the runtime is doing now, separate from the lifecycle:
@@ -135,9 +137,9 @@ Lifecycle rules (SHIPPED, from the reducer): `created`/`launching`/`starting` ma
 "work_state": {"value": "idle", "since": "2026-10-21T00:12:01.5Z", "known": true}
 ```
 
-`value` is one of `idle`, `processing`, `awaiting_approval`, `awaiting_input`, `unknown`. `awaiting_*` is derived from the open request flags, so it cannot disagree with `pending_*`. `unknown` (with `known: false`) is reported while no work-state has been observed; it is never defaulted to `idle`. Once the lifecycle has ended, `work_state` is **absent** from the item.
+`value` is one of `idle`, `processing`, `awaiting_approval`, `awaiting_input`, `unknown`. `awaiting_*` is derived from the open request flags, so it cannot disagree with `pending_*`. `unknown` (with `known: false`) is reported while no work-state has been observed; it is never defaulted to `idle`. Once the lifecycle has ended, `work_state` is **absent** from the item. When the owning worker disconnects (connectivity `disconnected`, 5.4) `value` becomes `unknown` with `known: false`, and the previous reading is kept as `last_known`: `{"value": "idle", "at": "..."}`, so a UI can say "was idle at T, now unobservable" without inventing a current value. `last_known` is absent while the value is known.
 
-**Known gap this fixes:** a worker's `idle` frame is normalized to the persisted lifecycle state `running` before `session.state_changed` is written (`worker_ingest.go`), so that event is always `running -> running` and carries no work-state. The fix emits a durable `session.work_state_changed` **before** the normalization, **only on an actual change** of value: `{"from","to","at"}` with the values above. It is retained like the other session state events. A snapshot reads the latest such event per session, so a client that reconnects reconstructs `work_state` from the snapshot alone, with no `/sessions/{id}/health` call. `/sessions/{id}/health` `live_state` stays the live source for health and is not part of this contract.
+**Known gap this fixes:** a worker's `idle` frame is normalized to the persisted lifecycle state `running` before `session.state_changed` is written (`worker_ingest.go`), so that event is always `running -> running` and carries no work-state. The fix emits a durable `session.work_state_changed` **before** the normalization, **only on an actual change** of value: `{"from","to","at"}` with the values above. It is retained like the other session state events. **Durability (RULING PENDING, see the review thread):** the current work-state and its `since` are kept on a state row written in the **same transaction** as the event (the pattern `environment_request_status` already uses), and the snapshot reads that row, so event retention cannot erase it. A client that reconnects reconstructs `work_state` from the snapshot alone, with no `/sessions/{id}/health` call. `/sessions/{id}/health` `live_state` stays the live source for health and is not part of this contract; once the work-state is deployed it is a second source for the same fact and is retired from capacity use, so there is one authoritative publisher.
 
 ### 5.4 Connectivity and freshness (PROPOSED, CW-20261021-0003)
 
@@ -152,9 +154,9 @@ Lifecycle rules (SHIPPED, from the reducer): `created`/`launching`/`starting` ma
 
 `session.projection_changed` carries the **whole** session projection (5.2), identical in shape to a snapshot item, produced by the **same function** as the snapshot. A client replaces its copy of that session; it never merges deltas and never runs a pending-request reducer. It is idempotent by `seq`.
 
-Its payload is the snapshot item **without `route`** (see 7.1); everything else is identical. It is emitted on any change of: lifecycle, work-state, pending flags, connectivity, provider/worker/project, or operations. **Coalescing applies ONLY to `last_activity_at` / heartbeat-only changes.** Initial session appearance, idle/processing edges, pending question/approval, lifecycle terminal, capability and connectivity changes publish immediately. A change of `last_activity_at` alone is coalesced with trailing-edge semantics: at most one event per 10 s per session, and the last value is always delivered (no lost final update).
+Its payload is the snapshot item **without `route`** (see 7.1), built **at emission**; `freshness.observed_at` is the emission time. **Change triggers, exhaustive:** lifecycle (`session_state`, `instance_status`, `instance_detail`), `work_state.value`, the pending flags, `connectivity.value`, `provider_id` / `worker_id` / `project_id`, and `operations`: each publishes immediately. **`freshness.*` never triggers an event.** `last_activity_at` alone is the only coalesced trigger (see the wording above). **`last_activity_at` is not a liveness signal**: a quiet session produces no event, so the absence of events means nothing; liveness is `connectivity` plus `work_state`. The payload fields are an explicit allowlist, so a field added to the session item later does not appear in this event until it is added to the allowlist deliberately (fail closed on fields, not only on kinds).
 
-It is emitted on any change of: lifecycle, work-state, pending flags, connectivity, provider/worker/project, or operations (all immediately), and on an activity-only change as above. Raw events (`session.state_changed`, `session.request_status`, ...) stay available and unchanged.
+Raw events (`session.state_changed`, `session.request_status`, ...) stay available and unchanged.
 
 ## 6. Operation capabilities (PROPOSED, CW-20261021-0004)
 
@@ -162,7 +164,7 @@ It is emitted on any change of: lifecycle, work-state, pending flags, connectivi
 "operations": {"send_turn": true, "send_input": false, "attach": true, "stop": true, "resize": false}
 ```
 
-Each value is `true`, `false`, or `null` (not known). It states what the **runtime supports for this session**. It says nothing about whether the caller is allowed: authorization is the caller's own scopes (section 2) and is never embedded in the session item. `streaming_stdio: false` on the health endpoint must not be read as "read-only": JSON-RPC providers are interactive. The exact mapping is verified per provider (claude-code, codex-app-server, antigravity) in CW-20261021-0004 and published before it ships. Lifecycle control semantics (start/stop/end) are out of scope of this contract.
+Each value is `true`, `false`, or `null` (not known). It states what the **runtime supports for this session**. It says nothing about whether the caller is allowed: authorization is the caller's own scopes (section 2) and is never embedded in the session item. `streaming_stdio: false` on the health endpoint must not be read as "read-only": JSON-RPC providers are interactive. The exact mapping is verified per provider (claude-code, codex-app-server, antigravity) in CW-20261021-0004 and published before it ships. **UI rule for `null`:** a `null` operation means not known or not verified for this provider; the UI shows it as unknown/unverified and must neither hide the control nor enable it by default. A value becomes `true` or `false` only for a provider whose capability set has been verified in CW-20261021-0004, and only then. Lifecycle control semantics (start/stop/end) are out of scope of this contract.
 
 ## 7. Payload-light view (PROPOSED, approved by the architect)
 
@@ -172,7 +174,7 @@ Each value is `true`, `false`, or `null` (not known). It states what the **runti
 |---|---|
 | `session.projection_changed` (PROPOSED) | the whole session projection (5.2) |
 | `session.work_state_changed` (PROPOSED) | `from`, `to`, `at` |
-| `session.state_changed` | `from`, `to`, `exit_code` only (free-text `detail` is dropped) |
+| `session.state_changed` | `from`, `to`, `exit_code` only (free-text `detail` and the `reason` code are dropped) |
 | `session.health_changed` | `from`, `to`, `reasons`, `since` |
 | `session.stalled` | `reason`, `denied` |
 
@@ -186,7 +188,7 @@ Tether-View: projection; v=1
 
 on `/environment/events` and `/sessions/{id}/stream`, and repeats it in every `synchronized` frame as `"view":"projection"` (the raw stream's frames are unchanged and carry neither). The header is **absent on raw responses**. A client that asked for the view and does not receive the header **MUST fail closed**: it must not forward the stream to a browser. An unknown `view` value, or a repeated `view`, is `400 invalid view` (never ignored). `v` is the view's version; a later incompatible allowlist is `v=2`.
 
-Cursor behaviour is identical to the raw stream (section 3): excluded events are consumed, `seq` stays global, `synchronized` advances the cursor, `gap` is unchanged. **This is a leak-prevention view, not access control.** Any `tether.read` holder can still ask for the raw feed. The Tachyon backend must therefore request `view=projection` server-side and must **not** hand the credential to the browser. A projection-only scope would be the real control; it is deferred (CW-20261020-0047, low priority). The view grants nothing the raw stream does not already require: the same `tether.read`, the same visibility rules (operator-class events stay operator-only), no new scope, the raw stream is unchanged. The existing `kind=`, `app=`, `scope.*` filters still apply on top (AND); they can only narrow the view further.
+Cursor behaviour is identical to the raw stream (section 3): excluded events are consumed, `seq` stays global, `synchronized` advances the cursor, `gap` is unchanged. **This is a leak-prevention view, not access control.** Any `tether.read` holder can still ask for the raw feed. The Tachyon backend must therefore request `view=projection` server-side and must **not** hand the credential to the browser. A projection-only scope would be the real control; it is deferred (CW-20261020-0047, low priority). The view grants nothing the raw stream does not already require: the same `tether.read`, the same visibility rules (operator-class events stay operator-only), no new scope, the raw stream is unchanged. The existing `kind=`, `app=`, `scope.*` filters still apply on top (AND); they can only narrow the view further. **Fields are allowlisted, not only kinds:** each kind's payload goes through the registered per-kind path allowlist (the `Metadata` admission class), and the projection event's fields are an explicit list (5.5), so nothing is delivered by being new. **Limitation, stated plainly:** today a `tether.read` credential **cannot** be limited server-side to this view; a holder may request the raw stream. The control is the Tachyon backend requesting the view server-side with a credential it never gives to a browser; a projection-only scope is deferred (CW-20261020-0047).
 
 ### 7.1 Privacy audit of the projection (CW-20261021-0001)
 
