@@ -62,6 +62,9 @@ func serviceTokenRequestHandler(is *authissuer.Issuer, cfg issuerConfig) http.Ha
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := identity.FromContext(r.Context())
 		if !ok || !p.Verified {
+			// Unverified or anonymous callers are not audited: identity/guard.go forbids
+			// unauthenticated traffic from allocating audit rows, and the same policy applies
+			// to the task_id and app stamps. Only a verified caller leaves a row.
 			writeError(w, http.StatusUnauthorized, "unauthorized", "verified caller identity required")
 			return
 		}
@@ -91,6 +94,9 @@ func serviceTokenRequestHandler(is *authissuer.Issuer, cfg issuerConfig) http.Ha
 		}
 		var req ServiceTokenSessionRequest
 		if !decodeDeviceBody(w, r, &req) {
+			// A verified caller's malformed or unknown-field body is audited as invalid;
+			// the row carries no body content.
+			audit("", "refused_invalid", "", nil)
 			return
 		}
 		row, err := cfg.sessionLookup.GetSession(p.SessionID)

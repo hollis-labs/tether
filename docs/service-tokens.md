@@ -147,7 +147,9 @@ launches agents (Torque) does not need the operator to hand-issue each token.
 - **Cap and audit.** At most 5 live tokens per (app, requesting session), inside the
   global bound of 256. Each request writes an `identity_audit` row (`service_token_request
   app=... decision=issued|pending|refused jti=<first 8>`) with the requester and
-  session, never the token.
+  session, never the token. A verified caller's refusal is audited too, including a
+  malformed or unknown-field body (`decision=refused_invalid`, no body content);
+  unverified and anonymous callers leave no row, as for every other route.
 - **Same token.** The token is signed by the same `svc-` key, recorded the same way
   (plus `requested_by` and `requested_session`), listed by `service-token list` and
   revoked like any other, including by `revoke --all --app`. `Exchange` still refuses

@@ -245,3 +245,51 @@ func TestRequestRouteIsLocalOnlyInTheRemoteTable(t *testing.T) {
 		}
 	}
 }
+
+// Every refusal of a verified caller leaves one audit row, including a malformed or
+// unknown-field body, and no row ever carries request content. Unverified and anonymous
+// callers leave none (identity/guard.go: unauthenticated traffic allocates no audit rows).
+func TestRequestAuditPolicy(t *testing.T) {
+	f := newRequestFixture(t, ServiceRequestAuto, defaultSessions())
+	rows := func() int {
+		f.audit.mu.Lock()
+		defer f.audit.mu.Unlock()
+		return len(f.audit.rows)
+	}
+	for name, body := range map[string]string{
+		"malformed json":      `{"scopes": [`,
+		"unknown field":       `{"app":"SECRET-APP-VALUE"}`,
+		"trailing document":   `{} {"x":"SECRET-TRAILER"}`,
+		"unknown field value": `{"label":"ok","token":"SECRET-TOKEN-VALUE"}`,
+	} {
+		before := rows()
+		if code, _ := f.do("s1", body, false); code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", name, code)
+		}
+		if rows() != before+1 {
+			t.Fatalf("%s: %d audit rows added, want 1", name, rows()-before)
+		}
+		last := f.audit.rows[len(f.audit.rows)-1]
+		if !strings.Contains(last.Event, "decision=refused_invalid") || last.SessionID != "s1" || last.PrincipalID != "msg://session/local/s1" {
+			t.Fatalf("%s: audit row %+v", name, last)
+		}
+		for _, secret := range []string{"SECRET-APP-VALUE", "SECRET-TRAILER", "SECRET-TOKEN-VALUE"} {
+			if strings.Contains(last.Event, secret) || strings.Contains(last.RequiredScope, secret) {
+				t.Fatalf("%s: the audit row holds request content", name)
+			}
+		}
+	}
+	// Refused verified callers (wrong kind) are audited; unverified and anonymous are not.
+	before := rows()
+	f.do("operator", `{}`, false)
+	if rows() != before+1 {
+		t.Fatalf("a refused verified operator left %d rows", rows()-before)
+	}
+	before = rows()
+	f.do("claimed", `{}`, false)
+	f.do("", `{}`, false)
+	f.do("claimed", `{"bad":`, false)
+	if rows() != before {
+		t.Fatalf("unverified or anonymous callers left %d audit rows", rows()-before)
+	}
+}
