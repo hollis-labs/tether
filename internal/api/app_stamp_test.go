@@ -23,6 +23,7 @@ func TestAppStampPolicy(t *testing.T) {
 	}{
 		{"operator, valid app", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}, "torque", "torque", http.StatusOK, false},
 		{"operator, no app", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}, "", "", http.StatusOK, false},
+		{"operator, valid shape but not a registered producer", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}, "apiarcscratch", "", http.StatusBadRequest, false},
 		{"operator, uppercase", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}, "Torque", "", http.StatusBadRequest, false},
 		{"operator, path-like", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}, "a/b", "", http.StatusBadRequest, false},
 		{"operator, too long", &identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}, strings.Repeat("a", 33), "", http.StatusBadRequest, false},

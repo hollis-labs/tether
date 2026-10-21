@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -17,8 +18,8 @@ const eventAppDropped = "app_dropped"
 // one the session may later request a service token for, so it is stamped by the hub
 // at launch and only an explicit allow may set it:
 //
-//   - the verified local operator: accepted when it is a valid service app id (400
-//     otherwise);
+//   - the verified local operator: accepted when it is a valid service app id AND a
+//     registered producer in the event catalog the ingest uses (400 otherwise);
 //   - an agent or a session credential: refused with 403 app_not_permitted;
 //   - any other caller: the field is dropped, the request proceeds with no app, and
 //     the drop is recorded in identity_audit.
@@ -44,7 +45,18 @@ func (s *Server) appStamp(w http.ResponseWriter, r *http.Request, app string) (s
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "app must be one lowercase app id (letters, digits and '-', at most 32 characters)")
 		return "", false
 	}
+	if !appRegistered(app) {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "app_not_registered: "+app+" is not a registered producer in the event catalog")
+		return "", false
+	}
 	return app, true
+}
+
+// appRegistered reports whether app is a registered producer (the event catalog's
+// producers.json that POST /events binds an app to). A seam so a test can pin it.
+var appRegistered = func(app string) bool {
+	_, ok := catalog.ProducerFor(app)
+	return ok
 }
 
 func (s *Server) auditAppDropped(r *http.Request, p identity.Principal) {

@@ -122,10 +122,12 @@ launches agents (Torque) does not need the operator to hand-issue each token.
   a session with no app cannot request. Only the verified local operator sets it,
   with `POST /sessions {"app": "<id>"}`; an agent or session asserting it gets 403
   `app_not_permitted`, and any other caller has it dropped and audited
-  (`app_dropped`). The value is checked for the service-principal id shape
-  (lowercase, `[a-z][a-z0-9-]{0,31}`); Tether has no app registry, so it does not
-  check that the app is a real one. The operator credential is the root of trust
-  until a launcher has its own service identity (CW-20261019-0047).
+  (`app_dropped`). The value must have the service-principal id shape
+  (lowercase, `[a-z][a-z0-9-]{0,31}`) **and** be a registered producer in the event
+  catalog that `POST /events` binds apps to (`producers.json` in
+  `libs/harness/core/.../runtimeevents/catalog`); otherwise 400 `app_not_registered`.
+  The operator credential is the root of trust until a launcher has its own service
+  identity (CW-20261019-0047).
 - **Children inherit and cannot widen.** A session created with a `parent_session_id`
   (resume) takes exactly its parent's app, or none; a team session takes its parent's
   app when it is linked (`LinkTeamSession`); a replaced team session copies it.
