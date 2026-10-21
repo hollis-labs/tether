@@ -48,6 +48,11 @@ type IdentityConfig struct {
 	// Issuer is the iss claim of tokens Tether issues (POST /auth/token) and
 	// the value verifiers in other apps must be configured with. Default "tether".
 	Issuer string `yaml:"issuer,omitempty"`
+	// ServiceRequest decides what POST /auth/service-tokens/request does when a session
+	// asks for its own app's service token (CW-20261020-0036): "auto" issues it at once
+	// and logs it (dev posture), anything else, including omission, records the request
+	// and answers 202 without issuing. Local listener only.
+	ServiceRequest string `yaml:"service_request,omitempty"`
 	// MCPGrants is operator-provisioned authority for service/interactive
 	// principals. Omission grants no upstreams, never the operator's inventory.
 	MCPGrants map[string]PrincipalMCPGrant `yaml:"mcp_grants,omitempty"`

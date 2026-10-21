@@ -26,7 +26,7 @@ import (
 // LinkTeamSession sets a retained team parent before the first launch. It is an
 // internal adapter operation: the key must already own the created session.
 func (s *Service) LinkTeamSession(ctx context.Context, id, key, parent string) error {
-	result, err := s.Store.DB().ExecContext(ctx, `UPDATE sessions SET parent_session_id=NULLIF(?,'') WHERE id=? AND state='created' AND EXISTS(SELECT 1 FROM session_idempotency WHERE principal_id=? AND key=? AND session_id=?)`, parent, id, store.IdempotencyPrincipalTeam, key, id)
+	result, err := s.Store.DB().ExecContext(ctx, `UPDATE sessions SET parent_session_id=NULLIF(?,''), app=(SELECT p.app FROM sessions p WHERE p.id=NULLIF(?,'')) WHERE id=? AND state='created' AND EXISTS(SELECT 1 FROM session_idempotency WHERE principal_id=? AND key=? AND session_id=?)`, parent, parent, id, store.IdempotencyPrincipalTeam, key, id)
 	if err != nil {
 		return err
 	}

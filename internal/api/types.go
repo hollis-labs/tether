@@ -188,6 +188,12 @@ type LaunchRequest struct {
 	// launcher may assert it (403 task_id_not_permitted otherwise); it is set at creation
 	// and never changed; there is no existence check against Torque.
 	TaskID string `json:"task_id,omitempty"`
+
+	// App is the one app this session speaks for (CW-20261020-0036): the app whose
+	// service token it may later request. Only the verified local operator may set it
+	// (403 app_not_permitted for an agent or session; dropped and audited for any other
+	// caller). It is set at creation and never changed. Omit it for no app.
+	App string `json:"app,omitempty"`
 }
 
 // ResumeOptions carries the optional arguments of a resume.
@@ -236,6 +242,8 @@ type CreateSessionInput struct {
 	IdempotencyPrincipal string
 	// TaskID is the validated, launcher-asserted task id. See LaunchRequest.TaskID.
 	TaskID string
+	// App is the validated, operator-asserted app. See LaunchRequest.App.
+	App string
 }
 
 type LaunchResponse struct {

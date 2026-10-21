@@ -8,6 +8,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- A session can request a service token for its own app (CW-20261020-0036): the operator stamps `sessions.app` at launch
+  (`POST /sessions {"app"}`, migration 0098; children inherit and cannot widen it), and the session calls the local-only
+  `POST /auth/service-tokens/request` for `msg://service/<app>/dev` with `tether.events`. `identity.service_request` is `auto`
+  (issue and log) or, by default, approval (records the request, answers 202). Max 5 live per (app, session); audited without the
+  token. See `docs/service-tokens.md`.
 - Worker sessions get a saved MCP policy (CW-20261016-0160 follow-up): `launchWorkerSession` saves the session's MCP authority
   (servers, profile, tools, upstream ownership, extract_refs and the `editable_agents` allowlist) like a hub-local launch, so the
   hub's `/mcp` can serve the session's agent token (without it `/mcp` refused every worker session). The launch frame carries

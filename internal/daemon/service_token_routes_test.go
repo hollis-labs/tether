@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // Every service-token management route the issuer handler serves must be
@@ -157,5 +158,38 @@ func TestServiceTokenManagementWorksThroughTheDaemonRouter(t *testing.T) {
 	issue("cerberus")
 	if code, body := do("POST", "/auth/service-tokens/rotate-key", `{}`); code != http.StatusOK {
 		t.Fatalf("rotate-key: %d %s", code, body)
+	}
+}
+
+// POST /auth/service-tokens/request (CW-20261020-0036) is on the daemon's local router
+// only when it can load sessions, answers from the handler (not the mux), and is
+// refused on the remote listener even with the operator credential.
+func TestServiceTokenRequestRouteWiring(t *testing.T) {
+	s, _, operator := remoteTestServer(t)
+	s.Issuer = serviceIssuer(t)
+	post := func(h http.Handler, bearer string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "http://localhost:9000/auth/service-tokens/request", strings.NewReader(`{}`))
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	// Without a session lookup the route is not wired at all: it fails closed.
+	if w := post(s.Handler(), ""); w.Code != http.StatusNotFound {
+		t.Fatalf("unwired route: %d %q", w.Code, w.Body.String())
+	}
+	db, err := store.Open(filepath.Join(t.TempDir(), "req.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	s.SessionBootstrap = db
+	if w := post(s.Handler(), ""); w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), `"unauthorized"`) {
+		t.Fatalf("wired route with no identity: %d %q, want the handler's 401", w.Code, w.Body.String())
+	}
+	if w := post(s.RemoteHandler("127.0.0.1:7331"), operator); w.Code != http.StatusUnauthorized && w.Code != http.StatusForbidden && w.Code != http.StatusNotFound {
+		t.Fatalf("remote listener with the operator credential: %d %q", w.Code, w.Body.String())
 	}
 }

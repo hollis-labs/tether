@@ -286,6 +286,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.TaskID = taskID
+	appID, appOK := s.appStamp(w, r, req.App)
+	if !appOK {
+		return
+	}
+	req.App = appID
 	idemPrincipal, keyErr := idempotencyPrincipal(r.Context())
 	if keyErr != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "verified device required")
@@ -307,7 +312,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var err error
 	// A keyed request always takes the input path: that is where the
 	// request digest is computed and the key recorded.
-	if req.Worker != "" || req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" || req.TaskID != "" {
+	if req.Worker != "" || req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" || req.TaskID != "" || req.App != "" {
 		// v005-08 Tier-2 path: caller-provided payload (any field set routes here).
 		res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
 			Worker:             req.Worker,
@@ -325,6 +330,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			ReplaceIdempotency:   req.ReplaceIdempotency,
 			IdempotencyPrincipal: idemPrincipal,
 			TaskID:               req.TaskID,
+			App:                  req.App,
 		})
 	} else if req.BootPrompt != "" {
 		res, err = s.Service.CreateSessionWithBootPrompt(req.Launch, req.BootPrompt)

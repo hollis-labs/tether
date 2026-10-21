@@ -232,6 +232,11 @@ type SessionRow struct {
 	// creation by a launcher principal and never rebound. NULL when none was named.
 	// Migration 0079.
 	TaskID sql.NullString
+	// App is the one app this session speaks for (CW-20261020-0036): the app
+	// whose service token it may request. Stamped when the row is created and
+	// never updated; NULL means none. A session with a parent inherits the
+	// parent's app and cannot widen it (see inheritApp). Migration 0098.
+	App sql.NullString
 }
 
 func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
@@ -261,6 +266,10 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 	// re-attached by hand is orphaned by the exact event it was meant to
 	// survive. See workstreams.go.
 	row.WorkstreamID = s.inheritWorkstreamID(row)
+	// The app is NOT a gap-filler like the workstream: a session with a parent
+	// takes exactly the parent's app (or none), whatever the row carried, so a
+	// child can never hold an app its parent did not.
+	row.App = s.inheritApp(row)
 	// ref_attribution is INSERTED, not only updated later. A caller that knows
 	// at creation time that nothing will be planted for this session -- the
 	// /sessions/bootstrap path -- says so on the row, and leaving the column
@@ -296,11 +305,11 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
 		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt,
-		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution, row.RouteJSON, row.WorkerID, row.TaskID); err != nil {
+		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution, row.RouteJSON, row.WorkerID, row.TaskID, row.App); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO launch_plans (session_id, plan_json) VALUES (?, ?)`, row.ID, string(pb)); err != nil {
@@ -476,7 +485,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("launch_id = ?", opts.LaunchID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id FROM sessions` + where + ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app FROM sessions` + where + ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -487,7 +496,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID, &r.App); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -501,8 +510,8 @@ func (s *Store) GetSession(id string) (*SessionRow, error) {
 
 func (s *Store) GetSessionContext(ctx context.Context, id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID)
+	err := s.db.QueryRowContext(ctx, `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID, &r.App)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}

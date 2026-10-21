@@ -398,3 +398,19 @@ func (s *Store) inheritWorkstreamID(row SessionRow) sql.NullString {
 	}
 	return parent.WorkstreamID
 }
+
+// inheritApp resolves the app of a newly created session (CW-20261020-0036). A
+// session with a parent takes exactly its parent's app, or none when the parent
+// has none or cannot be read: lineage can narrow what a session may request,
+// never widen it. A session with no parent keeps the app the launch path
+// stamped on the row.
+func (s *Store) inheritApp(row SessionRow) sql.NullString {
+	if !row.ParentSessionID.Valid || row.ParentSessionID.String == "" {
+		return row.App
+	}
+	parent, err := s.GetSession(row.ParentSessionID.String)
+	if err != nil {
+		return sql.NullString{}
+	}
+	return parent.App
+}

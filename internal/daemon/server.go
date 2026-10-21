@@ -38,6 +38,9 @@ type Config struct {
 	IdentityMode   identity.Mode
 	// IdentityPoints overrides IdentityMode per enforcement point (CW-20261010-0268).
 	IdentityPoints map[string]identity.Mode
+	// ServiceTokenRequest is identity.service_request: "auto" issues a session's request
+	// for its own app's service token at once, anything else only records it (202).
+	ServiceTokenRequest string
 	// EventIngest is the POST /events configuration.
 	EventIngest     EventIngestSettings
 	ListenAddr      string
@@ -583,11 +586,16 @@ func (s *Server) handler(remote bool) http.Handler {
 		if s.Identity != nil {
 			issuerOpts = append(issuerOpts, api.WithMintAudit(s.recordIdentityObservation), api.WithWorkloadTrustStore(s.Identity))
 		}
+		if s.SessionBootstrap != nil && !remote {
+			// A session asks for its own app's token over the local listener only.
+			issuerOpts = append(issuerOpts, api.WithServiceRequests(s.SessionBootstrap, s.Config.ServiceTokenRequest))
+			log.Printf("authissuer: session service token requests are %s (identity.service_request)", serviceRequestModeLabel(s.Config.ServiceTokenRequest))
+		}
 		issuerHandler := api.NewTokenIssuerHandler(s.Issuer, issuerOpts...)
 		// ServeMux matches a path without a trailing slash exactly, so every
 		// service-token route the handler serves is listed: a missing subpath
 		// answers 404 from the mux and never reaches the handler.
-		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.ServiceTokensPath + "/revoke", api.ServiceTokensPath + "/rotate-key", api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
+		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.ServiceTokensPath + "/revoke", api.ServiceTokensPath + "/rotate-key", api.ServiceTokenRequestPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
 			router.Handle(path, issuerHandler)
 		}
 	}
@@ -1126,4 +1134,13 @@ func (c Config) StrictestIdentityMode() identity.Mode {
 		}
 	}
 	return best
+}
+
+// serviceRequestModeLabel names the active mode for the startup log line, so what the
+// daemon will do with a session's service token request is never a guess.
+func serviceRequestModeLabel(mode string) string {
+	if mode == api.ServiceRequestAuto {
+		return api.ServiceRequestAuto
+	}
+	return api.ServiceRequestApproval
 }

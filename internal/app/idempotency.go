@@ -59,9 +59,10 @@ func createRequestDigest(in CreateSessionInput) string {
 		Route           *launchprofile.Route `json:"route,omitempty"`
 		Worker          string               `json:"worker,omitempty"`
 		TaskID          string               `json:"task_id,omitempty"`
+		App             string               `json:"app,omitempty"`
 	}{
 		store.IdempotencyOpCreate, in.LaunchID, in.BootPromptOverride, in.AgentFile, in.AgentInline,
-		in.BootProfileFile, in.Override, in.BootPromptAppend, in.Injection, in.Route, in.Worker, in.TaskID,
+		in.BootProfileFile, in.Override, in.BootPromptAppend, in.Injection, in.Route, in.Worker, in.TaskID, in.App,
 	})
 }
 

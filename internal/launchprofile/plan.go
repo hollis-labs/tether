@@ -28,6 +28,9 @@ type Plan struct {
 	// (CW-20261012-0062a): a bare Torque id, asserted only by the launcher at creation
 	// and never changed. Empty when none was named.
 	TaskID string `json:"task_id,omitempty"`
+	// App is the app the hub stamps on the session row at creation (CW-20261020-0036).
+	// Never serialized, so a stored or caller-supplied plan cannot carry one in.
+	App string `json:"-"`
 	// ResumeProviderSessionID is set only by explicit or boot recovery. LaunchSession
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.

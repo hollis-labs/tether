@@ -1001,6 +1001,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		IdempotencyPrincipal: in.IdempotencyPrincipal,
 		ReplaceIdempotency:   in.ReplaceIdempotency,
 		TaskID:               in.TaskID,
+		App:                  in.App,
 	})
 	if err != nil {
 		return api.LaunchResult{}, err
@@ -1387,11 +1388,12 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		return daemon.Config{}, fmt.Errorf("remote listener requires modules.remote_listener")
 	}
 	return daemon.Config{
-		RemoteListener: remote,
-		Modules:        profile,
-		TeamsEnabled:   profile.Enabled(environment.Teams),
-		IdentityMode:   mode,
-		IdentityPoints: identityPointModes(cat.Global.Identity),
+		RemoteListener:      remote,
+		Modules:             profile,
+		TeamsEnabled:        profile.Enabled(environment.Teams),
+		IdentityMode:        mode,
+		IdentityPoints:      identityPointModes(cat.Global.Identity),
+		ServiceTokenRequest: cat.Global.Identity.ServiceRequest,
 		EventIngest: daemon.EventIngestSettings{
 			Enabled:             d.EventIngest.Enabled,
 			AllowUnknownKinds:   d.EventStageMode != "enforce",
