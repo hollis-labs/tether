@@ -10,7 +10,16 @@
     "instance_id": false,
     "logical_agent_id": {"type": "string"},
     "kind": {"type": "string", "description": "provider kind, e.g. cli, api"},
-    "route": {"type": "object"},
+    "route": {
+      "type": "object",
+      "required": ["channel", "kinds"],
+      "properties": {
+        "channel": {"type": "string", "minLength": 1},
+        "kinds": {"type": "array", "items": {"enum": ["final", "question", "approval", "failure"]}}
+      },
+      "additionalProperties": false,
+      "description": "SHIPPED on the snapshot item only; never in session.projection_changed. Exactly the resolved launch route; any other key is a contract violation, not pass-through"
+    },
     "session_state": {"enum": ["starting", "running", "detached", "paused", "orphaned", "ended"], "description": "lifecycle"},
     "instance_status": {"enum": ["starting", "running", "waiting", "stopping", "stopped", "rejected"]},
     "instance_detail": {

@@ -286,3 +286,28 @@ func TestContractSchemaOmitsRouteFromTheProjectionEvent(t *testing.T) {
 		t.Fatalf("the snapshot fixture should keep route on the item that has one: %v", err)
 	}
 }
+
+// route is typed to its real shape: opaque pass-through is not allowed, so a
+// route with any other key (a host, a path) fails the schema.
+func TestContractSchemaTypesRoute(t *testing.T) {
+	schemas := compileSchemas(t)
+	item := func(route string) string {
+		return `{"id":"a","kind":"cli","session_state":"running","instance_status":"running","instance_detail":{},"last_activity":"2026-10-21T00:00:00Z","pending_question":false,"pending_approval":false,"pending_known":false,"pending_question_known":false,"pending_approval_known":false,"route":` + route + `}`
+	}
+	for route, ok := range map[string]bool{
+		`{"channel":"ops","kinds":["final","failure"]}`:               true,
+		`{"channel":"ops","kinds":[]}`:                                true,
+		`{"channel":"ops","kinds":["final"],"host":"10.0.0.5"}`:       false,
+		`{"channel":"ops","kinds":["final"],"workspace":"/home/x/y"}`: false,
+		`{"channel":"ops","kinds":["transcript"]}`:                    false,
+		`{"kinds":["final"]}`:                                         false,
+	} {
+		doc, err := jsonschema.UnmarshalJSON(strings.NewReader(item(route)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := schemas["session"].Validate(doc) == nil; got != ok {
+			t.Errorf("route %s: valid=%v, want %v", route, got, ok)
+		}
+	}
+}
