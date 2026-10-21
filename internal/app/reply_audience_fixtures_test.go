@@ -14,6 +14,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
@@ -55,6 +56,12 @@ func TestReplyAudienceFixtures(t *testing.T) {
 			// operator credential, which a human or an agent may hold.
 			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
 			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
+		}},
+		{"unknown_shared_operator_credential_direct", func(t *testing.T, s *Service) {
+			// /turn or MCP send-turn with the shared operator token: a human at the CLI
+			// and a local agent both hold it, so the audience is not proven.
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Verified: true, Scopes: []string{"*"}})
+			s.beginTurnInput(ctx, "s1")(nil)
 		}},
 		{"system", func(t *testing.T, s *Service) { s.beginTurnInput(deviceCtx("worker"), "s1")(nil) }},
 		{"unknown_anonymous", func(t *testing.T, s *Service) { s.beginTurnInput(context.Background(), "s1")(nil) }},

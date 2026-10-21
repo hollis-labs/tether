@@ -8,6 +8,7 @@
     "unknown_no_input",
     "unknown_queued_inputs_present",
     "unknown_shared_operator_credential",
+    "unknown_shared_operator_credential_direct",
     "unknown_submission_unsettled"
   ],
   "generated_by": "TestReplyAudienceFixtures"

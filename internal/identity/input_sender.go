@@ -13,6 +13,9 @@ const (
 
 	InputBasisPrincipal = "authenticated_principal"
 	InputBasisNone      = "none"
+	// InputBasisSharedOperator marks input submitted with the shared operator
+	// credential, which a human at the CLI and a local agent both hold.
+	InputBasisSharedOperator = "shared_operator_credential"
 )
 
 // ClassifyInputSender maps the caller's authenticated identity to the class of an
@@ -21,7 +24,11 @@ const (
 // revisited at release posture.
 //
 //   - no verified principal (anonymous, observe-mode ?as=, identity off): unknown;
-//   - the local operator credential: operator;
+//   - the local operator credential: unknown (basis shared_operator_credential). A
+//     human at the CLI and an agent on the operator-authorized connection are
+//     indistinguishable behind it; per-agent credentials are the real fix
+//     (CW-20261020-0047). Cost: CLI turns typed with the operator token are unknown;
+//   - a paired device holding an interactive scope: operator (the only operator);
 //   - a paired device: operator only if it holds an interactive scope (operate);
 //     a device holding only the host-credential worker scope is system; any other
 //     device is unknown;
@@ -33,7 +40,7 @@ func ClassifyInputSender(p Principal, ok bool) (urn, class, basis string) {
 	}
 	switch {
 	case IsOperatorCredential(p):
-		return p.ID, InputClassOperator, InputBasisPrincipal
+		return p.ID, InputClassUnknown, InputBasisSharedOperator
 	case p.Kind == "device":
 		switch {
 		case ScopeGranted(p.Scopes, ScopeOperate):

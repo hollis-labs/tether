@@ -33,8 +33,8 @@ destination are never evidence. **Any doubt resolves to `unknown`, never to `ope
 
 | Evidence | Class |
 |---|---|
-| the local operator credential | `operator` |
-| a paired device holding an interactive scope (`operate`, or `tether.operate`) | `operator` |
+| the **shared operator credential** (the operator token: the human CLI and local agents on the operator-authorized connection both hold it) | `unknown` (basis `shared_operator_credential`) |
+| a paired device holding an interactive scope (`operate`, or `tether.operate`) | `operator` (the only source of `operator`) |
 | a paired device holding only the host-credential `worker` scope (worker devices, event relays) | `system` |
 | any other device (read-only, admin-only), a principal of unknown kind | `unknown` |
 | a session or agent principal | `agent` |
@@ -57,7 +57,11 @@ connection with an agent `From` (or, equally, with a user `From`) is stamped
 verified principal recorded with the message (`from_principal`), and the shared
 operator credential is `unknown`, never `operator` and never `agent`: nothing
 distinguishes a human from an agent behind it. Operator audience therefore comes only
-from authenticated direct routes (see the table above).
+from a paired device with an interactive scope (see the table above).
+
+**Cost.** The same rule applies to direct routes: a turn typed with the operator token
+(`/turn`, MCP send-turn) is `unknown`, visible under "All" but not under "Replies to me".
+The real fix is per-agent / human-distinct credentials (CW-20261020-0047).
 
 ## Binding an input to an output
 

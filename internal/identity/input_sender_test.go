@@ -11,7 +11,7 @@ func TestClassifyInputSender(t *testing.T) {
 		ok    bool
 		class string
 	}{
-		"local operator credential":                  {op, true, InputClassOperator},
+		"local operator credential (shared)":         {op, true, InputClassUnknown},
 		"tachyon device operate+maintain+read":       {Principal{ID: "msg://device/t", Kind: "device", Verified: true, Scopes: []string{"maintain", "operate", "read"}}, true, InputClassOperator},
 		"device with canonical tether.operate":       {Principal{ID: "msg://device/t", Kind: "device", Verified: true, Scopes: []string{"tether.operate"}}, true, InputClassOperator},
 		"worker-only device (host credential)":       {Principal{ID: "msg://device/w", Kind: "device", Verified: true, Scopes: []string{"worker"}}, true, InputClassSystem},
@@ -51,6 +51,18 @@ func TestUnverifiedSenderIsNeverOperator(t *testing.T) {
 			if _, class, _ := ClassifyInputSender(p, false); class == InputClassOperator {
 				t.Fatalf("a principal not present in the context classified operator (kind=%q)", kind)
 			}
+		}
+	}
+}
+
+// The shared operator credential is held by a human at the CLI and by local agents
+// alike, so across every scope set it is never operator and says why.
+func TestSharedOperatorCredentialIsNeverOperator(t *testing.T) {
+	for _, sc := range [][]string{nil, {"operate"}, {"tether.operate"}, {"*"}, {"operate", "maintain", "read"}, {"worker"}} {
+		p := Principal{ID: OperatorID, Kind: "operator", Verified: true, Scopes: sc}
+		_, class, basis := ClassifyInputSender(p, true)
+		if class != InputClassUnknown || basis != InputBasisSharedOperator {
+			t.Fatalf("operator credential scopes=%v: class %q basis %q", sc, class, basis)
 		}
 	}
 }
