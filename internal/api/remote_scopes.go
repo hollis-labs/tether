@@ -95,7 +95,10 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/auth/renew", "/auth/renew", map[string]string{"POST": selfScope}),
 	routeScope("/auth/token", "/auth/token", map[string]string{"POST": selfScope}),
 	routeScope(WorkloadTrustPath, WorkloadTrustPath, map[string]string{"POST": identity.WorkloadTrustScope}),
-	routeScope("/auth/denylist", "/auth/denylist", map[string]string{"GET": maintainScope, "POST": adminScope}),
+	routeScope(ServiceTokensPath, ServiceTokensPath, map[string]string{"GET": localScope, "POST": localScope}),
+	routeScope(ServiceTokensPath+"/revoke", ServiceTokensPath+"/revoke", map[string]string{"POST": localScope}),
+	routeScope(ServiceTokensPath+"/rotate-key", ServiceTokensPath+"/rotate-key", map[string]string{"POST": localScope}),
+	routeScope("/auth/denylist", "/auth/denylist", map[string]string{"GET": publicScope, "HEAD": publicScope, "POST": adminScope}),
 	routeScope("/.well-known/jwks.json", "/.well-known/jwks.json", map[string]string{"GET": publicScope, "HEAD": publicScope}),
 	routeScope("/auth/context", "/auth/context", map[string]string{"GET": readScope}),
 	routeScope("/sessions", "/sessions", map[string]string{"GET": readScope, "POST": sessionsScope}, "launch"),
@@ -168,7 +171,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/messages/", "/messages/{id}/redrive", map[string]string{"POST": maintainScope}),
 	routeScope("/messages/", "/messages/{id}/purge", map[string]string{"POST": maintainScope}),
 	routeScope("/messages/retention/candidates", "/messages/retention/candidates", map[string]string{"GET": maintainScope}),
-	routeScope("/events", "/events", map[string]string{"GET": readScope}),
+	routeScope("/events", "/events", map[string]string{"GET": readScope, "POST": identity.ScopeEvents}),
 	routeScope("/events/stream", "/events/stream", map[string]string{"GET": readScope}),
 	routeScope("/events/tool-metrics", "/events/tool-metrics", map[string]string{"GET": readScope}),
 	routeScope("/proxy/events", "/proxy/events", map[string]string{"GET": readScope, "POST": localScope}),
@@ -318,6 +321,14 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		p, ok := identity.FromContext(r.Context())
+		// A service JWT admitted by the identity middleware's one-route path is
+		// judged by its own scopes, and only for exactly POST /events; the marker
+		// is set nowhere else, so no other request reaches this branch.
+		if ok && identity.ServiceEventsRequest(r.Context()) && p.Kind == "service" &&
+			r.Method == identity.ServiceJWTMethod && r.URL.Path == identity.ServiceJWTPath {
+			applyRouteScopes(w, r, next, true, false, func(scope string) bool { return identity.ScopeGranted(p.Scopes, scope) })
+			return
+		}
 		applyRouteScopes(w, r, next, ok && p.Kind == "device" && p.ID != identity.OperatorID, true, func(scope string) bool { return identity.HasDeviceScope(p, scope) })
 	})
 }

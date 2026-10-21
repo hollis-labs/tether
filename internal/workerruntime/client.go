@@ -32,10 +32,15 @@ type Config struct {
 	WorkspaceRoot    string            `json:"workspace_root,omitempty"`
 	MailSocket       string            `json:"mail_socket,omitempty"`
 	MailGID          *int              `json:"mail_gid,omitempty"`
-	MailUIDs         []int             `json:"mail_uids,omitempty"`
-	Hub              string            `json:"hub"`
-	Label            string            `json:"label"`
-	WorkerID         string            `json:"worker_id,omitempty"`
+	// EventsRelay, when set to a loopback address such as "127.0.0.1:7845", starts the
+	// local events relay (CW-20261020-0032): services on this host publish to
+	// http://<address>/events with no credential and the worker forwards to the hub.
+	// Off by default.
+	EventsRelay string `json:"events_relay,omitempty"`
+	MailUIDs    []int  `json:"mail_uids,omitempty"`
+	Hub         string `json:"hub"`
+	Label       string `json:"label"`
+	WorkerID    string `json:"worker_id,omitempty"`
 	// MCPSSHFallback keeps the degraded 'ssh <hub> tether mcp --daemon-only' MCP entry available for launches that
 	// cannot use the hub's /mcp (CW-20261016-0160). Off by default; remove once every worker uses /mcp.
 	MCPSSHFallback bool `json:"mcp_ssh_fallback,omitempty"`

@@ -96,22 +96,25 @@ func TestTokenEndpointJWKSAndDenyList(t *testing.T) {
 	if c, _ := mint(t, h, tok.Token, `{"audience":"tether","scopes":["read"]}`); c != 403 {
 		t.Fatalf("issued token minted: %d", c)
 	}
-	// deny-list: read-only device refused; maintain device served with ETag; 304 on match
-	if out := call(h, "GET", DenyListPath, "tth_read", ""); out.Code != 403 {
-		t.Fatalf("denylist without maintain: %d", out.Code)
-	}
-	if out := call(h, "GET", DenyListPath, tok.Token, ""); out.Code != 403 {
-		t.Fatalf("denylist with a read-only issued token: %d", out.Code)
+	// deny-list: the minimal list (ids only) is PUBLIC: any caller, or none, reads
+	// it with an ETag; 304 on match. Writing it still needs admin (below).
+	// (The fixture wraps the handler in the identity middleware; the unauthenticated
+	// path is mounted in the daemon and exercised by the daemon's remote listener
+	// test and by TestPublicDenyListReadHandler.)
+	for _, bearer := range []string{"tth_read", tok.Token} {
+		if out := call(h, "GET", DenyListPath, bearer, ""); out.Code != 200 {
+			t.Fatalf("public denylist read with bearer %q: %d", bearer, out.Code)
+		}
 	}
 	_ = is.State.Deny(authissuer.DenySID, "gone", time.Now().Add(time.Hour))
-	out := call(h, "GET", DenyListPath, "tth_admin", "")
+	out := call(h, "GET", DenyListPath, "tth_read", "")
 	etag := out.Header().Get("ETag")
 	var doc struct{ JTI, Sub, SID []string }
 	if out.Code != 200 || etag == "" || json.Unmarshal(out.Body.Bytes(), &doc) != nil || len(doc.SID) != 1 || doc.SID[0] != "gone" || doc.JTI == nil || doc.Sub == nil {
 		t.Fatalf("denylist: %d %s", out.Code, out.Body)
 	}
 	req := httptest.NewRequest("GET", DenyListPath, nil)
-	req.Header.Set("Authorization", "Bearer tth_admin")
+	req.Header.Set("Authorization", "Bearer tth_read")
 	req.Header.Set("If-None-Match", etag)
 	r2 := httptest.NewRecorder()
 	h.ServeHTTP(r2, req)
@@ -206,7 +209,7 @@ func TestDefaultAgentScopesAreNarrow(t *testing.T) {
 		{"POST", "/broker/envelopes", 404}, // broker stays operate
 		{"POST", "/catalog/reload", 403},
 		{"POST", "/catalog/plans/p1/apply", 403},
-		{"GET", "/auth/denylist", 403},
+		{"GET", "/auth/denylist", 200}, // public minimal list
 	} {
 		got := call(h, c.method, c.path, tok.Token, "{}").Code
 		if got == 204 && c.want != 204 {

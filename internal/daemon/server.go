@@ -37,7 +37,9 @@ type Config struct {
 	TeamsEnabled   bool
 	IdentityMode   identity.Mode
 	// IdentityPoints overrides IdentityMode per enforcement point (CW-20261010-0268).
-	IdentityPoints  map[string]identity.Mode
+	IdentityPoints map[string]identity.Mode
+	// EventIngest is the POST /events configuration.
+	EventIngest     EventIngestSettings
 	ListenAddr      string
 	PIDFile         string
 	ShutdownTimeout time.Duration
@@ -96,6 +98,8 @@ type Server struct {
 	Bus events.Bus
 	// EventsStore is optional; when set, GET /sessions/{id}/events works.
 	EventsStore api.EventsStore
+	// EventIngest is optional; when set, POST /events publishes app events.
+	EventIngest api.EventIngestService
 	// Catalog is optional; when set, GET /catalog/<type> endpoints are
 	// mounted. Nil in tests that only exercise the session surface.
 	Catalog api.CatalogLoader
@@ -580,7 +584,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			issuerOpts = append(issuerOpts, api.WithMintAudit(s.recordIdentityObservation), api.WithWorkloadTrustStore(s.Identity))
 		}
 		issuerHandler := api.NewTokenIssuerHandler(s.Issuer, issuerOpts...)
-		for _, path := range []string{api.TokenPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
+		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
 			router.Handle(path, issuerHandler)
 		}
 	}
@@ -595,7 +599,7 @@ func (s *Server) handler(remote bool) http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || api.HasTeamOps(teams) {
+	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || s.EventIngest != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
 			Forums:              s.Forums,
 			EnvironmentStream:   s.EnvironmentStream,
@@ -609,6 +613,8 @@ func (s *Server) handler(remote bool) http.Handler {
 			Broker:              s.Broker,
 			Bus:                 s.Bus,
 			EventsStore:         s.EventsStore,
+			EventIngest:         s.EventIngest,
+			EventIngestMode:     s.Config.IdentityModeFor("local_api"),
 			Catalog:             s.Catalog,
 			GroupStore:          s.GroupStore,
 			Workstreams:         s.Workstreams,
@@ -673,11 +679,38 @@ func (s *Server) handler(remote bool) http.Handler {
 	}
 	protected := identity.MiddlewareWithScopes(s.Config.IdentityModeFor("local_api"), verifier, s.recordIdentityObservation, identity.ScopePolicy{Observe: api.ObserveLocalScope}, s.Config.Modules.ModuleGate(protocolHandler))
 	if remote {
-		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
+		var remoteOpts []identity.RemoteOption
+		// A service JWT may POST /events remotely, and only when the event
+		// ingest is on and this daemon is the issuer (fail closed otherwise).
+		if s.Issuer != nil && s.EventIngest != nil {
+			if composite, err := authissuer.NewVerifier(s.Identity, s.Issuer); err == nil {
+				rate, burst := s.Config.EventIngest.FailedAuthPerSecond, s.Config.EventIngest.FailedAuthBurst
+				if rate <= 0 {
+					rate = 50
+				}
+				if burst <= 0 {
+					burst = 100
+				}
+				remoteOpts = append(remoteOpts, identity.WithServiceJWT(identity.ServiceJWT{
+					Verify: composite, Known: s.Issuer.LiveService, Failures: identity.NewAttemptLimiter(rate, burst),
+				}))
+			} else {
+				log.Printf("daemon: remote service JWT path unavailable: %v", err)
+			}
+		}
+		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler), remoteOpts...)
 	}
 	ordinary := otelprop.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.Environment != nil && r.URL.Path == environment.DescriptorPath {
 			s.Environment.ServeHTTP(w, r)
+			return
+		}
+		// The minimal deny-list (opaque jti/sub/sid ids) is public so that any
+		// verifier can honor a revocation without a Tether credential. Only
+		// the exact path and the read methods; writing it stays admin-only and
+		// goes through the authenticated handler below.
+		if s.Issuer != nil && r.URL.Path == api.DenyListPath && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			api.NewDenyListReadHandler(s.Issuer).ServeHTTP(w, r)
 			return
 		}
 		protected.ServeHTTP(w, r)
@@ -980,7 +1013,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/messages/thread/", s.MessageStore != nil},
 		{"/messages/retention/candidates", s.MessageStore != nil},
 
-		{"/events", s.EventsStore != nil},
+		{"/events", s.EventsStore != nil || s.EventIngest != nil},
 		{"/events/stream", s.Bus != nil},
 		{"/proxy/events", s.ProxyEvents != nil},
 
@@ -1033,6 +1066,18 @@ func (s *Server) apiMounts() []apiMount {
 		{"/fs/validate", true},
 		{"/fs/detect", true},
 	}
+}
+
+// EventIngestSettings is the resolved POST /events configuration.
+type EventIngestSettings struct {
+	Enabled bool
+	// AllowUnknownKinds accepts kinds missing from the catalog (event_stage_mode shadow).
+	AllowUnknownKinds bool
+	RatePerSecond     float64
+	Burst             int
+	// FailedAuthPerSecond and FailedAuthBurst bound refused service JWTs on the remote listener.
+	FailedAuthPerSecond float64
+	FailedAuthBurst     int
 }
 
 // IdentityModeFor is the identity mode of one enforcement point.

@@ -243,6 +243,9 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 type DaemonConfig struct {
 	// EventStageMode is selected at startup; empty means shadow.
 	EventStageMode string `yaml:"event_stage_mode,omitempty"`
+	// EventIngest turns on POST /events, the generic publish route for apps.
+	// Off unless enabled.
+	EventIngest EventIngestConfig `yaml:"event_ingest,omitempty"`
 	// RemoteListener adds an enforce-only loopback TCP listener beside listen_addr.
 	RemoteListener RemoteListenerConfig `yaml:"remote_listener,omitempty"`
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
@@ -264,6 +267,21 @@ type DaemonConfig struct {
 	// proxy_events, ai_events, identity_audit and terminal a2a_tasks.
 	// Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
+}
+
+// EventIngestConfig configures POST /events (CW-20261020-0010). Unknown kinds
+// are accepted while event_stage_mode is shadow and rejected when it is enforce.
+type EventIngestConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// RatePerSecond and Burst limit events per publishing principal. Zero uses
+	// the defaults (200 per second, burst 1000).
+	RatePerSecond float64 `yaml:"rate_per_second,omitempty"`
+	Burst         int     `yaml:"burst,omitempty"`
+	// FailedAuthPerSecond and FailedAuthBurst bound the unauthenticated work a
+	// flood of bad service JWTs can cause on the remote listener (one shared
+	// budget, charged only to refused tokens). Zero uses 50 per second, burst 100.
+	FailedAuthPerSecond float64 `yaml:"failed_auth_per_second,omitempty"`
+	FailedAuthBurst     int     `yaml:"failed_auth_burst,omitempty"`
 }
 
 type RemoteListenerConfig struct {

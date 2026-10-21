@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,6 +55,16 @@ type Issuer struct {
 	Keys  *KeyStore
 	State *State
 	Now   func() time.Time
+
+	// keyLife serializes what must not interleave: choosing a service key through
+	// registering the token that names it (issueServiceFrom), and pruning rotated-out
+	// service keys. Without it a rotate-then-prune between the two deletes a key an
+	// in-flight issuance is about to depend on. Order: keyLife, then the key store's
+	// and state's own locks.
+	keyLife sync.Mutex
+	// afterServiceKeyChosen is a test seam: it runs while keyLife is held, after the
+	// token is signed and before its record is written.
+	afterServiceKeyChosen func()
 }
 
 // New builds an Issuer.
@@ -210,6 +221,12 @@ func (i *Issuer) Exchange(parent identity.Principal, req Request) (Token, error)
 
 func (i *Issuer) sign(c Claims) (token, kid string, err error) {
 	kid, priv := i.Keys.Active()
+	return i.signWith(kid, priv, c)
+}
+
+// signWith signs c with the given key (the session key for ordinary tokens, a
+// service key for service tokens).
+func (i *Issuer) signWith(kid string, priv ed25519.PrivateKey, c Claims) (token, kid2 string, err error) {
 	hdr, _ := json.Marshal(map[string]string{"alg": "EdDSA", "typ": "JWT", "kid": kid})
 	pl, err := json.Marshal(c)
 	if err != nil {
@@ -296,7 +313,10 @@ func (i *Issuer) Maintain(ctx context.Context, rotateEvery time.Duration) {
 				log.Printf("authissuer: key rotation failed: %v", err)
 			}
 		}
-		if _, err := i.Keys.Prune(); err != nil {
+		i.keyLife.Lock()
+		_, err := i.Keys.PruneWith(i.ServiceKeyInUse)
+		i.keyLife.Unlock()
+		if err != nil {
 			log.Printf("authissuer: key prune failed: %v", err)
 		}
 	}

@@ -2,9 +2,11 @@ package mcpadapter
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
@@ -178,6 +180,74 @@ func TestObservationTools_EventsWait(t *testing.T) {
 	}
 }
 
+func TestObservationTools_EventsWaitEnvironmentCursor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/environment/events" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Tether-Protocol") != "1" {
+			t.Errorf("Tether-Protocol = %q", r.Header.Get("Tether-Protocol"))
+		}
+		q := r.URL.Query()
+		if got := q.Get("after_seq"); got != "10" {
+			t.Errorf("after_seq = %q", got)
+		}
+		if got := q["kind"]; len(got) != 2 || got[0] != "task.*" || got[1] != "run.state_changed" {
+			t.Errorf("kind = %v", got)
+		}
+		if got := q.Get("category"); got != "state" {
+			t.Errorf("category = %q", got)
+		}
+		if got := q.Get("severity_min"); got != "warning" {
+			t.Errorf("severity_min = %q", got)
+		}
+		if got := q["scope.task_id"]; len(got) != 1 || got[0] != "CW-1" {
+			t.Errorf("scope.task_id = %v", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(
+			"id: 12\nevent: task.state_changed\n" +
+				`data: {"kind":"task.state_changed","seq":12,"environment_id":"e"}` + "\n\n" +
+				"id: 15\nevent: synchronized\n" +
+				`data: {"environment_id":"e","seq":15}` + "\n\n",
+		))
+	}))
+	defer srv.Close()
+	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+srv.URL[len("http://"):]), "test-token", nil)
+	res := callObservationTool(t, a, "tether_events_wait", map[string]any{
+		"after_seq": 10, "kind": "task.*,run.state_changed", "category": "state",
+		"severity_min": "warning", "task_id": "CW-1", "wait_ms": 200, "max_events": 5,
+	})
+	if res.IsError {
+		t.Fatalf("events wait error: %s", textOf(res))
+	}
+	body := parseToolJSON(t, res)
+	if got, _ := body["count"].(float64); int(got) != 1 {
+		t.Fatalf("body = %v", body)
+	}
+	// The synchronized marker moves the cursor past the filtered-out range.
+	if got, _ := body["next_cursor"].(float64); int(got) != 15 {
+		t.Fatalf("next_cursor = %v body=%v", got, body)
+	}
+	evs, _ := body["events"].([]any)
+	ev, _ := evs[0].(map[string]any)
+	if ev["kind"] != "task.state_changed" || ev["environment_id"] != "e" {
+		t.Fatalf("event = %v", ev)
+	}
+}
+
+func TestObservationTools_EventsWaitEnvironmentFilterNeedsCursor(t *testing.T) {
+	a := NewWithDaemon(&app.Service{}, client.New("tcp:127.0.0.1:1"), "test-token", nil)
+	res := callObservationTool(t, a, "tether_events_wait", map[string]any{"category": "state"})
+	if !res.IsError {
+		t.Fatal("expected an error without after_seq")
+	}
+	if got := parseToolJSON(t, res)["code"]; got != "invalid_request" {
+		t.Fatalf("code = %v", got)
+	}
+}
+
 func TestObservationTools_EventsWaitRejectsInvalidScope(t *testing.T) {
 	a := NewWithDaemon(&app.Service{}, client.New("tcp:127.0.0.1:1"), "test-token", nil)
 	res := callObservationTool(t, a, "tether_events_wait", map[string]any{"scope": "nope"})
@@ -214,4 +284,35 @@ func callObservationTool(t *testing.T, a *Adapter, name string, args map[string]
 		t.Fatalf("CallTool %s: %v", name, err)
 	}
 	return res
+}
+
+// A stream that ends right after its frames (EOF) must still hand over every
+// buffered frame and the final cursor: the wait may not end on the closed error
+// channel ahead of frames the reader has not taken yet.
+func TestObservationTools_EventsWaitEnvironmentDrainsFramesBeforeEOF(t *testing.T) {
+	const n = 40
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		var b strings.Builder
+		for i := 1; i <= n; i++ {
+			fmt.Fprintf(&b, "id: %d\nevent: task.state_changed\ndata: {\"kind\":\"task.state_changed\",\"seq\":%d}\n\n", i, i)
+		}
+		fmt.Fprintf(&b, "id: %d\nevent: synchronized\ndata: {\"seq\":%d}\n\n", n+5, n+5)
+		_, _ = w.Write([]byte(b.String()))
+	}))
+	defer srv.Close()
+	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+srv.URL[len("http://"):]), "test-token", nil)
+	for i := 0; i < 25; i++ {
+		res := callObservationTool(t, a, "tether_events_wait", map[string]any{"after_seq": 0, "kind": "task.*", "wait_ms": 500, "max_events": 100})
+		if res.IsError {
+			t.Fatalf("run %d: %s", i, textOf(res))
+		}
+		body := parseToolJSON(t, res)
+		if c, _ := body["count"].(float64); int(c) != n {
+			t.Fatalf("run %d: count = %v, want %d (events lost at EOF)", i, c, n)
+		}
+		if c, _ := body["next_cursor"].(float64); int(c) != n+5 {
+			t.Fatalf("run %d: next_cursor = %v, want %d", i, c, n+5)
+		}
+	}
 }

@@ -1,9 +1,9 @@
 module github.com/hollis-labs/tether/apps/sysop
 
-go 1.26.9
+go 1.26.10
 
 require (
-	github.com/hollis-labs/libs/harness/core v0.13.0
+	github.com/hollis-labs/libs/harness/core v0.14.1
 	github.com/hollis-labs/libs/llm/core v0.2.0
 	github.com/hollis-labs/libs/mesh/core v0.6.0
 	github.com/hollis-labs/tether v0.0.0
@@ -18,6 +18,7 @@ require (
 	github.com/hollis-labs/libs/security/policy v0.1.0 // indirect
 	github.com/hollis-labs/libs/security/redact v0.2.0 // indirect
 	github.com/hollis-labs/libs/security/secrets v0.1.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/zalando/go-keyring v0.2.8 // indirect
 )
 

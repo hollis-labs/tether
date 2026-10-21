@@ -51,8 +51,8 @@ func (s *Server) registerEventRoutes(router *http.ServeMux) {
 	if s.Bus != nil {
 		router.HandleFunc("/events/stream", s.handleEventsStream)
 	}
-	if s.EventsStore != nil {
-		router.HandleFunc("/events", s.handleEventsList)
+	if s.EventsStore != nil || s.EventIngest != nil {
+		router.HandleFunc("/events", s.handleEvents)
 	}
 	// Per-session history mounts under the sessions dispatcher's
 	// "events" action case; see handleSessionsItem.
