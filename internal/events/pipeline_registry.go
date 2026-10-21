@@ -41,6 +41,7 @@ func pipelinePolicies() map[string]admissionPolicy {
 	add(Metadata, catalog.KindToolCallStarted, "/tool", "/server", "/args_bytes", "/args_schema_fp")
 	add(Metadata, catalog.KindToolCallFinished, "/tool", "/server", "/args_bytes", "/args_schema_fp", "/ok", "/error_class", "/duration_ms", "/gateway_ms", "/forward_ms", "/result_bytes")
 	add(Metadata, KindSessionStalled, "/reason", "/denied")
+	add(Metadata, KindSessionWorkStateChanged, "/from", "/to", "/at")
 	add(Metadata, EventTypeMachineAuthorityDecision, "/server", "/tool", "/class", "/mode", "/allowed", "/session_id", "/timestamp")
 	// Fixed metadata is derived from broker.EnvelopeEvent, daemon startup,
 	// the atomic channel audit and the X2 typed wake journal payloads.
