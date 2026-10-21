@@ -74,7 +74,54 @@ type Session struct {
 	PendingKnown  bool `json:"pending_known"`
 	QuestionKnown bool `json:"pending_question_known"`
 	ApprovalKnown bool `json:"pending_approval_known"`
-	requests      map[string]store.EnvironmentRequest
+	// WorkState is what the runtime is doing, separate from the lifecycle in
+	// SessionState: nil once the session has ended (CW-20261021-0003).
+	WorkState *WorkState `json:"work_state,omitempty"`
+	requests  map[string]store.EnvironmentRequest
+	// workBase and workSince are the last recorded idle/processing value and when
+	// it began; WorkState is derived from them and the open requests.
+	workBase  string
+	workSince time.Time
+}
+
+// WorkState values.
+const (
+	WorkIdle             = "idle"
+	WorkProcessing       = "processing"
+	WorkAwaitingApproval = "awaiting_approval"
+	WorkAwaitingInput    = "awaiting_input"
+	WorkUnknown          = "unknown"
+)
+
+// WorkState is what a live session's runtime is doing. Known is false (and Value
+// "unknown") until a work-state has been observed: unknown is never idle.
+type WorkState struct {
+	Value string     `json:"value"`
+	Since *time.Time `json:"since,omitempty"`
+	Known bool       `json:"known"`
+}
+
+// refreshWork derives WorkState from the last recorded value and the open
+// requests, so it can never disagree with pending_approval / pending_question.
+func refreshWork(s *Session) {
+	if s.SessionState == mesh.SessionEnded {
+		s.WorkState = nil
+		return
+	}
+	w := &WorkState{Value: WorkUnknown}
+	switch {
+	case s.PendingApproval:
+		w.Value, w.Known = WorkAwaitingApproval, true
+	case s.PendingQuestion:
+		w.Value, w.Known = WorkAwaitingInput, true
+	case s.workBase != "":
+		w.Value, w.Known = s.workBase, true
+	}
+	if !s.workSince.IsZero() && s.workBase != "" {
+		since := s.workSince
+		w.Since = &since
+	}
+	s.WorkState = w
 }
 
 type Snapshot struct {
@@ -107,6 +154,9 @@ func snapshot(environmentID string, base store.EnvironmentSnapshot) Snapshot {
 			s.Route = json.RawMessage(row.RouteJSON)
 		}
 		setState(&s, row.State)
+		if w, ok := base.WorkStates[row.ID]; ok {
+			s.workBase, s.workSince = w.Value, w.At
+		}
 		if s.SessionState != mesh.SessionEnded {
 			s.requests = make(map[string]store.EnvironmentRequest)
 			for _, req := range base.Requests {
@@ -118,6 +168,7 @@ func snapshot(environmentID string, base store.EnvironmentSnapshot) Snapshot {
 				refreshRequests(&s)
 			}
 		}
+		refreshWork(&s)
 		out.Sessions = append(out.Sessions, s)
 	}
 	return out
