@@ -29,6 +29,14 @@ type TurnOutputEvent struct {
 	MessageID         string                `json:"message_id,omitempty"`
 	Text              string                `json:"text,omitempty"`
 	TextTruncated     bool                  `json:"text_truncated,omitempty"`
+	// Audience records who asked for the turn (CW-20261021-0010): operator, agent,
+	// system or unknown, with the evidence class in AudienceBasis. InputClasses is
+	// filled only when the input was bound by proven order. Absent on outputs that
+	// predate it, which reads as unknown. No sender identity is ever copied here.
+	Audience      string   `json:"audience,omitempty"`
+	AudienceBasis string   `json:"audience_basis,omitempty"`
+	InputIDs      []string `json:"input_ids,omitempty"`
+	InputClasses  []string `json:"input_classes,omitempty"`
 }
 
 // TurnOutputExcerpt is the shared unrouted retention policy for producers and

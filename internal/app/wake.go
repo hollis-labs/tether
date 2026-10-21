@@ -341,6 +341,7 @@ func (s *Service) ResolveActorSession(ctx context.Context, logicalAgentID string
 // AttemptWake drives one Claim/Ack/Nack wake attempt for messageID/to
 // against the already-resolved sessionID. See the file doc comment.
 func (s *Service) AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
+	ctx = s.mailWakeInputContext(ctx, messageID)
 	if env, err := s.Store.MessagingStore().Get(ctx, messageID); err == nil && env.Metadata[wakeintent.MetadataKey] != "" {
 		intent, intentErr := wakeintent.Read(env)
 		if intentErr != nil {
@@ -1032,4 +1033,17 @@ func sweepWakeText(env messaging.Envelope) string {
 	}
 	return fmt.Sprintf("**Mailbox wake (daemon-injected, retried)** — you have unread message(s) waiting. Latest message: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.\n\nPlease run your inbox-check procedure, process messages normally, and mark handled messages read or consumed according to your checklist. This is a delivery notification, not an instruction to abandon the current task unless your own procedure says the message is urgent.",
 		env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency)
+}
+
+// mailWakeInputContext tags ctx with the provenance of the mail being injected: the
+// sender the hub stamped on the stored message. A message that cannot be read, or
+// that carries no verified stamp, is an unknown sender.
+func (s *Service) mailWakeInputContext(ctx context.Context, messageID string) context.Context {
+	note := turnInputNote{Source: store.InputMailWake, Class: store.ClassUnknown, Basis: store.BasisNone, RefID: messageID}
+	if s.Store != nil && messageID != "" {
+		if env, err := s.Store.MessagingStore().Get(ctx, messageID); err == nil {
+			note.SenderURN, note.Class, note.Basis = classifyStampedSender(env.From, env.Metadata)
+		}
+	}
+	return withTurnInput(ctx, note)
 }

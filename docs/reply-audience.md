@@ -1,0 +1,90 @@
+# Reply audience and triggering input (CW-20261021-0010)
+
+Status: slice 1 (recording, binding, metadata). The consumer contract and fixtures
+with the Tachyon session follow as slice 2; nothing here is a consumer contract yet.
+
+Every routed agent output records **who asked for its turn**. A consumer can then
+show, for example, only the replies addressed to the operator.
+
+## What is recorded
+
+Each input handed to a session is stored in `turn_inputs` (migration 0097) **before**
+the text reaches the runtime: the session, a per-session sequence, the route it
+arrived by (`source`), the sender URN, the **sender class** and the evidence for it
+(`basis`), a reference (message id, reply id), and a state: `submitting`, then
+`accepted` once the runtime took it, or `failed`.
+
+| `source` | How it arrives |
+|---|---|
+| `chat_send` | a chat send into a running session, or the text that starts a new chat session |
+| `session_turn` | `POST /sessions/{id}/turn` |
+| `mcp_send_turn` | the MCP `tether_session_send_turn` tool in the local service |
+| `mail_wake` | mail injected into a session by the wake path |
+| `routing_reply` | a routed reply delivered as the session's next turn |
+| `system` | an injection Tether makes itself (the codex prime) |
+
+There is no separate ACP source: an ACP prompt reaches the daemon as `/turn` and is classified by its authenticated principal like any other input. A runtime with no turn feed (a PTY) produces no turn outputs to bind, so nothing is labeled for it.
+
+## Sender class (a DEV policy, to revisit at release posture)
+
+The class comes from **authenticated facts only**: a verified principal, or the sender
+the daemon stamped on a stored message. Prose, timestamps and the copied owner-inbox
+destination are never evidence. **Any doubt resolves to `unknown`, never to `operator`.**
+
+| Evidence | Class |
+|---|---|
+| the local operator credential | `operator` |
+| a paired device holding an interactive scope (`operate`, or `tether.operate`) | `operator` |
+| a paired device holding only the host-credential `worker` scope (worker devices, event relays) | `system` |
+| any other device (read-only, admin-only), a principal of unknown kind | `unknown` |
+| a session or agent principal | `agent` |
+| a service principal | `system` |
+| mail or a reply stamped `stamped`/`verified` by the daemon: sender kind `user` | `operator` |
+| ... sender kind `agent` or `session` | `agent` |
+| ... sender kind `service` | `system` |
+| no verified principal (anonymous, identity off, observe-mode `?as=`), an unstamped or `unverified` message | `unknown` |
+| a Tether-made injection | `system` |
+
+## Binding an input to an output
+
+When a turn's output is published, the **oldest unbound, not-failed input** of the
+session is bound to that turn, by the order Tether observed itself. A failed or
+never-accepted input never binds to a later turn. The audience is the input's class
+only when the binding is **proven**: the input is accepted, it was not queued behind
+another unbound input, and no other input is waiting. Otherwise the audience is
+`unknown` and the reason is the basis:
+
+| `audience_basis` | Meaning |
+|---|---|
+| `authenticated_principal`, `stamped_message_sender`, `system_injection` | proven; the class is the input's class |
+| `none` | the input's sender is unknown |
+| `no_input` | no recorded input (history, a provider-initiated turn) |
+| `submission_unsettled` | the output arrived before the runtime confirmed the input |
+| `queued_input` | the input was queued behind another |
+| `queued_inputs_present` | another input is waiting, so coalescing cannot be excluded |
+| `binding_unavailable` | the binding could not complete within the output deadline |
+
+`mixed` is part of the vocabulary but slice 1 never emits it: whether a runtime merges
+queued inputs into one turn is not proven, so a possibly merged turn is `unknown`.
+Questions, approvals and failures of a turn share the turn's audience. A replay
+republishes the journaled audience unchanged. Historical outputs have no `turn_inputs`
+row and no audience field, which reads as `unknown`.
+
+## What an output carries
+
+Routed-message metadata and the `session.turn_output` payload gain `audience`,
+`audience_basis`, `input_ids` (opaque ids) and `input_classes` (the sorted classes of
+a proven binding; empty whenever the audience is `unknown`, so a consumer that filters
+on it never shows a guess).
+
+## Privacy and retention
+
+- **Sender URNs never leave the hub database.** They are stored in `turn_inputs` only;
+  an output carries the class and opaque ids, never the URN.
+- `session.turn_output` is not in the `view=projection` allowlist of the managed-session
+  contract, so none of this reaches the fleet feed. Adding any audience field to that
+  view is a contract change and repeats the field audit.
+- `turn_inputs` follows the **events retention window** (the daily sweep deletes rows
+  older than the window together with the events). A consumer that needs an old
+  classification reads it from the output, which carries the class itself.
+- Additive and forward-only, no backfill. An older binary ignores the table.

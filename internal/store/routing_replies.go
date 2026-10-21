@@ -512,3 +512,29 @@ func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, in Routi
 	}
 	return tx.Commit()
 }
+
+// RoutingReplySender returns the sender address and the daemon-stamped metadata of
+// a stored reply, so the audience of the turn it becomes can be classified from
+// what the hub verified when the reply was accepted (CW-20261021-0010).
+func (s *Store) RoutingReplySender(ctx context.Context, replyID string) (messaging.Address, map[string]string, error) {
+	var from string
+	var raw sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT m.from_urn, m.metadata FROM messages m JOIN routing_replies r ON r.reply_id = m.id WHERE r.reply_id=?`, replyID).Scan(&from, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return messaging.Address{}, nil, ErrRoutingReplyNotFound
+	}
+	if err != nil {
+		return messaging.Address{}, nil, err
+	}
+	addr, err := messaging.ParseURN(from)
+	if err != nil {
+		return messaging.Address{}, nil, err
+	}
+	meta := map[string]string{}
+	if raw.Valid && raw.String != "" {
+		if err := json.Unmarshal([]byte(raw.String), &meta); err != nil {
+			return addr, nil, fmt.Errorf("routing reply: decode metadata: %w", err)
+		}
+	}
+	return addr, meta, nil
+}

@@ -426,7 +426,13 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 	d.mu.Lock()
 	d.drainFor(sessionID).again = false
 	d.mu.Unlock()
-	err = d.rt.sendTurn(d.ctx, sessionID, body)
+	// The reply's author, as the hub verified it when it accepted the reply, is the
+	// input's sender; a reply with no readable stamp is an unknown sender.
+	note := turnInputNote{Source: store.InputRoutingReply, Class: store.ClassUnknown, Basis: store.BasisNone, RefID: r.ReplyID}
+	if from, meta, serr := d.st.RoutingReplySender(d.ctx, r.ReplyID); serr == nil {
+		note.SenderURN, note.Class, note.Basis = classifyStampedSender(from, meta)
+	}
+	err = d.rt.sendTurn(withTurnInput(d.ctx, note), sessionID, body)
 	// The order matters. A rejection (turn in flight, session gone) means the
 	// runtime did not take the reply, whatever else the error carries: a rejected
 	// submit can still have had an in-flight turn's first event bind its marker, so
