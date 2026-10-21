@@ -115,6 +115,12 @@ type RoutingReplyDelivery struct {
 	SettledAt            *time.Time `json:"settled_at,omitempty"`
 }
 
+// replyNotSessionHint tells the caller what to use instead. A reply is the next
+// turn of the SESSION that published a message to a channel; a mailbox message
+// (from a user, a device, an agent address, or a session that sent it to a
+// mailbox) is answered with a message to its sender.
+const replyNotSessionHint = "; this reply only answers a message a session published to a channel. To answer a mailbox message, send a message to its sender with tether_message_send (in_reply_to=<message_id>)"
+
 func writeReplyError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrReplyInvalid):
@@ -124,7 +130,7 @@ func writeReplyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrReplyParentNotFound), errors.Is(err, ErrReplyNotFound):
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 	case errors.Is(err, ErrReplyTargetNotSession):
-		writeError(w, http.StatusBadRequest, CodeReplyTargetNotSession, err.Error())
+		writeError(w, http.StatusBadRequest, CodeReplyTargetNotSession, err.Error()+replyNotSessionHint)
 	case errors.Is(err, ErrReplyForbidden):
 		writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
 	case errors.Is(err, ErrReplyInterruptUnsupported):

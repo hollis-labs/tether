@@ -124,7 +124,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_reply",
-		Description: "Reply to the session that sent a routed message; the body is delivered as that session's next turn at its next idle boundary. Same route as POST /messages/{id}/reply. Requires message.write scope.",
+		Description: "Reply to the session that sent a routed message (one a session published to a channel); the body is delivered as that session's next turn at its next idle boundary. Same route as POST /messages/{id}/reply. Requires message.write scope. For an ordinary mailbox message (from a user, device or agent address) this fails with reply_target_not_a_session: answer it with tether_message_send to its sender and in_reply_to=<message_id>.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "ID of the routed message being replied to", true),
 			gomcp.StringProp("body", "Reply text (max 128 KiB)", true),
