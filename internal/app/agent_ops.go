@@ -113,6 +113,11 @@ type CreateSessionInput struct {
 	// well-formed; never decoded from a client into this struct. Stored on the session
 	// row and planted as TETHER_TASK_ID; no existence check against Torque.
 	TaskID string
+
+	// App is the app the launch path stamps on the session row (CW-20261020-0036).
+	// Server-set after the API has checked the caller is the operator and the id is
+	// well-formed; never decoded from a client into this struct.
+	App string
 }
 
 // TaskIDEnv is the environment variable that carries the launcher-asserted task id
@@ -643,4 +648,8 @@ func isUnsupportedProvider(err error) bool {
 
 func nullableTaskID(id string) sql.NullString {
 	return sql.NullString{String: id, Valid: id != ""}
+}
+
+func nullableApp(app string) sql.NullString {
+	return sql.NullString{String: app, Valid: app != ""}
 }

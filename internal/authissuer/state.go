@@ -312,6 +312,33 @@ func (s *State) addService(r ServiceRecord) error {
 	return s.saveLocked()
 }
 
+// addServiceForRequester records a token a session asked for, refusing it when that
+// requester already holds max live (unrevoked) tokens for the app, or when the global
+// bound is reached. The count and the insert share one lock, so concurrent requests
+// cannot both slip under the cap.
+func (s *State) addServiceForRequester(r ServiceRecord, limit int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+	live := 0
+	for _, e := range s.doc.Services {
+		if e.RevokedAt == nil && e.RequestedSession == r.RequestedSession && e.App == r.App {
+			live++
+		}
+	}
+	if live >= limit {
+		return forbidden("this session already holds %d live service tokens for app %q; revoke one first", live, r.App)
+	}
+	if len(s.doc.Services) >= maxServiceRecords {
+		return forbidden("too many live service tokens (%d); revoke unused ones", len(s.doc.Services))
+	}
+	if s.doc.Services == nil {
+		s.doc.Services = map[string]ServiceRecord{}
+	}
+	s.doc.Services[r.JTI] = r
+	return s.saveLocked()
+}
+
 func (s *State) serviceCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

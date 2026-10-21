@@ -533,3 +533,40 @@ func TestTeamReplacementRetriesCommittedDestinationAndKeepsFailedAdmission(t *te
 		})
 	}
 }
+
+// A replaced team session carries exactly its source's app (CW-20261020-0036): the
+// replacement insert copies it from the source row and takes nothing from the input.
+func TestTeamReplacementCopiesTheSourcesAppExactly(t *testing.T) {
+	for _, tc := range []struct {
+		name, app string
+	}{{"source with an app", "torque"}, {"source with no app", ""}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, in, _ := replacementStoreRig(t)
+			if tc.app != "" {
+				if _, err := r.svc.Store.DB().Exec(`UPDATE sessions SET app=? WHERE id=?`, tc.app, in.Source.ID); err != nil {
+					t.Fatal(err)
+				}
+				// The replacement compares the source row it was given with the stored one.
+				row, err := r.svc.Store.GetSession(in.Source.ID)
+				if err != nil || row.App.String != tc.app {
+					t.Fatalf("source app not set: %+v %v", row, err)
+				}
+				in.Source = *row
+			}
+			if _, err := prepareReplacement(t, r, in); err != nil {
+				t.Fatal(err)
+			}
+			next, err := r.svc.Store.GetSession(in.DestinationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if next.App.String != tc.app || next.App.Valid != (tc.app != "") {
+				t.Fatalf("replacement app = %+v, want %q", next.App, tc.app)
+			}
+			old, err := r.svc.Store.GetSession(in.Source.ID)
+			if err != nil || old.App.String != tc.app {
+				t.Fatalf("source app changed by the replacement: %+v %v", old.App, err)
+			}
+		})
+	}
+}

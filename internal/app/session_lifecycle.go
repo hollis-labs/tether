@@ -144,6 +144,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 		return nil, err
 	}
 	stampTaskID(plan, in.TaskID)
+	plan.App = in.App
 	return plan, nil
 }
 
@@ -225,6 +226,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 		TaskID:         nullableTaskID(plan.TaskID),
+		App:            nullableApp(plan.App),
 	}
 	s.sealTeamPlanEvidence(plan, "")
 	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {

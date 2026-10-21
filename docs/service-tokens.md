@@ -112,6 +112,54 @@ cannot honor a revocation, and nothing in it is secret. **Writing** it
 over the local socket). Earlier, reading it needed `tether.maintain`; a poller that
 still sends a bearer is unaffected.
 
+## A session requests its own app's token (CW-20261020-0036)
+
+An agent session can ask for a service token for **its own app**, so an app that
+launches agents (Torque) does not need the operator to hand-issue each token.
+
+- **The app lives on the session.** `sessions.app` (migration 0098) is stamped by
+  the hub when the row is created and has no update path. `NULL` means no app, and
+  a session with no app cannot request. Only the verified local operator sets it,
+  with `POST /sessions {"app": "<id>"}`; an agent or session asserting it gets 403
+  `app_not_permitted`, and any other caller has it dropped and audited
+  (`app_dropped`). The value must have the service-principal id shape
+  (lowercase, `[a-z][a-z0-9-]{0,31}`) **and** be a registered producer in the event
+  catalog that `POST /events` binds apps to (`producers.json` in
+  `libs/harness/core/.../runtimeevents/catalog`); otherwise 400 `app_not_registered`.
+  The operator credential is the root of trust until a launcher has its own service
+  identity (CW-20261019-0047).
+- **Children inherit and cannot widen.** A session created with a `parent_session_id`
+  (resume) takes exactly its parent's app, or none; a team session takes its parent's
+  app when it is linked (`LinkTeamSession`); a replaced team session copies it.
+  Sessions made by `POST /sessions/bootstrap` (external, nothing launched) get no app.
+- **The request.** `POST /auth/service-tokens/request` on the **local** listener
+  only (the remote listener refuses it). The caller must be a verified session or
+  agent credential with a session id; the hub loads that session's row itself (the
+  body names no session, app, env or audience, and an unknown field is a 400). It
+  issues only `msg://service/<session.app>/dev`, audience `tether`, scope
+  `tether.events` (the only scope a session may request; none named means
+  `tether.events`). An ended session or one with no app is refused.
+- **Posture.** `identity.service_request` in `global.yaml`: `auto` issues at once and
+  logs; anything else, including leaving it out, records the request and answers
+  `202` without issuing (the approval flow is CW-20261015-0052). The daemon logs
+  the active mode at start. A dev hub that wants hands-off issuing sets `auto` in its
+  `global.yaml` explicitly (an operator change; nothing here edits live config).
+- **Cap and audit.** At most 5 live tokens per (app, requesting session), inside the
+  global bound of 256. Each request writes an `identity_audit` row (`service_token_request
+  app=... decision=issued|pending|refused jti=<first 8>`) with the requester and
+  session, never the token. A verified caller's refusal is audited too, including a
+  malformed or unknown-field body (`decision=refused_invalid`, no body content);
+  unverified and anonymous callers leave no row, as for every other route.
+- **Same token.** The token is signed by the same `svc-` key, recorded the same way
+  (plus `requested_by` and `requested_session`), listed by `service-token list` and
+  revoked like any other, including by `revoke --all --app`. `Exchange` still refuses
+  agent and session parents; `RequestService` takes no operator principal.
+- **Not yet.** An agent token (`TokenID` set) is refused by the scope gate when
+  `local_api` is `enforce` (a `local-only` route has no scope an issued token holds);
+  stored session credentials and the dev `observe` posture work. A scope for it is a
+  decision for when enforce flips. The token is returned once in the response; there
+  is no `out_file`.
+
 ## Scope rules
 
 - Explicit verbs by default. `<audience>.*` is accepted only with

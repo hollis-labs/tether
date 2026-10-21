@@ -1,6 +1,7 @@
 package authissuer
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -71,10 +72,15 @@ type ServiceRecord struct {
 	KID string `json:"kid,omitempty"`
 	// Replaces is the jti of the token this one was re-issued for after a
 	// service key rotation.
-	Replaces  string     `json:"replaces,omitempty"`
-	IssuedAt  time.Time  `json:"issued_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	Replaces string `json:"replaces,omitempty"`
+	// RequestedBy and RequestedSession are set only on a token a session asked for
+	// (RequestService): the requesting principal and its session id. Operator-issued
+	// tokens leave them empty.
+	RequestedBy      string     `json:"requested_by,omitempty"`
+	RequestedSession string     `json:"requested_session,omitempty"`
+	IssuedAt         time.Time  `json:"issued_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
 }
 
 // ServicePrincipalID is the principal id (the sub claim) of a service token.
@@ -94,6 +100,15 @@ func (i *Issuer) issueServiceFrom(parent identity.Principal, req ServiceRequest,
 	if !parent.Verified || parent.Kind != "operator" || parent.TokenID != "" {
 		return Token{}, ServiceRecord{}, forbidden("only the operator issues service tokens")
 	}
+	return i.mintService(parent.ID, req, replaces, reissue, "", "", i.State.addService)
+}
+
+// mintService is the one signing and recording path for service tokens, shared by
+// the operator's IssueService and a session's RequestService so the svc- key, the
+// record and its deny-list semantics are identical for both. The caller has already
+// decided WHO may mint; issuedBy is recorded as the issuer principal and the par
+// claim. add records the token and may refuse it (a cap).
+func (i *Issuer) mintService(issuedBy string, req ServiceRequest, replaces string, reissue bool, requestedBy, requestedSession string, add func(ServiceRecord) error) (Token, ServiceRecord, error) {
 	if !audRe.MatchString(req.App) || identity.ReservedIssuerSubject(ServicePrincipalID(req.App, DefaultServiceEnv)) {
 		return Token{}, ServiceRecord{}, invalid("app must be one app id")
 	}
@@ -124,7 +139,7 @@ func (i *Issuer) issueServiceFrom(parent identity.Principal, req ServiceRequest,
 	now := i.Now().UTC()
 	exp := now.Add(ServiceTokenLifetime)
 	c := Claims{Iss: i.Name, Sub: sub, Aud: req.Audience, Scope: strings.Join(scopes, " "), Exp: exp.Unix(), Iat: now.Unix(),
-		JTI: uuid.NewString(), Kind: KindService, Par: parent.ID}
+		JTI: uuid.NewString(), Kind: KindService, Par: issuedBy}
 	// Hold keyLife from choosing the key until the record that names it is saved, so
 	// a concurrent rotate + prune cannot delete the key in between.
 	i.keyLife.Lock()
@@ -141,8 +156,12 @@ func (i *Issuer) issueServiceFrom(parent identity.Principal, req ServiceRequest,
 		i.afterServiceKeyChosen()
 	}
 	rec := ServiceRecord{JTI: c.JTI, Sub: sub, App: req.App, Env: env, Audience: req.Audience, Scopes: scopes, Label: req.Label,
-		IssuedBy: parent.ID, IssuedAt: now, ExpiresAt: exp, KID: kid, Replaces: replaces}
-	if err := i.State.addService(rec); err != nil {
+		IssuedBy: issuedBy, IssuedAt: now, ExpiresAt: exp, KID: kid, Replaces: replaces,
+		RequestedBy: requestedBy, RequestedSession: requestedSession}
+	if err := add(rec); err != nil {
+		if errors.Is(err, ErrForbidden) {
+			return Token{}, ServiceRecord{}, err
+		}
 		return Token{}, ServiceRecord{}, fmt.Errorf("authissuer: cannot record the service token: %w", err)
 	}
 	if slices.ContainsFunc(scopes, func(s string) bool { return strings.HasSuffix(s, ".*") }) {

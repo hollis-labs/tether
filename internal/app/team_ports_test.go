@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -357,5 +358,73 @@ func TestStopTeamSessionAcknowledgesOwnExitErrorAndRetriesDetached(t *testing.T)
 	}
 	if err = svc.StopTeamSession(context.Background(), "detached-team"); !errors.Is(err, teamhost.ErrSessionUnavailable) {
 		t.Fatal("detached treated as gone", err)
+	}
+}
+
+// A team session takes its parent's app when it is linked (CW-20261020-0036): exactly the
+// parent's app or none, never one the team session could have been given on its own.
+func TestLinkTeamSessionTakesTheParentsAppOrNone(t *testing.T) {
+	rig := newCodexRig(t)
+	ctx := context.Background()
+	if err := rig.svc.Store.CreateSession(store.SessionRow{ID: "parent-torque", State: "running", App: sql.NullString{String: "torque", Valid: true}}, &launch.Plan{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.Store.CreateSession(store.SessionRow{ID: "parent-none", State: "running"}, &launch.Plan{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ key, parent, want string }{
+		{"team-port:app-a", "parent-torque", "torque"},
+		{"team-port:app-b", "parent-none", ""},
+		{"team-port:app-c", "no-such-parent", ""},
+	} {
+		created, err := rig.svc.CreateTeamSession(ctx, tc.key, "codex-launch")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row, err := rig.svc.Store.GetSession(created.SessionID); err != nil || row.App.Valid {
+			t.Fatalf("%s: a fresh team session has an app before it is linked: %+v %v", tc.key, row, err)
+		}
+		if err := rig.svc.LinkTeamSession(ctx, created.SessionID, tc.key, tc.parent); err != nil {
+			t.Fatalf("%s: %v", tc.key, err)
+		}
+		row, err := rig.svc.Store.GetSession(created.SessionID)
+		if err != nil || row.App.String != tc.want || row.App.Valid != (tc.want != "") {
+			t.Fatalf("%s: linked to %q gives app %+v, want %q (%v)", tc.key, tc.parent, row.App, tc.want, err)
+		}
+	}
+}
+
+// Linking can only narrow: even a team session that somehow already holds another app
+// ends up with exactly its parent's app (or none) once linked, never a wider one.
+func TestLinkTeamSessionCannotWidenTheApp(t *testing.T) {
+	rig := newCodexRig(t)
+	ctx := context.Background()
+	for _, p := range []store.SessionRow{
+		{ID: "wide-parent-torque", State: "running", App: sql.NullString{String: "torque", Valid: true}},
+		{ID: "wide-parent-none", State: "running"},
+	} {
+		if err := rig.svc.Store.CreateSession(p, &launch.Plan{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct{ key, parent, want string }{
+		{"team-port:wide-a", "wide-parent-torque", "torque"},
+		{"team-port:wide-b", "wide-parent-none", ""},
+	} {
+		created, err := rig.svc.CreateTeamSession(ctx, tc.key, "codex-launch")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Plant a wider app directly, as a corrupted or hostile row would carry.
+		if _, err := rig.svc.Store.DB().Exec(`UPDATE sessions SET app='cerberus' WHERE id=?`, created.SessionID); err != nil {
+			t.Fatal(err)
+		}
+		if err := rig.svc.LinkTeamSession(ctx, created.SessionID, tc.key, tc.parent); err != nil {
+			t.Fatalf("%s: %v", tc.key, err)
+		}
+		row, err := rig.svc.Store.GetSession(created.SessionID)
+		if err != nil || row.App.String != tc.want || row.App.Valid != (tc.want != "") {
+			t.Fatalf("%s: app after linking to %q = %+v, want %q (%v)", tc.key, tc.parent, row.App, tc.want, err)
+		}
 	}
 }

@@ -31,6 +31,9 @@ type TokenRequest struct {
 type issuerConfig struct {
 	mintAudit     func(context.Context, identity.Observation) error
 	workloadStore *identity.Store
+	// sessionLookup and requestMode enable POST /auth/service-tokens/request.
+	sessionLookup SessionLookup
+	requestMode   string
 }
 
 // IssuerOption configures NewTokenIssuerHandler.
@@ -196,6 +199,9 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, ServiceTokenResponse{Token: tok, Record: rec})
 	})
+	if cfg.sessionLookup != nil {
+		mux.HandleFunc("POST /auth/service-tokens/request", serviceTokenRequestHandler(is, cfg))
+	}
 	mux.HandleFunc("GET /auth/service-tokens", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := serviceTokenOperator(w, r); !ok {
 			return

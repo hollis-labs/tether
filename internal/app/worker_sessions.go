@@ -75,7 +75,7 @@ func (s *Service) createWorkerSessionWith(in CreateSessionInput, digest string, 
 	if err != nil {
 		return nil, err
 	}
-	row := store.SessionRow{ID: id, WorkerID: workerID, LaunchID: plan.LaunchID, ProjectID: plan.ProjectID, LogicalAgentID: plan.LogicalAgentID, ProviderID: plan.ProviderID, ProviderKind: "cli", TaskID: nullableTaskID(plan.TaskID), Workspace: ws.Root, State: "created", Publication: "tether-hosted"}
+	row := store.SessionRow{ID: id, WorkerID: workerID, LaunchID: plan.LaunchID, ProjectID: plan.ProjectID, LogicalAgentID: plan.LogicalAgentID, ProviderID: plan.ProviderID, ProviderKind: "cli", TaskID: nullableTaskID(plan.TaskID), App: nullableApp(plan.App), Workspace: ws.Root, State: "created", Publication: "tether-hosted"}
 	s.sealTeamPlanEvidence(plan, row.WorkerID)
 	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {
 		return nil, err
