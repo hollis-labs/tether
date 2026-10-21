@@ -259,3 +259,30 @@ func validateRaw(t *testing.T, s *jsonschema.Schema, name, raw string) {
 		t.Errorf("%s does not validate: %v", name, err)
 	}
 }
+
+// The projection event is the session item without route (contract 7.1): the
+// schema rejects a route in its payload, and accepts it in a snapshot item.
+func TestContractSchemaOmitsRouteFromTheProjectionEvent(t *testing.T) {
+	schemas := compileSchemas(t)
+	raw, err := os.ReadFile(filepath.Join(fixtureDir, "proposed", "session.projection_changed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env map[string]any
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	env["payload"].(map[string]any)["route"] = map[string]any{"channel": "ops", "kinds": []string{"final"}}
+	b, _ := json.Marshal(env)
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if schemas["event"].Validate(doc) == nil {
+		t.Fatal("a route in session.projection_changed validated")
+	}
+	snap, err := os.ReadFile(filepath.Join(fixtureDir, "snapshot.json"))
+	if err != nil || !bytes.Contains(snap, []byte(`"route"`)) {
+		t.Fatalf("the snapshot fixture should keep route on the item that has one: %v", err)
+	}
+}
