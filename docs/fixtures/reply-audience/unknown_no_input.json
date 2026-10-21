@@ -1,0 +1,26 @@
+{
+  "event": {
+    "output_id": "out_example",
+    "provider_result_id": "turn-1",
+    "session_id": "s1",
+    "turn_id": "turn-1",
+    "kind": "final",
+    "stop_reason": "end_turn",
+    "confidence": "exact",
+    "runtime": "claude",
+    "logical_agent_id": "agent",
+    "project_id": "project",
+    "workstream_id": "workstream",
+    "message_id": "msg_example",
+    "audience": "unknown",
+    "audience_basis": "no_input"
+  },
+  "message_metadata": {
+    "audience": "unknown",
+    "audience_basis": "no_input",
+    "kind": "final",
+    "session_id": "s1",
+    "turn_id": "turn-1"
+  },
+  "note": "event is the session.turn_output payload; message_metadata is the audience part of the routed message metadata. Ids are replaced by stable placeholders."
+}
