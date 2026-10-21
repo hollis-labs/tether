@@ -1,13 +1,15 @@
 {
   "cases": [
     "agent",
+    "agent_mail_via_operator_credential",
     "operator",
+    "operator_mail_from_user",
     "system",
     "unknown_anonymous",
     "unknown_failed_input_ignored",
+    "unknown_mail_from_user_unverified",
     "unknown_no_input",
     "unknown_queued_inputs_present",
-    "unknown_shared_operator_credential",
     "unknown_submission_unsettled"
   ],
   "generated_by": "TestReplyAudienceFixtures"

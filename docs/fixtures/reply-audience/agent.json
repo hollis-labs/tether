@@ -13,7 +13,7 @@
     "workstream_id": "workstream",
     "message_id": "msg_example",
     "audience": "agent",
-    "audience_basis": "stamped_message_sender",
+    "audience_basis": "mail_from=session;principal=agent",
     "input_ids": [
       "ti_example"
     ],
@@ -23,7 +23,7 @@
   },
   "message_metadata": {
     "audience": "agent",
-    "audience_basis": "stamped_message_sender",
+    "audience_basis": "mail_from=session;principal=agent",
     "input_classes": "agent",
     "input_ids": "ti_example",
     "kind": "final",

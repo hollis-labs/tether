@@ -49,24 +49,23 @@ func systemInput(ref string) turnInputNote {
 }
 
 // classifyStampedSender classifies the author of a stored message (a mail wake, a
-// routing reply) from what the daemon verified, not from what the message claims.
+// routing reply). Archie's rule (CW-20261021-0010): the stamped From address kind
+// decides first, and the verified principal can only confirm a human claim.
 //
-// The From address is a claim: a principal holding "*" or message.send_as (the
-// shared operator credential, for one) may author ANY From, so "verified" proves
-// only that the credential was allowed to claim it, never who wrote the mail. The
-// evidence is therefore the verified principal the daemon recorded
-// (from_principal), and:
+//   - From agent or session: agent. Local agents share the operator-authorized
+//     connection, so a verified operator credential on an agent From proves nothing
+//     about a human and never yields operator;
+//   - From service: system;
+//   - From user AND the verified principal is the operator credential: operator;
+//   - From user with any other principal, or any From with no verified stamp:
+//     unknown. (A paired interactive device is not recognised: a device id is not a
+//     messaging address the stamp can carry, so there is nothing to confirm it by.)
 //
-//   - a session or agent principal: agent (it can only author its own addresses
-//     unless it holds send_as, and either way the author is that agent);
-//   - a service principal: system;
-//   - the shared operator credential: unknown. A human at the CLI and an agent on the
-//     shared operator-authorized MCP connection are indistinguishable behind it, so
-//     the credential's scope is never taken as evidence of a human;
-//   - a device principal: unknown (its scopes are not in the message stamp);
-//   - no stamp, an "unverified" stamp, or no recorded principal: unknown.
+// The basis records both inputs (mailBasis), so a consumer can see why.
 //
-// Anything not proven is unknown, never operator.
+// Known limitation: while agents share the operator credential, an agent can forge
+// From=<user URN> and be classified operator. The fix is per-agent credentials
+// (CW-20261020-0047), not this classifier.
 func classifyStampedSender(from messaging.Address, meta map[string]string) (urn, class, basis string) {
 	switch meta[api.MetaFromVerification] {
 	case "stamped", "verified":
@@ -78,15 +77,27 @@ func classifyStampedSender(from messaging.Address, meta map[string]string) (urn,
 		return "", store.ClassUnknown, store.BasisNone
 	}
 	urn = principal.URN()
+	pclass := "other"
 	switch {
 	case urn == identity.OperatorID:
-		return urn, store.ClassUnknown, store.BasisSharedOperator
+		pclass = "operator"
 	case principal.Kind == messaging.KindAgent || principal.Kind == messaging.KindSession:
-		return urn, store.ClassAgent, store.BasisStampedSender
+		pclass = "agent"
 	case principal.Kind == messaging.KindService:
-		return urn, store.ClassSystem, store.BasisStampedSender
+		pclass = "service"
 	}
-	return urn, store.ClassUnknown, store.BasisNone
+	basis = store.MailBasis(string(from.Kind), pclass)
+	switch from.Kind {
+	case messaging.KindAgent, messaging.KindSession:
+		return urn, store.ClassAgent, basis
+	case messaging.KindService:
+		return urn, store.ClassSystem, basis
+	case messaging.KindUser:
+		if pclass == "operator" {
+			return urn, store.ClassOperator, basis
+		}
+	}
+	return urn, store.ClassUnknown, basis
 }
 
 // beginTurnInput records the input about to be submitted to sessionID and returns

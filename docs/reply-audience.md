@@ -39,25 +39,35 @@ destination are never evidence. **Any doubt resolves to `unknown`, never to `ope
 | any other device (read-only, admin-only), a principal of unknown kind | `unknown` |
 | a session or agent principal | `agent` |
 | a service principal | `system` |
-| mail or a reply stored with a daemon stamp: the **verified principal that wrote it** is a session or agent principal | `agent` |
-| ... a service principal | `system` |
-| ... the **shared operator credential** (the operator token, including the operator-authorized MCP connection agents use) | `unknown` (basis `shared_operator_credential`) |
-| ... a device principal (its scopes are not in the stamp) | `unknown` |
+| mail or a reply stored with a daemon stamp, **From an agent or session address** | `agent`, whatever principal carried it (basis `mail_from=agent;principal=operator`, ...) |
+| ... From a service address | `system` |
+| ... From a **user** address AND the verified principal is the operator credential | `operator` |
+| ... From a user address with any other principal, or any other From kind | `unknown` |
 | no verified principal (anonymous, identity off, observe-mode `?as=`), an unstamped or `unverified` message | `unknown` |
 | a Tether-made injection | `system` |
 
-### Why mail is classified by the verified principal, not by its From
+### Why mail is classified by the From kind first
 
-A message's `From` is a claim. A principal holding `*` or `message.send_as` (the operator
-credential does) may author **any** From, and the daemon then stamps the message
-`verified`: that proves only that the credential was *allowed* to claim the address, not
-who wrote the mail. An agent that sends mail through the shared operator-authorized
-connection with an agent `From` (or, equally, with a user `From`) is stamped
-`verified` with the operator as the verified principal. So the class comes from the
-verified principal recorded with the message (`from_principal`), and the shared
-operator credential is `unknown`, never `operator` and never `agent`: nothing
-distinguishes a human from an agent behind it. Operator audience therefore comes only
-from authenticated direct routes (see the table above).
+A message's `From` is a claim, and the verified principal can be a shared credential:
+local agents send through the operator-authorized connection, so a message from an
+agent is stamped `verified` with the **operator credential** as the principal. A verified
+operator credential therefore never proves a human wrote the mail. The rule is:
+
+1. the stamped From kind decides first: agent or session is `agent`, service is `system`;
+2. a **user** From is `operator` only when the verified principal is the operator
+   credential; with any other principal it is `unknown`;
+3. no verified stamp, or no recorded principal, is `unknown`.
+
+The basis records both inputs: `mail_from=<From kind>;principal=<operator|agent|service|other>`.
+Direct-API inputs (chat send, `/turn`, MCP send-turn) have no From and are classified
+from the authenticated principal, as in the table above.
+
+**Known limitation.** While agents share the operator credential, an agent can forge
+`From=<a user URN>` and be classified `operator`. The fix is per-agent credentials
+(outside this change; tracked under CW-20261020-0047, security hardening). A consumer
+that needs proof of a human must not rely on mail-derived `operator`.
+Paired interactive devices cannot be recognised on mail: a device id is not a
+messaging address the stamp can carry.
 
 ## Binding an input to an output
 
@@ -70,9 +80,8 @@ another unbound input, and no other input is waiting. Otherwise the audience is
 
 | `audience_basis` | Meaning |
 |---|---|
-| `authenticated_principal`, `stamped_message_sender`, `system_injection` | proven; the class is the input's class |
+| `authenticated_principal`, `mail_from=<kind>;principal=<class>`, `system_injection` | proven; the class is the input's class |
 | `none` | the input's sender is unknown |
-| `shared_operator_credential` | mail written through the shared operator credential, which a human or an agent may hold |
 | `no_input` | no recorded input (history, a provider-initiated turn) |
 | `submission_unsettled` | the output arrived before the runtime confirmed the input |
 | `queued_input` | the input was queued behind another |

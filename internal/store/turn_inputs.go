@@ -13,26 +13,22 @@ import (
 
 // Turn input vocabulary (migration 0097).
 const (
-	InputChatSend      = "chat_send"
-	InputSessionTurn   = "session_turn"
-	InputMCPSendTurn   = "mcp_send_turn"
-	InputMailWake      = "mail_wake"
-	InputRoutingReply  = "routing_reply"
-	InputSystem        = "system"
-	ClassOperator      = "operator"
-	ClassAgent         = "agent"
-	ClassSystem        = "system"
-	ClassUnknown       = "unknown"
-	BasisPrincipal     = "authenticated_principal"
-	BasisStampedSender = "stamped_message_sender"
-	// BasisSharedOperator marks mail authored through the shared operator credential:
-	// a human and an agent are indistinguishable behind it, so it proves nothing.
-	BasisSharedOperator = "shared_operator_credential"
-	BasisSystem         = "system_injection"
-	BasisNone           = "none"
-	InputSubmitting     = "submitting"
-	InputAccepted       = "accepted"
-	InputFailed         = "failed"
+	InputChatSend     = "chat_send"
+	InputSessionTurn  = "session_turn"
+	InputMCPSendTurn  = "mcp_send_turn"
+	InputMailWake     = "mail_wake"
+	InputRoutingReply = "routing_reply"
+	InputSystem       = "system"
+	ClassOperator     = "operator"
+	ClassAgent        = "agent"
+	ClassSystem       = "system"
+	ClassUnknown      = "unknown"
+	BasisPrincipal    = "authenticated_principal"
+	BasisSystem       = "system_injection"
+	BasisNone         = "none"
+	InputSubmitting   = "submitting"
+	InputAccepted     = "accepted"
+	InputFailed       = "failed"
 )
 
 // TurnInput is one input handed to a session.
@@ -210,4 +206,13 @@ func (s *Store) SettleLaunchPromptInput(ctx context.Context, sessionID string, l
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE turn_inputs SET state=?, accepted_at=? WHERE session_id=? AND ref_id='launch_prompt' AND state='submitting'`, state, at, sessionID)
 	return err
+}
+
+// BasisMailPrefix starts the basis of an input classified from a stored message: it
+// records both the From address kind and the class of the verified principal.
+const BasisMailPrefix = "mail_from="
+
+// MailBasis is "mail_from=<from kind>;principal=<principal class>".
+func MailBasis(fromKind, principalClass string) string {
+	return BasisMailPrefix + fromKind + ";principal=" + principalClass
 }
