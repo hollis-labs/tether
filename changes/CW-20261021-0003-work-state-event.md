@@ -9,3 +9,10 @@
   `awaiting_input` are derived from the open requests, `unknown` (not idle) until
   a work-state is observed, and no `work_state` once the session has ended. See
   `docs/managed-session-contract.md`.
+  The current value and when it began are kept in a new table,
+  `environment_work_state` (migration 0096, additive, forward-only, no
+  backfill), written in the same transaction as the event, so event retention
+  cannot turn an idle session into `unknown`; sessions that have not reported
+  since the upgrade show `unknown` (`known: false`) until their next worker
+  frame. An older binary ignores the table and keeps working against a database
+  that has it.
