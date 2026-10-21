@@ -1042,7 +1042,7 @@ func (s *Service) mailWakeInputContext(ctx context.Context, messageID string) co
 	note := turnInputNote{Source: store.InputMailWake, Class: store.ClassUnknown, Basis: store.BasisNone, RefID: messageID}
 	if s.Store != nil && messageID != "" {
 		if env, err := s.Store.MessagingStore().Get(ctx, messageID); err == nil {
-			note.SenderURN, note.Class, note.Basis = classifyStampedSender(env.From, env.Metadata)
+			note.SenderURN, note.Class, note.Basis = classifyStampedSender(env.Metadata)
 		}
 	}
 	return withTurnInput(ctx, note)

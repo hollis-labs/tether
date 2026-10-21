@@ -57,7 +57,7 @@ func TestClassifyStampedSender(t *testing.T) {
 		"unparseable principal":                                   {"msg://agent/agent-mux/agt_x", meta("verified", "garbage"), store.ClassUnknown, store.BasisNone},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, class, basis := classifyStampedSender(addr(t, tc.from), tc.meta)
+			_, class, basis := classifyStampedSender(tc.meta)
 			if class != tc.class || basis != tc.basis {
 				t.Fatalf("class %q basis %q, want %q %q", class, basis, tc.class, tc.basis)
 			}
@@ -68,7 +68,7 @@ func TestClassifyStampedSender(t *testing.T) {
 	for _, kind := range []string{"user", "agent", "session", "service", "group"} {
 		for _, state := range []string{"", "stamped", "verified", "unverified"} {
 			for _, principal := range []string{"", op, "msg://session/local/x", "msg://agent/a/b", "msg://service/s/e", "msg://device/d"} {
-				if _, class, _ := classifyStampedSender(addr(t, "msg://"+kind+"/local/x"), meta(state, principal)); class == store.ClassOperator {
+				if _, class, _ := classifyStampedSender(meta(state, principal)); class == store.ClassOperator {
 					t.Fatalf("From kind %s stamp %q principal %q classified operator", kind, state, principal)
 				}
 			}

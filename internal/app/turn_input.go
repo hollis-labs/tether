@@ -67,7 +67,7 @@ func systemInput(ref string) turnInputNote {
 //   - no stamp, an "unverified" stamp, or no recorded principal: unknown.
 //
 // Anything not proven is unknown, never operator.
-func classifyStampedSender(from messaging.Address, meta map[string]string) (urn, class, basis string) {
+func classifyStampedSender(meta map[string]string) (urn, class, basis string) {
 	switch meta[api.MetaFromVerification] {
 	case "stamped", "verified":
 	default: // absent or "unverified"
