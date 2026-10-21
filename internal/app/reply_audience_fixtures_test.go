@@ -49,19 +49,11 @@ func TestReplyAudienceFixtures(t *testing.T) {
 			id := mailFixture(t, s, "msg://session/local/s9", map[string]string{api.MetaFromVerification: "stamped", api.MetaFromPrincipal: "msg://session/local/s9"})
 			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
 		}},
-		{"agent_mail_via_operator_credential", func(t *testing.T, s *Service) {
+		{"unknown_shared_operator_credential", func(t *testing.T, s *Service) {
 			// An agent-authored mail sent through the shared operator-authorized MCP
 			// connection: From is an agent address, the verified principal is the
-			// operator credential. The From kind decides: agent, never operator.
+			// operator credential, which a human or an agent may hold.
 			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
-			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
-		}},
-		{"operator_mail_from_user", func(t *testing.T, s *Service) {
-			id := mailFixture(t, s, "msg://user/local/chrispian", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
-			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
-		}},
-		{"unknown_mail_from_user_unverified", func(t *testing.T, s *Service) {
-			id := mailFixture(t, s, "msg://user/local/chrispian", map[string]string{api.MetaFromVerification: "unverified", api.MetaFromPrincipal: "msg://user/local/operator"})
 			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
 		}},
 		{"system", func(t *testing.T, s *Service) { s.beginTurnInput(deviceCtx("worker"), "s1")(nil) }},
