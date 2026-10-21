@@ -69,22 +69,3 @@ func TestEnvironmentSnapshotLastEventAt(t *testing.T) {
 		t.Fatalf("last event times: %v", got)
 	}
 }
-
-func explainPlan(t *testing.T, db *Store, query string, args ...any) string {
-	t.Helper()
-	rows, err := db.db.Query(`EXPLAIN QUERY PLAN `+query, args...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var plan []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-			t.Fatal(err)
-		}
-		plan = append(plan, detail)
-	}
-	return strings.Join(plan, " | ")
-}
