@@ -584,7 +584,10 @@ func (s *Server) handler(remote bool) http.Handler {
 			issuerOpts = append(issuerOpts, api.WithMintAudit(s.recordIdentityObservation), api.WithWorkloadTrustStore(s.Identity))
 		}
 		issuerHandler := api.NewTokenIssuerHandler(s.Issuer, issuerOpts...)
-		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
+		// ServeMux matches a path without a trailing slash exactly, so every
+		// service-token route the handler serves is listed: a missing subpath
+		// answers 404 from the mux and never reaches the handler.
+		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.ServiceTokensPath + "/revoke", api.ServiceTokensPath + "/rotate-key", api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
 			router.Handle(path, issuerHandler)
 		}
 	}
