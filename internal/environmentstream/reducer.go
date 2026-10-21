@@ -2,6 +2,7 @@ package environmentstream
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/tether/internal/events"
@@ -14,6 +15,7 @@ func Reduce(session *Session, event Event) {
 	if event.SessionID != session.ID {
 		return
 	}
+	defer refreshWork(session)
 	if event.Time.After(session.LastActivity) {
 		session.LastActivity = event.Time
 	}
@@ -23,6 +25,17 @@ func Reduce(session *Session, event Event) {
 		}
 		if json.Unmarshal(event.Payload, &change) == nil && change.To != "" {
 			setState(session, change.To)
+		}
+	}
+	if event.Kind == events.KindSessionWorkStateChanged {
+		var change struct {
+			To string    `json:"to"`
+			At time.Time `json:"at"`
+		}
+		// An unreadable payload, an unknown value or an older event than the one
+		// already applied changes nothing, so replay and reordering are safe.
+		if json.Unmarshal(event.Payload, &change) == nil && (change.To == WorkIdle || change.To == WorkProcessing) && !change.At.Before(session.workSince) {
+			session.workBase, session.workSince = change.To, change.At
 		}
 	}
 	if event.Kind == store.EnvironmentRequestKind {

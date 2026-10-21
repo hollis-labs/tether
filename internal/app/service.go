@@ -92,9 +92,12 @@ type Service struct {
 	// deny-lists the session id when it ends (the token issuer).
 	AgentTokens    AgentTokenIssuer
 	workerIngestMu sync.Mutex
-	workerCarries  map[string][]byte
-	Manager        *agentsessions.Manager
-	Bus            events.Bus
+	// workStates is the last published work-state per worker session, guarded by
+	// workerIngestMu (see recordWorkState).
+	workStates    map[string]string
+	workerCarries map[string][]byte
+	Manager       *agentsessions.Manager
+	Bus           events.Bus
 	// EventStamp is the stamp stage installed on Bus.
 	EventStamp *eventstamp.Stage
 	// EventPipeline exposes value-free shadow/enforcement counters.
