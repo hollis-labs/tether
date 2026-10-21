@@ -115,12 +115,11 @@ type EnvironmentWorkState struct {
 	At    time.Time
 }
 
-// latestWorkStateSQL reads the newest work-state payload of one session. It is an
-// index lookup on idx_events_session_kind_at (session_id, kind, at): no sort.
-const latestWorkStateSQL = `SELECT payload_json FROM events WHERE session_id=? AND kind=? ORDER BY at DESC, id DESC LIMIT 1`
-
-// environmentWorkStatesSQL reads it for every requested session in one statement.
-const environmentWorkStatesSQL = `SELECT s.id, COALESCE((SELECT payload_json FROM events WHERE session_id=s.id AND kind=? ORDER BY at DESC, id DESC LIMIT 1),'') FROM sessions s WHERE (?='' OR s.id=?) ORDER BY s.id`
+// environmentWorkStateSQL / environmentWorkStatesSQL read the current work-state
+// from environment_work_state (migration 0096), a primary-key row maintained in
+// the same transaction as the event, so event retention cannot erase it.
+const environmentWorkStateSQL = `SELECT value, since FROM environment_work_state WHERE session_id=?`
+const environmentWorkStatesSQL = `SELECT session_id, value, since FROM environment_work_state WHERE (?='' OR session_id=?) ORDER BY session_id`
 
 // parseWorkState reads {"to":..., "at":...}. A payload that does not name a known
 // value is no work-state.
@@ -136,18 +135,18 @@ func parseWorkState(payload string) (EnvironmentWorkState, bool) {
 	return EnvironmentWorkState{Value: p.To, At: at}, true
 }
 
-// LatestWorkState returns the last recorded work-state of a session.
+// LatestWorkState returns the current work-state of a session, if one was ever recorded.
 func (s *Store) LatestWorkState(ctx context.Context, sessionID string) (EnvironmentWorkState, bool, error) {
-	var payload string
-	err := s.db.QueryRowContext(ctx, latestWorkStateSQL, sessionID, events.KindSessionWorkStateChanged).Scan(&payload)
+	var value, since string
+	err := s.db.QueryRowContext(ctx, environmentWorkStateSQL, sessionID).Scan(&value, &since)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EnvironmentWorkState{}, false, nil
 	}
 	if err != nil {
 		return EnvironmentWorkState{}, false, err
 	}
-	w, ok := parseWorkState(payload)
-	return w, ok, nil
+	at, _ := time.Parse(time.RFC3339Nano, since)
+	return EnvironmentWorkState{Value: value, At: at}, true, nil
 }
 
 // environmentSessionsSQL is the snapshot's session query; a test asserts its
@@ -213,20 +212,19 @@ func (s *Store) EnvironmentSnapshot(ctx context.Context, sessionID string) (Envi
 }
 
 func environmentWorkStates(ctx context.Context, tx *sql.Tx, sessionID string) (map[string]EnvironmentWorkState, error) {
-	rows, err := tx.QueryContext(ctx, environmentWorkStatesSQL, events.KindSessionWorkStateChanged, sessionID, sessionID)
+	rows, err := tx.QueryContext(ctx, environmentWorkStatesSQL, sessionID, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]EnvironmentWorkState{}
 	for rows.Next() {
-		var id, payload string
-		if err := rows.Scan(&id, &payload); err != nil {
+		var id, value, since string
+		if err := rows.Scan(&id, &value, &since); err != nil {
 			return nil, err
 		}
-		if w, ok := parseWorkState(payload); ok {
-			out[id] = w
-		}
+		at, _ := time.Parse(time.RFC3339Nano, since)
+		out[id] = EnvironmentWorkState{Value: value, At: at}
 	}
 	return out, rows.Err()
 }
