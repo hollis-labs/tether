@@ -621,6 +621,15 @@ func (s inboxSessionLookup) Live(id string) bool {
 	return ok
 }
 
+// BoundToActor asks the service whether actorID's current binding is this session. A service
+// that cannot answer (no registry) is never a recipient by binding.
+func (s inboxSessionLookup) BoundToActor(sessionID, actorID string) bool {
+	b, ok := s.service.(interface {
+		SessionBoundToActor(sessionID, actorID string) bool
+	})
+	return ok && b.SessionBoundToActor(sessionID, actorID)
+}
+
 func (s inboxSessionLookup) LogicalAgentID(id string) (string, error) {
 	row, err := s.service.GetSession(id)
 	if err != nil {
