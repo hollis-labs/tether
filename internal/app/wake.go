@@ -1031,7 +1031,7 @@ func sweepWakeText(env messaging.Envelope) string {
 	if urgency == "" {
 		urgency = "normal"
 	}
-	return fmt.Sprintf("**Mailbox wake (daemon-injected, retried)** — you have unread message(s) waiting. Latest message: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.\n\nPlease run your inbox-check procedure, process messages normally, and mark handled messages read or consumed according to your checklist. This is a delivery notification, not an instruction to abandon the current task unless your own procedure says the message is urgent.",
+	return fmt.Sprintf("**Mailbox wake (daemon-injected, retried)** — you have unread message(s) waiting. Latest message: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.\n\nPlease run your inbox-check procedure, process messages normally, and mark handled messages read or consumed according to your checklist. This is a delivery notification, not an instruction to abandon the current task unless your own procedure says the message is urgent. This reminder is the only push you get for these messages: marking a message read or consumed settles it, and a settled message is never woken again.",
 		env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency)
 }
 
