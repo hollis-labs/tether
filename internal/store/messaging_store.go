@@ -198,6 +198,9 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 
 	// Build WHERE clause for optional Filter fields.
 	where := "routing_staged=0 AND to_urn=? AND delivered_at IS NULL AND canceled_at IS NULL"
+	if unreadOnlyInbox(ctx) {
+		where += " AND read_at IS NULL"
+	}
 	args := []any{toURN}
 	if len(f.Kind) > 0 {
 		in := make([]any, len(f.Kind))

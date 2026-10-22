@@ -7,6 +7,8 @@ import (
 	"log"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
+
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // Store keeps atomic delivered marking in Inbox; Consume settles a delivery.
@@ -41,13 +43,21 @@ func New(store Store, sessions Sessions) *Service {
 }
 
 // Pull preserves Inbox's result even if a subsequent Consume fails. Only a
-// live session matching the recipient gets the best-effort consumption step.
+// live session matching the recipient gets the best-effort consumption step, and
+// the same session gets unread messages only: what it already read is settled, not
+// handed back as new and consumed again (CW-20261021-0029). Operator pulls are the
+// plain pull.
 func (s *Service) Pull(ctx context.Context, to messaging.Address, filter messaging.Filter, sessionID string) (Result, error) {
-	envs, err := s.store.Inbox(ctx, to, filter)
+	recipient := s.sessionIsRecipient(sessionID, to)
+	pullCtx := ctx
+	if recipient {
+		pullCtx = store.WithUnreadOnlyInbox(ctx)
+	}
+	envs, err := s.store.Inbox(pullCtx, to, filter)
 	if err != nil {
 		return Result{}, err
 	}
-	if s.sessionIsRecipient(sessionID, to) {
+	if recipient {
 		for _, env := range envs {
 			if err := s.store.Consume(ctx, env.ID, to); err != nil {
 				log.Printf("api: inbox: consume message %s pulled by its recipient failed: %v", env.ID, err)

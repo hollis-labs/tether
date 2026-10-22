@@ -242,6 +242,73 @@ func (d *deliveryBackedStore) MarkRead(ctx context.Context, id string, recipient
 	return nil
 }
 
+// inboxSettleBatch bounds how many read-but-undelivered messages one pull settles; the
+// rest are settled by the next pull.
+const inboxSettleBatch = 500
+
+// Inbox is the wrapped store's atomic pull. When the caller asked for unread-only
+// (a live recipient session pulling its own mailbox), the messages the recipient has
+// already read are first settled instead of being handed back as new: delivered_at is
+// stamped, so they never come back, and their delivery is closed as consumed through the
+// same receipts MarkRead records (CW-20261021-0029). Without the flag the pull is the
+// legacy one.
+func (d *deliveryBackedStore) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {
+	if unreadOnlyInbox(ctx) {
+		d.settleReadUndelivered(ctx, to, f)
+	}
+	return d.messagingStore.Inbox(ctx, to, f)
+}
+
+// settleReadUndelivered is best-effort: a failure leaves the messages for the next pull
+// and never fails the pull itself, and the unread-only filter keeps them out of its result.
+func (d *deliveryBackedStore) settleReadUndelivered(ctx context.Context, to messaging.Address, f messaging.Filter) {
+	where := "routing_staged=0 AND to_urn=? AND delivered_at IS NULL AND canceled_at IS NULL AND read_at IS NOT NULL"
+	args := []any{to.URN()}
+	if len(f.Kind) > 0 {
+		in := make([]any, len(f.Kind))
+		for i, k := range f.Kind {
+			in[i] = string(k)
+		}
+		where += " AND kind IN (?" + repeatCommaQ(len(f.Kind)-1) + ")"
+		args = append(args, in...)
+	}
+	if f.ThreadID != "" {
+		where += " AND thread_id=?"
+		args = append(args, f.ThreadID)
+	}
+	rows, err := d.db.QueryContext(ctx, `SELECT id, delivery_id FROM messages WHERE `+where+` ORDER BY created_at, id LIMIT ?`, append(args, inboxSettleBatch)...)
+	if err != nil {
+		log.Printf("delivery store: inbox: list read-but-undelivered messages for %s failed (they stay for the next pull): %v", to.URN(), err)
+		return
+	}
+	type settled struct{ id, deliveryID string }
+	var found []settled
+	for rows.Next() {
+		var id string
+		var deliveryID sql.NullString
+		if err := rows.Scan(&id, &deliveryID); err != nil {
+			rows.Close()
+			log.Printf("delivery store: inbox: scan read-but-undelivered message failed: %v", err)
+			return
+		}
+		found = append(found, settled{id, deliveryID.String})
+	}
+	rows.Close()
+	if rows.Err() != nil || len(found) == 0 {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, m := range found {
+		if _, err := d.db.ExecContext(ctx, `UPDATE messages SET delivered_at=? WHERE id=? AND delivered_at IS NULL AND read_at IS NOT NULL`, now, m.id); err != nil {
+			log.Printf("delivery store: inbox: stamp delivered_at for read message %s failed: %v", m.id, err)
+			continue
+		}
+		if m.deliveryID != "" {
+			d.recordConsumedReceipts(ctx, m.id, m.deliveryID, to)
+		}
+	}
+}
+
 func (d *deliveryBackedStore) recordConsumedReceipts(ctx context.Context, messageID, deliveryID string, recipient messaging.Address) {
 	lease, err := d.leaseForConsumedReceipts(ctx, messageID, deliveryID, recipient)
 	if errors.Is(err, delivery.ErrTerminalDelivery) {
