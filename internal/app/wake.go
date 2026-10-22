@@ -976,10 +976,13 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 				text = sweepWakeText(msg)
 			}
 			var outcome api.WakeOutcome
+			// A retried wake is the same mail wake as the first attempt: tag its input with the
+			// message and the sender the hub stamped, as Service.AttemptWake does.
+			wakeCtx := withTurnInput(ctx, mailWakeInputNote(msg.ID, msg.Metadata))
 			if !found && st.HasMessageDeliveryObserver() {
-				outcome = attemptRecipientWake(ctx, st, reg, rt, string(lr.rd.MessageID), lr.rd.Recipient, lr.sessionID, text)
+				outcome = attemptRecipientWake(wakeCtx, st, reg, rt, string(lr.rd.MessageID), lr.rd.Recipient, lr.sessionID, text)
 			} else {
-				outcome = attemptWake(ctx, st, reg, rt, string(lr.rd.MessageID), lr.rd.Recipient, lr.sessionID, text)
+				outcome = attemptWake(wakeCtx, st, reg, rt, string(lr.rd.MessageID), lr.rd.Recipient, lr.sessionID, text)
 			}
 			if found {
 				raw, _ := json.Marshal(outcome)
@@ -1035,15 +1038,25 @@ func sweepWakeText(env messaging.Envelope) string {
 		env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency)
 }
 
-// mailWakeInputContext tags ctx with the provenance of the mail being injected: the
-// sender the hub stamped on the stored message. A message that cannot be read, or
-// that carries no verified stamp, is an unknown sender.
-func (s *Service) mailWakeInputContext(ctx context.Context, messageID string) context.Context {
+// mailWakeInputNote is the provenance of the mail being injected: the sender the hub stamped on
+// the stored message. No verified stamp is an unknown sender.
+func mailWakeInputNote(messageID string, meta map[string]string) turnInputNote {
 	note := turnInputNote{Source: store.InputMailWake, Class: store.ClassUnknown, Basis: store.BasisNone, RefID: messageID}
+	if meta != nil {
+		note.SenderURN, note.Class, note.Basis = classifyStampedSender(meta)
+	}
+	return note
+}
+
+// mailWakeInputContext tags ctx with the provenance of the mail being injected. A message that
+// cannot be read is an unknown sender. The sweep's retried wakes tag the same way
+// (CW-20261021-0029): they are the same mail wake, only later.
+func (s *Service) mailWakeInputContext(ctx context.Context, messageID string) context.Context {
+	var meta map[string]string
 	if s.Store != nil && messageID != "" {
 		if env, err := s.Store.MessagingStore().Get(ctx, messageID); err == nil {
-			note.SenderURN, note.Class, note.Basis = classifyStampedSender(env.Metadata)
+			meta = env.Metadata
 		}
 	}
-	return withTurnInput(ctx, note)
+	return withTurnInput(ctx, mailWakeInputNote(messageID, meta))
 }
