@@ -197,6 +197,64 @@ func TestAttemptWake_HandledDuringBackoffSettlesWithoutWaking(t *testing.T) {
 	}
 }
 
+// A message the recipient marked read after its wake is settled at once, so the
+// lease neither lapses into a retry nor lets the sweep wake it a second time
+// (CW-20261021-0029). Before, only Consume closed the lease.
+func TestAttemptWake_MarkReadAfterTheWakeSettlesAndNeverRewakes(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+
+	to := messaging.Address{Kind: messaging.KindSession, Authority: "test", ID: "s1"}
+	env := sendMessage(t, st, to)
+	if outcome := attemptWake(ctx, st, reg, rt.seam(), env.ID, to, "s1", "wake up"); !outcome.Delivered {
+		t.Fatalf("wake = %+v; want Delivered", outcome)
+	}
+	id := deliveryIDOf(t, st, env.ID)
+	if err := st.MessagingStore().MarkRead(ctx, env.ID, to); err != nil {
+		t.Fatal(err)
+	}
+	if rd := currentDelivery(t, st, id); rd.Status != delivery.DeliveryDelivered {
+		t.Fatalf("status after mark-read = %q; want delivered", rd.Status)
+	}
+	// Past the consume window nothing is left to retry.
+	if rd := deliveryAt(t, st, id, time.Now().Add(wakeConsumeWindow+time.Minute)); rd.Status != delivery.DeliveryDelivered {
+		t.Fatalf("status after the window = %q; want delivered", rd.Status)
+	}
+	if n, err := runWakeSweep(ctx, st, reg, rt.seam(), nil); err != nil || n != 0 {
+		t.Fatalf("sweep attempted %d (err %v); a read message must not be woken", n, err)
+	}
+	if n := rt.sendCallCount("s1"); n != 1 {
+		t.Fatalf("sendTurn calls = %d; want exactly the one original wake", n)
+	}
+}
+
+// A message read before any wake is never woken at all, and its delivery traces
+// as consumed.
+func TestRunWakeSweep_ReadMessageIsNotWoken(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+
+	to := messaging.Address{Kind: messaging.KindSession, Authority: "test", ID: "s1"}
+	env := sendMessage(t, st, to)
+	if err := st.MessagingStore().MarkRead(ctx, env.ID, to); err != nil {
+		t.Fatal(err)
+	}
+	id := deliveryIDOf(t, st, env.ID)
+	if rd := currentDelivery(t, st, id); rd.Status != delivery.DeliveryDelivered {
+		t.Fatalf("status after mark-read = %q; want delivered", rd.Status)
+	}
+	if n, err := runWakeSweep(ctx, st, reg, rt.seam(), nil); err != nil || n != 0 {
+		t.Fatalf("sweep attempted %d (err %v); want 0", n, err)
+	}
+	if n := rt.sendCallCount("s1"); n != 0 {
+		t.Fatalf("sendTurn calls = %d; want 0", n)
+	}
+}
+
 // A listing that is not the recipient's own -- an operator running
 // `tether messages inbox` for someone else -- stamps delivered_at but settles
 // nothing: the next attempt still wakes the recipient.

@@ -10,8 +10,9 @@ package store
 //   - `messages` (this package, unchanged) stays the sole source of truth
 //     for MESSAGE CONTENT (body/thread/reply/metadata) and ATTENTION state
 //     (read_at/archived_at, via messaging_inbox.go). Get/Inbox/Thread/List/
-//     MarkRead/Archive/Unarchive/Subscribe are untouched by this file --
-//     zero behavior change for any existing caller.
+//     Archive/Unarchive/Subscribe are untouched by this file -- zero
+//     behavior change for any existing caller. MarkRead keeps its own write
+//     (read_at) and additionally settles the delivery (CW-20261021-0029).
 //   - go-messaging's messaging_* tables (delivery.SQLiteStore) become the
 //     sole source of truth for RECIPIENT DELIVERY OBLIGATIONS, ATTEMPTS and
 //     RECEIPTS -- the thing delivered_at/consumed_at were a weak, crash-
@@ -19,8 +20,8 @@ package store
 //     crashes between Inbox's delivered_at stamp and Consume).
 //
 // deliveryBackedStore wraps the existing InboxStore and overrides exactly
-// the two methods that change delivery lifecycle state (Send, Consume).
-// Get/Inbox/Thread/List/MarkRead/Archive/Unarchive/Subscribe/Cancel pass
+// the methods that change delivery lifecycle state (Send, Consume, MarkRead).
+// Get/Inbox/Thread/List/Archive/Unarchive/Subscribe/Cancel pass
 // through unchanged. Cancel is intentionally NOT wired to the delivery core:
 // the delivery.Store interface has no cancel/delete primitive (by design --
 // CONTRACTS.md's reliable-delivery stages are persisted/lease_acquired/
@@ -214,6 +215,30 @@ func (d *deliveryBackedStore) Consume(ctx context.Context, id string, recipient 
 		return nil
 	}
 	d.recordConsumedReceipts(ctx, id, deliveryID, recipient)
+	return nil
+}
+
+// MarkRead stamps read_at (the wrapped store's idempotent, recipient-scoped
+// write) and then settles the delivery the same way Consume does. An agent that
+// reads a message and marks it read has handled it: before this, the delivery
+// stayed open, so the trace showed nothing and a wake that came after the read
+// (a retry, a lapsed lease) had to be caught by the wake path's handled check
+// (CW-20261021-0029). Receipt recording is best-effort and runs on every call,
+// including an idempotent replay, so a crash between the two writes heals on
+// the caller's retry, exactly as in Consume. read_at stays the core write;
+// consumed_at is not touched (attention state is not consumption).
+func (d *deliveryBackedStore) MarkRead(ctx context.Context, id string, recipient messaging.Address) error {
+	if err := d.messagingStore.MarkRead(ctx, id, recipient); err != nil {
+		return err
+	}
+	var deliveryID sql.NullString
+	if err := d.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&deliveryID); err != nil {
+		log.Printf("delivery store: mark read: read back delivery_id for %s failed (best-effort receipt recording skipped): %v", id, err)
+		return nil
+	}
+	if deliveryID.String != "" {
+		d.recordConsumedReceipts(ctx, id, deliveryID.String, recipient)
+	}
 	return nil
 }
 
