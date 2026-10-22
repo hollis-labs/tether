@@ -137,6 +137,16 @@ message waits in the inbox until the agent pulls it; the wake retries on its own
 agent's inbox-check procedure is the backstop. Sessions started before this change do not
 have the variable until they are relaunched.
 
+Deployment note: the stand-down lives in the tether-mail plugin, and a hosted Claude session
+loads that plugin from the copy on the host it runs on, not from the repository. On the
+worker host that is the global copy `~/.claude/skills/tether-mail` (the agent directories
+under `dev/agents/*/plugins/tether-mail` are separate copies). A plugin release therefore
+reaches hosted sessions only when that host copy is updated too; until then the plugin keeps
+injecting there and the session gets each message twice (seen live on 2026-10-22 with a copy
+dated 2026-10-14). An already-running session keeps the environment it was launched with and
+the watcher its plugin already started, so it needs a relaunch to get the marker and drop the
+stale watcher.
+
 ### Retry
 
 A notify call's own wake attempt is synchronous and best-effort, but a wake that
