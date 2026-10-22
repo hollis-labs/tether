@@ -108,6 +108,35 @@ The default wake text tells the agent it has unread mail and asks it to run its
 normal inbox-check procedure. It does not require the agent to abandon current
 work unless the agent's own checklist treats the message as urgent.
 
+### One delivery path per hosted session
+
+A session the hub manages is woken by the hub, and only by the hub. Every such session's
+process gets `TETHER_HOSTED_SESSION=<session id>` (daemon launches and worker-hosted
+launches both), and the tether-mail plugin does nothing when it sees it: before this, a
+hosted session received each message twice (the wake turn plus the plugin's prompt) and N
+times when N sessions shared one agent URN. The plugin remains the push path for plain
+local sessions, which have no such variable.
+
+Settlement, so a handled message is never delivered again:
+
+- `mark read` (`POST /messages/{id}/read`, MCP `tether_message_mark_read`) stamps `read_at`
+  **and settles the delivery**: it records the host_accepted, turn_submitted and consumed
+  receipts the way `consume` does, so a read message traces as consumed/delivered. It is
+  idempotent, only the addressed recipient can do it, and it never takes another claimant's
+  lease. `consumed_at` is not touched.
+- A wake that arrives after the message was read, or whose lease lapsed after the read, is
+  dropped: the wake path settles the delivery instead of submitting a turn. During a retry
+  backoff the delivery cannot be claimed, so it is settled by the next attempt (seconds).
+- A live recipient session's `inbox` pull returns unread messages only; messages it already
+  read are settled in the pull (delivered, delivery closed) and never come back. Operator and
+  CLI pulls are the plain pull.
+
+Known risk: in a hosted session the hub wake is the only push. If the hub cannot wake it
+(no live session resolves for the address, the session stays busy, the hub is down) the
+message waits in the inbox until the agent pulls it; the wake retries on its own and the
+agent's inbox-check procedure is the backstop. Sessions started before this change do not
+have the variable until they are relaunched.
+
 ### Retry
 
 A notify call's own wake attempt is synchronous and best-effort, but a wake that
@@ -129,7 +158,7 @@ There are two read surfaces with different semantics.
 
 | Surface | Behavior | Use |
 |---|---|---|
-| `inbox` | Destructive agent pull. Returned messages are marked `delivered_at` and will not appear in later inbox pulls. | Agent runtime checklists. |
+| `inbox` | Destructive agent pull. Returned messages are marked `delivered_at` and will not appear in later inbox pulls. A live recipient session's pull returns unread messages only and settles the ones it already read. | Agent runtime checklists. |
 | `list` | Non-destructive repeatable listing with `read_at`, `archived_at`, and `canceled_at` state. | Operator UIs, dashboards, audits. |
 
 CLI examples:
