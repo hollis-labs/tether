@@ -22,6 +22,10 @@ type Store interface {
 type Sessions interface {
 	Live(string) bool
 	LogicalAgentID(string) (string, error)
+	// BoundToActor reports whether actorID's current registry binding resolves to exactly
+	// this session: the rule the mailbox wake already uses to pick the session for an
+	// actor whose mailbox URN is not its logical agent id.
+	BoundToActor(sessionID, actorID string) bool
 }
 
 // Service owns the pull/consume operation over narrow storage/session seams.
@@ -76,7 +80,12 @@ func (s *Service) sessionIsRecipient(sessionID string, to messaging.Address) boo
 		return to.ID == sessionID
 	case messaging.KindAgent:
 		agentID, err := s.sessions.LogicalAgentID(sessionID)
-		return err == nil && agentID != "" && agentID == to.ID
+		if err == nil && agentID != "" && agentID == to.ID {
+			return true
+		}
+		// An actor whose mailbox URN is not its logical agent id (an agt_ id) is still this
+		// session's recipient when the actor's current binding resolves to this session.
+		return s.sessions.BoundToActor(sessionID, to.ID)
 	default:
 		return false
 	}

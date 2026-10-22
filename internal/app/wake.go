@@ -338,6 +338,21 @@ func (s *Service) ResolveActorSession(ctx context.Context, logicalAgentID string
 	return resolveActorSession(ctx, s.Store, s.Registry, s.runtimeSeam(), logicalAgentID)
 }
 
+// SessionBoundToActor reports whether actorID's current registry binding resolves to
+// exactly sessionID: the same binding-first rule the wake uses to pick an actor's session.
+// Nothing looser: no binding, a lapsed or revoked one, a pull-only bridge binding, or a
+// binding to a different session all answer false, and there is no fallback to the newest
+// running session of a logical agent.
+func (s *Service) SessionBoundToActor(sessionID, actorID string) bool {
+	if s.Registry == nil || sessionID == "" || actorID == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	b, err := s.Registry.CurrentBinding(ctx, registry.LogicalAgentBindingTarget(actorID))
+	return err == nil && !isPullOnly(b) && b.SessionID == sessionID
+}
+
 // AttemptWake drives one Claim/Ack/Nack wake attempt for messageID/to
 // against the already-resolved sessionID. See the file doc comment.
 func (s *Service) AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
