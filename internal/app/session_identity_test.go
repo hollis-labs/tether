@@ -359,3 +359,27 @@ func TestSessionCredentialTeamWriteOnlyWhenTeamsEnabled(t *testing.T) {
 		}
 	}
 }
+
+// A daemon-hosted session's process is told it is hub-managed, so a mail plugin in
+// it stays out and the hub wake is the single injector (CW-20261021-0029).
+func TestLocalLaunchMarksTheSessionAsHosted(t *testing.T) {
+	for _, brand := range []string{"claude", "codex"} {
+		t.Run(brand, func(t *testing.T) {
+			svc, rt, id, _ := credentialLaunch(t, brand)
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "parent", Scopes: []string{"session.write"}})
+			if _, err := svc.LaunchSessionWithContext(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			want := HostedSessionEnv + "=" + id
+			found := 0
+			for _, env := range rt.options.Env {
+				if env == want {
+					found++
+				}
+			}
+			if found != 1 {
+				t.Fatalf("%s set %d times in the session env, want once", want, found)
+			}
+		})
+	}
+}

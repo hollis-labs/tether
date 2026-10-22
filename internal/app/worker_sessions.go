@@ -92,6 +92,12 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 	}
 	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, PermissionMode: p.PermissionMode, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}, MCPServers: append([]string{}, launch.EffectiveMCPServers(p.Env)...), ResumeSessionID: p.ResumeProviderSessionID}
 	spec.ExtractRefs = p.ExtractRefs
+	// The plan's map is shared; the hosted marker belongs to this session only.
+	spec.Env = make(map[string]string, len(p.Env)+1)
+	for k, v := range p.Env {
+		spec.Env[k] = v
+	}
+	spec.Env[HostedSessionEnv] = id
 	if p.Command != "" {
 		spec.Command = filepath.Base(p.Command)
 	}

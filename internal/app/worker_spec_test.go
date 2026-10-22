@@ -83,3 +83,25 @@ func TestWorkerSpecCarriesResumeSessionID(t *testing.T) {
 		t.Fatalf("fresh launch carries resume id %q", spec.ResumeSessionID)
 	}
 }
+
+// A worker-hosted session's process is told it is hub-managed (CW-20261021-0029),
+// without writing into the plan's shared env map.
+func TestWorkerSpecMarksTheSessionAsHosted(t *testing.T) {
+	s := &Service{Catalog: &config.Catalog{}}
+	plan := launch.Plan{ProviderBrand: "claude", Env: map[string]string{"KEEP": "1"}}
+	spec, err := s.workerSpec(context.Background(), "sess-42", &plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Env[HostedSessionEnv] != "sess-42" || spec.Env["KEEP"] != "1" {
+		t.Fatalf("spec env = %v", spec.Env)
+	}
+	if _, leaked := plan.Env[HostedSessionEnv]; leaked {
+		t.Fatalf("the marker leaked into the plan's shared env: %v", plan.Env)
+	}
+	// A nil plan env still gets the marker.
+	spec, err = s.workerSpec(context.Background(), "sess-43", &launch.Plan{ProviderBrand: "claude"})
+	if err != nil || spec.Env[HostedSessionEnv] != "sess-43" {
+		t.Fatalf("nil plan env: %v %v", spec.Env, err)
+	}
+}

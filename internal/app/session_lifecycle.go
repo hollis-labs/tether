@@ -613,7 +613,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			return nil, err
 		}
 	}
-	sessionEnv := map[string]string{"TETHER_TOKEN": token}
+	sessionEnv := map[string]string{"TETHER_TOKEN": token, HostedSessionEnv: sessionID}
 	if token == "" {
 		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 	}
