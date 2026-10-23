@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/launch"
@@ -57,5 +59,56 @@ func TestLeaseActorBindingNamesTheRunningSessionItDisplaces(t *testing.T) {
 	// Re-leasing the session that already holds it displaces nobody.
 	if got := svc.leaseActorBinding("c", "general"); got != "" {
 		t.Fatalf("re-lease by the holder displaced %q", got)
+	}
+}
+
+// Under concurrent launches binding_taken_from is the holder each insert actually
+// displaced: compared with the committed generations in order (Reviewer hold on #504).
+func TestConcurrentReplaceReportsTheActualDisplacedHolder(t *testing.T) {
+	svc := bindingFixture(t)
+	const n = 20
+	for i := 0; i < n; i++ {
+		addSession(t, svc, fmt.Sprintf("s%d", i), session.StateRunning)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	reported := map[string]string{}
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("s%d", i)
+			<-start
+			taken := svc.leaseActorBinding(id, "general")
+			mu.Lock()
+			reported[id] = taken
+			mu.Unlock()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	rows, err := svc.Store.DB().Query(`SELECT session_id FROM runtime_bindings WHERE target_urn=? ORDER BY generation`, registry.LogicalAgentBindingTarget("general"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	prev, seen := "", 0
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if reported[id] != prev {
+			t.Errorf("%s reported displaced=%q, actual preceding holder=%q", id, reported[id], prev)
+		}
+		prev = id
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if seen != n {
+		t.Fatalf("%d generations, want %d", seen, n)
 	}
 }

@@ -986,9 +986,8 @@ func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) string {
 	if s.Registry == nil || strings.TrimSpace(logicalAgentID) == "" {
 		return ""
 	}
-	target := registry.LogicalAgentBindingTarget(logicalAgentID)
-	taken := s.liveBindingHolder(target, sessionID)
-	if _, err := s.Registry.LeaseBinding(context.Background(), target, sessionID, localHostID, sessionID, nil, registry.VisibilityPrivateLocal, 0); err != nil {
+	taken, err := s.leaseBindingTracked(context.Background(), registry.LogicalAgentBindingTarget(logicalAgentID), sessionID, localHostID, registry.VisibilityPrivateLocal)
+	if err != nil {
 		log.Printf("app: lease runtime binding for logical agent %q session %q failed (non-fatal): %v", logicalAgentID, sessionID, err)
 		return ""
 	}
@@ -996,25 +995,31 @@ func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) string {
 	return taken
 }
 
-// liveBindingHolder is the session that currently holds target and is still running,
-// when that is not sessionID itself; "" when the address is free, held by an ended
-// session, or already held by sessionID. A launch takes the address either way (a new
-// binding generation fences the old holder out); this only names who was displaced.
-func (s *Service) liveBindingHolder(target, sessionID string) string {
-	if s.Registry == nil || s.Store == nil {
-		return ""
+// leaseBindingTracked leases target for sessionID (a new generation; the previous
+// holder is fenced out, as it always has been) and returns the running session that
+// was displaced, "" when the address was free, held by an ended session, or already
+// held by sessionID. The previous holder is read inside the lease transaction, so
+// under concurrent launches it is the holder this very insert displaced, not a stale
+// earlier read (CW-20261023-0018).
+func (s *Service) leaseBindingTracked(ctx context.Context, target, sessionID, hostID string, visibility registry.PublicationVisibility) (string, error) {
+	var running string
+	hold := func(ctx context.Context, tx *sql.Tx, holder string) (bool, error) {
+		var state string
+		switch e := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, holder).Scan(&state); {
+		case errors.Is(e, sql.ErrNoRows):
+			return false, nil
+		case e != nil:
+			return false, e
+		}
+		if !session.State(state).Terminal() {
+			running = holder
+		}
+		return false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	cur, err := s.Registry.CurrentBinding(ctx, target)
-	if err != nil || cur.SessionID == "" || cur.SessionID == sessionID {
-		return ""
+	if _, err := s.Registry.LeaseBindingUnlessHeld(ctx, target, sessionID, hostID, sessionID, nil, visibility, 0, hold); err != nil {
+		return "", err
 	}
-	row, err := s.Store.GetSession(cur.SessionID)
-	if err != nil || session.State(row.State).Terminal() {
-		return ""
-	}
-	return cur.SessionID
+	return running, nil
 }
 
 func logBindingTaken(logicalAgentID, sessionID, takenFrom string) {

@@ -343,6 +343,10 @@ func (s *stubStorage) RegisterWithExternalKey(context.Context, registry.Profile,
 func (s *stubStorage) LeaseBinding(context.Context, string, string, string, string, []string, registry.PublicationVisibility, time.Duration) (registry.RuntimeBinding, error) {
 	panic("stubStorage.LeaseBinding: unexpected call")
 }
+func (s *stubStorage) LeaseBindingUnlessHeld(context.Context, string, string, string, string, []string, registry.PublicationVisibility, time.Duration, registry.HoldFunc) (registry.RuntimeBinding, error) {
+	panic("stubStorage.LeaseBindingUnlessHeld: unexpected call")
+}
+
 func (s *stubStorage) LeaseBindingUnlessVisibility(context.Context, string, string, string, string, []string, registry.PublicationVisibility, time.Duration, ...registry.PublicationVisibility) (registry.RuntimeBinding, error) {
 	panic("stubStorage.LeaseBindingUnlessVisibility: unexpected call")
 }
