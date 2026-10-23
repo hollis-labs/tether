@@ -387,3 +387,16 @@ still running, the hub logs it and the launch response carries `binding_taken_fr
 session id). Sessions that must stay individually reachable — several parallel workers of one
 shared agent — are addressed by session URN (`msg://session/<authority>/<session_id>`), not by the
 shared agent address.
+
+A launch profile or launch file can say what its launches do with the address, under `lifecycle`:
+
+```yaml
+lifecycle:
+  binding: replace   # default: take the address, as above
+  # binding: keep   # take it only when no other session still holds it
+  # binding: none   # never take it; address the session by session URN
+```
+
+`keep` still takes the address for a resume or replacement of the session that holds it, and when it
+declines the launch response carries `binding_held_by` (the session that kept it). Unset behaves as
+`replace`; the launch overrides the agent field by field, like the rest of `lifecycle`.

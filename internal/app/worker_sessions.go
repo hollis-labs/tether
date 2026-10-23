@@ -255,16 +255,19 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 			log.Printf("worker session %s: could not save ref attribution", row.ID)
 		}
 	}
-	var bindingTakenFrom string
+	var bindingTakenFrom, bindingHeldBy string
 	if s.Registry != nil && p.LogicalAgentID != "" {
 		var err error
-		bindingTakenFrom, err = s.leaseBindingTracked(ctx, registry.LogicalAgentBindingTarget(p.LogicalAgentID), row.ID, row.WorkerID, registry.VisibilityTetherHosted)
+		bindingTakenFrom, bindingHeldBy, err = s.leaseBindingByMode(ctx, registry.LogicalAgentBindingTarget(p.LogicalAgentID), row.ID, row.WorkerID, registry.VisibilityTetherHosted, p.Lifecycle.BindingMode(), p.ResumeSourceSessionID)
 		if err != nil {
 			return nil, err
 		}
+		if bindingHeldBy != "" {
+			log.Printf("app: session %q did not take the mail binding of logical agent %q: session %q still holds it (lifecycle.binding=keep)", row.ID, p.LogicalAgentID, bindingHeldBy)
+		}
 		logBindingTaken(p.LogicalAgentID, row.ID, bindingTakenFrom)
 	}
-	return &Launched{SessionID: row.ID, Workspace: workspace.Open(row.Workspace, row.ID), Plan: p, ProviderKind: row.ProviderKind, BindingTakenFrom: bindingTakenFrom}, nil
+	return &Launched{SessionID: row.ID, Workspace: workspace.Open(row.Workspace, row.ID), Plan: p, ProviderKind: row.ProviderKind, BindingTakenFrom: bindingTakenFrom, BindingHeldBy: bindingHeldBy}, nil
 }
 func (s *Service) sendWorkerCommand(ctx context.Context, row *store.SessionRow, kind string, data []byte) error {
 	wait, cancel := context.WithTimeout(ctx, 30*time.Second)

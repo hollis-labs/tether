@@ -386,6 +386,7 @@ func launchResponseOf(res LaunchResult) LaunchResponse {
 		LogicalAgentID:   res.LogicalAgentID,
 		Replayed:         res.Replayed,
 		BindingTakenFrom: res.BindingTakenFrom,
+		BindingHeldBy:    res.BindingHeldBy,
 	}
 }
 

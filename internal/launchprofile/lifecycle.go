@@ -19,6 +19,27 @@ type LifecyclePolicy struct {
 	RequestGrace       *string `yaml:"request_grace,omitempty" json:"request_grace,omitempty"`
 	TerminateGrace     *string `yaml:"terminate_grace,omitempty" json:"terminate_grace,omitempty"`
 	KillGrace          *string `yaml:"kill_grace,omitempty" json:"kill_grace,omitempty"`
+	// Binding says what a launch does with its logical agent's mail address
+	// (CW-20261023-0018): "replace" (default) takes it, as every launch always has;
+	// "keep" takes it only when no other session still holds it (a resume or
+	// replacement of the holder still takes it over); "none" never takes it, so the
+	// session is addressed by session URN. Use keep or none for a shared agent that
+	// runs several sessions at once.
+	Binding *string `yaml:"binding,omitempty" json:"binding,omitempty"`
+}
+
+const (
+	BindingReplace = "replace"
+	BindingKeep    = "keep"
+	BindingNone    = "none"
+)
+
+// BindingMode is the effective binding mode: "replace" unless set.
+func (p *LifecyclePolicy) BindingMode() string {
+	if p == nil || p.Binding == nil || *p.Binding == "" {
+		return BindingReplace
+	}
+	return *p.Binding
 }
 
 type LifecycleDurations struct {
@@ -42,6 +63,10 @@ func MergeLifecycle(base, override *LifecyclePolicy) *LifecyclePolicy {
 				*dst = &v
 			}
 		}
+		if p.Binding != nil {
+			v := *p.Binding
+			out.Binding = &v
+		}
 	}
 	return out
 }
@@ -58,6 +83,11 @@ func (p *LifecyclePolicy) Durations() (LifecycleDurations, error) {
 	}{
 		{"idle_timeout", p.IdleTimeout, &d.IdleTimeout}, {"stop_after_final_turn", p.StopAfterFinalTurn, &d.StopAfterFinalTurn}, {"max_duration", p.MaxDuration, &d.MaxDuration}, {"lease_duration", p.LeaseDuration, &d.LeaseDuration},
 		{"orphan_grace", p.OrphanGrace, &d.OrphanGrace}, {"request_grace", p.RequestGrace, &d.RequestGrace}, {"terminate_grace", p.TerminateGrace, &d.TerminateGrace}, {"kill_grace", p.KillGrace, &d.KillGrace},
+	}
+	switch p.BindingMode() {
+	case BindingReplace, BindingKeep, BindingNone:
+	default:
+		return d, fmt.Errorf("lifecycle.binding must be replace, keep or none")
 	}
 	for _, f := range fields {
 		if f.value == nil {

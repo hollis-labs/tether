@@ -135,6 +135,9 @@ type LaunchResult struct {
 	// BindingTakenFrom is the session that held the logical agent's mail binding and
 	// was still running when this launch took it over (CW-20261023-0018).
 	BindingTakenFrom string
+	// BindingHeldBy is the running session that kept the logical agent's address
+	// because the launch's lifecycle.binding is "keep".
+	BindingHeldBy string
 }
 
 // (RuntimeKind / Capabilities live in agentsessions; see
@@ -267,6 +270,10 @@ type LaunchResponse struct {
 	// and was still running when this launch took it over. Mail to the agent's
 	// address now reaches this session only; address the other one by session URN.
 	BindingTakenFrom string `json:"binding_taken_from,omitempty"`
+	// BindingHeldBy names the running session that kept the logical agent's mail
+	// address because this launch's lifecycle.binding is "keep"; this session is
+	// addressed by session URN. Omitted when this launch holds (or never wanted) it.
+	BindingHeldBy string `json:"binding_held_by,omitempty"`
 }
 
 type WaitResponse struct {

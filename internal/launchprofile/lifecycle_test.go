@@ -1,6 +1,7 @@
 package launchprofile
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,5 +53,29 @@ func TestLifecycleStopAfterFinalTurnIsOptInAndCascades(t *testing.T) {
 	}
 	if _, err := (&LifecyclePolicy{StopAfterFinalTurn: durationText("-1s")}).Durations(); err == nil {
 		t.Fatal("negative grace accepted")
+	}
+}
+
+func TestLifecycleBindingMode(t *testing.T) {
+	str := func(s string) *string { return &s }
+	if got := (*LifecyclePolicy)(nil).BindingMode(); got != BindingReplace {
+		t.Fatalf("nil policy mode = %q", got)
+	}
+	for _, mode := range []string{BindingReplace, BindingKeep, BindingNone} {
+		if _, err := (&LifecyclePolicy{Binding: str(mode)}).Durations(); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+	}
+	if _, err := (&LifecyclePolicy{Binding: str("steal")}).Durations(); err == nil || !strings.Contains(err.Error(), "lifecycle.binding") {
+		t.Fatalf("an unknown mode was accepted: %v", err)
+	}
+	// The launch overrides the agent; unset inherits.
+	merged := MergeLifecycle(&LifecyclePolicy{Binding: str(BindingNone)}, &LifecyclePolicy{IdleTimeout: str("1m")})
+	if merged.BindingMode() != BindingNone {
+		t.Fatalf("inherited mode = %q, want none", merged.BindingMode())
+	}
+	merged = MergeLifecycle(&LifecyclePolicy{Binding: str(BindingNone)}, &LifecyclePolicy{Binding: str(BindingKeep)})
+	if merged.BindingMode() != BindingKeep {
+		t.Fatalf("overridden mode = %q, want keep", merged.BindingMode())
 	}
 }

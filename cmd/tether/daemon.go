@@ -968,6 +968,7 @@ func (a *serviceAdapter) CreateSession(launchID string) (api.LaunchResult, error
 		ProviderKind:     l.ProviderKind,
 		LogicalAgentID:   l.Plan.LogicalAgentID,
 		BindingTakenFrom: l.BindingTakenFrom,
+		BindingHeldBy:    l.BindingHeldBy,
 	}, nil
 }
 
@@ -984,6 +985,7 @@ func (a *serviceAdapter) CreateSessionWithBootPrompt(launchID, bootPrompt string
 		ProviderKind:     l.ProviderKind,
 		LogicalAgentID:   l.Plan.LogicalAgentID,
 		BindingTakenFrom: l.BindingTakenFrom,
+		BindingHeldBy:    l.BindingHeldBy,
 	}, nil
 }
 
@@ -1018,6 +1020,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		LogicalAgentID:   l.Plan.LogicalAgentID,
 		Replayed:         l.Replayed,
 		BindingTakenFrom: l.BindingTakenFrom,
+		BindingHeldBy:    l.BindingHeldBy,
 	}, nil
 }
 
@@ -1049,6 +1052,7 @@ func (a *serviceAdapter) LaunchSessionWithContext(ctx context.Context, sessionID
 		LogicalAgentID:   l.Plan.LogicalAgentID,
 		Replayed:         l.Replayed,
 		BindingTakenFrom: l.BindingTakenFrom,
+		BindingHeldBy:    l.BindingHeldBy,
 	}, nil
 }
 
