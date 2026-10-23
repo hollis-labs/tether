@@ -62,3 +62,47 @@ func firstID(created []byte) []byte {
 	rest := created[i+len(k):]
 	return rest[:bytes.IndexByte(rest, '"')]
 }
+
+// A shared or delegated sender address does not share keys: the namespace is the
+// verified principal, so a principal that may act as the address and another that
+// merely claims it each have their own.
+func TestIdempotencyKeyIsNotSharedThroughADelegatedAddress(t *testing.T) {
+	h := newSenderHarness(t, identity.Observe)
+	body := `{"from":"msg://agent/agent-mux/builder","to":"msg://agent/test/delegated-target","kind":"notice","payload":{"text":"same"}}`
+	code, first := keyedPost(t, h, "agentsession", "shared-key", body) // may act as builder
+	if code != http.StatusCreated {
+		t.Fatalf("delegate send: %d %s", code, first)
+	}
+	used, raw := keyedPost(t, h, "sendas", "shared-key", body) // only claims builder
+	fresh, _ := keyedPost(t, h, "sendas", "other-key", body)
+	if used != fresh || bytes.Contains(raw, firstID(first)) {
+		t.Fatalf("a claimant of the shared address reached the delegate's key: used=%d fresh=%d body=%s", used, fresh, raw)
+	}
+	// The delegate itself still dedupes.
+	if code, again := keyedPost(t, h, "agentsession", "shared-key", body); code != http.StatusCreated || !bytes.Contains(again, firstID(first)) {
+		t.Fatalf("delegate repeat: %d %s", code, again)
+	}
+}
+
+// A send whose enqueue committed but whose content insert failed is repaired by a
+// retry with the same key: one content row, no duplicate (the half-commit path).
+func TestRetryRepairsEnqueueThenInsertFailure(t *testing.T) {
+	h := newSenderHarness(t, identity.Enforce)
+	if _, err := h.db.DB().Exec(`CREATE TRIGGER fail_insert BEFORE INSERT ON messages BEGIN SELECT RAISE(FAIL,'insertion fault'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"to":"msg://agent/test/target","kind":"notice","payload":{"text":"same"}}`
+	if code, _ := keyedPost(t, h, "session", "repair-key", body); code != http.StatusInternalServerError {
+		t.Fatalf("fault status %d, want 500", code)
+	}
+	if _, err := h.db.DB().Exec(`DROP TRIGGER fail_insert`); err != nil {
+		t.Fatal(err)
+	}
+	if code, raw := keyedPost(t, h, "session", "repair-key", body); code != http.StatusCreated {
+		t.Fatalf("retry %d %s", code, raw)
+	}
+	var n int
+	if err := h.db.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("content rows = %d err=%v, want 1", n, err)
+	}
+}
