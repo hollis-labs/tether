@@ -25,6 +25,7 @@ var (
 	messageSendPayloadJSON string
 	messageSendSubject     string
 	messageSendMetadata    []string
+	messageSendIdempotency string
 	messageNotifyUrgency   string
 	messageNotifySession   string
 	messageNotifyNoWake    bool
@@ -75,15 +76,16 @@ var messageSendCmd = &cobra.Command{
 			return classifyErr(err)
 		}
 		sent, err := c.MessageSend(cmdCtx(cmd), client.MessageSendRequest{
-			Kind:        messageSendKind,
-			Channel:     messageSendChannel,
-			From:        messageSendFrom,
-			To:          messageSendTo,
-			ThreadID:    messageSendThread,
-			InReplyTo:   messageSendInReplyTo,
-			Payload:     payload,
-			ContentType: "application/json",
-			Metadata:    metadata,
+			Kind:           messageSendKind,
+			Channel:        messageSendChannel,
+			From:           messageSendFrom,
+			To:             messageSendTo,
+			ThreadID:       messageSendThread,
+			InReplyTo:      messageSendInReplyTo,
+			Payload:        payload,
+			ContentType:    "application/json",
+			Metadata:       metadata,
+			IdempotencyKey: messageSendIdempotency,
 		})
 		if err != nil {
 			return classifyErr(err)
@@ -122,15 +124,16 @@ var messageNotifyCmd = &cobra.Command{
 		wake := !messageNotifyNoWake
 		out, err := c.MessageNotify(cmdCtx(cmd), client.MessageNotifyRequest{
 			MessageSendRequest: client.MessageSendRequest{
-				Kind:        messageSendKind,
-				Channel:     messageSendChannel,
-				From:        messageSendFrom,
-				To:          messageSendTo,
-				ThreadID:    messageSendThread,
-				InReplyTo:   messageSendInReplyTo,
-				Payload:     payload,
-				ContentType: "application/json",
-				Metadata:    metadata,
+				Kind:           messageSendKind,
+				Channel:        messageSendChannel,
+				From:           messageSendFrom,
+				To:             messageSendTo,
+				ThreadID:       messageSendThread,
+				InReplyTo:      messageSendInReplyTo,
+				Payload:        payload,
+				ContentType:    "application/json",
+				Metadata:       metadata,
+				IdempotencyKey: messageSendIdempotency,
 			},
 			Urgency:   messageNotifyUrgency,
 			SessionID: messageNotifySession,
@@ -642,6 +645,7 @@ func init() {
 	messageSendCmd.Flags().StringVar(&messageSendPayloadJSON, "payload-json", "", "raw JSON payload body")
 	messageSendCmd.Flags().StringVar(&messageSendSubject, "subject", "", "subject for generated JSON payload")
 	messageSendCmd.Flags().StringArrayVar(&messageSendMetadata, "metadata", nil, "metadata key=value; repeatable")
+	messageSendCmd.Flags().StringVar(&messageSendIdempotency, "idempotency-key", "", "repeating this key from the same sender returns the earlier message (default: a fresh key per call, reused if the call is retried)")
 	for _, c := range []*cobra.Command{messageNotifyCmd} {
 		c.Flags().StringVar(&messageSendFrom, "from", "", "sender URN")
 		c.Flags().StringVar(&messageSendTo, "to", "", "recipient URN")
@@ -652,6 +656,7 @@ func init() {
 		c.Flags().StringVar(&messageSendPayloadJSON, "payload-json", "", "raw JSON payload body")
 		c.Flags().StringVar(&messageSendSubject, "subject", "", "subject for generated JSON payload")
 		c.Flags().StringArrayVar(&messageSendMetadata, "metadata", nil, "metadata key=value; repeatable")
+		c.Flags().StringVar(&messageSendIdempotency, "idempotency-key", "", "repeating this key from the same sender returns the earlier message (default: a fresh key per call, reused if the call is retried)")
 	}
 	messageNotifyCmd.Flags().StringVar(&messageNotifyUrgency, "urgency", "normal", "urgency: very-low, low, normal, high")
 	messageNotifyCmd.Flags().StringVar(&messageNotifySession, "session", "", "explicit live session ID to wake")

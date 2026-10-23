@@ -147,6 +147,23 @@ dated 2026-10-14). An already-running session keeps the environment it was launc
 the watcher its plugin already started, so it needs a relaunch to get the marker and drop the
 stale watcher.
 
+### Repeating a send safely
+
+A send that times out may still have been stored. Give it an idempotency key and repeat it:
+`tether messages send --idempotency-key <key> ...` (also `notify`), the `idempotency_key`
+property on `tether_message_send` and `tether_message_notify`, or an `Idempotency-Key` header on
+`POST /messages` and `POST /messages/notify`. A repeated key from the same sender returns the
+message already stored; the same key with a different body is `409 idempotency_conflict`; the key
+is scoped by the sender address and, when the request carries a verified principal, by that principal too (the server derives it, a claimed From cannot widen it), so one principal cannot collide with or probe another's keys; with no verified principal the key is scoped by the sender address alone. This applies to a key set as `tether.message_id` metadata with no header too. The key maps onto the `tether.message_id` metadata the delivery store already
+used, so setting that metadata by hand is the same thing, and a header that disagrees with it is
+`400`. Without a key, the Tether client uses the `tether.message_id` metadata if the caller set it, else
+picks a fresh key per call, and reuses it if it repeats the call after a timeout, a dropped
+connection, or a response that was lost or cut off after the server committed (three attempts;
+never after a refused connection, an unsuccessful status or a malformed body), so an automatic
+repeat cannot duplicate. Two separate calls with no key are still two messages.
+`tether-remote` goes over ssh, so a timeout of the ssh wrapper itself is outside this: pass
+`--idempotency-key` and check `messages list` before repeating by hand.
+
 ### Retry
 
 A notify call's own wake attempt is synchronous and best-effort, but a wake that

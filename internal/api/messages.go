@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -139,11 +141,15 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", req.Kind))
 		return
 	}
+	if !s.applySendIdempotencyKey(w, r, &req.Metadata) {
+		return
+	}
 	envMeta := messaging.Envelope{From: req.From, Metadata: req.Metadata}
 	if !s.stampSender(w, r, &envMeta) {
 		return
 	}
 	req.From, req.Metadata = envMeta.From, envMeta.Metadata
+	scopeIdempotencyKey(req.Metadata)
 	if req.From.IsZero() || req.To.IsZero() {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "from and to are required")
 		return
@@ -477,6 +483,9 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
 		return
 	}
+	if !s.applySendIdempotencyKey(w, r, &env.Metadata) {
+		return
+	}
 	// Validate kind against closed enum. Empty kind is rejected — all new
 	// messages must have an explicit kind (backwards-compat empty-kind is
 	// only preserved in the legacy /broker surface).
@@ -493,6 +502,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	if !s.stampSender(w, r, &env) {
 		return
 	}
+	scopeIdempotencyKey(env.Metadata)
 
 	// A reply to a message a session routed to a channel goes to that session
 	// as its next turn (CW-20261002-0065); other in_reply_to use is unchanged.
@@ -1098,6 +1108,7 @@ func (s *Server) handleMessageRequest(w http.ResponseWriter, r *http.Request) {
 	if !s.stampSender(w, r, &env) {
 		return
 	}
+	scopeIdempotencyKey(env.Metadata)
 
 	disp := messaging.NewDispatcher(s.MessageStore)
 	waitCtx, cancel := context.WithTimeout(r.Context(), timeoutDur)
@@ -1247,4 +1258,45 @@ func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messa
 		return s.Channels.Publish(ctx, env)
 	}
 	return s.MessageStore.Send(ctx, env)
+}
+
+// applySendIdempotencyKey maps the Idempotency-Key header onto the metadata key
+// the delivery store already uses to deduplicate a send (checked against the
+// message digest), so a client that retries after a timeout gets the stored
+// message back instead of a second one (CW-20261023-0018). A key set both ways
+// must agree.
+func (s *Server) applySendIdempotencyKey(w http.ResponseWriter, r *http.Request, meta *map[string]string) bool {
+	key := r.Header.Get("Idempotency-Key")
+	if key == "" {
+		return true
+	}
+	if msg := validateIdempotencyKey(key); msg != "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
+		return false
+	}
+	if *meta == nil {
+		*meta = map[string]string{}
+	}
+	if have := (*meta)[wakeintent.MessageIDKey]; have != "" && have != key {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "Idempotency-Key conflicts with metadata "+wakeintent.MessageIDKey)
+		return false
+	}
+	(*meta)[wakeintent.MessageIDKey] = key
+	return true
+}
+
+// scopeIdempotencyKey binds a caller-supplied key, from the header or from the
+// tether.message_id metadata alike, to the server-derived verified principal that
+// sent the message, after stampSender recorded it. The delivery store scopes a key
+// by the claimed From, which a caller can choose; without this, a second principal
+// claiming the same From could collide with, and learn about, the first one's keys.
+// With no verified principal the key stays as given (the legacy namespace). No
+// in-process sender goes through here, and nothing else reads this metadata key.
+func scopeIdempotencyKey(meta map[string]string) {
+	principal, key := meta[MetaFromPrincipal], meta[wakeintent.MessageIDKey]
+	if key == "" || principal == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(principal))
+	meta[wakeintent.MessageIDKey] = "p" + hex.EncodeToString(sum[:8]) + ":" + key
 }
