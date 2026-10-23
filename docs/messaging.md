@@ -375,3 +375,12 @@ start). Unset means FULL, unchanged. `NORMAL` syncs at checkpoints: it cannot co
 database, a process crash loses nothing, but a power loss or OS crash can lose the most recent
 commits. Change it only with the operator's approval. Shim retirement requires FULL or EXTRA and
 refuses to run under `NORMAL`.
+
+### Reading an agent instance mailbox
+
+A session reads and settles its own instance mailbox (`msg://agent/<authority>/<agent>/<session id>`
+with its own id and its own logical agent) as `?as=` on the inbox, list, read and consume routes,
+also under `identity: enforce`. Its live pull of that mailbox is unread-only and consumed like a
+session pulling its own address. Nothing else is recipient: a sibling session of the same agent,
+a session of another agent, or the holder of the agent's bare binding. This is receive-only: the
+verified principal's address set, and with it who a session may send as, is unchanged.

@@ -132,3 +132,35 @@ func TestPull_BindingMakesTheSessionTheRecipientOfAnActorMailbox(t *testing.T) {
 		})
 	}
 }
+
+// An agent instance mailbox belongs to its one session: another session of the same
+// logical agent is not its recipient, and the agent's binding does not make it one
+// (CW-20261023-0018).
+func TestPull_InstanceMailboxBelongsToThatSessionOnly(t *testing.T) {
+	instance := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker", SubID: "s1"}
+	bare := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	otherAgent := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "general", SubID: "s1"}
+	for name, tc := range map[string]struct {
+		sessionID string
+		to        messaging.Address
+		bound     map[string]string
+		recipient bool
+	}{
+		"the instance's own session":                {"s1", instance, nil, true},
+		"a sibling session of the same agent":       {"s2", instance, nil, false},
+		"a sibling that holds the agent's binding":  {"s2", instance, map[string]string{"worker": "s2"}, false},
+		"the instance session, wrong logical agent": {"s1", otherAgent, nil, false},
+		"the bare mailbox, a session of that agent": {"s2", bare, nil, true},
+		"no session (operator pull) on an instance": {"", instance, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := &testStore{result: []messaging.Envelope{{ID: "m1"}}}
+			if _, err := New(st, &testSessions{bound: tc.bound}).Pull(context.Background(), tc.to, messaging.Filter{}, tc.sessionID); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(st.consumed) > 0; got != tc.recipient || st.unread != tc.recipient {
+				t.Fatalf("consumed=%v unreadOnly=%v, want recipient=%v", st.consumed, st.unread, tc.recipient)
+			}
+		})
+	}
+}
