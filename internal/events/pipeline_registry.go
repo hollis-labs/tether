@@ -66,6 +66,9 @@ func pipelinePolicies() map[string]admissionPolicy {
 		KindSessionBootDirPlanted, KindProviderSessionLost, KindProviderPermissionDenied, KindSessionShimStatus,
 		EventTypeToolCallStart, EventTypeToolCallEnd,
 		"session.reaper", "session.activity", "session.replaced_by", "session.native_resumed", "session.boot_recovery",
+		// Worker output frames are written by Store.RecordWorkerOutput on the outbox path;
+		// retained byte for byte like every other local-consumer kind (CW-20261023-0018).
+		"session.output",
 	} {
 		add(Compatibility, kind)
 	}
