@@ -139,6 +139,9 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", req.Kind))
 		return
 	}
+	if !s.applySendIdempotencyKey(w, r, &req.Metadata) {
+		return
+	}
 	envMeta := messaging.Envelope{From: req.From, Metadata: req.Metadata}
 	if !s.stampSender(w, r, &envMeta) {
 		return
@@ -475,6 +478,9 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	var env messaging.Envelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
+		return
+	}
+	if !s.applySendIdempotencyKey(w, r, &env.Metadata) {
 		return
 	}
 	// Validate kind against closed enum. Empty kind is rejected — all new
@@ -1247,4 +1253,29 @@ func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messa
 		return s.Channels.Publish(ctx, env)
 	}
 	return s.MessageStore.Send(ctx, env)
+}
+
+// applySendIdempotencyKey maps the Idempotency-Key header onto the metadata key
+// the delivery store already uses to deduplicate a send (scoped by sender and
+// checked against the message digest), so a client that retries after a timeout
+// gets the stored message back instead of a second one (CW-20261023-0018). A key
+// set both ways must agree.
+func (s *Server) applySendIdempotencyKey(w http.ResponseWriter, r *http.Request, meta *map[string]string) bool {
+	key := r.Header.Get("Idempotency-Key")
+	if key == "" {
+		return true
+	}
+	if msg := validateIdempotencyKey(key); msg != "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
+		return false
+	}
+	if *meta == nil {
+		*meta = map[string]string{}
+	}
+	if have := (*meta)[wakeintent.MessageIDKey]; have != "" && have != key {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "Idempotency-Key conflicts with metadata "+wakeintent.MessageIDKey)
+		return false
+	}
+	(*meta)[wakeintent.MessageIDKey] = key
+	return true
 }

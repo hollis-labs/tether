@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/callcontext"
@@ -87,6 +89,11 @@ type MessageSendRequest struct {
 	Payload     json.RawMessage   `json:"payload,omitempty"`
 	ContentType string            `json:"content_type,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	// IdempotencyKey travels as the Idempotency-Key header. A repeated key from the
+	// same sender returns the earlier message instead of storing a second one
+	// (CW-20261023-0018). Empty means the client picks a fresh key per call, so its
+	// own retry after a timeout cannot duplicate the message.
+	IdempotencyKey string `json:"-"`
 }
 
 // MessageNotifyRequest is the JSON body accepted by POST /messages/notify.
@@ -1084,14 +1091,9 @@ func (c *Client) MessageSend(ctx context.Context, msg MessageSendRequest) (Messa
 	if err != nil {
 		return MessageEnvelopeDTO{}, fmt.Errorf("marshal message request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages", bytes.NewReader(body))
+	resp, err := c.postKeyed(ctx, "/messages", body, msg.IdempotencyKey)
 	if err != nil {
 		return MessageEnvelopeDTO{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return MessageEnvelopeDTO{}, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
@@ -1104,6 +1106,58 @@ func (c *Client) MessageSend(ctx context.Context, msg MessageSendRequest) (Messa
 	return sent, nil
 }
 
+// messageSendAttempts bounds how often a send is repeated after a timeout or a
+// dropped connection. Every attempt carries the same Idempotency-Key, so a
+// request the server had already committed returns the stored message.
+const messageSendAttempts = 3
+
+// postKeyed posts body to path with an Idempotency-Key header (a fresh one when
+// key is empty) and repeats the same request after a timeout or a dropped
+// connection, never after a refused one or a canceled context.
+func (c *Client) postKeyed(ctx context.Context, path string, body []byte, key string) (*http.Response, error) {
+	if key == "" {
+		key = uuid.NewString()
+	}
+	var lastErr error
+	for attempt := 0; attempt < messageSendAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, wrapIfUnreachable(lastErr)
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", key)
+		resp, err := c.http.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !retryableTransport(err) {
+			break
+		}
+	}
+	return nil, wrapIfUnreachable(lastErr)
+}
+
+// retryableTransport is true for a request that may have reached the server: a
+// timeout, a reset or a closed connection after the request was written.
+func retryableTransport(err error) bool {
+	if isUnreachable(err) {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
+}
+
 // MessageNotify sends an envelope and asks the daemon to wake-inject a live
 // recipient session when one can be resolved.
 func (c *Client) MessageNotify(ctx context.Context, msg MessageNotifyRequest) (MessageNotifyResult, error) {
@@ -1111,14 +1165,9 @@ func (c *Client) MessageNotify(ctx context.Context, msg MessageNotifyRequest) (M
 	if err != nil {
 		return MessageNotifyResult{}, fmt.Errorf("marshal notify request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages/notify", bytes.NewReader(body))
+	resp, err := c.postKeyed(ctx, "/messages/notify", body, msg.IdempotencyKey)
 	if err != nil {
 		return MessageNotifyResult{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return MessageNotifyResult{}, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {

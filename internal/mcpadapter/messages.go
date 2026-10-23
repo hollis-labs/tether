@@ -34,6 +34,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 			gomcp.StringProp("payload_json", "JSON payload body (optional)", false),
 			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
 			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
+			gomcp.StringProp("idempotency_key", "Optional key; repeating it from the same sender returns the earlier message instead of storing a second one. Default: a fresh key per call, reused if the call is retried", false),
 		),
 		Handler: a.handleMessageSend,
 	}, Writes())
@@ -48,6 +49,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 			gomcp.StringProp("payload_json", "JSON payload body (optional)", false),
 			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
 			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
+			gomcp.StringProp("idempotency_key", "Optional key; repeating it from the same sender returns the earlier message instead of storing a second one. Default: a fresh key per call, reused if the call is retried", false),
 			gomcp.StringProp("urgency", "Urgency: very-low, low, normal, high (default normal)", false),
 			gomcp.StringProp("session_id", "Explicit live session ID to wake (optional override)", false),
 			gomcp.StringProp("wake_text", "Override daemon-generated mailbox wake text (optional)", false),
@@ -207,11 +209,12 @@ func (a *Adapter) handleMessageSend(ctx context.Context, args map[string]any) (a
 		return nil, toolError("internal_error", "tether_message_send requires daemon routing; start MCP with tether mcp")
 	}
 	sendReq := client.MessageSendRequest{
-		From:      fromURN,
-		To:        toURN,
-		Kind:      kind,
-		ThreadID:  str(args, "thread_id"),
-		InReplyTo: str(args, "in_reply_to"),
+		From:           fromURN,
+		To:             toURN,
+		Kind:           kind,
+		ThreadID:       str(args, "thread_id"),
+		InReplyTo:      str(args, "in_reply_to"),
+		IdempotencyKey: str(args, "idempotency_key"),
 	}
 	if p := str(args, "payload_json"); p != "" {
 		sendReq.Payload = []byte(p)
@@ -256,11 +259,12 @@ func (a *Adapter) handleMessageNotify(ctx context.Context, args map[string]any) 
 	wake := !boolArg(args, "no_wake")
 	notifyReq := client.MessageNotifyRequest{
 		MessageSendRequest: client.MessageSendRequest{
-			From:      fromURN,
-			To:        toURN,
-			Kind:      kind,
-			ThreadID:  str(args, "thread_id"),
-			InReplyTo: str(args, "in_reply_to"),
+			From:           fromURN,
+			To:             toURN,
+			Kind:           kind,
+			ThreadID:       str(args, "thread_id"),
+			InReplyTo:      str(args, "in_reply_to"),
+			IdempotencyKey: str(args, "idempotency_key"),
 		},
 		Urgency:   str(args, "urgency"),
 		SessionID: str(args, "session_id"),
