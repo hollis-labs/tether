@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,6 +81,13 @@ func Open(path string) (*Store, error) {
 func openDB(path string) (*Store, error) {
 	// DSN parameters are supported by modernc.org/sqlite.
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	syncMode, err := synchronousFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if syncMode != "" {
+		dsn += "&_pragma=synchronous(" + syncMode + ")"
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -536,4 +544,22 @@ func (s *Store) GetLaunchPlan(sessionID string) (*launch.Plan, error) {
 		return nil, fmt.Errorf("unmarshal launch plan: %w", err)
 	}
 	return &plan, nil
+}
+
+// SynchronousEnv names the optional override for SQLite's synchronous pragma
+// (CW-20261023-0018). Unset keeps SQLite's default, FULL: every commit syncs the
+// WAL. NORMAL syncs only at checkpoints: a power loss or OS crash can lose the most
+// recent commits (never corrupt the database); a process crash loses nothing.
+// Operator-approved change only. ShimRetirementStore refuses to run under NORMAL
+// (it requires FULL or EXTRA), by design.
+const SynchronousEnv = "TETHER_SQLITE_SYNCHRONOUS"
+
+// synchronousFromEnv returns the validated pragma value, or "" when unset.
+func synchronousFromEnv() (string, error) {
+	v := strings.ToUpper(strings.TrimSpace(os.Getenv(SynchronousEnv)))
+	switch v {
+	case "", "FULL", "NORMAL", "EXTRA":
+		return v, nil
+	}
+	return "", fmt.Errorf("%s=%q: want FULL, NORMAL or EXTRA", SynchronousEnv, os.Getenv(SynchronousEnv))
 }

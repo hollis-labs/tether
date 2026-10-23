@@ -347,3 +347,14 @@ restarts preserve that fence and drain new committed backlog. Existing mailbox
 attention history is not reconstructed. Stream-control `stream.*` kinds are
 excluded by both the projection and federation send boundary. Event retention,
 mailbox retention and existing access rules are unchanged.
+
+### SQLite durability setting
+
+The state database runs WAL with `synchronous=FULL` (SQLite's default): every commit syncs the
+log, and one connection serves all reads and writes, so on a busy hub a message write waits
+behind the event stream's commits (CW-20261023-0018). `TETHER_SQLITE_SYNCHRONOUS` in the daemon
+environment overrides it (`FULL`, `NORMAL` or `EXTRA`; anything else, `OFF` included, refuses to
+start). Unset means FULL, unchanged. `NORMAL` syncs at checkpoints: it cannot corrupt the
+database, a process crash loses nothing, but a power loss or OS crash can lose the most recent
+commits. Change it only with the operator's approval. Shim retirement requires FULL or EXTRA and
+refuses to run under `NORMAL`.
