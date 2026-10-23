@@ -255,12 +255,16 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 			log.Printf("worker session %s: could not save ref attribution", row.ID)
 		}
 	}
+	var bindingTakenFrom string
 	if s.Registry != nil && p.LogicalAgentID != "" {
-		if _, err := s.Registry.LeaseBinding(ctx, registry.LogicalAgentBindingTarget(p.LogicalAgentID), row.ID, row.WorkerID, row.ID, nil, registry.VisibilityTetherHosted, 0); err != nil {
+		var err error
+		bindingTakenFrom, err = s.leaseBindingTracked(ctx, registry.LogicalAgentBindingTarget(p.LogicalAgentID), row.ID, row.WorkerID, registry.VisibilityTetherHosted)
+		if err != nil {
 			return nil, err
 		}
+		logBindingTaken(p.LogicalAgentID, row.ID, bindingTakenFrom)
 	}
-	return &Launched{SessionID: row.ID, Workspace: workspace.Open(row.Workspace, row.ID), Plan: p, ProviderKind: row.ProviderKind}, nil
+	return &Launched{SessionID: row.ID, Workspace: workspace.Open(row.Workspace, row.ID), Plan: p, ProviderKind: row.ProviderKind, BindingTakenFrom: bindingTakenFrom}, nil
 }
 func (s *Service) sendWorkerCommand(ctx context.Context, row *store.SessionRow, kind string, data []byte) error {
 	wait, cancel := context.WithTimeout(ctx, 30*time.Second)

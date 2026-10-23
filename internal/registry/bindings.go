@@ -107,7 +107,7 @@ var ErrVisibilityConflict = errors.New("registry: binding visibility conflict")
 // means no expiry (the binding is current until explicitly revoked or
 // superseded by a newer generation).
 func (s *Storage) LeaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration) (RuntimeBinding, error) {
-	return s.leaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, nil)
+	return s.leaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, nil, nil)
 }
 
 // LeaseBindingUnlessVisibility mints a new binding exactly like LeaseBinding,
@@ -122,10 +122,31 @@ func (s *Storage) LeaseBinding(ctx context.Context, targetURN, sessionID, hostID
 // external caller and Tether's own internal launch path racing to bind the
 // same target_urn).
 func (s *Storage) LeaseBindingUnlessVisibility(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, blocked ...PublicationVisibility) (RuntimeBinding, error) {
-	return s.leaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, blocked)
+	return s.leaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, blocked, nil)
 }
 
-func (s *Storage) leaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, blocked []PublicationVisibility) (RuntimeBinding, error) {
+// ErrBindingHeld is returned by LeaseBindingUnlessHeld when its HoldFunc says the
+// current holder keeps the address.
+var ErrBindingHeld = errors.New("registry: binding held by the current holder")
+
+// HoldFunc decides, inside the lease transaction, whether the live current holder of
+// a target keeps it. It runs with the holder's session id (never the leasing session's
+// own) on the transaction's connection: it may read, and must not use any other
+// connection (the database has exactly one, so that would deadlock). Returning true
+// refuses the lease with ErrBindingHeld; false lets it proceed, and the func can note
+// who was displaced.
+type HoldFunc func(ctx context.Context, tx *sql.Tx, holderSessionID string) (bool, error)
+
+// LeaseBindingUnlessHeld mints a new binding exactly like LeaseBinding unless hold
+// says the live current holder keeps the address (ErrBindingHeld, nothing written).
+// The holder read, the decision and the insert run in ONE transaction, so concurrent
+// leasers cannot both take, or displace one another's, an address that hold would
+// keep (CW-20261023-0018).
+func (s *Storage) LeaseBindingUnlessHeld(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, hold HoldFunc) (RuntimeBinding, error) {
+	return s.leaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, nil, hold)
+}
+
+func (s *Storage) leaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, blocked []PublicationVisibility, hold HoldFunc) (RuntimeBinding, error) {
 	if targetURN == "" || sessionID == "" || hostID == "" || attemptID == "" {
 		return RuntimeBinding{}, fmt.Errorf("registry: lease binding: target_urn, session_id, host_id and attempt_id are required")
 	}
@@ -156,6 +177,27 @@ func (s *Storage) leaseBinding(ctx context.Context, targetURN, sessionID, hostID
 				if current.Visibility == v {
 					return RuntimeBinding{}, fmt.Errorf("%w: target_urn is currently bound with visibility %s", ErrVisibilityConflict, current.Visibility)
 				}
+			}
+		}
+	}
+
+	if hold != nil {
+		current, err := scanBindingTx(ctx, tx,
+			`SELECT `+bindingColumns+` FROM runtime_bindings
+			 WHERE target_urn = ? AND revoked_at IS NULL
+			   AND (lease_expires_at IS NULL OR lease_expires_at > ?)
+			 ORDER BY generation DESC LIMIT 1`,
+			targetURN, formatTime(time.Now().UTC()))
+		if err != nil && !errors.Is(err, ErrBindingNotFound) {
+			return RuntimeBinding{}, fmt.Errorf("registry: lease binding: read current binding: %w", err)
+		}
+		if err == nil && current.SessionID != sessionID {
+			held, herr := hold(ctx, tx, current.SessionID)
+			if herr != nil {
+				return RuntimeBinding{}, fmt.Errorf("registry: lease binding: hold decision: %w", herr)
+			}
+			if held {
+				return RuntimeBinding{}, ErrBindingHeld
 			}
 		}
 	}

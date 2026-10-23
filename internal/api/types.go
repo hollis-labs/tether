@@ -132,6 +132,9 @@ type LaunchResult struct {
 	// Replayed is true when an idempotent request returned an existing
 	// session (CW-20260930-0229).
 	Replayed bool
+	// BindingTakenFrom is the session that held the logical agent's mail binding and
+	// was still running when this launch took it over (CW-20261023-0018).
+	BindingTakenFrom string
 }
 
 // (RuntimeKind / Capabilities live in agentsessions; see
@@ -260,6 +263,10 @@ type LaunchResponse struct {
 	// Replayed is true when an idempotent request returned an existing
 	// session instead of creating or launching one (CW-20260930-0229).
 	Replayed bool `json:"replayed"`
+	// BindingTakenFrom names the session that held the logical agent's mail binding
+	// and was still running when this launch took it over. Mail to the agent's
+	// address now reaches this session only; address the other one by session URN.
+	BindingTakenFrom string `json:"binding_taken_from,omitempty"`
 }
 
 type WaitResponse struct {

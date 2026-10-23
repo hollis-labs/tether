@@ -66,6 +66,11 @@ type Launched struct {
 	// Replayed reports that an idempotent request returned an existing
 	// session rather than creating or launching one (CW-20260930-0229).
 	Replayed bool
+
+	// BindingTakenFrom is the session that held the logical agent's mail binding
+	// and was still running when this launch took it over ("" when the launch
+	// took nothing from a live session). CW-20261023-0018.
+	BindingTakenFrom string
 }
 
 // ErrSessionNotCreated is returned by LaunchSession when the target
@@ -800,6 +805,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}()
 	}
 
+	var bindingTakenFrom string
 	// Record this launch profile on the logical agent so the resume
 	// endpoint knows which catalog config to use next time.
 	if !plan.TeamMember {
@@ -817,7 +823,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		// the replaced side. Best-effort: a lease failure must not fail an
 		// otherwise-successful launch (established enhancement-write pattern,
 		// e.g. SetClaudeSessionID above).
-		s.leaseActorBinding(sessionID, plan.LogicalAgentID)
+		bindingTakenFrom = s.leaseActorBinding(sessionID, plan.LogicalAgentID)
 	}
 	s.watchSessionBindings(sessionID)
 	if plan.TeamMember && plan.ResumeSourceSessionID == "" && rt.Caps().JsonRpcStdio {
@@ -825,10 +831,11 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 
 	return &Launched{
-		SessionID:    sessionID,
-		Workspace:    ws,
-		Plan:         plan,
-		ProviderKind: rt.Kind(),
+		SessionID:        sessionID,
+		Workspace:        ws,
+		Plan:             plan,
+		ProviderKind:     rt.Kind(),
+		BindingTakenFrom: bindingTakenFrom,
 		Wait: func(ctx context.Context) (int, error) {
 			return s.Manager.WaitSession(ctx, sessionID)
 		},
@@ -975,13 +982,49 @@ func (s *Service) clearStopOnExit(id string) {
 // prior attempt under the same ID), so session-scoped is the honest
 // current granularity, not a placeholder for something more precise that
 // already exists.
-func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) {
+func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) string {
 	if s.Registry == nil || strings.TrimSpace(logicalAgentID) == "" {
-		return
+		return ""
 	}
-	target := registry.LogicalAgentBindingTarget(logicalAgentID)
-	if _, err := s.Registry.LeaseBinding(context.Background(), target, sessionID, localHostID, sessionID, nil, registry.VisibilityPrivateLocal, 0); err != nil {
+	taken, err := s.leaseBindingTracked(context.Background(), registry.LogicalAgentBindingTarget(logicalAgentID), sessionID, localHostID, registry.VisibilityPrivateLocal)
+	if err != nil {
 		log.Printf("app: lease runtime binding for logical agent %q session %q failed (non-fatal): %v", logicalAgentID, sessionID, err)
+		return ""
+	}
+	logBindingTaken(logicalAgentID, sessionID, taken)
+	return taken
+}
+
+// leaseBindingTracked leases target for sessionID (a new generation; the previous
+// holder is fenced out, as it always has been) and returns the running session that
+// was displaced, "" when the address was free, held by an ended session, or already
+// held by sessionID. The previous holder is read inside the lease transaction, so
+// under concurrent launches it is the holder this very insert displaced, not a stale
+// earlier read (CW-20261023-0018).
+func (s *Service) leaseBindingTracked(ctx context.Context, target, sessionID, hostID string, visibility registry.PublicationVisibility) (string, error) {
+	var running string
+	hold := func(ctx context.Context, tx *sql.Tx, holder string) (bool, error) {
+		var state string
+		switch e := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, holder).Scan(&state); {
+		case errors.Is(e, sql.ErrNoRows):
+			return false, nil
+		case e != nil:
+			return false, e
+		}
+		if !session.State(state).Terminal() {
+			running = holder
+		}
+		return false, nil
+	}
+	if _, err := s.Registry.LeaseBindingUnlessHeld(ctx, target, sessionID, hostID, sessionID, nil, visibility, 0, hold); err != nil {
+		return "", err
+	}
+	return running, nil
+}
+
+func logBindingTaken(logicalAgentID, sessionID, takenFrom string) {
+	if takenFrom != "" {
+		log.Printf("app: session %q took the mail binding of logical agent %q from session %q, which is still running; mail to that agent now reaches %q only", sessionID, logicalAgentID, takenFrom, sessionID)
 	}
 }
 
