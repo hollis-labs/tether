@@ -158,11 +158,11 @@ func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) 
 
 	sent, err := d.sendWithID(ctx, env, string(res.Deliveries[0].ID))
 	if err != nil {
-		if res.Duplicate {
-			// A concurrent retry may have repaired the content row first.
-			if existing, lookupErr := d.Get(ctx, env.ID); lookupErr == nil {
-				return d.observe(ctx, existing), nil
-			}
+		// A concurrent retry of the same keyed send may have inserted the content row
+		// first, whichever of the two won the enqueue. The row under this message id is
+		// that message: the enqueue already matched the key to the same digest.
+		if existing, lookupErr := d.Get(ctx, env.ID); lookupErr == nil {
+			return d.observe(ctx, existing), nil
 		}
 		log.Printf("delivery store: messages insert failed after successful enqueue -- orphaned delivery %s (message %s) needs manual reconciliation: %v",
 			res.Deliveries[0].ID, res.Message.ID, err)

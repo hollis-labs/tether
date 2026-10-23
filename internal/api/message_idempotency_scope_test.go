@@ -2,10 +2,13 @@ package api
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -17,7 +20,8 @@ func keyedPost(t *testing.T, h *senderHarness, principal, key, body string) (int
 	r.Header.Set("Idempotency-Key", key)
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		t.Fatal(err)
+		t.Errorf("post: %v", err)
+		return 0, nil
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
@@ -114,7 +118,8 @@ func metadataPost(t *testing.T, h *senderHarness, principal, path, body string) 
 	r.Header.Set("X-Test-Principal", principal)
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		t.Fatal(err)
+		t.Errorf("post: %v", err)
+		return 0, nil
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
@@ -152,12 +157,55 @@ func TestMetadataOnlyIdempotencyKeyIsScopedToTheVerifiedPrincipal(t *testing.T) 
 func TestRequestRouteScopesAMetadataKeyToTheVerifiedPrincipal(t *testing.T) {
 	h := newSenderHarness(t, identity.Observe)
 	body := `{"from":"msg://session/local/s1","to":"msg://agent/test/request-target","kind":"request","payload":{"text":"q"},"metadata":{"tether.message_id":"req-key"}}`
-	metadataPost(t, h, "session", "/messages/request?timeout=1ms", body) // times out; the request is stored
+	// The request waits for a reply that never comes; it is stored as soon as it is
+	// accepted. Wait for the row rather than assuming the timeout left one.
+	go metadataPost(t, h, "session", "/messages/request?timeout=1500ms", body)
 	var meta string
-	if err := h.db.DB().QueryRow(`SELECT metadata FROM messages WHERE to_urn = ?`, "msg://agent/test/request-target").Scan(&meta); err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := h.db.DB().QueryRow(`SELECT metadata FROM messages WHERE to_urn = ?`, "msg://agent/test/request-target").Scan(&meta)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the request was never stored: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if !strings.Contains(meta, `"tether.message_id":"p`) || strings.Contains(meta, `"tether.message_id":"req-key"`) {
 		t.Fatalf("stored metadata = %s, want the key scoped to the principal", meta)
+	}
+}
+
+// Concurrent sends with one key converge: every request answers 201 and exactly one
+// message is stored, whichever of them won the enqueue and whichever inserted the row.
+func TestConcurrentKeyedSendsConverge(t *testing.T) {
+	h := newSenderHarness(t, identity.Observe)
+	const n, rounds = 20, 8
+	for round := 0; round < rounds; round++ {
+		to := fmt.Sprintf("msg://agent/test/concurrent-target-%d", round)
+		body := `{"kind":"notice","from":"msg://session/local/s1","to":"` + to + `","payload":{"text":"same"}}`
+		key := fmt.Sprintf("concurrent-key-%d", round)
+		codes := make(chan int, n)
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				code, _ := keyedPost(t, h, "session", key, body)
+				codes <- code
+			}()
+		}
+		wg.Wait()
+		close(codes)
+		for code := range codes {
+			if code != http.StatusCreated {
+				t.Errorf("round %d: concurrent keyed send status = %d, want 201", round, code)
+			}
+		}
+		var rows int
+		if err := h.db.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE to_urn = ?`, to).Scan(&rows); err != nil || rows != 1 {
+			t.Fatalf("round %d: rows = %d err=%v, want 1", round, rows, err)
+		}
 	}
 }
