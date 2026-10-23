@@ -106,3 +106,43 @@ func TestRetryRepairsEnqueueThenInsertFailure(t *testing.T) {
 		t.Fatalf("content rows = %d err=%v, want 1", n, err)
 	}
 }
+
+func metadataPost(t *testing.T, h *senderHarness, principal, path, body string) (int, []byte) {
+	t.Helper()
+	r, _ := http.NewRequest("POST", h.srv.URL+path, bytes.NewBufferString(body))
+	r.Header.Set("X-Test-Principal", principal)
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b
+}
+
+// A key set only as tether.message_id metadata, with no header, is scoped to the
+// verified principal the same way, on both send and notify.
+func TestMetadataOnlyIdempotencyKeyIsScopedToTheVerifiedPrincipal(t *testing.T) {
+	for _, path := range []string{"/messages", "/messages/notify"} {
+		t.Run(path, func(t *testing.T) {
+			h := newSenderHarness(t, identity.Observe)
+			mk := func(key string) string {
+				return `{"from":"msg://session/local/s1","to":"msg://agent/test/meta-target","kind":"notice","payload":{"text":"same"},"metadata":{"tether.message_id":"` + key + `"}}`
+			}
+			code, first := metadataPost(t, h, "session", path, mk("meta-key"))
+			if code != http.StatusCreated {
+				t.Fatalf("first send: %d %s", code, first)
+			}
+			// The same principal repeating it dedupes.
+			if code, again := metadataPost(t, h, "session", path, mk("meta-key")); code != http.StatusCreated || !bytes.Contains(again, firstID(first)) {
+				t.Fatalf("same principal repeat: %d %s", code, again)
+			}
+			// Another principal claiming the same From behaves as with an unused key.
+			used, raw := metadataPost(t, h, "agentsession", path, mk("meta-key"))
+			fresh, _ := metadataPost(t, h, "agentsession", path, mk("unused-meta-key"))
+			if used != fresh || bytes.Contains(raw, firstID(first)) {
+				t.Fatalf("metadata key probed across principals: used=%d fresh=%d body=%s", used, fresh, raw)
+			}
+		})
+	}
+}
