@@ -218,3 +218,31 @@ func (s *Store) RecordSessionActivity(ctx context.Context, id string, at time.Ti
 	}
 	return err
 }
+
+// RecordWorkerOutput stores a worker's resume cursor for a session and the
+// session.output event for that frame in one transaction: one commit and one sync
+// instead of two (CW-20261023-0018), and the cursor can no longer say a frame was
+// handled when its event was lost. The event is a pending outbox row; the bus
+// publishes it after the commit. publishEvent false stores the cursor alone.
+func (s *Store) RecordWorkerOutput(ctx context.Context, sessionID string, seq int64, payloadJSON string, at time.Time, publishEvent bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO session_worker_seq(session_id,last_seq) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET last_seq=excluded.last_seq`, sessionID, seq); err != nil {
+		return err
+	}
+	if publishEvent {
+		if err = s.publishOutboxEvent(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: sessionID, Kind: "session.output", At: at, PayloadJSON: payloadJSON}); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if publishEvent {
+		s.EventsCommitted()
+	}
+	return nil
+}

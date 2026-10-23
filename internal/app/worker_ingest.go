@@ -58,14 +58,15 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		if err != nil {
 			return err
 		}
-		if _, err = s.Store.DB().Exec(`INSERT INTO session_worker_seq(session_id,last_seq) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET last_seq=excluded.last_seq`, f.Session, f.Seq); err != nil {
-			return err
-		}
 		raw, _ := json.Marshal(map[string]any{"data": f.Data, "stream": f.Stream, "worker_seq": f.Seq})
-		if err := s.workerTurnOutput(row, f); err != nil {
+		// The cursor and the session.output event commit together. The cursor still
+		// advances when the turn-output step fails, as it did before; only then is
+		// the event not published.
+		turnErr := s.workerTurnOutput(row, f)
+		if err = s.Store.RecordWorkerOutput(context.Background(), f.Session, f.Seq, string(raw), time.Now().UTC(), turnErr == nil); err != nil {
 			return err
 		}
-		return s.publishWorkerEvent(f.Session, "session.output", raw)
+		return turnErr
 	case "state":
 		state := f.State
 		// Work-state is what the runtime is doing, separate from the lifecycle:
