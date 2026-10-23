@@ -676,7 +676,9 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 // submission. Never-bound and lapsed hosted actors keep the legacy path;
 // the most recent pull-only binding keeps its fence even after it lapses.
 func checkWakeBinding(ctx context.Context, reg *registry.Service, to messaging.Address, sessionID string, expectedGeneration int64) (int64, api.WakeOutcome) {
-	if to.Kind != messaging.KindAgent || reg == nil {
+	// An instance address names one session directly, like a session address: the
+	// logical agent's home binding is not the question (CW-20261023-0018).
+	if to.Kind != messaging.KindAgent || IsInstanceAddress(to) || reg == nil {
 		return 0, api.WakeOutcome{}
 	}
 	blocked := func(reason, detail string) (int64, api.WakeOutcome) {
@@ -750,6 +752,16 @@ func resolveWakeTarget(ctx context.Context, st *store.Store, reg *registry.Servi
 		}
 		return "", nil
 	case messaging.KindAgent:
+		if IsInstanceAddress(to) {
+			// An instance address wakes exactly its own session; ended or unknown ones
+			// are parked like any other offline recipient, never redirected.
+			sessionID, err := resolveInstanceSession(ctx, st, rt, to)
+			var ended *api.InstanceEndedError
+			if errors.Is(err, api.ErrInstanceUnknown) || errors.Is(err, api.ErrBoundSessionNotRunning) || errors.As(err, &ended) {
+				return "", nil
+			}
+			return sessionID, err
+		}
 		sessionID, err := resolveActorSession(ctx, st, reg, rt, to.ID)
 		if errors.Is(err, api.ErrBoundSessionNotRunning) {
 			// No live session, like any other offline recipient: the

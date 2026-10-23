@@ -75,6 +75,26 @@ type LaunchService interface {
 // declining the wake without saying why.
 var ErrBoundSessionNotRunning = errors.New("bound session is not running")
 
+// ErrInstanceUnknown is the answer for an agent instance address (msg://agent/<authority>/
+// <logical agent>/<session id>) that names no session of that logical agent.
+var ErrInstanceUnknown = errors.New("no such instance session for this agent")
+
+// InstanceEndedError says the session an agent instance address names has ended.
+// SupersededBy is its resumed successor when one is known, else empty. The address is
+// never redirected to the successor, the agent's bare mailbox or any other session
+// (CW-20261023-0018).
+type InstanceEndedError struct {
+	SessionID    string
+	SupersededBy string
+}
+
+func (e *InstanceEndedError) Error() string {
+	if e.SupersededBy != "" {
+		return "instance session " + e.SessionID + " has ended; superseded_by " + e.SupersededBy
+	}
+	return "instance session " + e.SessionID + " has ended"
+}
+
 // WakeOutcome is AttemptWake's disposition. See internal/app/wake.go's
 // WakeOutcome doc comment for the full Reason vocabulary and rationale —
 // this type lives here (not internal/app) because internal/app already

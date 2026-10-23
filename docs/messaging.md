@@ -375,3 +375,22 @@ start). Unset means FULL, unchanged. `NORMAL` syncs at checkpoints: it cannot co
 database, a process crash loses nothing, but a power loss or OS crash can lose the most recent
 commits. Change it only with the operator's approval. Shim retirement requires FULL or EXTRA and
 refuses to run under `NORMAL`.
+
+### Agent instance addresses
+
+`msg://agent/<authority>/<logical agent>/<session id>` names one session of a logical agent: a
+readable spelling of `msg://session/<authority>/<session id>` that also says which agent the
+session belongs to. It is derived from the session, never registered, and costs no registry row or
+runtime binding. Mail to it lands in its own mailbox (the exact address), wakes exactly that
+session whatever the agent's home binding is, and never falls back:
+
+- an unknown session, or a session of another logical agent, is `404 instance_unknown`;
+- an ended session is `409 instance_ended` with `details.superseded_by` (the session it was
+  resumed into, when known) and nothing is stored: the address is not redirected to the successor,
+  the agent's bare mailbox or its home session;
+- a session that exists but has not started running yet accepts mail, which waits for it.
+
+A resume mints a new session id, so an instance address dies with its session; use the bare agent
+address for continuity. The bare address keeps its meaning (the home session, per
+`lifecycle.binding`). Instance addresses are receive-only for now: a session does not send as its
+instance address. A catalog agent's declared `urn` still cannot carry a fourth segment.

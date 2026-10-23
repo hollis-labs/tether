@@ -17,6 +17,8 @@ func TestValidateAgentURNAndMCPScopes(t *testing.T) {
 		{"valid", map[string]Agent{"pm": {ID: "pm", URN: good, MCPScopes: []string{"message.write", "registry.write"}}}, ""},
 		{"not an agent urn", map[string]Agent{"pm": {ID: "pm", URN: "msg://user/local/operator"}}, "invalid urn"},
 		{"garbage", map[string]Agent{"pm": {ID: "pm", URN: "agt_454f2timi7"}}, "invalid urn"},
+		// An agent instance address (a session id as the fourth segment) is derived from a running session, never declared (CW-20261023-0018).
+		{"instance address", map[string]Agent{"pm": {ID: "pm", URN: good + "/0b7f6a1e-0000-4000-8000-000000000001"}}, "invalid urn"},
 		{"duplicate", map[string]Agent{"a": {ID: "a", URN: good}, "b": {ID: "b", URN: good}}, "same urn"},
 		{"unknown scope", map[string]Agent{"pm": {ID: "pm", MCPScopes: []string{"root"}}}, "unknown mcp_scopes"},
 		{"editable agents", map[string]Agent{"aom": {ID: "aom", EditableAgents: []string{"chat"}}, "chat": {ID: "chat"}}, ""},

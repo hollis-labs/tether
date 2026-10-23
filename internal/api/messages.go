@@ -184,6 +184,9 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	intent := wakeintent.Intent{WakeText: req.WakeText, Urgency: req.Urgency, NoWake: req.Wake != nil && !*req.Wake}
 	wakeintent.Put(&env, intent)
+	if !s.checkInstanceRecipient(r.Context(), w, env.To) {
+		return
+	}
 	sent, err := s.sendMessage(wakeintent.LocalNotify(r.Context()), env)
 	if err != nil {
 		if errors.Is(err, delivery.ErrDigestConflict) {
@@ -291,6 +294,18 @@ func (s *Server) resolveNotifySession(ctx context.Context, explicit string, to m
 			}
 			return id, nil
 		}
+	}
+	if to.Kind == messaging.KindAgent && to.SubID != "" {
+		// An agent instance address names exactly one session (CW-20261023-0018): no
+		// binding lookup, no fallback to the agent's home session or a successor.
+		id, err := s.resolveInstance(ctx, to)
+		if err != nil {
+			return "", err
+		}
+		if explicit != "" && explicit != id {
+			return "", fmt.Errorf("session_id %s does not match the instance recipient session %s", explicit, id)
+		}
+		return id, nil
 	}
 	if explicit != "" {
 		row, err := s.Service.GetSession(explicit)
@@ -511,6 +526,9 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.checkInstanceRecipient(r.Context(), w, env.To) {
+		return
+	}
 	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
 		if errors.Is(err, delivery.ErrDigestConflict) {
@@ -1299,4 +1317,47 @@ func scopeIdempotencyKey(meta map[string]string) {
 	}
 	sum := sha256.Sum256([]byte(principal))
 	meta[wakeintent.MessageIDKey] = "p" + hex.EncodeToString(sum[:8]) + ":" + key
+}
+
+// instanceResolver is the optional seam that resolves an agent instance address.
+type instanceResolver interface {
+	ResolveInstanceSession(context.Context, messaging.Address) (string, error)
+}
+
+func (s *Server) resolveInstance(ctx context.Context, to messaging.Address) (string, error) {
+	r, ok := s.Service.(instanceResolver)
+	if !ok {
+		return "", ErrInstanceUnknown
+	}
+	return r.ResolveInstanceSession(ctx, to)
+}
+
+// checkInstanceRecipient refuses a send to an agent instance address whose session is
+// unknown or has ended, before anything is stored: 404 instance_unknown, or 409
+// instance_ended naming the resumed successor when known. A session that exists but is
+// not running yet is accepted; the mail waits for it. It reports whether to continue.
+func (s *Server) checkInstanceRecipient(ctx context.Context, w http.ResponseWriter, to messaging.Address) bool {
+	if to.Kind != messaging.KindAgent || to.SubID == "" {
+		return true
+	}
+	if s.Service == nil {
+		return true
+	}
+	_, err := s.resolveInstance(ctx, to)
+	var ended *InstanceEndedError
+	switch {
+	case err == nil, errors.Is(err, ErrBoundSessionNotRunning):
+		return true
+	case errors.Is(err, ErrInstanceUnknown):
+		writeError(w, http.StatusNotFound, "instance_unknown", "no session "+to.SubID+" of agent "+to.ID)
+	case errors.As(err, &ended):
+		details := map[string]string{"session_id": ended.SessionID}
+		if ended.SupersededBy != "" {
+			details["superseded_by"] = ended.SupersededBy
+		}
+		writeJSON(w, http.StatusConflict, ErrorResponse{Error: ErrorDetail{Code: "instance_ended", Message: ended.Error(), Details: details}})
+	default:
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+	}
+	return false
 }

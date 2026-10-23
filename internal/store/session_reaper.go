@@ -218,3 +218,15 @@ func (s *Store) RecordSessionActivity(ctx context.Context, id string, at time.Ti
 	}
 	return err
 }
+
+// SuccessorSessionID is the newest session resumed from id under the same logical
+// agent ("" when none is known). A resume mints a new session id and records the old one
+// as its parent (idx_sessions_parent).
+func (s *Store) SuccessorSessionID(ctx context.Context, id string) (string, error) {
+	var succ string
+	err := s.db.QueryRowContext(ctx, `SELECT c.id FROM sessions c JOIN sessions p ON p.id = c.parent_session_id AND p.logical_agent_id = c.logical_agent_id WHERE c.parent_session_id = ? ORDER BY c.created_at DESC, c.id DESC LIMIT 1`, id).Scan(&succ)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return succ, err
+}

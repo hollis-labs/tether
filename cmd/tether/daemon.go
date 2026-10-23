@@ -1118,6 +1118,10 @@ func (a *serviceAdapter) SessionHealthObservations(ctx context.Context, id strin
 	return a.svc.SessionHealthObservations(ctx, id)
 }
 
+func (a *serviceAdapter) ResolveInstanceSession(ctx context.Context, to gomsg.Address) (string, error) {
+	return a.svc.ResolveInstanceSession(ctx, to)
+}
+
 func (a *serviceAdapter) ResolveActorSession(ctx context.Context, logicalAgentID string) (string, error) {
 	return a.svc.ResolveActorSession(ctx, logicalAgentID)
 }
