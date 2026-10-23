@@ -751,6 +751,12 @@ type Health struct {
 	UptimeSec     int64                             `json:"uptime_sec"`
 	Listener      string                            `json:"listener"`
 	Sessions      int                               `json:"sessions"`
+	// Features names optional behaviours this daemon has, so a client can tell an older
+	// hub from one that has them. "agent_instance_address": mail to
+	// msg://agent/<authority>/<agent>/<session id> reaches exactly that session; an older
+	// hub parses the address but wakes the agent's bare session (CW-20261023-0018).
+	Features []string `json:"features,omitempty"`
+
 	// Hardening reports the launch-hardening switches the running daemon
 	// decided from its own environment, so `tether doctor` can report what
 	// tetherd does rather than what the doctor's environment would do. Absent
@@ -883,6 +889,7 @@ func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode,
 			}
 		}
 	}
+	h.Features = []string{"agent_instance_address"}
 	h.Identity = s.identityHealth()
 	h.DenyListWatch = denyListWatchHealth(os.Getenv("TETHER_DENYLIST_WATCH_STATE"), time.Now())
 	h.Identity.Mode = mode

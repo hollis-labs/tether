@@ -385,12 +385,12 @@ runtime binding. Mail to it lands in its own mailbox (the exact address), wakes 
 session whatever the agent's home binding is, and never falls back:
 
 - an unknown session, or a session of another logical agent, is `404 instance_unknown`;
-- an ended session is `409 instance_ended` with `details.superseded_by` (the session it was
+- an ended session is `409 instance_not_live` with `details.superseded_by` (the session it was
   resumed into, when known) and nothing is stored: the address is not redirected to the successor,
   the agent's bare mailbox or its home session;
 - a session that exists but has not started running yet accepts mail, which waits for it.
 
-A resume mints a new session id, so an instance address dies with its session; use the bare agent
+A hub that resolves these addresses lists `agent_instance_address` in `features` on `GET /health`; an older hub parses the address but wakes the agent's bare session, so check the flag before addressing an instance. A resume mints a new session id, so an instance address dies with its session; use the bare agent
 address for continuity. The bare address keeps its meaning (the home session, per
 `lifecycle.binding`). Instance addresses are receive-only for now: a session does not send as its
 instance address. A catalog agent's declared `urn` still cannot carry a fourth segment.

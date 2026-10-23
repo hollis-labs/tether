@@ -1334,7 +1334,7 @@ func (s *Server) resolveInstance(ctx context.Context, to messaging.Address) (str
 
 // checkInstanceRecipient refuses a send to an agent instance address whose session is
 // unknown or has ended, before anything is stored: 404 instance_unknown, or 409
-// instance_ended naming the resumed successor when known. A session that exists but is
+// instance_not_live naming the resumed successor when known. A session that exists but is
 // not running yet is accepted; the mail waits for it. It reports whether to continue.
 func (s *Server) checkInstanceRecipient(ctx context.Context, w http.ResponseWriter, to messaging.Address) bool {
 	if to.Kind != messaging.KindAgent || to.SubID == "" {
@@ -1355,7 +1355,7 @@ func (s *Server) checkInstanceRecipient(ctx context.Context, w http.ResponseWrit
 		if ended.SupersededBy != "" {
 			details["superseded_by"] = ended.SupersededBy
 		}
-		writeJSON(w, http.StatusConflict, ErrorResponse{Error: ErrorDetail{Code: "instance_ended", Message: ended.Error(), Details: details}})
+		writeJSON(w, http.StatusConflict, ErrorResponse{Error: ErrorDetail{Code: "instance_not_live", Message: ended.Error(), Details: details}})
 	default:
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 	}

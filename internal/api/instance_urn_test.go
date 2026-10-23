@@ -84,8 +84,8 @@ func TestSendToAnInstanceAddress(t *testing.T) {
 		code, out = post(path, ended)
 		errObj, _ := out["error"].(map[string]any)
 		details, _ := errObj["details"].(map[string]any)
-		if code != http.StatusConflict || errObj["code"] != "instance_ended" || details["superseded_by"] != "s-new" || rows(ended) != 0 {
-			t.Fatalf("%s to an ended instance: %d %v rows %d, want 409 instance_ended superseded_by s-new, nothing stored", path, code, out, rows(ended))
+		if code != http.StatusConflict || errObj["code"] != "instance_not_live" || details["superseded_by"] != "s-new" || rows(ended) != 0 {
+			t.Fatalf("%s to an ended instance: %d %v rows %d, want 409 instance_not_live superseded_by s-new, nothing stored", path, code, out, rows(ended))
 		}
 	}
 	// Ended with no known successor: still 409, no superseded_by.
