@@ -1108,6 +1108,7 @@ func (s *Server) handleMessageRequest(w http.ResponseWriter, r *http.Request) {
 	if !s.stampSender(w, r, &env) {
 		return
 	}
+	scopeIdempotencyKey(env.Metadata)
 
 	disp := messaging.NewDispatcher(s.MessageStore)
 	waitCtx, cancel := context.WithTimeout(r.Context(), timeoutDur)

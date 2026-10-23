@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/identity"
@@ -144,5 +145,19 @@ func TestMetadataOnlyIdempotencyKeyIsScopedToTheVerifiedPrincipal(t *testing.T) 
 				t.Fatalf("metadata key probed across principals: used=%d fresh=%d body=%s", used, fresh, raw)
 			}
 		})
+	}
+}
+
+// POST /messages/request takes the same client key and scopes it the same way.
+func TestRequestRouteScopesAMetadataKeyToTheVerifiedPrincipal(t *testing.T) {
+	h := newSenderHarness(t, identity.Observe)
+	body := `{"from":"msg://session/local/s1","to":"msg://agent/test/request-target","kind":"request","payload":{"text":"q"},"metadata":{"tether.message_id":"req-key"}}`
+	metadataPost(t, h, "session", "/messages/request?timeout=1ms", body) // times out; the request is stored
+	var meta string
+	if err := h.db.DB().QueryRow(`SELECT metadata FROM messages WHERE to_urn = ?`, "msg://agent/test/request-target").Scan(&meta); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(meta, `"tether.message_id":"p`) || strings.Contains(meta, `"tether.message_id":"req-key"`) {
+		t.Fatalf("stored metadata = %s, want the key scoped to the principal", meta)
 	}
 }
