@@ -156,9 +156,11 @@ property on `tether_message_send` and `tether_message_notify`, or an `Idempotenc
 message already stored; the same key with a different body is `409 idempotency_conflict`; the key
 is scoped by sender. The key maps onto the `tether.message_id` metadata the delivery store already
 used, so setting that metadata by hand is the same thing, and a header that disagrees with it is
-`400`. Without a key, the Tether client picks a fresh one per call and reuses it if it repeats the
-call after a timeout or a dropped connection (three attempts, never after a refused connection),
-so an automatic repeat cannot duplicate. Two separate calls with no key are still two messages.
+`400`. Without a key, the Tether client uses the `tether.message_id` metadata if the caller set it, else
+picks a fresh key per call, and reuses it if it repeats the call after a timeout, a dropped
+connection, or a response that was lost or cut off after the server committed (three attempts;
+never after a refused connection, an unsuccessful status or a malformed body), so an automatic
+repeat cannot duplicate. Two separate calls with no key are still two messages.
 `tether-remote` goes over ssh, so a timeout of the ssh wrapper itself is outside this: pass
 `--idempotency-key` and check `messages list` before repeating by hand.
 

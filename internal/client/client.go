@@ -1091,30 +1091,36 @@ func (c *Client) MessageSend(ctx context.Context, msg MessageSendRequest) (Messa
 	if err != nil {
 		return MessageEnvelopeDTO{}, fmt.Errorf("marshal message request: %w", err)
 	}
-	resp, err := c.postKeyed(ctx, "/messages", body, msg.IdempotencyKey)
-	if err != nil {
-		return MessageEnvelopeDTO{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		return MessageEnvelopeDTO{}, readError(resp)
-	}
 	var sent MessageEnvelopeDTO
-	if err := json.NewDecoder(resp.Body).Decode(&sent); err != nil {
-		return MessageEnvelopeDTO{}, fmt.Errorf("decode message response: %w", err)
+	if err := c.postKeyed(ctx, "/messages", body, sendKey(msg), &sent, "message"); err != nil {
+		return MessageEnvelopeDTO{}, err
 	}
 	return sent, nil
 }
 
-// messageSendAttempts bounds how often a send is repeated after a timeout or a
-// dropped connection. Every attempt carries the same Idempotency-Key, so a
-// request the server had already committed returns the stored message.
+// sendKey is the Idempotency-Key for a send: the explicit field, else the
+// tether.message_id metadata callers already used for this, else empty (a fresh
+// key is picked per call). An explicit key that disagrees with the metadata is
+// sent as is; the server refuses the conflict.
+func sendKey(msg MessageSendRequest) string {
+	if msg.IdempotencyKey != "" {
+		return msg.IdempotencyKey
+	}
+	return msg.Metadata["tether.message_id"]
+}
+
+// messageSendAttempts bounds how often a send is repeated after a timeout, a
+// dropped connection or a response that was lost or cut off. Every attempt carries
+// the same Idempotency-Key, so a request the server had already committed returns
+// the stored message.
 const messageSendAttempts = 3
 
 // postKeyed posts body to path with an Idempotency-Key header (a fresh one when
-// key is empty) and repeats the same request after a timeout or a dropped
-// connection, never after a refused one or a canceled context.
-func (c *Client) postKeyed(ctx context.Context, path string, body []byte, key string) (*http.Response, error) {
+// key is empty) and decodes the 201 response into out. It repeats the same request
+// after a transport error or a response body that is lost or truncated, closing each
+// response first. It never repeats a refused connection, a canceled context, an
+// unsuccessful status or a body that is malformed rather than cut short.
+func (c *Client) postKeyed(ctx context.Context, path string, body []byte, key string, out any, what string) error {
 	if key == "" {
 		key = uuid.NewString()
 	}
@@ -1123,26 +1129,39 @@ func (c *Client) postKeyed(ctx context.Context, path string, body []byte, key st
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, wrapIfUnreachable(lastErr)
+				return lastErr
 			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
 			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Idempotency-Key", key)
 		resp, err := c.http.Do(req)
-		if err == nil {
-			return resp, nil
+		if err != nil {
+			lastErr = wrapIfUnreachable(err)
+			if ctx.Err() != nil || !retryableTransport(err) {
+				return lastErr
+			}
+			continue
 		}
-		lastErr = err
+		if resp.StatusCode != http.StatusCreated {
+			defer resp.Body.Close()
+			return readError(resp)
+		}
+		err = json.NewDecoder(resp.Body).Decode(out)
+		resp.Body.Close()
+		if err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("decode %s response: %w", what, err)
 		if ctx.Err() != nil || !retryableTransport(err) {
-			break
+			return lastErr
 		}
 	}
-	return nil, wrapIfUnreachable(lastErr)
+	return lastErr
 }
 
 // retryableTransport is true for a request that may have reached the server: a
@@ -1165,17 +1184,9 @@ func (c *Client) MessageNotify(ctx context.Context, msg MessageNotifyRequest) (M
 	if err != nil {
 		return MessageNotifyResult{}, fmt.Errorf("marshal notify request: %w", err)
 	}
-	resp, err := c.postKeyed(ctx, "/messages/notify", body, msg.IdempotencyKey)
-	if err != nil {
-		return MessageNotifyResult{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		return MessageNotifyResult{}, readError(resp)
-	}
 	var out MessageNotifyResult
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return MessageNotifyResult{}, fmt.Errorf("decode notify response: %w", err)
+	if err := c.postKeyed(ctx, "/messages/notify", body, sendKey(msg.MessageSendRequest), &out, "notify"); err != nil {
+		return MessageNotifyResult{}, err
 	}
 	return out, nil
 }
