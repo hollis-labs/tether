@@ -60,12 +60,15 @@ func TestInstanceMailboxIdentityUnderEnforce(t *testing.T) {
 		principal, mailbox string
 		want               int
 	}{
-		"own instance mailbox":                                                 {"w1", "msg://agent/agent-mux/worker/w1", http.StatusOK},
-		"a sibling's instance mailbox":                                         {"w1", "msg://agent/agent-mux/worker/w2", http.StatusForbidden},
-		"own session id under another agent":                                   {"w1", "msg://agent/agent-mux/general/w1", http.StatusForbidden},
-		"another agent's instance mailbox":                                     {"w1", "msg://agent/agent-mux/general/g1", http.StatusForbidden},
-		"agent-name prefix collision":                                          {"w1", "msg://agent/agent-mux/worker-2/w1", http.StatusForbidden},
-		"the agent's bare mailbox is not covered":                              {"w1", "msg://agent/agent-mux/worker", http.StatusForbidden},
+		"own instance mailbox":                    {"w1", "msg://agent/agent-mux/worker/w1", http.StatusOK},
+		"a sibling's instance mailbox":            {"w1", "msg://agent/agent-mux/worker/w2", http.StatusForbidden},
+		"own session id under another agent":      {"w1", "msg://agent/agent-mux/general/w1", http.StatusForbidden},
+		"another agent's instance mailbox":        {"w1", "msg://agent/agent-mux/general/g1", http.StatusForbidden},
+		"agent-name prefix collision":             {"w1", "msg://agent/agent-mux/worker-2/w1", http.StatusForbidden},
+		"another authority":                       {"w1", "msg://agent/elsewhere/worker/w1", http.StatusForbidden},
+		"different case of the agent id":          {"w1", "msg://agent/agent-mux/Worker/w1", http.StatusForbidden},
+		"a fifth segment":                         {"w1", "msg://agent/agent-mux/worker/w1/extra", http.StatusForbidden},
+		"the agent's bare mailbox is not covered": {"w1", "msg://agent/agent-mux/worker", http.StatusForbidden},
 		"a grant on the agent address (not a session) cannot read an instance": {"agent-worker", "msg://agent/agent-mux/worker/w1", http.StatusForbidden},
 		"a grant on the agent address still reads the bare mailbox":            {"agent-worker", "msg://agent/agent-mux/worker", http.StatusOK},
 	} {

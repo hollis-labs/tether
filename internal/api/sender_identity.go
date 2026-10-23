@@ -7,6 +7,7 @@ import (
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/registry"
 )
 
 // Envelope metadata the daemon writes for a verified principal's message.
@@ -161,6 +162,17 @@ func (s *Server) guardAs(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// instanceAuthority is the one authority an agent instance address may carry: the hub's own,
+// the same one every logical-agent binding target uses (a mailbox is keyed by the exact
+// address string, so another authority is an unrelated mailbox).
+func instanceAuthority() string {
+	a, err := messaging.ParseURN(registry.LogicalAgentBindingTarget("x"))
+	if err != nil {
+		return ""
+	}
+	return a.Authority
+}
+
 // ownInstanceMailbox reports whether claimed is the agent instance address
 // (msg://agent/<authority>/<logical agent>/<session id>) of the very session whose verified
 // credential made the request, with that session belonging to that logical agent. It lets a
@@ -174,7 +186,7 @@ func (s *Server) ownInstanceMailbox(r *http.Request, claimed string) bool {
 		return false
 	}
 	addr, err := messaging.ParseURN(claimed)
-	if err != nil || addr.Kind != messaging.KindAgent || addr.SubID == "" || addr.SubID != p.SessionID || addr.URN() != claimed {
+	if err != nil || addr.Kind != messaging.KindAgent || addr.SubID == "" || addr.SubID != p.SessionID || addr.URN() != claimed || addr.Authority != instanceAuthority() {
 		return false
 	}
 	row, err := s.Service.GetSession(p.SessionID)
