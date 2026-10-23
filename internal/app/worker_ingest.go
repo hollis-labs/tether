@@ -59,14 +59,14 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 			return err
 		}
 		raw, _ := json.Marshal(map[string]any{"data": f.Data, "stream": f.Stream, "worker_seq": f.Seq})
-		// The cursor and the session.output event commit together. The cursor still
-		// advances when the turn-output step fails, as it did before; only then is
-		// the event not published.
-		turnErr := s.workerTurnOutput(row, f)
-		if err = s.Store.RecordWorkerOutput(context.Background(), f.Session, f.Seq, string(raw), time.Now().UTC(), turnErr == nil); err != nil {
+		// The cursor and the session.output event commit first, together. The turn-output
+		// step keeps in-memory state (a partial result line) and publishes turn events, so
+		// it must not run until the frame is durably accepted: a frame whose commit failed
+		// is replayed from the old cursor and would otherwise be applied twice.
+		if err = s.Store.RecordWorkerOutput(context.Background(), f.Session, f.Seq, string(raw), time.Now().UTC()); err != nil {
 			return err
 		}
-		return turnErr
+		return s.workerTurnOutput(row, f)
 	case "state":
 		state := f.State
 		// Work-state is what the runtime is doing, separate from the lifecycle:

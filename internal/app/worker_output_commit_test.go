@@ -50,3 +50,31 @@ func TestWorkerOutputFrameStoresCursorAndEventTogether(t *testing.T) {
 		t.Fatalf("session.output rows after a repeated frame = %d err=%v, want 2", n, err)
 	}
 }
+
+// A frame whose cursor commit failed is replayed from the old cursor. The turn-output
+// step (a partial result line carried in memory, turn events) must not have run for
+// it, or the replay applies the same bytes twice and the result line is lost.
+func TestWorkerCursorFailureDoesNotCorruptTheCarryOnReplay(t *testing.T) {
+	s := workerOutputService(t)
+	data := resultLine("turn-replay", "hello")
+	cut := len(data) / 2
+	frame := workerwire.Frame{T: "output", Session: "s1", Seq: 1, Stream: "stdout", Data: data[:cut]}
+	if _, err := s.Store.DB().Exec(`CREATE TRIGGER fail_cursor BEFORE INSERT ON session_worker_seq BEGIN SELECT RAISE(FAIL,'cursor failure'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ingestWorkerFrame("worker", frame); err == nil {
+		t.Fatal("injected cursor write did not fail")
+	}
+	if _, err := s.Store.DB().Exec(`DROP TRIGGER fail_cursor`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ingestWorkerFrame("worker", frame); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ingestWorkerFrame("worker", workerwire.Frame{T: "output", Session: "s1", Seq: 2, Stream: "stdout", Data: data[cut:]}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(outputEvents(t, s)); got != 1 {
+		t.Fatalf("%d turn outputs after replaying a failed frame, want 1", got)
+	}
+}
