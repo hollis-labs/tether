@@ -466,3 +466,50 @@ func TestIngestRejectsDuplicateNamesAndBrokenUnicode(t *testing.T) {
 		}
 	}
 }
+
+// The card.* kinds added in harness/core v0.16.0 are admitted for tachyon, the only
+// producer the catalog lists for them, and refused for every other app. A field the
+// payload schema does not declare (a title, free text) is not stored.
+func TestCardKindsAreAdmittedForTachyonOnly(t *testing.T) {
+	f := newFixture(t, eventingest.Config{})
+	card := func(id, app, kind string, payload map[string]any) json.RawMessage {
+		return raw(id, app, kind, func(m map[string]any) {
+			m["subject"] = "msg://card/" + app + "/card_01"
+			m["payload"] = payload
+		})
+	}
+	created := map[string]any{"card_id": "card_01", "revision": 1, "card_type": "approval", "state": "pending", "source_app": "tachyon", "title": "Delete the production database?"}
+	resolved := map[string]any{"card_id": "card_01", "revision": 2, "outcome": "approved", "source_app": "tachyon"}
+	effect := map[string]any{"card_id": "card_01", "revision": 2, "op_digest": "sha256:ab12", "results": []any{map[string]any{"effect_id": "e1", "status": "completed"}}}
+	updated := map[string]any{"card_id": "card_01", "revision": 2, "state": "pending", "source_app": "tachyon"}
+	expired := map[string]any{"card_id": "card_01", "revision": 1, "source_app": "tachyon"}
+	res, err := f.svc.Ingest(context.Background(), operator, []json.RawMessage{
+		card("evt_00000000000000000000000000007001", "tachyon", "card.created", created),
+		card("evt_00000000000000000000000000007002", "tachyon", "card.updated", updated),
+		card("evt_00000000000000000000000000007003", "tachyon", "card.resolved", resolved),
+		card("evt_00000000000000000000000000007004", "tachyon", "card.expired", expired),
+		card("evt_00000000000000000000000000007005", "tachyon", "card.effect.completed", effect),
+		card("evt_00000000000000000000000000007006", "tachyon", "card.effect.failed", effect),
+		card("evt_00000000000000000000000000007007", "cerberus", "card.created", created),
+		card("evt_00000000000000000000000000007008", "torque", "card.resolved", resolved),
+		card("evt_00000000000000000000000000007009", "nanite", "card.effect.completed", effect),
+		card("evt_00000000000000000000000000007010", "tachyon", "approval.requested", map[string]any{"request_id": "r1", "hitl_ref": "hitl://r1"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		if res[i].Status != ingest.StatusAccepted {
+			t.Errorf("tachyon card kind #%d: %+v", i, res[i])
+		}
+	}
+	for i := 6; i < 10; i++ {
+		if res[i].Code != ingest.CodeForbiddenKind {
+			t.Errorf("non-owner or unowned kind #%d: %+v, want forbidden_kind", i, res[i])
+		}
+	}
+	e, found, _ := f.db.EventByEventID(context.Background(), "evt_00000000000000000000000000007001")
+	if !found || strings.Contains(e.PayloadJSON, "Delete the production database") || !strings.Contains(e.PayloadJSON, `"card_id":"card_01"`) {
+		t.Fatalf("stored card payload = %s (found=%v), want declared fields only", e.PayloadJSON, found)
+	}
+}
