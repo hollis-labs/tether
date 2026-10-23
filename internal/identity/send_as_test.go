@@ -64,17 +64,17 @@ func TestMayActAsAgentInstanceAddress(t *testing.T) {
 	const instance = agent + "/s1"
 	for _, tc := range []struct {
 		name string
-		p    Principal
+		p    identity.Principal
 		addr string
 		want bool
 	}{
-		{"agent address does not cover its instance", Principal{ID: "msg://device/d", Addresses: []string{agent}}, instance, false},
-		{"session address does not cover the instance", Principal{ID: "msg://session/local/s1", SessionID: "s1", Addresses: []string{"msg://session/local/s1"}}, instance, false},
-		{"instance entry does not cover the agent address", Principal{ID: "msg://device/d", Addresses: []string{instance}}, agent, false},
-		{"another agent's instance with the same id", Principal{ID: "msg://device/d", Addresses: []string{instance}}, "msg://agent/agent-mux/general/s1", false},
-		{"explicit entry is honoured as an exact string", Principal{ID: "msg://device/d", Addresses: []string{instance}}, instance, true},
-		{"a prefix of the agent id is not the agent", Principal{ID: "msg://device/d", Addresses: []string{"msg://agent/agent-mux/work"}}, instance, false},
-		{"send_as still covers any address", Principal{ID: "msg://device/d", Scopes: []string{ScopeSendAs}}, instance, true},
+		{"agent address does not cover its instance", identity.Principal{ID: "msg://device/d", Addresses: []string{agent}}, instance, false},
+		{"session address does not cover the instance", identity.Principal{ID: "msg://session/local/s1", SessionID: "s1", Addresses: []string{"msg://session/local/s1"}}, instance, false},
+		{"instance entry does not cover the agent address", identity.Principal{ID: "msg://device/d", Addresses: []string{instance}}, agent, false},
+		{"another agent's instance with the same id", identity.Principal{ID: "msg://device/d", Addresses: []string{instance}}, "msg://agent/agent-mux/general/s1", false},
+		{"explicit entry is honoured as an exact string", identity.Principal{ID: "msg://device/d", Addresses: []string{instance}}, instance, true},
+		{"a prefix of the agent id is not the agent", identity.Principal{ID: "msg://device/d", Addresses: []string{"msg://agent/agent-mux/work"}}, instance, false},
+		{"send_as still covers any address", identity.Principal{ID: "msg://device/d", Scopes: []string{identity.ScopeSendAs}}, instance, true},
 	} {
 		if got := tc.p.MayActAs(tc.addr); got != tc.want {
 			t.Errorf("%s: MayActAs(%q) = %v, want %v", tc.name, tc.addr, got, tc.want)
