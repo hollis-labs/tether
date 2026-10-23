@@ -378,13 +378,14 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 // launchResponseOf renders a LaunchResult as the wire response.
 func launchResponseOf(res LaunchResult) LaunchResponse {
 	return LaunchResponse{
-		ID:             res.SessionID,
-		Workspace:      res.Workspace,
-		Log:            res.LogPath,
-		ProviderID:     res.ProviderID,
-		ProviderKind:   res.ProviderKind,
-		LogicalAgentID: res.LogicalAgentID,
-		Replayed:       res.Replayed,
+		ID:               res.SessionID,
+		Workspace:        res.Workspace,
+		Log:              res.LogPath,
+		ProviderID:       res.ProviderID,
+		ProviderKind:     res.ProviderKind,
+		LogicalAgentID:   res.LogicalAgentID,
+		Replayed:         res.Replayed,
+		BindingTakenFrom: res.BindingTakenFrom,
 	}
 }
 

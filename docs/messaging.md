@@ -375,3 +375,15 @@ start). Unset means FULL, unchanged. `NORMAL` syncs at checkpoints: it cannot co
 database, a process crash loses nothing, but a power loss or OS crash can lose the most recent
 commits. Change it only with the operator's approval. Shim retirement requires FULL or EXTRA and
 refuses to run under `NORMAL`.
+
+### One address, one session
+
+A logical agent has one mail address (`msg://agent/<authority>/<logical_agent_id>`) and at most one
+session holding it. A launch under that agent takes the address: the newest launch wins, whether
+or not the previous holder is still running, and the previous holder simply stops being the
+current binding. Mail to the address then reaches the new session only, and is never routed to
+another running session of the agent. When a launch takes the address from a session that is
+still running, the hub logs it and the launch response carries `binding_taken_from` (the displaced
+session id). Sessions that must stay individually reachable — several parallel workers of one
+shared agent — are addressed by session URN (`msg://session/<authority>/<session_id>`), not by the
+shared agent address.

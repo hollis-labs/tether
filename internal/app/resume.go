@@ -74,13 +74,14 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 
 func launchResultOf(l *Launched) api.LaunchResult {
 	return api.LaunchResult{
-		SessionID:      l.SessionID,
-		Workspace:      l.Workspace.Root,
-		LogPath:        l.Workspace.LogPath,
-		ProviderID:     l.Plan.ProviderID,
-		ProviderKind:   l.ProviderKind,
-		LogicalAgentID: l.Plan.LogicalAgentID,
-		Replayed:       l.Replayed,
+		SessionID:        l.SessionID,
+		Workspace:        l.Workspace.Root,
+		LogPath:          l.Workspace.LogPath,
+		ProviderID:       l.Plan.ProviderID,
+		ProviderKind:     l.ProviderKind,
+		LogicalAgentID:   l.Plan.LogicalAgentID,
+		Replayed:         l.Replayed,
+		BindingTakenFrom: l.BindingTakenFrom,
 	}
 }
 
@@ -313,12 +314,13 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:      l.SessionID,
-		Workspace:      l.Workspace.Root,
-		LogPath:        l.Workspace.LogPath,
-		ProviderID:     l.Plan.ProviderID,
-		ProviderKind:   l.ProviderKind,
-		LogicalAgentID: l.Plan.LogicalAgentID,
+		SessionID:        l.SessionID,
+		Workspace:        l.Workspace.Root,
+		LogPath:          l.Workspace.LogPath,
+		ProviderID:       l.Plan.ProviderID,
+		ProviderKind:     l.ProviderKind,
+		LogicalAgentID:   l.Plan.LogicalAgentID,
+		BindingTakenFrom: l.BindingTakenFrom,
 	}, nil
 }
 

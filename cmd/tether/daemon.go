@@ -961,12 +961,13 @@ func (a *serviceAdapter) CreateSession(launchID string) (api.LaunchResult, error
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:      l.SessionID,
-		Workspace:      l.Workspace.Root,
-		LogPath:        l.Workspace.LogPath,
-		ProviderID:     l.Plan.ProviderID,
-		ProviderKind:   l.ProviderKind,
-		LogicalAgentID: l.Plan.LogicalAgentID,
+		SessionID:        l.SessionID,
+		Workspace:        l.Workspace.Root,
+		LogPath:          l.Workspace.LogPath,
+		ProviderID:       l.Plan.ProviderID,
+		ProviderKind:     l.ProviderKind,
+		LogicalAgentID:   l.Plan.LogicalAgentID,
+		BindingTakenFrom: l.BindingTakenFrom,
 	}, nil
 }
 
@@ -976,12 +977,13 @@ func (a *serviceAdapter) CreateSessionWithBootPrompt(launchID, bootPrompt string
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:      l.SessionID,
-		Workspace:      l.Workspace.Root,
-		LogPath:        l.Workspace.LogPath,
-		ProviderID:     l.Plan.ProviderID,
-		ProviderKind:   l.ProviderKind,
-		LogicalAgentID: l.Plan.LogicalAgentID,
+		SessionID:        l.SessionID,
+		Workspace:        l.Workspace.Root,
+		LogPath:          l.Workspace.LogPath,
+		ProviderID:       l.Plan.ProviderID,
+		ProviderKind:     l.ProviderKind,
+		LogicalAgentID:   l.Plan.LogicalAgentID,
+		BindingTakenFrom: l.BindingTakenFrom,
 	}, nil
 }
 
@@ -1008,13 +1010,14 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:      l.SessionID,
-		Workspace:      l.Workspace.Root,
-		LogPath:        l.Workspace.LogPath,
-		ProviderID:     l.Plan.ProviderID,
-		ProviderKind:   l.ProviderKind,
-		LogicalAgentID: l.Plan.LogicalAgentID,
-		Replayed:       l.Replayed,
+		SessionID:        l.SessionID,
+		Workspace:        l.Workspace.Root,
+		LogPath:          l.Workspace.LogPath,
+		ProviderID:       l.Plan.ProviderID,
+		ProviderKind:     l.ProviderKind,
+		LogicalAgentID:   l.Plan.LogicalAgentID,
+		Replayed:         l.Replayed,
+		BindingTakenFrom: l.BindingTakenFrom,
 	}, nil
 }
 
@@ -1038,13 +1041,14 @@ func (a *serviceAdapter) LaunchSessionWithContext(ctx context.Context, sessionID
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:      l.SessionID,
-		Workspace:      l.Workspace.Root,
-		LogPath:        l.Workspace.LogPath,
-		ProviderID:     l.Plan.ProviderID,
-		ProviderKind:   l.ProviderKind,
-		LogicalAgentID: l.Plan.LogicalAgentID,
-		Replayed:       l.Replayed,
+		SessionID:        l.SessionID,
+		Workspace:        l.Workspace.Root,
+		LogPath:          l.Workspace.LogPath,
+		ProviderID:       l.Plan.ProviderID,
+		ProviderKind:     l.ProviderKind,
+		LogicalAgentID:   l.Plan.LogicalAgentID,
+		Replayed:         l.Replayed,
+		BindingTakenFrom: l.BindingTakenFrom,
 	}, nil
 }
 
