@@ -82,6 +82,7 @@ func launchResultOf(l *Launched) api.LaunchResult {
 		LogicalAgentID:   l.Plan.LogicalAgentID,
 		Replayed:         l.Replayed,
 		BindingTakenFrom: l.BindingTakenFrom,
+		BindingHeldBy:    l.BindingHeldBy,
 	}
 }
 
@@ -321,6 +322,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		ProviderKind:     l.ProviderKind,
 		LogicalAgentID:   l.Plan.LogicalAgentID,
 		BindingTakenFrom: l.BindingTakenFrom,
+		BindingHeldBy:    l.BindingHeldBy,
 	}, nil
 }
 

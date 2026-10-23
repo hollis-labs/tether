@@ -71,6 +71,9 @@ type Launched struct {
 	// and was still running when this launch took it over ("" when the launch
 	// took nothing from a live session). CW-20261023-0018.
 	BindingTakenFrom string
+	// BindingHeldBy is the running session that kept the logical agent's address
+	// because this launch's lifecycle.binding is "keep" ("" otherwise).
+	BindingHeldBy string
 }
 
 // ErrSessionNotCreated is returned by LaunchSession when the target
@@ -805,7 +808,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}()
 	}
 
-	var bindingTakenFrom string
+	var bindingTakenFrom, bindingHeldBy string
 	// Record this launch profile on the logical agent so the resume
 	// endpoint knows which catalog config to use next time.
 	if !plan.TeamMember {
@@ -823,7 +826,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		// the replaced side. Best-effort: a lease failure must not fail an
 		// otherwise-successful launch (established enhancement-write pattern,
 		// e.g. SetClaudeSessionID above).
-		bindingTakenFrom = s.leaseActorBinding(sessionID, plan.LogicalAgentID)
+		bindingTakenFrom, bindingHeldBy = s.leaseActorBindingMode(sessionID, plan.LogicalAgentID, plan.Lifecycle.BindingMode(), plan.ResumeSourceSessionID)
 	}
 	s.watchSessionBindings(sessionID)
 	if plan.TeamMember && plan.ResumeSourceSessionID == "" && rt.Caps().JsonRpcStdio {
@@ -836,6 +839,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		Plan:             plan,
 		ProviderKind:     rt.Kind(),
 		BindingTakenFrom: bindingTakenFrom,
+		BindingHeldBy:    bindingHeldBy,
 		Wait: func(ctx context.Context) (int, error) {
 			return s.Manager.WaitSession(ctx, sessionID)
 		},
@@ -983,25 +987,42 @@ func (s *Service) clearStopOnExit(id string) {
 // current granularity, not a placeholder for something more precise that
 // already exists.
 func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) string {
-	if s.Registry == nil || strings.TrimSpace(logicalAgentID) == "" {
-		return ""
-	}
-	taken, err := s.leaseBindingTracked(context.Background(), registry.LogicalAgentBindingTarget(logicalAgentID), sessionID, localHostID, registry.VisibilityPrivateLocal)
-	if err != nil {
-		log.Printf("app: lease runtime binding for logical agent %q session %q failed (non-fatal): %v", logicalAgentID, sessionID, err)
-		return ""
-	}
-	logBindingTaken(logicalAgentID, sessionID, taken)
+	taken, _ := s.leaseActorBindingMode(sessionID, logicalAgentID, launchprofile.BindingReplace, "")
 	return taken
 }
 
-// leaseBindingTracked leases target for sessionID (a new generation; the previous
-// holder is fenced out, as it always has been) and returns the running session that
-// was displaced, "" when the address was free, held by an ended session, or already
-// held by sessionID. The previous holder is read inside the lease transaction, so
-// under concurrent launches it is the holder this very insert displaced, not a stale
-// earlier read (CW-20261023-0018).
-func (s *Service) leaseBindingTracked(ctx context.Context, target, sessionID, hostID string, visibility registry.PublicationVisibility) (string, error) {
+// leaseActorBindingMode is leaseActorBinding under the plan's lifecycle.binding mode
+// (CW-20261023-0018). replace takes the address (today's behavior); none never does;
+// keep takes it unless a different session still holds it, and a resume or replacement
+// of that holder (resumeSource) still takes it over. It returns the running session the
+// launch displaced and, when keep declined, the session that kept the address.
+func (s *Service) leaseActorBindingMode(sessionID, logicalAgentID, mode, resumeSource string) (takenFrom, heldBy string) {
+	if s.Registry == nil || strings.TrimSpace(logicalAgentID) == "" {
+		return "", ""
+	}
+	taken, held, err := s.leaseBindingByMode(context.Background(), registry.LogicalAgentBindingTarget(logicalAgentID), sessionID, localHostID, registry.VisibilityPrivateLocal, mode, resumeSource)
+	if err != nil {
+		log.Printf("app: lease runtime binding for logical agent %q session %q failed (non-fatal): %v", logicalAgentID, sessionID, err)
+		return "", ""
+	}
+	if held != "" {
+		log.Printf("app: session %q did not take the mail binding of logical agent %q: session %q still holds it (lifecycle.binding=keep)", sessionID, logicalAgentID, held)
+	}
+	logBindingTaken(logicalAgentID, sessionID, taken)
+	return taken, held
+}
+
+// leaseBindingByMode leases target for sessionID under a lifecycle.binding mode. The
+// holder check, the keep decision and the insert are one registry transaction, so
+// concurrent launches cannot both take (or displace each other from) an address that
+// keep would leave to its holder (CW-20261023-0018). none leases nothing. It returns the
+// running session a replace or keep launch displaced, or, when keep declined, the
+// running session that kept the address. A holder that has ended is not running; a
+// resume or replacement of the holder (resumeSource) is not kept out under keep.
+func (s *Service) leaseBindingByMode(ctx context.Context, target, sessionID, hostID string, visibility registry.PublicationVisibility, mode, resumeSource string) (takenFrom, heldBy string, err error) {
+	if mode == launchprofile.BindingNone {
+		return "", "", nil
+	}
 	var running string
 	hold := func(ctx context.Context, tx *sql.Tx, holder string) (bool, error) {
 		var state string
@@ -1011,15 +1032,19 @@ func (s *Service) leaseBindingTracked(ctx context.Context, target, sessionID, ho
 		case e != nil:
 			return false, e
 		}
-		if !session.State(state).Terminal() {
-			running = holder
+		if session.State(state).Terminal() {
+			return false, nil
 		}
-		return false, nil
+		running = holder
+		return mode == launchprofile.BindingKeep && holder != resumeSource, nil
 	}
-	if _, err := s.Registry.LeaseBindingUnlessHeld(ctx, target, sessionID, hostID, sessionID, nil, visibility, 0, hold); err != nil {
-		return "", err
+	if _, err = s.Registry.LeaseBindingUnlessHeld(ctx, target, sessionID, hostID, sessionID, nil, visibility, 0, hold); err != nil {
+		if errors.Is(err, registry.ErrBindingHeld) {
+			return "", running, nil
+		}
+		return "", "", err
 	}
-	return running, nil
+	return running, "", nil
 }
 
 func logBindingTaken(logicalAgentID, sessionID, takenFrom string) {
