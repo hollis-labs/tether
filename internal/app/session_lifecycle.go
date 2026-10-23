@@ -992,7 +992,7 @@ func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) string {
 }
 
 // leaseActorBindingMode is leaseActorBinding under the plan's lifecycle.binding mode
-// (CW-20261023-0018). replace takes the address (today's behaviour); none never does;
+// (CW-20261023-0018). replace takes the address (today's behavior); none never does;
 // keep takes it unless a different session still holds it, and a resume or replacement
 // of that holder (resumeSource) still takes it over. It returns the running session the
 // launch displaced and, when keep declined, the session that kept the address.

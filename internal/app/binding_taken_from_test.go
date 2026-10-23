@@ -123,7 +123,7 @@ func currentHolder(t *testing.T, svc *Service) string {
 	return cur.SessionID
 }
 
-// lifecycle.binding: replace is today's behaviour; keep and none leave a running holder
+// lifecycle.binding: replace is today's behavior; keep and none leave a running holder
 // alone; a resume of the holder still takes the address under keep.
 func TestLeaseActorBindingModes(t *testing.T) {
 	svc := bindingFixture(t)
