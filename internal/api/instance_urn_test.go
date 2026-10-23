@@ -99,8 +99,19 @@ func TestSendToAnInstanceAddress(t *testing.T) {
 			t.Fatalf("%s: %d %v rows %d, want 404 and nothing stored", to, code, out, rows(to))
 		}
 	}
-	// A bare agent address is not an instance address and is unaffected.
+	// Different case is a different agent, and a fifth segment is not an address at all.
+	if code, _ = post("/messages", "msg://agent/agent-mux/General/s-live"); code != http.StatusNotFound {
+		t.Fatalf("wrong-case agent: %d, want 404", code)
+	}
+	if code, _ = post("/messages", live+"/extra"); code != http.StatusBadRequest {
+		t.Fatalf("five-segment address: %d, want 400", code)
+	}
+	// A bare agent address is not an instance address and is unaffected, and the two
+	// mailboxes stay separate both ways.
 	if code, _ := post("/messages", "msg://agent/agent-mux/general"); code != http.StatusCreated {
 		t.Fatalf("bare agent address: %d", code)
+	}
+	if rows("msg://agent/agent-mux/general") != 1 || rows(live) != 2 {
+		t.Fatalf("mailboxes: bare=%d instance=%d, want 1 and 2 (send + notify), not shared", rows("msg://agent/agent-mux/general"), rows(live))
 	}
 }

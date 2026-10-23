@@ -54,6 +54,7 @@ func TestResolveInstanceSession(t *testing.T) {
 	for name, to := range map[string]messaging.Address{
 		"other agent's session": instance("general", "o1"),
 		"unknown session":       instance("general", "nope"),
+		"another authority":     {Kind: messaging.KindAgent, Authority: "elsewhere", ID: "general", SubID: "a1"},
 		"bare agent address":    {Kind: messaging.KindAgent, Authority: "agent-mux", ID: "general"},
 	} {
 		if id, err := resolveInstanceSession(ctx, st, seam, to); !errors.Is(err, api.ErrInstanceUnknown) || id != "" {

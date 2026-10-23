@@ -8,6 +8,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -22,6 +23,17 @@ import (
 // IsInstanceAddress reports whether to is an agent instance address.
 func IsInstanceAddress(to messaging.Address) bool {
 	return to.Kind == messaging.KindAgent && to.SubID != ""
+}
+
+// instanceAuthority is the one authority an instance address may carry: the hub's own,
+// the same one every logical-agent binding target uses. A mailbox is keyed by the exact
+// address string, so another authority would be a different, unrelated mailbox.
+func instanceAuthority() string {
+	a, err := messaging.ParseURN(registry.LogicalAgentBindingTarget("x"))
+	if err != nil {
+		return ""
+	}
+	return a.Authority
 }
 
 // ResolveInstanceSession answers which running session an agent instance address names.
@@ -44,7 +56,7 @@ func resolveInstanceSession(ctx context.Context, st *store.Store, rt wakeRuntime
 		}
 		return "", err
 	}
-	if row.LogicalAgentID != to.ID {
+	if row.LogicalAgentID != to.ID || to.Authority != instanceAuthority() {
 		return "", api.ErrInstanceUnknown
 	}
 	if _, ok := rt.health(row.ID); ok {
