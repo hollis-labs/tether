@@ -79,6 +79,13 @@ func (s *Service) sessionIsRecipient(sessionID string, to messaging.Address) boo
 	case messaging.KindSession:
 		return to.ID == sessionID
 	case messaging.KindAgent:
+		if to.SubID != "" {
+			// An agent instance mailbox (msg://agent/<authority>/<agent>/<session id>) belongs
+			// to that one session. Another session of the same logical agent is not its
+			// recipient, and the agent's binding is not the question (CW-20261023-0018).
+			agentID, err := s.sessions.LogicalAgentID(sessionID)
+			return err == nil && to.SubID == sessionID && agentID != "" && agentID == to.ID
+		}
 		agentID, err := s.sessions.LogicalAgentID(sessionID)
 		if err == nil && agentID != "" && agentID == to.ID {
 			return true

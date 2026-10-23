@@ -7,6 +7,7 @@ import (
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/registry"
 )
 
 // Envelope metadata the daemon writes for a verified principal's message.
@@ -153,11 +154,43 @@ func stampedActor(r *http.Request, claimed string) string {
 // records as_unverified and continues; enforce refuses with 403.
 func (s *Server) guardAs(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.claimedActor(w, r, r.URL.Query().Get("as"), "as") {
+		as := r.URL.Query().Get("as")
+		if !s.ownInstanceMailbox(r, as) && !s.claimedActor(w, r, as, "as") {
 			return
 		}
 		next(w, r)
 	}
+}
+
+// instanceAuthority is the one authority an agent instance address may carry: the hub's own,
+// the same one every logical-agent binding target uses (a mailbox is keyed by the exact
+// address string, so another authority is an unrelated mailbox).
+func instanceAuthority() string {
+	a, err := messaging.ParseURN(registry.LogicalAgentBindingTarget("x"))
+	if err != nil {
+		return ""
+	}
+	return a.Authority
+}
+
+// ownInstanceMailbox reports whether claimed is the agent instance address
+// (msg://agent/<authority>/<logical agent>/<session id>) of the very session whose verified
+// credential made the request, with that session belonging to that logical agent. It lets a
+// session read and settle its own instance mailbox (CW-20261023-0018). It is receive-only:
+// it applies to the ?as= mailbox identity here, never to stampSender or MayActAs, so a session
+// still cannot send as its instance address. Everything is derived from the verified
+// principal and the session row; nothing comes from the claim except the address to compare.
+func (s *Server) ownInstanceMailbox(r *http.Request, claimed string) bool {
+	p, ok := verifiedPrincipal(r)
+	if !ok || p.SessionID == "" || s.Service == nil {
+		return false
+	}
+	addr, err := messaging.ParseURN(claimed)
+	if err != nil || addr.Kind != messaging.KindAgent || addr.SubID == "" || addr.SubID != p.SessionID || addr.URN() != claimed || addr.Authority != instanceAuthority() {
+		return false
+	}
+	row, err := s.Service.GetSession(p.SessionID)
+	return err == nil && row != nil && row.LogicalAgentID == addr.ID
 }
 
 // senderMetadata returns the daemon-stamped sender keys of m, for carrying onto
