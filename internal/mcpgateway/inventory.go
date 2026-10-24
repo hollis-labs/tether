@@ -49,13 +49,16 @@ type Item struct {
 	Annotations *mcpsdk.ToolAnnotations `json:"annotations,omitempty"`
 	// RequiredArgs names the top-level required arguments; present in summary
 	// detail so a caller can often call a tool without hydrating its schema.
-	RequiredArgs []string      `json:"required_args,omitempty"`
-	InputSchema  any           `json:"inputSchema,omitempty"`
-	OutputSchema any           `json:"outputSchema,omitempty"`
-	Meta         mcpsdk.Meta   `json:"_meta,omitempty"`
-	Icons        []mcpsdk.Icon `json:"icons,omitempty"`
-	Score        *int          `json:"score,omitempty"`
-	Error        string        `json:"error,omitempty"`
+	RequiredArgs []string `json:"required_args,omitempty"`
+	// Example is a minimal call shape for schema detail: the schema's own first
+	// example when it has one, else placeholders for the required arguments.
+	Example      map[string]any `json:"example,omitempty"`
+	InputSchema  any            `json:"inputSchema,omitempty"`
+	OutputSchema any            `json:"outputSchema,omitempty"`
+	Meta         mcpsdk.Meta    `json:"_meta,omitempty"`
+	Icons        []mcpsdk.Icon  `json:"icons,omitempty"`
+	Score        *int           `json:"score,omitempty"`
+	Error        string         `json:"error,omitempty"`
 }
 type Result struct {
 	Items        []Item `json:"items"`
@@ -197,7 +200,8 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 			return Item{Name: entry.Tool.Name, Origin: entry.Origin, Title: entry.Tool.Title, Description: brief, Annotations: entry.Tool.Annotations, RequiredArgs: requiredArgs(entry.Tool.InputSchema), Score: score}
 		}
 		tool := ClientSafeTool(entry.Tool)
-		return Item{Name: tool.Name, Origin: entry.Origin, Title: tool.Title, Description: tool.Description, Annotations: tool.Annotations, Icons: tool.Icons, Score: score, InputSchema: tool.InputSchema, OutputSchema: tool.OutputSchema, Meta: tool.Meta}
+		example, _ := SynthesizedExample(tool.InputSchema)
+		return Item{Name: tool.Name, Origin: entry.Origin, Title: tool.Title, Description: tool.Description, Annotations: tool.Annotations, Icons: tool.Icons, Score: score, Example: example, InputSchema: tool.InputSchema, OutputSchema: tool.OutputSchema, Meta: tool.Meta}
 	}
 	itemBytes := func(item Item) int {
 		raw, err := json.Marshal(item)
@@ -389,10 +393,35 @@ func (s *Service) ResolveTarget(name string) (Entry, error) {
 }
 
 func (s *Service) Call(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
-	if _, err := s.ResolveTarget(name); err != nil {
+	entry, err := s.ResolveTarget(name)
+	if err != nil {
 		return nil, err
 	}
-	return s.Dispatch(ctx, name, args, meta)
+	result, err := s.Dispatch(ctx, name, args, meta)
+	if err != nil || result == nil || !result.IsError {
+		return result, err
+	}
+	return withArgHint(result, entry.Tool, args), nil
+}
+
+// withArgHint appends a gateway_hint content block to a FAILED result when the
+// arguments sent do not fit the tool's schema (CW-20261024-0051). The upstream's
+// own content stays first and untouched; the result is copied, never mutated,
+// because a dispatcher may share it.
+func withArgHint(result *mcpsdk.CallToolResult, tool *mcpsdk.Tool, args map[string]any) *mcpsdk.CallToolResult {
+	hint := BuildArgHint(tool, args)
+	if hint == nil {
+		return result
+	}
+	raw, err := json.Marshal(struct {
+		Hint *ArgHint `json:"gateway_hint"`
+	}{hint})
+	if err != nil {
+		return result
+	}
+	out := *result
+	out.Content = append(append([]mcpsdk.Content(nil), result.Content...), &mcpsdk.TextContent{Text: string(raw)})
+	return &out
 }
 
 type Status struct {
