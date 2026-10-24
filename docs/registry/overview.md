@@ -180,7 +180,7 @@ Six operations × three transports = the full v060-01 surface.
 
 | Op | HTTP | MCP | CLI |
 |---|---|---|---|
-| Register | `POST /registry/{kind}` | `tether_registry_register` | `tether registry register --kind X --file Y` |
+| Register | `POST /registry/{kind}` (with `substrate` + `external_id` it is idempotent: `201` first, then `200` with the same URN) | `tether_registry_register` (optional `substrate`, `external_id`) | `tether registry register --kind X --file Y` |
 | Lookup | `GET /registry/{kind}/{urn}` | `tether_registry_lookup` | `tether registry lookup <urn>` |
 | Search | `GET /registry/{kind}` | `tether_registry_search` | `tether registry search --kind X ...` |
 | UpdateSelf | `PATCH /registry/{kind}/{urn}` | `tether_registry_update_self` | `tether registry update-self <urn> --file Y` |

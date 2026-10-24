@@ -42,6 +42,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -57,6 +59,7 @@ import (
 // MCP (T-v060-01-06) and HTTP (this file).
 type RegistryService interface {
 	Register(ctx context.Context, kind registry.Kind, p registry.Profile) (registry.Profile, error)
+	RegisterIdempotent(ctx context.Context, kind registry.Kind, p registry.Profile, substrate, externalID string) (registry.Profile, bool, error)
 	Lookup(ctx context.Context, urn string) (registry.Profile, error)
 	LookupExternalIDsForURN(ctx context.Context, urn string) ([]registry.ExternalID, error)
 	LookupBy(ctx context.Context, kind registry.Kind, externalID, substrate string) (registry.Profile, error)
@@ -241,17 +244,76 @@ type registryMergeRequest struct {
 	Into string `json:"into"`
 }
 
+// registerExternalKey is the optional idempotency key on a register request
+// (CW-20261024-0094). It is decoded separately from the Profile because Profile
+// has its own UnmarshalJSON, which would swallow these fields if embedded.
+type registerExternalKey struct {
+	Substrate  string `json:"substrate"`
+	ExternalID string `json:"external_id"`
+	// ExternalKey is the combined form "<substrate>/<external_id>", split at the
+	// first slash, so a caller holding one string (nanite/<install_id>/<host_settings_id>)
+	// does not have to split it.
+	ExternalKey string `json:"external_key"`
+}
+
+// resolve returns the (substrate, external_id) pair, or ok=false when the request
+// carries no key. A half-given or contradictory key is an error, never a silent
+// fall back to a non-idempotent register that would mint a duplicate.
+func (k registerExternalKey) resolve() (substrate, externalID string, ok bool, err error) {
+	substrate, externalID = k.Substrate, k.ExternalID
+	if k.ExternalKey != "" {
+		sub, id, found := strings.Cut(k.ExternalKey, "/")
+		if !found || sub == "" || id == "" {
+			return "", "", false, fmt.Errorf("%w: external_key must be \"<substrate>/<external_id>\"", registry.ErrInvalidRequest)
+		}
+		if (substrate != "" && substrate != sub) || (externalID != "" && externalID != id) {
+			return "", "", false, fmt.Errorf("%w: external_key conflicts with substrate/external_id", registry.ErrInvalidRequest)
+		}
+		substrate, externalID = sub, id
+	}
+	switch {
+	case substrate == "" && externalID == "":
+		return "", "", false, nil
+	case substrate == "" || externalID == "":
+		return "", "", false, fmt.Errorf("%w: substrate and external_id must be given together", registry.ErrInvalidRequest)
+	}
+	return substrate, externalID, true, nil
+}
+
 // handleRegistryRegister services POST /registry/{kind}. Body is a
 // Profile JSON. Kind/CreatedAt/UpdatedAt/TetherInstanceID are stripped here
 // so the storage path's defaults apply. A non-empty URN is NOT stripped —
 // Service.Register rejects it with ErrInvalidRequest (400) so callers
 // learn the contract (server mints URNs; never accepted from input).
 // Response: 201 + canonical Profile.
+//
+// With an external key in the body (substrate + external_id, or external_key)
+// the register is idempotent on that key: the first call creates the entry and
+// answers 201; every repeat answers 200 with the same URN and changes nothing
+// (use PATCH to update fields). Without a key the behavior is unchanged and
+// every call mints a new URN.
 func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, kind registry.Kind) {
-	var p registry.Profile
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"invalid request body: "+err.Error())
+		return
+	}
+	var p registry.Profile
+	if err := json.Unmarshal(raw, &p); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"invalid request body: "+err.Error())
+		return
+	}
+	var key registerExternalKey
+	if err := json.Unmarshal(raw, &key); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"invalid request body: "+err.Error())
+		return
+	}
+	substrate, externalID, keyed, err := key.resolve()
+	if err != nil {
+		writeRegistryError(w, err)
 		return
 	}
 	// Strip caller-supplied identity / timestamp fields so the storage
@@ -262,12 +324,25 @@ func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, 
 	p.UpdatedAt = noTime()
 	p.TetherInstanceID = ""
 
+	inc := parseIncludes(r)
+	if keyed {
+		out, created, err := s.Registry.RegisterIdempotent(r.Context(), kind, p, substrate, externalID)
+		if err != nil {
+			writeRegistryError(w, err)
+			return
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, projectProfile(out, inc))
+		return
+	}
 	out, err := s.Registry.Register(r.Context(), kind, p)
 	if err != nil {
 		writeRegistryError(w, err)
 		return
 	}
-	inc := parseIncludes(r)
 	writeJSON(w, http.StatusCreated, projectProfile(out, inc))
 }
 

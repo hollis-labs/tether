@@ -93,10 +93,15 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"include title, role, description, avatar, project, status, callback, capabilities, " +
 			"skills (each {name, learned_at RFC3339, optional via, level}), links (each " +
 			"{kind, target}), kind_meta, host_address, health_status. " +
-			"Returns the canonical Profile with the minted URN. Requires the registry.write scope.",
+			"Returns the canonical Profile with the minted URN. Give substrate and external_id together " +
+			"to make the register idempotent on that key: the first call creates the entry (created=true), " +
+			"a repeat returns the same URN (created=false) and changes nothing. " +
+			"Requires the registry.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringEnumProp("kind", "Entity kind: 'agent' or 'project'.", true, "agent", "project"),
 			gomcp.ObjectProp("profile", "Profile JSON to register. See tool description for the field shape.", true),
+			gomcp.StringProp("substrate", "Optional, with external_id: the owning substrate of the idempotency key, e.g. 'nanite'.", false),
+			gomcp.StringProp("external_id", "Optional, with substrate: a stable id within that substrate, e.g. '<install_id>/<host_settings_id>'.", false),
 		),
 		Handler: a.handleRegistryRegister,
 	}, Writes())
@@ -232,6 +237,20 @@ func (a *Adapter) handleRegistryRegister(ctx context.Context, args map[string]an
 
 	if a.client == nil {
 		return nil, toolError("internal_error", "tether_registry_register requires daemon routing; start MCP with tether mcp")
+	}
+	substrate, externalID := str(args, "substrate"), str(args, "external_id")
+	if (substrate == "") != (externalID == "") {
+		return nil, toolError("invalid_request", "substrate and external_id must be given together")
+	}
+	if substrate != "" {
+		out, created, err := a.client.Registry().RegisterIdempotent(ctx, kind, profile, substrate, externalID)
+		if err != nil {
+			if isDaemonUnreachable(err) {
+				return nil, daemonUnreachableError(err)
+			}
+			return nil, mapRegistryErr(err)
+		}
+		return toolJSON(map[string]any{"ok": true, "created": created, "profile": out}), nil
 	}
 	out, err := a.client.Registry().Register(ctx, kind, profile)
 	if err != nil {

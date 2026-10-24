@@ -30,6 +30,18 @@ back in the app's own storage.** Tether's registry is a directory, not your
 configuration store — an app that re-registers on every boot because it did not
 save the URN creates a new actor each time and orphans all prior mail.
 
+**Retry-safe registration.** When the app cannot be sure it saved the URN (a crash
+between "registered" and "stored", a retried queue), register with an external key
+instead: add `substrate` and `external_id` (or the single `external_key`,
+`<substrate>/<external_id>`) to the body, or the same two arguments to
+`tether_registry_register`. The first call creates the entry (`201`,
+`created: true`); every repeat with the same key returns `200` and the same URN and
+changes nothing; concurrent calls agree on one URN. For example Nanite uses substrate
+`nanite` and external id `<install_id>/<host_settings_id>`. The key must be stable and
+unique per actor, and half a key is `invalid_request` rather than a silent plain
+register. Use `PATCH` to change fields; `GET /registry/agents?substrate=...&external_id=...`
+finds the entry again.
+
 A useful shape: URN in the app's config or DB, written once at provisioning,
 read at every boot, never derived. If it is absent, that is a provisioning
 error worth failing loudly on, not a cue to register again.
