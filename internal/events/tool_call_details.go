@@ -57,6 +57,15 @@ type ToolCallDetails struct {
 
 	// ResolvedTool is the downstream tool a tether_tool_call dispatch targeted.
 	ResolvedTool string `json:"resolved_tool,omitempty"`
+
+	// Result cap (CW-20261024-0052): the size the tool produced before the gateway
+	// cap and whether the cap cut it. The size delivered is the event's
+	// result_bytes. ResultCapSkipped says why an oversize result was sent whole
+	// ("no_array", "not_json") or cut without a cursor ("stash_full",
+	// "too_large_for_cursor").
+	ResultOriginalBytes int64  `json:"result_original_bytes,omitempty"`
+	ResultCapped        bool   `json:"result_capped,omitempty"`
+	ResultCapSkipped    string `json:"result_cap_skipped,omitempty"`
 }
 
 func TruncateToolCallError(s string) string {

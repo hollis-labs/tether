@@ -16,6 +16,9 @@ func (p Profile) Validate() error {
 			return err
 		}
 	}
+	if err := p.ResultCap.Validate(); err != nil {
+		return err
+	}
 	if utf8.RuneCountInString(p.Instructions) > 2048 {
 		return fmt.Errorf("instructions exceeds 2048 characters")
 	}

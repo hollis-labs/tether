@@ -16,10 +16,10 @@ operator or an agent authorized to configure that catalog.
 | Inspect budgets and event retention | [Budgets and policies](budgets.md) |
 | Diagnose missing tools or a failed server | [Troubleshoot](troubleshoot.md) |
 
-Profiles are planned in CW-20260926-0008. MCP result budgets, daemon-enforced
-quotas/approval policy, and guided onboarding are planned in
-CW-20261001-0554, CW-20261001-0555, and CW-20261001-0556 respectively.
-Their proposed knobs are not commands you can use yet.
+Daemon-enforced quotas/approval policy and guided onboarding are planned in
+CW-20261001-0555 and CW-20261001-0556. Their proposed knobs are not commands you
+can use yet. MCP result budgets (CW-20261001-0554) shipped as the
+[tool result cap](budgets.md#tool-result-cap).
 
 ## Read these guides through Tether
 

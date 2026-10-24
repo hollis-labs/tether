@@ -7,6 +7,7 @@ import gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 func (a *Adapter) registerTools(s *gomcp.Server) {
 	a.mcp = s
 	a.registerHealthTools(s)
+	a.registerResultNextTool(s)
 	a.registerDocsTools(s)
 	a.registerChannelTools(s)
 	a.registerForumTools(s)

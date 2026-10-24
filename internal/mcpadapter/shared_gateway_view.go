@@ -209,6 +209,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		logging.contextDecorator = a.withSessionID
 		viewMws = append(viewMws, logging)
 	}
+	viewMws = append(viewMws, a.newResultCapMiddleware(registry, opts.Profile.Profile))
 	s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(viewMws, registry))
 	allowed := map[string]struct{}{}
 	for id := range upstreams.servers {
