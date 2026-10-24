@@ -24,9 +24,12 @@ import (
 //
 // cwd is the planted boot dir, whose .agents/ workspace root carries the
 // launch's skills and MCP plugin; the project is attached with --add-dir by
-// the planter. HOME is never relocated: agy's live credential is an OAuth
-// token in the macOS Keychain (its logs report "authenticated via keyring"),
-// and its global config under ~/.gemini is shared with the desktop app.
+// the planter. HOME is not relocated by default: agy's global config under
+// ~/.gemini is shared with the desktop app. With TETHER_AGY_MCP_ALLOWLIST=1 the
+// launch gets a private HOME instead (see allowhome.go): a farm of symlinks to
+// the real home plus a private .gemini carrying the MCP allowlist. agy still
+// authenticates under it on macOS and Linux (verified 2026-10-24, agy 1.4.7),
+// because ~/Library and the login files resolve through the farm.
 //
 // The adapter's Preflight is not forwarded: it stats ~/.gemini/oauth_creds.json,
 // which is Gemini CLI's file, not agy's, so it both passes without an agy

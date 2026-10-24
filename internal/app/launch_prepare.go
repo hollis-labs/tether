@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,4 +169,47 @@ func withBrowserShim(providerBrand, workspaceRoot string, env []string) ([]strin
 		return nil, err
 	}
 	return antigravity.PrependPATH(env, dir), nil
+}
+
+// withAgyAllowlist gives an agy launch its own HOME carrying an MCP allowlist
+// (CW-20261024-0111), so a headless run can call the Tether gateway's tools
+// instead of having every MCP call auto-denied. It is OFF unless
+// TETHER_AGY_MCP_ALLOWLIST=1 and leaves every other provider's env untouched.
+//
+// The allowlist is the planted plugin's own server list run through
+// antigravity.AllowRules: Tether's server is granted server-wide (its tool set is
+// already limited by the agent's profile), any other planted server gets no rule
+// and so stays denied. The launch's HOME becomes <workspace>/agy-home: a farm of
+// symlinks to the real home's entries plus a private .gemini. See
+// antigravity.PlantHome for what it never touches and for the known limits.
+// Enabled and unable to build the home is a launch error, not a silent fall back
+// to a HOME that would deny every call.
+func withAgyAllowlist(providerBrand, bootDir, workspaceRoot string, env []string, getenv func(string) string, userHome func() (string, error)) ([]string, error) {
+	if providerBrand != "antigravity" || !antigravity.AllowlistEnabled(getenv) {
+		return env, nil
+	}
+	servers, err := antigravity.PluginServers(bootDir)
+	if err != nil {
+		return nil, err
+	}
+	rules, denied := antigravity.AllowRules(servers)
+	if len(denied) > 0 {
+		log.Printf("agy allowlist: no rule for planted MCP server(s) %s; their calls stay denied", strings.Join(denied, ", "))
+	}
+	realHome := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "HOME="); ok && v != "" {
+			realHome = v
+		}
+	}
+	if realHome == "" {
+		if realHome, err = userHome(); err != nil {
+			return nil, fmt.Errorf("agy allowlist: no home directory: %w", err)
+		}
+	}
+	home, err := antigravity.PlantHome(antigravity.HomeSpec{RealHome: realHome, Dir: filepath.Join(workspaceRoot, antigravity.HomeDirName), Rules: rules})
+	if err != nil {
+		return nil, err
+	}
+	return antigravity.WithHome(env, home), nil
 }

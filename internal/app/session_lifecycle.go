@@ -612,6 +612,12 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, err
 		}
+		startOpts.Env, err = withAgyAllowlist(plan.ProviderBrand, prepared.PlantedBootDir, ws.Root, startOpts.Env, os.Getenv, os.UserHomeDir)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
 	}
 	if ownership == config.MCPUpstreamsDaemon && rt.Kind() != acp.Kind {
 		startOpts.Env, err = s.daemonWorkerEnv(startOpts.Env, launch.EffectiveMCPServers(plan.Env))
