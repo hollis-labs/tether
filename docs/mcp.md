@@ -1107,13 +1107,18 @@ are addressed using URNs in the form `msg://<kind>/<authority>/<id>[/<subid>]`.
 `normal`, or `high`.
 
 #### `tether_message_send` _(message.write)_
+The message body lives inside `payload_json` (for example `{"subject":"...","body":"..."}`). `tether_message_send` and
+`tether_message_notify` refuse an argument they do not declare, naming it and listing the accepted set, rather than
+accepting it and storing an empty payload (CW-20261024-0040). `_traceparent` and `_tracestate` are ignored as gateway
+metadata; any other underscore-prefixed name is refused.
+
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `from` | string | ✓ | Sender URN |
 | `to` | string | ✓ | Recipient URN |
 | `kind` | string | ✓ | Message kind |
-| `payload_json` | string | — | JSON payload body |
+| `payload_json` | string | — | JSON payload body: a string containing JSON (a JSON object or array is also accepted and serialized). Any other type is refused |
 | `thread_id` | string | — | Thread ID for grouping |
 | `in_reply_to` | string | — | Message ID this replies to |
 
@@ -1127,7 +1132,7 @@ session can be resolved.
 | `from` | string | ✓ | Sender URN |
 | `to` | string | ✓ | Recipient URN |
 | `kind` | string | — | Message kind; defaults to `notice` |
-| `payload_json` | string | — | JSON payload body |
+| `payload_json` | string | — | JSON payload body: a string containing JSON (a JSON object or array is also accepted and serialized). Any other type is refused |
 | `thread_id` | string | — | Thread ID for grouping |
 | `in_reply_to` | string | — | Message ID this replies to |
 | `urgency` | string | — | `very-low`, `low`, `normal`, or `high`; defaults to `normal` |

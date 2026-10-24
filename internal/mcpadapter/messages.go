@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
@@ -24,29 +25,29 @@ var validMsgKinds = map[messaging.Kind]struct{}{
 }
 
 func (a *Adapter) registerMessageTools(s *gomcp.Server) {
-	a.addTool(s, gomcp.Tool{
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name:        "tether_message_send",
 		Description: "Send a message envelope via the tether messaging store. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
 			gomcp.StringProp("to", "Recipient URN (e.g. msg://agent/agent-mux/worker)", true),
 			gomcp.StringProp("kind", "Message kind: request, response, notice, status_update, handoff, escalation", true),
-			gomcp.StringProp("payload_json", "JSON payload body (optional)", false),
+			gomcp.StringProp("payload_json", "JSON payload body (optional). Send a string containing JSON; a JSON object or array is also accepted and serialized for you. Any other type is rejected (CW-20261024-0040)", false),
 			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
 			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
 			gomcp.StringProp("idempotency_key", "Optional key; repeating it from the same sender returns the earlier message instead of storing a second one. Default: a fresh key per call, reused if the call is retried", false),
 		),
 		Handler: a.handleMessageSend,
-	}, Writes())
+	}), Writes())
 
-	a.addTool(s, gomcp.Tool{
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name:        "tether_message_notify",
 		Description: "Send a message envelope and best-effort wake a live recipient session with a mailbox notification turn. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
 			gomcp.StringProp("to", "Recipient URN; msg://session/<authority>/<session_id> wakes that session, msg://agent/<authority>/<logical_agent_id> wakes the latest running session for that logical agent when found", true),
 			gomcp.StringProp("kind", "Message kind: request, response, notice, status_update, handoff, escalation (default notice)", false),
-			gomcp.StringProp("payload_json", "JSON payload body (optional)", false),
+			gomcp.StringProp("payload_json", "JSON payload body (optional). Send a string containing JSON; a JSON object or array is also accepted and serialized for you. Any other type is rejected (CW-20261024-0040)", false),
 			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
 			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
 			gomcp.StringProp("idempotency_key", "Optional key; repeating it from the same sender returns the earlier message instead of storing a second one. Default: a fresh key per call, reused if the call is retried", false),
@@ -56,7 +57,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 			gomcp.BooleanProp("no_wake", "Store the message but skip wake injection", false),
 		),
 		Handler: a.handleMessageNotify,
-	}, Writes())
+	}), Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_get",
@@ -181,6 +182,38 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
+// payloadJSONArg reads the payload_json argument of the message-send tools.
+//
+// A string is used as given. A JSON object or array is serialized, because
+// callers (LLM clients above all) routinely send the payload as the object it
+// describes and the conversion loses nothing. Anything else is refused: the old
+// str() read returned "" for a non-string, so the payload was dropped, the
+// envelope stored with payload:null and the call reported ok:true -- blank mail
+// bodies (CW-20261024-0040, the same drop as CW-20260521-0018). An absent or
+// null argument supplied nothing, so nothing is dropped.
+func (a *Adapter) payloadJSONArg(args map[string]any, tool string) (json.RawMessage, error) {
+	switch v := args["payload_json"].(type) {
+	case nil:
+		return nil, nil
+	case string:
+		if p := str(args, "payload_json"); p != "" {
+			return json.RawMessage(p), nil
+		}
+		return nil, nil
+	case map[string]any, []any:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return nil, toolError("invalid_request", "payload_json could not be serialized: "+err.Error())
+		}
+		a.logger().Warn("payload_json sent as a JSON value, not a string; serialized it",
+			"tool", tool, "received", fmt.Sprintf("%T", v))
+		return raw, nil
+	default:
+		return nil, toolError("invalid_request",
+			fmt.Sprintf("payload_json must be a string containing JSON (or a JSON object/array), got %T; the payload was not sent", v))
+	}
+}
+
 func (a *Adapter) handleMessageSend(ctx context.Context, args map[string]any) (any, error) {
 	if err := a.checkScope(ScopeMessageWrite); err != nil {
 		return nil, err
@@ -216,9 +249,11 @@ func (a *Adapter) handleMessageSend(ctx context.Context, args map[string]any) (a
 		InReplyTo:      str(args, "in_reply_to"),
 		IdempotencyKey: str(args, "idempotency_key"),
 	}
-	if p := str(args, "payload_json"); p != "" {
-		sendReq.Payload = []byte(p)
+	payload, err := a.payloadJSONArg(args, "tether_message_send")
+	if err != nil {
+		return nil, err
 	}
+	sendReq.Payload = payload
 	sent, err := a.client.MessageSend(ctx, sendReq)
 	if err != nil {
 		if isDaemonUnreachable(err) {
@@ -271,8 +306,12 @@ func (a *Adapter) handleMessageNotify(ctx context.Context, args map[string]any) 
 		Wake:      &wake,
 		WakeText:  str(args, "wake_text"),
 	}
-	if p := str(args, "payload_json"); p != "" {
-		notifyReq.Payload = []byte(p)
+	payload, err := a.payloadJSONArg(args, "tether_message_notify")
+	if err != nil {
+		return nil, err
+	}
+	if payload != nil {
+		notifyReq.Payload = payload
 		notifyReq.ContentType = "application/json"
 	}
 	out, err := a.client.MessageNotify(ctx, notifyReq)
