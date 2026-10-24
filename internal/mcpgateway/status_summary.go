@@ -14,6 +14,17 @@ type OriginBrief struct {
 	Cataloged int    `json:"cataloged_tools"`
 	Degraded  bool   `json:"degraded,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Tools with an outputSchema / annotations (see OriginStatus).
+	OutputSchema int `json:"output_schema_tools"`
+	Annotated    int `json:"annotated_tools"`
+}
+
+// SchemaCoverage counts eligible tools that declare each optional schema aspect.
+type SchemaCoverage struct {
+	Tools            int `json:"tools"`
+	WithOutputSchema int `json:"with_output_schema"`
+	WithAnnotations  int `json:"with_annotations"`
+	WithTitle        int `json:"with_title"`
 }
 
 // StatusSummary is the default answer of tether_gateway_status: counts, which
@@ -33,6 +44,7 @@ type StatusSummary struct {
 	Connected          []string       `json:"connected"`
 	UnavailableServers []string       `json:"unavailable_servers"`
 	Origins            []OriginBrief  `json:"origins"`
+	SchemaCoverage     SchemaCoverage `json:"schema_coverage"`
 	LintTotal          int            `json:"lint_total"`
 	LintByCode         map[string]int `json:"lint_by_code"`
 	Collisions         int            `json:"collisions"`
@@ -53,7 +65,8 @@ func (st Status) Summary() StatusSummary {
 		Selection: st.Selection, Profile: st.Profile, Complete: st.Complete,
 		CatalogedTools: st.CatalogedTools, EligibleTools: st.EligibleTools, AvailableTools: st.AvailableTools,
 		HiddenTools: st.HiddenTools, UnexaminedTools: st.UnexaminedTools, Exclusions: st.Exclusions,
-		Connected: []string{}, UnavailableServers: []string{}, Origins: []OriginBrief{},
+		SchemaCoverage: SchemaCoverage{Tools: st.EligibleTools, WithOutputSchema: st.OutputSchemaTools, WithAnnotations: st.AnnotatedTools, WithTitle: st.TitledTools},
+		Connected:      []string{}, UnavailableServers: []string{}, Origins: []OriginBrief{},
 		LintTotal: len(st.Lint), LintByCode: map[string]int{}, Collisions: len(st.Collisions), Warnings: st.Warnings,
 		Hint: `Compact view. Pass detail:"full" (with limit/cursor) for every lint finding and the raw origin records.`,
 		Name: st.Name, Visible: st.Visible, Reason: st.Reason, Tool: st.Tool,
@@ -63,7 +76,7 @@ func (st Status) Summary() StatusSummary {
 	}
 	degraded := []string{}
 	for _, origin := range st.Origins {
-		brief := OriginBrief{ID: origin.ID, Status: origin.Status, Available: origin.AvailableTools, Cataloged: origin.ToolCount, Degraded: origin.Degraded, Error: boundText(origin.Error, maxBriefError)}
+		brief := OriginBrief{ID: origin.ID, Status: origin.Status, Available: origin.AvailableTools, Cataloged: origin.ToolCount, Degraded: origin.Degraded, OutputSchema: origin.OutputSchemaTools, Annotated: origin.AnnotatedTools, Error: boundText(origin.Error, maxBriefError)}
 		out.Origins = append(out.Origins, brief)
 		switch {
 		case origin.Status != "connected":

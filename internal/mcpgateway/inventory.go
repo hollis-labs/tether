@@ -28,6 +28,12 @@ type OriginStatus struct {
 	HiddenTools       int            `json:"hidden_tools"`
 	Exclusions        map[string]int `json:"exclusions"`
 	Error             string         `json:"error,omitempty"`
+	// Schema coverage over this origin's eligible tools (CW-20261024-0048): how
+	// many declare an outputSchema, annotations, and a title. Typed APIs and good
+	// search results depend on these; they are counts, never schema contents.
+	OutputSchemaTools int `json:"output_schema_tools"`
+	AnnotatedTools    int `json:"annotated_tools"`
+	TitledTools       int `json:"titled_tools"`
 }
 type Snapshot struct {
 	Entries    []Entry
@@ -331,12 +337,16 @@ type Status struct {
 	AvailableTools  int             `json:"available_tools"`
 	HiddenTools     int             `json:"hidden_tools"`
 	UnexaminedTools int             `json:"unexamined_tools"`
-	Exclusions      map[string]int  `json:"exclusions"`
-	Complete        bool            `json:"complete"`
-	Name            string          `json:"name,omitempty"`
-	Visible         *bool           `json:"visible,omitempty"`
-	Reason          string          `json:"reason,omitempty"`
-	Tool            *Item           `json:"tool,omitempty"`
+	// Schema coverage totals over eligible tools; see OriginStatus.
+	OutputSchemaTools int            `json:"output_schema_tools"`
+	AnnotatedTools    int            `json:"annotated_tools"`
+	TitledTools       int            `json:"titled_tools"`
+	Exclusions        map[string]int `json:"exclusions"`
+	Complete          bool           `json:"complete"`
+	Name              string         `json:"name,omitempty"`
+	Visible           *bool          `json:"visible,omitempty"`
+	Reason            string         `json:"reason,omitempty"`
+	Tool              *Item          `json:"tool,omitempty"`
 }
 
 func (s *Service) Status(name string) Status {
@@ -354,6 +364,7 @@ func (s *Service) Status(name string) Status {
 		origin.EligibleTools = 0
 		origin.AvailableTools = 0
 		origin.HiddenTools = 0
+		origin.OutputSchemaTools, origin.AnnotatedTools, origin.TitledTools = 0, 0, 0
 		origin.Exclusions = map[string]int{}
 	}
 	if s.Policy != nil {
@@ -432,8 +443,27 @@ func (s *Service) Status(name string) Status {
 		out.CatalogedTools += origin.ToolCount
 	}
 	for _, entry := range snapshot.Entries {
+		hasOutput, hasAnnotations, hasTitle := entry.Tool != nil && entry.Tool.OutputSchema != nil, entry.Tool != nil && entry.Tool.Annotations != nil, entry.Tool != nil && entry.Tool.Title != ""
+		if hasOutput {
+			out.OutputSchemaTools++
+		}
+		if hasAnnotations {
+			out.AnnotatedTools++
+		}
+		if hasTitle {
+			out.TitledTools++
+		}
 		if i, ok := byOrigin[entry.Origin]; ok {
 			out.Origins[i].EligibleTools++
+			if hasOutput {
+				out.Origins[i].OutputSchemaTools++
+			}
+			if hasAnnotations {
+				out.Origins[i].AnnotatedTools++
+			}
+			if hasTitle {
+				out.Origins[i].TitledTools++
+			}
 			if !unavailable[entry.Origin] {
 				out.Origins[i].AvailableTools++
 			}

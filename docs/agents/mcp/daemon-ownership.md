@@ -113,6 +113,15 @@ tether mcp --forward-daemon --daemon-address unix:/abs/run/tetherd.sock \
   credential rather than the operator token.
 - Upstream credentials stay in the hub catalog and the daemon's children. The
   client holds only its bearer credential.
+- Several manual clients can share one operator-class credential, which makes
+  them indistinguishable in telemetry. `--client-label <name>` (or
+  `TETHER_CLIENT_LABEL`) lets a forwarder declare who it is: 1-64 characters of
+  letters, digits and `. _ : @ / -`. The daemon records it as `client_label` on
+  tool-call events as an **unverified claim**. It never affects authorization,
+  and an invalid label is ignored with a note on stderr rather than breaking the
+  connection. `--client-label` without `--forward-daemon` is an error. Calls from
+  one connection also carry `mcp_session`, a short hash of the transport session
+  handle, so searches and the calls that follow them can be linked.
 - Upstream calls are admitted and audited under the caller's principal. Passing
   that identity on to the upstream service (instead of the shared hub token)
   needs receiver-side support and is not part of this change.
