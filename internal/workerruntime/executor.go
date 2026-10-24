@@ -20,9 +20,11 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/provider"
+	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/hollis-labs/tether/internal/workspace"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -304,6 +306,16 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		cmd.Dir = prepared.Workdir
 		cmd.Env = provider.BuildEnv("merge", nil, nil, spec.Env, os.Environ())
 		cmd.Env = provider.BuildEnv("merge", nil, nil, prepared.Env, cmd.Env)
+		if spec.Provider == "antigravity" {
+			// A worker-hosted agy launch gets the same private HOME and MCP allowlist as a
+			// hub-local one (CW-20261024-0111). Off unless the launch or this worker's env
+			// sets TETHER_AGY_MCP_ALLOWLIST=1.
+			env, err := antigravity.ApplyAllowlist(antigravity.AllowlistOptions{BootDir: prepared.PlantedBootDir, WorkspaceRoot: ws.Root, Env: cmd.Env, Flag: antigravity.FlagLookup(spec.Env, os.Getenv), UserHome: os.UserHomeDir, Logf: log.Printf})
+			if err != nil {
+				return nil, err
+			}
+			cmd.Env = env
+		}
 	}
 	cmd.Env = launch.CorrelationFromEnv(spec.Env).SealEnv(cmd.Env)
 	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+spec.Actor)

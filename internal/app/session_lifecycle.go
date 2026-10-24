@@ -32,6 +32,7 @@ import (
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/provider"
 	"github.com/hollis-labs/tether/internal/provider/acp"
+	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -607,6 +608,12 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		startOpts.WorkspaceDir = ws.Root
 		startOpts.Env = mergeEnv(provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()), prepared.Env)
 		startOpts.Env, err = withBrowserShim(plan.ProviderBrand, ws.Root, startOpts.Env)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
+		startOpts.Env, err = withAgyAllowlist(plan.ProviderBrand, prepared.PlantedBootDir, ws.Root, startOpts.Env, antigravity.FlagLookup(plan.Env, os.Getenv), os.UserHomeDir)
 		if err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
