@@ -1,7 +1,8 @@
 # Inspect budgets, policies and retention
 
 Existing budgets govern Tether's AI gateway chat spend. They do not cap
-upstream MCP tool results, inventory tokens or calls to an app's own model API.
+inventory tokens or calls to an app's own model API; upstream tool results have a
+separate [result cap](#tool-result-cap).
 
 ## AI cost budgets
 
@@ -54,9 +55,68 @@ Retention removes AI usage history used by durable budgets, so choose a window
 that retains the budget history you intend to enforce. It is not a row-count
 or disk-size cap.
 
+## Tool result cap
+
+A tool that returns hundreds of kilobytes in one result makes clients spill the
+output to a file or cut it blindly. The gateway therefore caps the size of one
+tool result at 32 KiB (the JSON-encoded result, the same measure as
+`result_bytes` in tool-call events). This is a safety net; the real fix for a
+large listing is paging in the tool that owns it (CW-20261024-0053).
+
+What the cap does:
+
+- It cuts only a **successful result of a tool annotated read-only**. An error
+  is never cut, and neither is a write receipt or any result from a tool that
+  is not annotated read-only.
+- It cuts the largest array in the result at an item boundary, so the text is
+  still valid JSON, with at least the first item kept. Fields next to the array
+  are kept. A `structuredContent` copy is cut the same way.
+- It appends one extra content block, the marker:
+
+  ```json
+  {"gateway_truncated":{"truncated":true,"path":"data.items","from":0,"returned":156,
+   "total":600,"original_bytes":124189,"next_cursor":"<id>.156",
+   "how_to_continue":"call tether_result_next with {\"cursor\":\"<id>.156\"}; ..."}}
+  ```
+
+- It keeps a copy of the original result in memory (ten minutes, at most 64
+  results and 48 MiB, none over 8 MiB) and serves the rest with
+  `tether_result_next {"cursor": "..."}`, optionally with `max_bytes`. Pages
+  come from that one copy, so they never skip or repeat items even if the data
+  changes. Repeating a cursor returns the same page. A cursor belongs to the
+  gateway view that issued it; in search mode call `tether_result_next` through
+  `tether_tool_call`. After expiry or a daemon restart the cursor is refused
+  with `unknown or expired cursor`; call the tool again.
+- A result with no array to cut (one big object or plain text) is delivered
+  whole and noted in telemetry as skipped (`result_cap_skipped`: `no_array`,
+  `not_json`). A result too large to store (over 8 MiB) or arriving when the
+  store is full is still cut, with no cursor, and the marker says to narrow the
+  call.
+
+Each tool-call event records `result_original_bytes` (before the cap),
+`result_capped`, and `result_cap_skipped`; `result_bytes` is what was sent.
+
+### Changing the cap
+
+- Daemon default: `TETHER_MCP_RESULT_CAP_BYTES` in the daemon environment, then
+  restart. `0` or a negative value turns the cap off (the rollback switch).
+- Per profile, in the MCP profile config:
+
+  ```yaml
+  mcp:
+    profiles:
+      reviewer:
+        result_cap:
+          default_bytes: 65536     # 0 inherits, -1 removes the cap, otherwise >= 1024
+          tools:
+            tether_catalog_list_agents: -1
+            torque_task_list: 16384
+  ```
+
 ## Planned MCP policy
 
-CW-20261001-0554 covers result/inventory token budgets and an explicit truncation
-and continuation envelope. CW-20261001-0555 covers per-agent quotas, rate limits,
-approval-required tools and daemon-side policy telemetry. Neither is provided
-by today's discovery mode, server grant or AI cost budget.
+CW-20261001-0555 covers per-agent quotas, rate limits, approval-required tools
+and daemon-side policy telemetry. It is not provided by today's discovery mode,
+server grant, result cap or AI cost budget. Result-size budgets for the
+inventory (CW-20261001-0554) are covered by the cap above and the discovery
+response limits in [Discovery](discovery.md).

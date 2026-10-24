@@ -99,6 +99,19 @@ func SetResolved(ctx context.Context, name string) {
 	}
 }
 
+// SetResultCap records what the gateway result cap did to the current call's
+// result: the size before the cap, whether it was cut, and why not if it was
+// oversize but delivered whole.
+func SetResultCap(ctx context.Context, originalBytes int, truncated bool, skipped string) {
+	if o, ok := ctx.Value(observationKey{}).(*Observation); ok {
+		o.mu.Lock()
+		o.event.ResultOriginalBytes = int64(originalBytes)
+		o.event.ResultCapped = truncated
+		o.event.ResultCapSkipped = skipped
+		o.mu.Unlock()
+	}
+}
+
 func newSearchID() string {
 	var b [6]byte
 	if _, err := rand.Read(b[:]); err != nil {

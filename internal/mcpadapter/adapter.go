@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	hotel "github.com/hollis-labs/libs/core/util/otel"
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/budget"
@@ -46,6 +47,7 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/telemetry"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/trace"
@@ -79,7 +81,9 @@ type Adapter struct {
 	token                 string
 	scopes                map[string]struct{}
 	principal             *identity.Principal // daemon view only; derived from verified middleware
-	connectionContext     context.Context     // accepted-socket proof for in-memory native dispatch
+	pagerOnce             sync.Once
+	pagerStore            *mcpgateway.ResultPager // result-cap snapshots for this adapter's view
+	connectionContext     context.Context         // accepted-socket proof for in-memory native dispatch
 	callerContextResolver func(context.Context) (callcontext.Snapshot, error)
 	callerContextCache    callerContextCache
 

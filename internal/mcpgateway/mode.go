@@ -27,6 +27,8 @@ type Profile struct {
 	AlwaysLoad    []string  `yaml:"always_load" json:"always_load,omitempty"`
 	Instructions  string    `yaml:"instructions" json:"instructions,omitempty"`
 	DiscoveryMode *string   `yaml:"discovery_mode" json:"discovery_mode,omitempty"`
+	// ResultCap overrides the gateway result cap for this profile (CW-20261024-0052).
+	ResultCap *ResultCap `yaml:"result_cap" json:"result_cap,omitempty"`
 }
 type ToolRules struct {
 	Allow []string `yaml:"allow" json:"allow"`

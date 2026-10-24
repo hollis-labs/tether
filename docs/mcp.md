@@ -394,6 +394,9 @@ mcp:
       discovery_mode: search
 ```
 
+A profile may also set `result_cap` (`default_bytes`, per-tool `tools`) to change the
+gateway result cap; see [Budgets and policies](agents/mcp/budgets.md#tool-result-cap).
+
 `servers` selects origins, including reserved native origin **`tether`**. Omitted
 means all enabled origins; `[]` means none. `[torque]` excludes native targets;
 `[torque, tether]` retains them. Unknown/disabled origins fail startup before
