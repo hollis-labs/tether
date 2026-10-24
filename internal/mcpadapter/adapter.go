@@ -326,6 +326,11 @@ func classifyClientErr(err error, id string) *budget.ToolError {
 		return toolError("invalid_request", err.Error()).
 			WithHelpTool("tether_message_send").
 			WithNextStep("send to the original sender with in_reply_to set to this message's id; tether_message_reply answers only messages a session published to a channel")
+	case strings.Contains(msg, "(recipient_deprecated)"):
+		// The recipient URN was retired and is never reused (CW-20261024-0095).
+		return toolError("recipient_deprecated", err.Error()).
+			WithHelpTool("tether_registry_search").
+			WithNextStep("nothing was sent; find the recipient's current URN with tether_registry_search (by role) or tether_registry_lookup_by (by external id) and send to that")
 	case strings.Contains(msg, "(invalid_request)"), strings.Contains(msg, " 400 "):
 		return toolError("invalid_request", err.Error())
 	case strings.Contains(msg, "(not_found)"), strings.Contains(msg, " 404 "):
