@@ -15,8 +15,10 @@ func TestMetadataLintReportsWithoutInferringOrRewriting(t *testing.T) {
 		codes       []string
 	}{
 		{"run start post a lookup", nil, []string{"missing_annotations"}},
-		{strings.Repeat("界", 2048), &mcpsdk.ToolAnnotations{}, nil},
-		{strings.Repeat("界", 2049), &mcpsdk.ToolAnnotations{}, []string{"description_length"}},
+		// No sentence end, so the "first sentence" is the whole text: too long for a summary.
+		{strings.Repeat("界", 2048), &mcpsdk.ToolAnnotations{}, []string{"summary_too_long"}},
+		{strings.Repeat("界", 2049), &mcpsdk.ToolAnnotations{}, []string{"description_length", "summary_too_long"}},
+		{"Short sentence. " + strings.Repeat("界", 500), &mcpsdk.ToolAnnotations{}, nil},
 		{" \nDisabled: unavailable upstream feature", nil, []string{"missing_annotations", "disabled_description"}},
 		{"disabled tool", &mcpsdk.ToolAnnotations{}, []string{"disabled_description"}},
 		{"Disabledness is not a disabled declaration", &mcpsdk.ToolAnnotations{}, nil},

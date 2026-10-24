@@ -85,6 +85,9 @@ func LintTool(origin string, tool *mcpsdk.Tool) []NameFinding {
 	if utf8.RuneCountInString(tool.Description) > 2048 {
 		add("description_length", "description exceeds 2048 characters; some clients truncate it")
 	}
+	if _, clean := BriefDescription(tool.Description); !clean {
+		add("summary_too_long", fmt.Sprintf("the first sentence exceeds %d characters, so the search summary is cut mid-sentence; lead with a short sentence", BriefDescriptionMax))
+	}
 	if disabledDescription.MatchString(strings.TrimSpace(tool.Description)) {
 		add("disabled_description", "listed tool description begins with Disabled; upstream must reconcile its declaration, gateway does not infer availability from prose")
 	}

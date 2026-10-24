@@ -42,26 +42,38 @@ type Snapshot struct {
 	Collisions []NameCollision
 }
 type Item struct {
-	Name         string                  `json:"name"`
-	Origin       string                  `json:"origin,omitempty"`
-	Title        string                  `json:"title,omitempty"`
-	Description  string                  `json:"description,omitempty"`
-	Annotations  *mcpsdk.ToolAnnotations `json:"annotations"`
-	InputSchema  any                     `json:"inputSchema,omitempty"`
-	OutputSchema any                     `json:"outputSchema,omitempty"`
-	Meta         mcpsdk.Meta             `json:"_meta,omitempty"`
-	Icons        []mcpsdk.Icon           `json:"icons,omitempty"`
-	Score        *int                    `json:"score,omitempty"`
-	Error        string                  `json:"error,omitempty"`
+	Name        string                  `json:"name"`
+	Origin      string                  `json:"origin,omitempty"`
+	Title       string                  `json:"title,omitempty"`
+	Description string                  `json:"description,omitempty"`
+	Annotations *mcpsdk.ToolAnnotations `json:"annotations,omitempty"`
+	// RequiredArgs names the top-level required arguments; present in summary
+	// detail so a caller can often call a tool without hydrating its schema.
+	RequiredArgs []string      `json:"required_args,omitempty"`
+	InputSchema  any           `json:"inputSchema,omitempty"`
+	OutputSchema any           `json:"outputSchema,omitempty"`
+	Meta         mcpsdk.Meta   `json:"_meta,omitempty"`
+	Icons        []mcpsdk.Icon `json:"icons,omitempty"`
+	Score        *int          `json:"score,omitempty"`
+	Error        string        `json:"error,omitempty"`
 }
 type Result struct {
-	Items              []Item   `json:"items"`
-	Returned           int      `json:"returned"`
-	TotalMatches       int      `json:"total_matches"`
-	NextCursor         string   `json:"next_cursor,omitempty"`
-	Truncated          bool     `json:"truncated"`
-	Complete           bool     `json:"complete"`
-	UnavailableServers []string `json:"unavailable_servers"`
+	Items        []Item `json:"items"`
+	Returned     int    `json:"returned"`
+	TotalMatches int    `json:"total_matches"`
+	NextCursor   string `json:"next_cursor,omitempty"`
+	Truncated    bool   `json:"truncated"`
+	// TruncationReason is "limit" (the requested page size) or "bytes" (the
+	// response byte cap cut the page at an item boundary).
+	TruncationReason string `json:"truncation_reason,omitempty"`
+	// OmittedNames lists requested names that were not hydrated because the byte
+	// cap was reached; request them again. Names hydration has no cursor.
+	OmittedNames []string `json:"omitted_names,omitempty"`
+	// OriginCounts groups the returned items by origin. Items stay in rank order,
+	// because rank carries meaning (and is what search telemetry links to).
+	OriginCounts       map[string]int `json:"origin_counts,omitempty"`
+	Complete           bool           `json:"complete"`
+	UnavailableServers []string       `json:"unavailable_servers"`
 }
 type Request struct {
 	Query   string   `json:"query,omitempty"`
@@ -82,7 +94,14 @@ type Service struct {
 	Snapshot  func() Snapshot
 	Score     func(query string, entry Entry) int
 	Dispatch  func(context.Context, string, map[string]any, map[string]any) (*mcpsdk.CallToolResult, error)
+	// MaxResultBytes caps the encoded size of the items in one response; 0 means
+	// DefaultMaxResultBytes. The first item is always returned, however large.
+	MaxResultBytes int
 }
+
+// DefaultMaxResultBytes is the item-bytes cap for one discovery response. It
+// matches the starting default of the gateway result cap (CW-20261024-0052).
+const DefaultMaxResultBytes = 32 << 10
 
 func availability(snapshot Snapshot) (map[string]bool, []string) {
 	unavailable := map[string]bool{}
@@ -117,8 +136,8 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		if req.Detail == "" {
 			req.Detail = "summary"
 		}
-		if req.Detail != "summary" && req.Detail != "schema" {
-			return Result{}, fmt.Errorf("detail must be summary or schema")
+		if req.Detail != "names" && req.Detail != "summary" && req.Detail != "schema" {
+			return Result{}, fmt.Errorf("detail must be names, summary or schema")
 		}
 	}
 	limit := req.Limit
@@ -160,16 +179,44 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		servers[id] = true
 	}
 	out := Result{Items: []Item{}, Complete: len(unavailableServers) == 0, UnavailableServers: unavailableServers}
-	schema := !search || req.Detail == "schema"
+	// list always hydrates real schemas; search honors names|summary|schema.
+	detail := "schema"
+	if search {
+		detail = req.Detail
+	}
+	maxBytes := s.MaxResultBytes
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxResultBytes
+	}
 	itemFor := func(entry Entry, score *int) Item {
-		tool := ClientSafeTool(entry.Tool)
-		item := Item{Name: tool.Name, Origin: entry.Origin, Title: tool.Title, Description: tool.Description, Annotations: tool.Annotations, Icons: tool.Icons, Score: score}
-		if schema {
-			item.InputSchema = tool.InputSchema
-			item.OutputSchema = tool.OutputSchema
-			item.Meta = tool.Meta
+		switch detail {
+		case "names":
+			return Item{Name: entry.Tool.Name, Origin: entry.Origin, Score: score}
+		case "summary":
+			brief, _ := BriefDescription(entry.Tool.Description)
+			return Item{Name: entry.Tool.Name, Origin: entry.Origin, Title: entry.Tool.Title, Description: brief, Annotations: entry.Tool.Annotations, RequiredArgs: requiredArgs(entry.Tool.InputSchema), Score: score}
 		}
-		return item
+		tool := ClientSafeTool(entry.Tool)
+		return Item{Name: tool.Name, Origin: entry.Origin, Title: tool.Title, Description: tool.Description, Annotations: tool.Annotations, Icons: tool.Icons, Score: score, InputSchema: tool.InputSchema, OutputSchema: tool.OutputSchema, Meta: tool.Meta}
+	}
+	itemBytes := func(item Item) int {
+		raw, err := json.Marshal(item)
+		if err != nil {
+			return 0
+		}
+		return len(raw)
+	}
+	countOrigins := func(items []Item) map[string]int {
+		counts := map[string]int{}
+		for _, item := range items {
+			if item.Error == "" && item.Origin != "" {
+				counts[item.Origin]++
+			}
+		}
+		if len(counts) == 0 {
+			return nil
+		}
+		return counts
 	}
 	if req.Names != nil {
 		if len(req.Names) > 100 {
@@ -179,18 +226,28 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		for _, entry := range snapshot.Entries {
 			byName[entry.Tool.Name] = entry
 		}
-		for _, name := range req.Names {
+		used := 0
+		for i, name := range req.Names {
+			var item Item
 			entry, ok := byName[name]
-			if !ok {
-				out.Items = append(out.Items, Item{Name: name, Error: "unknown or excluded tool"})
-				continue
+			switch {
+			case !ok:
+				item = Item{Name: name, Error: "unknown or excluded tool"}
+			case unavailable[entry.Origin]:
+				item = Item{Name: name, Origin: entry.Origin, Error: "origin unavailable"}
+			default:
+				item = itemFor(entry, nil)
 			}
-			if unavailable[entry.Origin] {
-				out.Items = append(out.Items, Item{Name: name, Origin: entry.Origin, Error: "origin unavailable"})
-				continue
+			size := itemBytes(item)
+			if len(out.Items) > 0 && used+size > maxBytes {
+				out.Truncated, out.TruncationReason = true, "bytes"
+				out.OmittedNames = append([]string(nil), req.Names[i:]...)
+				break
 			}
-			out.Items = append(out.Items, itemFor(entry, nil))
+			used += size
+			out.Items = append(out.Items, item)
 		}
+		out.OriginCounts = countOrigins(out.Items)
 		out.Returned = len(out.Items)
 		out.TotalMatches = out.Returned
 		return out, nil
@@ -256,17 +313,31 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 	}
 	out.TotalMatches = len(matches)
 	end := min(offset+limit, len(matches))
+	used, cutByBytes := 0, false
 	for _, match := range matches[offset:end] {
 		var score *int
 		if search {
 			value := match.score
 			score = &value
 		}
-		out.Items = append(out.Items, itemFor(match.entry, score))
+		item := itemFor(match.entry, score)
+		size := itemBytes(item)
+		if len(out.Items) > 0 && used+size > maxBytes {
+			cutByBytes = true
+			break
+		}
+		used += size
+		out.Items = append(out.Items, item)
 	}
+	end = offset + len(out.Items)
 	out.Returned = len(out.Items)
+	out.OriginCounts = countOrigins(out.Items)
 	out.Truncated = end < len(matches)
 	if out.Truncated {
+		out.TruncationReason = "limit"
+		if cutByBytes {
+			out.TruncationReason = "bytes"
+		}
 		raw, _ := json.Marshal(pageCursor{fingerprint, end})
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}

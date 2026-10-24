@@ -99,7 +99,7 @@ func discoverySchema(search bool) map[string]any {
 		maxLimit, defaultLimit = 50, 10
 		properties["query"] = map[string]any{"type": "string", "minLength": 1}
 		properties["tags"] = arrayProperty()
-		properties["detail"] = map[string]any{"type": "string", "enum": []string{"summary", "schema"}, "default": "summary"}
+		properties["detail"] = map[string]any{"type": "string", "enum": []string{"names", "summary", "schema"}, "default": "summary", "description": "names: tool name and origin only. summary (default): name, origin, one-line description, annotations and required argument names. schema: full descriptions and input/output schemas."}
 		schema["required"] = []string{"query"}
 	} else {
 		properties["names"] = arrayProperty()
@@ -108,7 +108,7 @@ func discoverySchema(search bool) map[string]any {
 	return schema
 }
 func (a *Adapter) registerSearchTool(s *gomcp.Server, gateway *mcpgateway.Service) {
-	a.addTool(s, gomcp.Tool{Name: "tether_tool_search", Description: "Search eligible tools by a nonempty query. Use detail=schema for the real input/output schemas; otherwise hydrate exact names with tether_tool_list. Filters narrow this endpoint's inventory; results report incomplete upstream discovery. Execute with tether_tool_call.", InputSchema: discoverySchema(true), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	a.addTool(s, gomcp.Tool{Name: "tether_tool_search", Description: "Search eligible tools by a nonempty query. Results are ranked; the default summary has a one-line description and the required argument names, enough to call many tools. Use detail=names to scan cheaply and detail=schema (or tether_tool_list) for real input/output schemas. Responses are capped in size and cut at a whole tool with a cursor. Execute with tether_tool_call.", InputSchema: discoverySchema(true), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		req, err := discoveryRequest(args)
 		if err != nil {
 			return nil, toolError("invalid_request", err.Error())
@@ -130,7 +130,7 @@ func (a *Adapter) registerSearchTool(s *gomcp.Server, gateway *mcpgateway.Servic
 	}}, Reads("eligible tool metadata"))
 }
 func (a *Adapter) registerListTool(s *gomcp.Server, gateway *mcpgateway.Service) {
-	a.addTool(s, gomcp.Tool{Name: "tether_tool_list", Description: "Enumerate eligible tools deterministically with real schemas, or hydrate exact names using names (mutually exclusive with servers/limit/cursor). Unknown, excluded and unavailable names return per-name errors. No filter bypass.", InputSchema: discoverySchema(false), Handler: func(_ context.Context, args map[string]any) (any, error) {
+	a.addTool(s, gomcp.Tool{Name: "tether_tool_list", Description: "Enumerate eligible tools deterministically with real schemas, or hydrate exact names using names (mutually exclusive with servers/limit/cursor). Unknown, excluded and unavailable names return per-name errors. No filter bypass. A response is capped in size: when names are cut, truncated is true and omitted_names lists the ones to request again; when enumerating, next_cursor resumes.", InputSchema: discoverySchema(false), Handler: func(_ context.Context, args map[string]any) (any, error) {
 		req, err := discoveryRequest(args)
 		if err != nil {
 			return nil, toolError("invalid_request", err.Error())

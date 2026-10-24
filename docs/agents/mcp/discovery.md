@@ -48,13 +48,32 @@ call `tether_tool_search`:
 {"query":"tether_session_list"}
 ```
 
-Read `items` for exact tool names and origins. Search returns summaries by
-default; request `detail: "schema"` when you need input schemas in that response.
-For a known name, call `tether_tool_list` to get its real schema:
+Read `items` for exact tool names and origins. Results are ranked, so the order
+carries meaning; `origin_counts` summarizes how many came from each origin. Pick
+how much each item carries with `detail`:
+
+| `detail` | Each item carries | Use it to |
+|---|---|---|
+| `names` | name and origin | scan cheaply |
+| `summary` (default) | name, origin, title, a one-line description (the first sentence, at most 160 characters), annotations and `required_args` | choose a tool, and often call it without hydrating |
+| `schema` | the full description, input and output schemas | construct a call in one step |
+
+`required_args` lists the top-level required argument names (at most 12), in the
+schema's order; it is not a schema, so an argument's type still comes from
+`tether_tool_list`. For a known name, call `tether_tool_list` to get its real
+schema:
 
 ```json
 {"names":["tether_session_list"]}
 ```
+
+A response is capped at 32 KiB of items and is cut at a whole tool, never in the
+middle of one. When that happens `truncated` is true and `truncation_reason` is
+`"bytes"` (a page of the requested size would not fit; `"limit"` means the page
+was full). For enumeration and search, `next_cursor` resumes exactly where the cut
+fell. Hydrating by `names` has no cursor, so the names that did not fit come back
+in `omitted_names`: request them again. The first tool is always returned, however
+large, so a caller can make progress.
 
 Then call `tether_tool_call`, using the schema to construct `arguments`:
 
