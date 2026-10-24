@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -30,5 +31,23 @@ func TestClassifyClientErr_IdempotencyConflict(t *testing.T) {
 	msg := `daemon 409 (idempotency_conflict): idempotency key was already used with a different request (key bound to session s1 by a create request)`
 	if got := classifyClientErr(errors.New(msg), "").Code; got != "idempotency_conflict" {
 		t.Fatalf("code = %q; want idempotency_conflict", got)
+	}
+}
+
+// tether_message_reply only answers a routed session message. For ordinary mail
+// the redirect must be typed (HelpTool/NextStep), not only prose (CW-20261024-0051).
+func TestReplyToMailboxMessageCarriesATypedRedirect(t *testing.T) {
+	err := errors.New("daemon 400 (reply_target_not_a_session): the message was not sent by a session")
+	got := classifyClientErr(err, "")
+	if got.Code != "invalid_request" {
+		t.Fatalf("code = %q", got.Code)
+	}
+	if got.HelpTool != "tether_message_send" || !strings.Contains(got.NextStep, "in_reply_to") {
+		t.Fatalf("redirect not typed: helpTool=%q nextStep=%q", got.HelpTool, got.NextStep)
+	}
+	// Other 400s are unchanged and carry no redirect.
+	other := classifyClientErr(errors.New("daemon 400 (invalid_request): bad thing"), "")
+	if other.HelpTool != "" || other.NextStep != "" {
+		t.Fatalf("an unrelated 400 must not get a redirect: %+v", other)
 	}
 }

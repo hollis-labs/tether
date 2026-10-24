@@ -31,7 +31,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
 			gomcp.StringProp("to", "Recipient URN (e.g. msg://agent/agent-mux/worker)", true),
-			gomcp.StringProp("kind", "Message kind: request, response, notice, status_update, handoff, escalation", true),
+			gomcp.StringEnumProp("kind", "Message kind", true, "request", "response", "notice", "status_update", "handoff", "escalation"),
 			gomcp.StringProp("payload_json", "JSON payload body (optional). Send a string containing JSON; a JSON object or array is also accepted and serialized for you. Any other type is rejected (CW-20261024-0040)", false),
 			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
 			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
@@ -46,7 +46,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
 			gomcp.StringProp("to", "Recipient URN; msg://session/<authority>/<session_id> wakes that session, msg://agent/<authority>/<logical_agent_id> wakes the latest running session for that logical agent when found", true),
-			gomcp.StringProp("kind", "Message kind: request, response, notice, status_update, handoff, escalation (default notice)", false),
+			gomcp.StringEnumProp("kind", "Message kind (default notice)", false, "request", "response", "notice", "status_update", "handoff", "escalation"),
 			gomcp.StringProp("payload_json", "JSON payload body (optional). Send a string containing JSON; a JSON object or array is also accepted and serialized for you. Any other type is rejected (CW-20261024-0040)", false),
 			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
 			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
@@ -196,10 +196,22 @@ func (a *Adapter) payloadJSONArg(args map[string]any, tool string) (json.RawMess
 	case nil:
 		return nil, nil
 	case string:
-		if p := str(args, "payload_json"); p != "" {
-			return json.RawMessage(p), nil
+		p := str(args, "payload_json")
+		if p == "" {
+			return nil, nil
 		}
-		return nil, nil
+		if !json.Valid([]byte(p)) {
+			// A non-JSON string used to reach the daemon, fail to marshal there and
+			// come back as internal_error. It is the caller's input, so say so.
+			detail := ""
+			var probe any
+			if err := json.Unmarshal([]byte(p), &probe); err != nil {
+				detail = " (" + err.Error() + ")"
+			}
+			return nil, toolError("invalid_request", "payload_json is not valid JSON"+detail+"; send a string containing JSON such as {\"subject\":\"...\",\"body\":\"...\"}, or pass a JSON object").
+				WithField("payload_json")
+		}
+		return json.RawMessage(p), nil
 	case map[string]any, []any:
 		raw, err := json.Marshal(v)
 		if err != nil {
