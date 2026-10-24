@@ -312,3 +312,63 @@ func WithHome(env []string, home string) []string {
 	}
 	return append(out, "HOME="+home)
 }
+
+// FlagLookup returns a lookup for the allowlist switch that consults a launch's
+// own environment first (a launch profile's overrides.env, so one launch can be
+// enabled without enabling the whole daemon or worker) and then fallback.
+func FlagLookup(launchEnv map[string]string, fallback func(string) string) func(string) string {
+	return func(key string) string {
+		if v, ok := launchEnv[key]; ok {
+			return v
+		}
+		return fallback(key)
+	}
+}
+
+// AllowlistOptions describes one launch for ApplyAllowlist.
+type AllowlistOptions struct {
+	// BootDir is the planted boot dir whose .agents/plugins/tether/mcp_config.json
+	// names the MCP servers agy will see. WorkspaceRoot holds the launch's private home.
+	BootDir, WorkspaceRoot string
+	// Env is the environment the agy process would otherwise get.
+	Env []string
+	// Flag looks up the AllowlistEnv switch; UserHome is consulted only when Env has no HOME.
+	Flag     func(string) string
+	UserHome func() (string, error)
+	// Logf reports servers that get no rule; nil is silent.
+	Logf func(format string, args ...any)
+}
+
+// ApplyAllowlist returns the environment an agy launch should use. When the switch
+// is off it returns o.Env unchanged. When on, it plants a private HOME and returns
+// o.Env with HOME pointing at it; enabled but unable to build it is an error, not a
+// silent fall back to a HOME that denies every call. Callers gate on the provider.
+func ApplyAllowlist(o AllowlistOptions) ([]string, error) {
+	if !AllowlistEnabled(o.Flag) {
+		return o.Env, nil
+	}
+	servers, err := PluginServers(o.BootDir)
+	if err != nil {
+		return nil, err
+	}
+	rules, denied := AllowRules(servers)
+	if len(denied) > 0 && o.Logf != nil {
+		o.Logf("agy allowlist: no rule for planted MCP server(s) %s; their calls stay denied", strings.Join(denied, ", "))
+	}
+	realHome := ""
+	for _, kv := range o.Env {
+		if v, ok := strings.CutPrefix(kv, "HOME="); ok && v != "" {
+			realHome = v
+		}
+	}
+	if realHome == "" {
+		if realHome, err = o.UserHome(); err != nil {
+			return nil, fmt.Errorf("agy allowlist: no home directory: %w", err)
+		}
+	}
+	home, err := PlantHome(HomeSpec{RealHome: realHome, Dir: filepath.Join(o.WorkspaceRoot, HomeDirName), Rules: rules})
+	if err != nil {
+		return nil, err
+	}
+	return WithHome(o.Env, home), nil
+}

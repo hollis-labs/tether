@@ -7,10 +7,29 @@ mode cannot prompt for"). Tether launches agy in accept-edits, so before this
 change an agy agent could not call Tether's tools at all unless the launch was
 `bypass` (`--dangerously-skip-permissions`, which approves everything).
 
+## Turning it on
+
+It is **off by default**. The switch is `TETHER_AGY_MCP_ALLOWLIST=1`, read from, in
+this order, the launch's own env and then the process environment:
+
+- **One launch (preferred):** in the launch profile,
+
+  ```yaml
+  overrides:
+    env: {TETHER_AGY_MCP_ALLOWLIST: "1"}
+  ```
+
+  A launch that sets it to `0` opts out even when the process setting is on.
+- **Everything on one host:** set it in the daemon's environment (hub-local
+  launches) or the worker's environment (worker-hosted launches) and restart.
+
+It applies to both paths an agy session can take. A launch with `worker: <id>` is
+started by `tether-worker` on that machine, so the worker binary must include this
+feature; a hub-local launch is started by the daemon.
+
 ## What the switch does
 
-Set `TETHER_AGY_MCP_ALLOWLIST=1` in the daemon's environment and restart. It is
-**off by default**. For each antigravity launch the daemon then:
+For each antigravity launch with the switch on, the launcher then:
 
 1. reads the server names the shared planter wrote into
    `<boot dir>/.agents/plugins/tether/mcp_config.json` (agy names a plugin's
@@ -54,8 +73,8 @@ call.
 
 ## Rollback
 
-Unset `TETHER_AGY_MCP_ALLOWLIST` and restart the daemon. New launches use the
-real HOME again; existing `agy-home` directories sit inside session workspaces
+Remove the launch's `overrides.env` entry (or unset the process setting and restart).
+New launches use the real HOME again; existing `agy-home` directories sit inside session workspaces
 and can be deleted with them.
 
 ## Verification (2026-10-24)

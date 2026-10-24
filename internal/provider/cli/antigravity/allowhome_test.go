@@ -267,3 +267,60 @@ func TestAllowlistIsOffUnlessExplicitlyOn(t *testing.T) {
 	}
 	_ = strings.TrimSpace
 }
+
+func TestFlagLookupLetsOneLaunchOverrideTheProcessSetting(t *testing.T) {
+	process := func(string) string { return "1" }
+	// A launch that sets nothing follows the process setting.
+	if !AllowlistEnabled(FlagLookup(nil, process)) {
+		t.Fatal("no launch value: the process setting should apply")
+	}
+	// A launch that turns itself on works even when the process setting is off.
+	if !AllowlistEnabled(FlagLookup(map[string]string{AllowlistEnv: "1"}, func(string) string { return "" })) {
+		t.Fatal("a launch's own env must be able to enable it")
+	}
+	// A launch can also opt out of a process-wide setting.
+	if AllowlistEnabled(FlagLookup(map[string]string{AllowlistEnv: "0"}, process)) {
+		t.Fatal("a launch's own env must be able to opt out")
+	}
+}
+
+func TestApplyAllowlistOffReturnsEnvUntouchedAndOnRelocatesHome(t *testing.T) {
+	home := fakeRealHome(t)
+	boot := t.TempDir()
+	writeFile(t, filepath.Join(boot, ".agents/plugins/tether/mcp_config.json"), `{"mcpServers":{"tether":{"command":"t"}}}`, 0o600)
+	env := []string{"HOME=" + home, "PATH=/p"}
+	ws := t.TempDir()
+	noHome := func() (string, error) { panic("user home must not be consulted when env has HOME") }
+
+	off, err := ApplyAllowlist(AllowlistOptions{BootDir: boot, WorkspaceRoot: ws, Env: env, Flag: func(string) string { return "" }, UserHome: noHome})
+	if err != nil || !reflect.DeepEqual(off, env) {
+		t.Fatalf("off: %v %v", off, err)
+	}
+	if _, err := os.Stat(filepath.Join(ws, HomeDirName)); err == nil {
+		t.Fatal("off must not create anything")
+	}
+
+	var logged []string
+	on, err := ApplyAllowlist(AllowlistOptions{BootDir: boot, WorkspaceRoot: ws, Env: env, Flag: func(string) string { return "1" }, UserHome: noHome,
+		Logf: func(f string, a ...any) { logged = append(logged, f) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	farm := filepath.Join(ws, HomeDirName)
+	if !slices.Contains(on, "HOME="+farm) || slices.Contains(on, "HOME="+home) {
+		t.Fatalf("env=%v", on)
+	}
+	if _, allow := readAllow(t, farm); !slices.Equal(allow, []string{"mcp(tether_tether/*)"}) {
+		t.Fatalf("allow=%v", allow)
+	}
+	if len(logged) != 0 {
+		t.Fatalf("nothing was denied, nothing should be logged: %v", logged)
+	}
+
+	// A planted server without a rule is reported.
+	writeFile(t, filepath.Join(boot, ".agents/plugins/tether/mcp_config.json"), `{"mcpServers":{"tether":{},"torque":{}}}`, 0o600)
+	if _, err := ApplyAllowlist(AllowlistOptions{BootDir: boot, WorkspaceRoot: t.TempDir(), Env: env, Flag: func(string) string { return "1" }, UserHome: noHome,
+		Logf: func(f string, a ...any) { logged = append(logged, f) }}); err != nil || len(logged) != 1 {
+		t.Fatalf("a server with no rule should be logged once: %v %v", logged, err)
+	}
+}
