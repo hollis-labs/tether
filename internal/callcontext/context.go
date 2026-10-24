@@ -2,7 +2,12 @@
 // A snapshot describes attribution, never grants authorization to a caller.
 package callcontext
 
-import "context"
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+)
 
 type Snapshot struct {
 	// Verified is identity.Principal.Verified: a bearer credential resolved to
@@ -82,4 +87,32 @@ func ValidClientLabel(s string) bool {
 		}
 	}
 	return true
+}
+
+// WithTelemetryHints attaches two observation-only hints from a request's HTTP
+// headers (CW-20261024-0048). Neither grants anything and neither is read by
+// policy.
+//
+//   - X-Tether-Client-Label: the caller's self-declared name. Operator-token
+//     clients share one verified principal, so without this they are one blob in
+//     telemetry. It is a claim; an invalid value is dropped, not repaired.
+//   - Mcp-Session-Id: reduced to a short hash so one connection's calls can be
+//     grouped (and linked to the search that preceded them) without storing the
+//     handle itself.
+//
+// The MCP SDK runs tool handlers on a session-level context, so these must be
+// read from the per-request headers the SDK exposes (RequestExtra.Header), not
+// from the HTTP request's context.
+func WithTelemetryHints(ctx context.Context, h http.Header) context.Context {
+	if h == nil {
+		return ctx
+	}
+	if label := h.Get("X-Tether-Client-Label"); ValidClientLabel(label) {
+		ctx = WithClientLabel(ctx, label)
+	}
+	if id := h.Get("Mcp-Session-Id"); id != "" {
+		sum := sha256.Sum256([]byte(id))
+		ctx = WithMCPSession(ctx, hex.EncodeToString(sum[:6]))
+	}
+	return ctx
 }

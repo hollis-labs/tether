@@ -15,6 +15,7 @@ import (
 	hotel "github.com/hollis-labs/libs/core/util/otel"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -221,6 +222,9 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware, registries ...*ToolRegistr
 			call, ok := req.(*mcpsdk.CallToolRequest)
 			if !ok {
 				return next(ctx, method, req)
+			}
+			if extra := call.GetExtra(); extra != nil {
+				ctx = callcontext.WithTelemetryHints(ctx, extra.Header)
 			}
 			var args map[string]any
 			if len(call.Params.Arguments) > 0 {
