@@ -131,7 +131,7 @@ var subClientWrites = map[string]bool{
 	// Writes.
 	"Create": true, "AddMember": true, "RemoveMember": true, "Leave": true,
 	"Send": true, "MarkRead": true, "SetMemberRole": true, "Archive": true,
-	"Register": true, "Deregister": true, "UpdateSelf": true, "Sync": true,
+	"Register": true, "RegisterIdempotent": true, "Deregister": true, "UpdateSelf": true, "Sync": true,
 	"Merge": true, "Lease": true, "Renew": true, "Revoke": true, "Set": true,
 	// Catalog apply (CW-20261012-0124).
 	"Plan": true, "Apply": true, "Backups": false, "Validate": false, "Files": false, "ReadFile": false, "History": false,

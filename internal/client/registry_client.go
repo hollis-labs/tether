@@ -82,6 +82,53 @@ func (rc *RegistryClient) Register(ctx context.Context, kind registry.Kind, p re
 	return out, nil
 }
 
+// RegisterIdempotent registers p under an external key (substrate + external_id)
+// and returns the entry plus whether this call created it. Repeating the call
+// with the same key returns the same URN with created=false and changes nothing
+// (CW-20261024-0094). The server mints the URN; p.URN must be empty.
+func (rc *RegistryClient) RegisterIdempotent(ctx context.Context, kind registry.Kind, p registry.Profile, substrate, externalID string) (registry.Profile, bool, error) {
+	seg, err := pluralSegment(kind)
+	if err != nil {
+		return registry.Profile{}, false, err
+	}
+	if substrate == "" || externalID == "" {
+		return registry.Profile{}, false, fmt.Errorf("register idempotent: substrate and external_id are required")
+	}
+	profileJSON, err := json.Marshal(p)
+	if err != nil {
+		return registry.Profile{}, false, fmt.Errorf("marshal profile: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(profileJSON, &fields); err != nil {
+		return registry.Profile{}, false, fmt.Errorf("marshal profile: %w", err)
+	}
+	fields["substrate"], _ = json.Marshal(substrate)
+	fields["external_id"], _ = json.Marshal(externalID)
+	body, err := json.Marshal(fields)
+	if err != nil {
+		return registry.Profile{}, false, fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		rc.c.baseURL+"/registry/"+seg, bytes.NewReader(body))
+	if err != nil {
+		return registry.Profile{}, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.Profile{}, false, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return registry.Profile{}, false, readRegistryError(resp)
+	}
+	var out registry.Profile
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.Profile{}, false, fmt.Errorf("decode register response: %w", err)
+	}
+	return out, resp.StatusCode == http.StatusCreated, nil
+}
+
 // OnboardProjectParams defines the input parameters for Step 1 of the composable
 // onboarding sequence (CW-20260914-0041).
 type OnboardProjectParams struct {

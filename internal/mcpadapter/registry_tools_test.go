@@ -813,3 +813,43 @@ func TestRegistryTools_Props(t *testing.T) {
 		t.Errorf("upProps[inbox] = %v; want preserved", upProps["inbox"])
 	}
 }
+
+func TestRegistryTools_Register_IdempotentOnExternalKey(t *testing.T) {
+	a, _ := newRegistryAdapter(t)
+	call := func(name string) (urn string, created bool) {
+		res := callRegistryTool(t, a, "tether_registry_register", map[string]any{
+			"kind":        "agent",
+			"substrate":   "nanite",
+			"external_id": "inst-1/host-1",
+			"profile":     map[string]any{"display_name": name},
+		})
+		if res.IsError {
+			t.Fatalf("register: %s", textOf(res))
+		}
+		body := parseToolJSON(t, res)
+		profile, _ := body["profile"].(map[string]any)
+		urn, _ = profile["urn"].(string)
+		created, _ = body["created"].(bool)
+		return urn, created
+	}
+	first, created := call("First")
+	if first == "" || !created {
+		t.Fatalf("first call: urn %q created %v", first, created)
+	}
+	again, created := call("Second")
+	if again != first || created {
+		t.Fatalf("repeat: urn %q (want %q) created %v (want false)", again, first, created)
+	}
+}
+
+func TestRegistryTools_Register_HalfAnExternalKeyIsRejected(t *testing.T) {
+	a, _ := newRegistryAdapter(t)
+	for _, args := range []map[string]any{
+		{"kind": "agent", "substrate": "nanite", "profile": map[string]any{"display_name": "X"}},
+		{"kind": "agent", "external_id": "k", "profile": map[string]any{"display_name": "X"}},
+	} {
+		if res := callRegistryTool(t, a, "tether_registry_register", args); !res.IsError {
+			t.Fatalf("a half key must be refused, got: %s", textOf(res))
+		}
+	}
+}

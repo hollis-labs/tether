@@ -1697,3 +1697,127 @@ func TestRegistry_Props_HTTP(t *testing.T) {
 		t.Errorf("project_root = %q", patched.Props["project_root"])
 	}
 }
+
+// ─── POST /registry/{kind} with an external key (CW-20261024-0094) ────────────
+
+func registerKeyed(t *testing.T, r *regServer, path string, body map[string]any) (int, registry.Profile) {
+	t.Helper()
+	resp, raw := r.do(http.MethodPost, path, body)
+	var p registry.Profile
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatalf("decode: %v: %s", err, raw)
+		}
+	}
+	return resp.StatusCode, p
+}
+
+func TestRegistry_RegisterIdempotent_SecondCallReturnsSameURNAndChangesNothing(t *testing.T) {
+	r := newRegServer(t)
+	first := map[string]any{"display_name": "Nanite Alpha", "role": "worker", "substrate": "nanite", "external_id": "inst-1/host-1"}
+	code, a := registerKeyed(t, r, "/registry/agents", first)
+	if code != http.StatusCreated || a.URN == "" {
+		t.Fatalf("first call: status %d urn %q, want 201 and a URN", code, a.URN)
+	}
+	second := map[string]any{"display_name": "A Different Name", "role": "other", "substrate": "nanite", "external_id": "inst-1/host-1"}
+	code, b := registerKeyed(t, r, "/registry/agents", second)
+	if code != http.StatusOK {
+		t.Fatalf("repeat call: status %d, want 200", code)
+	}
+	if b.URN != a.URN {
+		t.Fatalf("repeat minted a new URN: %q vs %q", b.URN, a.URN)
+	}
+	if b.DisplayName != "Nanite Alpha" || b.Role != "worker" {
+		t.Fatalf("repeat must not change the entry: %+v", b)
+	}
+	// The key is findable the way Nanite's lookup-by-external-id does it.
+	resp, raw := r.do(http.MethodGet, "/registry/agents?substrate=nanite&external_id="+url.QueryEscape("inst-1/host-1"), nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(raw), a.URN) {
+		t.Fatalf("lookup by external id: %d %s", resp.StatusCode, raw)
+	}
+}
+
+func TestRegistry_RegisterIdempotent_CombinedExternalKeyEqualsThePair(t *testing.T) {
+	r := newRegServer(t)
+	_, a := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "X", "external_key": "nanite/inst-9/host-3"})
+	code, b := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "X", "substrate": "nanite", "external_id": "inst-9/host-3"})
+	if code != http.StatusOK || a.URN == "" || a.URN != b.URN {
+		t.Fatalf("combined key and pair must name the same entry: %q vs %q (status %d)", a.URN, b.URN, code)
+	}
+}
+
+func TestRegistry_RegisterIdempotent_DistinctKeysAndKindsAreDistinctEntries(t *testing.T) {
+	r := newRegServer(t)
+	_, a := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "A", "substrate": "nanite", "external_id": "k"})
+	_, b := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "A", "substrate": "other", "external_id": "k"})
+	_, c := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "A", "substrate": "nanite", "external_id": "k2"})
+	_, d := registerKeyed(t, r, "/registry/projects", map[string]any{"display_name": "P", "substrate": "nanite", "external_id": "k"})
+	seen := map[string]bool{}
+	for _, p := range []registry.Profile{a, b, c, d} {
+		if p.URN == "" || seen[p.URN] {
+			t.Fatalf("expected four distinct entries, got %+v", []string{a.URN, b.URN, c.URN, d.URN})
+		}
+		seen[p.URN] = true
+	}
+}
+
+func TestRegistry_RegisterIdempotent_BadKeysAreRejectedNotSilentlyRegistered(t *testing.T) {
+	r := newRegServer(t)
+	for name, body := range map[string]map[string]any{
+		"substrate only":       {"display_name": "A", "substrate": "nanite"},
+		"external_id only":     {"display_name": "A", "external_id": "k"},
+		"key without slash":    {"display_name": "A", "external_key": "nanite"},
+		"key with empty part":  {"display_name": "A", "external_key": "nanite/"},
+		"key conflicts (sub)":  {"display_name": "A", "external_key": "nanite/k", "substrate": "other"},
+		"key conflicts (id)":   {"display_name": "A", "external_key": "nanite/k", "external_id": "z"},
+		"caller URN with key":  {"display_name": "A", "substrate": "nanite", "external_id": "k", "urn": "msg://agent/agent-mux/agt_forged0001"},
+		"keyed, empty display": {"display_name": "", "substrate": "nanite", "external_id": "k"},
+	} {
+		if code, _ := registerKeyed(t, r, "/registry/agents", body); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, code)
+		}
+	}
+	// None of the rejected requests created anything.
+	resp, raw := r.do(http.MethodGet, "/registry/agents", nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"agents":[]`) {
+		t.Fatalf("rejected requests left entries behind: %s", raw)
+	}
+}
+
+func TestRegistry_RegisterWithoutKeyStillMintsANewURNEachTime(t *testing.T) {
+	r := newRegServer(t)
+	_, a := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "Same"})
+	_, b := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "Same"})
+	if a.URN == "" || a.URN == b.URN {
+		t.Fatalf("an unkeyed register must keep minting: %q %q", a.URN, b.URN)
+	}
+}
+
+func TestRegistry_RegisterIdempotent_ConcurrentCallsAgreeOnOneURN(t *testing.T) {
+	r := newRegServer(t)
+	const n = 16
+	type res struct {
+		code int
+		urn  string
+	}
+	out := make(chan res, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			code, p := registerKeyed(t, r, "/registry/agents", map[string]any{"display_name": "Racer", "substrate": "nanite", "external_id": "race"})
+			out <- res{code, p.URN}
+		}()
+	}
+	created, urns := 0, map[string]bool{}
+	for i := 0; i < n; i++ {
+		x := <-out
+		if x.code == http.StatusCreated {
+			created++
+		} else if x.code != http.StatusOK {
+			t.Fatalf("status %d", x.code)
+		}
+		urns[x.urn] = true
+	}
+	if created != 1 || len(urns) != 1 {
+		t.Fatalf("want exactly one 201 and one URN, got %d created, %d URNs", created, len(urns))
+	}
+}

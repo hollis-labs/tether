@@ -528,3 +528,33 @@ func TestRegistryClient_Unreachable(t *testing.T) {
 		t.Errorf("not ErrDaemonUnreachable: %v", err)
 	}
 }
+
+func TestRegistryClient_RegisterIdempotent_SendsTheKeyAndReportsCreated(t *testing.T) {
+	var gotBody map[string]any
+	status := http.StatusCreated
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/registry/agents" {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(registry.Profile{URN: "msg://agent/agent-mux/agt_alpha00001", Kind: registry.KindAgent, DisplayName: "Alpha"})
+	})
+	c := newRegistryClient(t, h)
+
+	out, created, err := c.Registry().RegisterIdempotent(context.Background(), registry.KindAgent, registry.Profile{DisplayName: "Alpha", Role: "worker"}, "nanite", "inst/host")
+	if err != nil || !created || out.URN == "" {
+		t.Fatalf("first: %+v created=%v err=%v", out, created, err)
+	}
+	if gotBody["substrate"] != "nanite" || gotBody["external_id"] != "inst/host" || gotBody["display_name"] != "Alpha" || gotBody["role"] != "worker" {
+		t.Fatalf("request body = %v", gotBody)
+	}
+	status = http.StatusOK
+	if _, created, err = c.Registry().RegisterIdempotent(context.Background(), registry.KindAgent, registry.Profile{DisplayName: "Alpha"}, "nanite", "inst/host"); err != nil || created {
+		t.Fatalf("repeat: created=%v err=%v (want created=false)", created, err)
+	}
+	if _, _, err = c.Registry().RegisterIdempotent(context.Background(), registry.KindAgent, registry.Profile{DisplayName: "Alpha"}, "", "x"); err == nil {
+		t.Fatal("an empty substrate must be refused before any request")
+	}
+}
