@@ -37,7 +37,36 @@ that interval remains a race; this check does not provide an atomic ownership
 transaction with the runtime. Wake never redirects a failed attempt to another
 session or starts an external session.
 
-CW-20261008-0126's Tether slice covers these consumer and hosted-wake boundaries.
-Tangent, Nanite, and Torque adoption remains downstream work. The consumer
+## Nanite and other pull-only hosts
+
+Nanite is not downstream-only any more: it runs its own API and CLI agents, a
+Tether delivery bridge, a wake reactor and the Tether MCP gateway for its agents.
+What a host like that relies on from Tether:
+
+- **Delivery is pull, never push.** Tether does not inject a turn into a pull-only
+  bridge (see the fence above). The host reads its actors' mail with
+  `GET /messages/list` (repeatable, no side effects) or the resumable
+  `GET /messages/watch` (`id: <seq>` framing, replay strictly after `after_seq`, `gap`
+  on a hub reset; see [Subscriptions](messaging.md#subscriptions)), and settles
+  deliveries with claim, ack and nack. It owns its cursor.
+- **Tether mints and owns URNs.** A durable actor is registered once in the Tether
+  registry and the host stores the URN. Register with an external key
+  (`substrate` + `external_id`, for Nanite `nanite` and `<install_id>/<host_settings_id>`)
+  so a retried enrollment returns the same URN instead of minting a second one; see
+  [Retry-safe registration](messaging-integration.md). Retiring an actor deregisters
+  it (soft delete to `deprecated`; the URN is never reused), and a send to a
+  deprecated agent URN is then refused with `409 recipient_deprecated` instead of
+  queueing unread mail; see [Sends to a retired actor](messaging-integration.md).
+- **Sends are retry-safe.** Send and notify accept an `Idempotency-Key`, so a host
+  that retries after a timeout gets the stored message back instead of a duplicate.
+- **Sender identity is observed, not enforced yet.** Tether stamps each message with
+  the verified principal it saw, but the daemon runs in `observe` mode, so a caller
+  holding the shared operator credential can still choose its `from`. A host that
+  needs trustworthy attribution should require `from_verification=verified` on what it
+  accepts, and use scoped credentials once enforce mode and per-service credentials
+  exist (CW-20261024-0023). See [caller identity](caller-identity.md).
+
+CW-20261008-0126's Tether slice covers the consumer and hosted-wake boundaries
+above. Tangent and Torque adoption remains downstream work. The consumer
 architecture ADR task CW-20261002-0131 remains a separate prerequisite for the
 Tangent plugin's stage pipeline and reply design.
