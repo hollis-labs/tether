@@ -51,3 +51,16 @@ func TestReplyToMailboxMessageCarriesATypedRedirect(t *testing.T) {
 		t.Fatalf("an unrelated 400 must not get a redirect: %+v", other)
 	}
 }
+
+// A send to a retired actor is refused with its own code and a typed pointer to
+// the registry, so the sender can find the replacement (CW-20261024-0095).
+func TestSendToDeprecatedRecipientCarriesATypedRedirect(t *testing.T) {
+	err := errors.New("daemon 409 (recipient_deprecated): recipient is deprecated: msg://agent/agent-mux/agt_old was deprecated in the registry; nothing was sent")
+	got := classifyClientErr(err, "")
+	if got.Code != "recipient_deprecated" {
+		t.Fatalf("code = %q", got.Code)
+	}
+	if got.HelpTool != "tether_registry_search" || !strings.Contains(got.NextStep, "tether_registry_lookup_by") {
+		t.Fatalf("redirect not typed: helpTool=%q nextStep=%q", got.HelpTool, got.NextStep)
+	}
+}

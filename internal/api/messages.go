@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -188,6 +190,10 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, delivery.ErrDigestConflict) {
 			writeError(w, http.StatusConflict, CodeIdempotencyConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ErrRecipientDeprecated) {
+			writeError(w, http.StatusConflict, CodeRecipientDeprecated, err.Error())
 			return
 		}
 		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
@@ -515,6 +521,10 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, delivery.ErrDigestConflict) {
 			writeError(w, http.StatusConflict, CodeIdempotencyConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ErrRecipientDeprecated) {
+			writeError(w, http.StatusConflict, CodeRecipientDeprecated, err.Error())
 			return
 		}
 		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
@@ -1249,7 +1259,42 @@ func isWrongRecipient(err error) bool {
 	return errors.Is(err, store.ErrWrongRecipient)
 }
 
+// ErrRecipientDeprecated marks a send refused because the recipient's registry
+// entry is deprecated (soft-deleted, for example a retired Nanite agent).
+var ErrRecipientDeprecated = errors.New("recipient is deprecated")
+
+// CodeRecipientDeprecated (409): the message was not accepted because the
+// recipient URN is deprecated in the registry. The URN is never reused, so this
+// will not clear; find the current URN with the registry (CW-20261024-0095).
+const CodeRecipientDeprecated = "recipient_deprecated"
+
+// refuseDeprecatedRecipient fails a send to an agent URN whose registry entry
+// is deprecated, so mail does not pile up unread for an actor that has been
+// retired. An address that is not in the registry (a session, a user, an agent
+// of another authority) is allowed, and so is any registry failure: the check
+// must never turn a registry problem into lost mail.
+func (s *Server) refuseDeprecatedRecipient(ctx context.Context, to messaging.Address) error {
+	if s.Registry == nil || to.Kind != messaging.KindAgent {
+		return nil
+	}
+	urn := to.URN()
+	profile, err := s.Registry.Lookup(ctx, urn)
+	if err != nil {
+		if !errors.Is(err, registry.ErrNotFound) {
+			slog.Warn("messages: recipient status check failed; sending anyway", "to", urn, "err", err)
+		}
+		return nil
+	}
+	if profile.Status == registry.StatusDeprecated {
+		return fmt.Errorf("%w: %s was deprecated in the registry; it is never reused, so nothing was sent. Look up its replacement with the registry (search by role or external id) and address that URN", ErrRecipientDeprecated, urn)
+	}
+	return nil
+}
+
 func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	if err := s.refuseDeprecatedRecipient(ctx, env.To); err != nil {
+		return messaging.Envelope{}, err
+	}
 	publication, err := channels.NormalizePublication(&env)
 	if err != nil {
 		return messaging.Envelope{}, err

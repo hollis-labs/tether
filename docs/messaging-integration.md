@@ -34,6 +34,18 @@ A useful shape: URN in the app's config or DB, written once at provisioning,
 read at every boot, never derived. If it is absent, that is a provisioning
 error worth failing loudly on, not a cue to register again.
 
+### Sends to a retired actor are refused
+
+When an actor is deregistered its registry entry becomes `deprecated`, and the URN
+is never reused. A send (`POST /messages`, `POST /messages/notify`, or the
+`tether_message_send` / `tether_message_notify` tools) to a **deprecated agent URN**
+is refused with `409 recipient_deprecated` and **nothing is stored**, so mail does not
+pile up for an actor nobody reads. The tool error points at `tether_registry_search`
+and `tether_registry_lookup_by` to find the replacement. Mail already queued before the
+deprecation stays readable. Addresses the registry does not hold (sessions, users,
+agents of another authority) are sent as before, and a registry lookup failure never
+blocks a send: the check fails open.
+
 ### Idempotency at the launch boundary
 
 `ResolveSessionBootstrap` (Go) and `POST /sessions/bootstrap` are the
