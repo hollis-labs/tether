@@ -16,6 +16,10 @@ func newToolMetricsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.Upstream, "upstream", "", "exact upstream origin")
 	cmd.Flags().StringVar(&req.Since, "since", "", "inclusive RFC3339 lower bound")
 	cmd.Flags().StringVar(&req.Until, "until", "", "exclusive RFC3339 upper bound")
+	cmd.Flags().StringVar(&req.Mode, "mode", "", "only calls made in this discovery mode: flat or search")
+	cmd.Flags().StringVar(&req.GroupBy, "group-by", "", "add a grouping dimension: mode")
+	cmd.Flags().BoolVar(&req.Compact, "compact", false, "averages and p50/p95 bucket bounds instead of full histograms (top 25 groups by default)")
+	cmd.Flags().IntVar(&req.Limit, "limit", 0, "max groups returned, highest call count first (1-1000)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print JSON output")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		c, err := newDaemonClient(catalogPath)
@@ -30,10 +34,13 @@ func newToolMetricsCmd() *cobra.Command {
 			return printJSON(out)
 		}
 		for _, g := range out.Groups {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\tcalls=%d\tduration_sum_ms=%d\n", g.Tool, g.Upstream, g.Outcome, g.Calls, g.Duration.SumMs)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\tcalls=%d\tduration_sum_ms=%d\n", g.Tool, g.Upstream, g.Outcome, g.Mode, g.Calls, g.Duration.SumMs)
+		}
+		for _, g := range out.Compact {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\tcalls=%d\tavg_ms=%d\tavg_result_bytes=%d\n", g.Tool, g.Upstream, g.Outcome, g.Mode, g.Calls, g.AvgMs, g.AvgResultBytes)
 		}
 		if out.Truncated {
-			fmt.Fprintln(cmd.OutOrStdout(), "truncated: narrow --tool/--upstream/--since filters")
+			fmt.Fprintln(cmd.OutOrStdout(), "truncated: narrow --tool/--upstream/--mode/--since filters or raise --limit")
 		}
 		return nil
 	}

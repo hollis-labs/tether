@@ -10,9 +10,14 @@ import (
 // QueryToolCallMetrics aggregates durable completed calls before applying the
 // group limit. It never scans argument/result values or the proxy projection.
 func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQuery) ([]telemetry.MetricGroup, error) {
+	modeExpr, groupBy := "''", "1,2,3"
+	if q.ByMode {
+		modeExpr, groupBy = "COALESCE(json_extract(payload_json,'$.discovery_mode'),'')", "1,2,3,4"
+	}
 	sqlText := `SELECT COALESCE(json_extract(payload_json,'$.tool_name'),''),
  COALESCE(json_extract(payload_json,'$.server'),''),
  CASE WHEN json_extract(payload_json,'$.ok')=1 THEN 'ok' ELSE COALESCE(NULLIF(json_extract(payload_json,'$.error_class'),''),'upstream_error') END,
+ ` + modeExpr + `,
  COUNT(*),COALESCE(SUM(json_extract(payload_json,'$.args_bytes')),0),COALESCE(SUM(json_extract(payload_json,'$.result_bytes')),0),
  SUM(CASE WHEN json_type(payload_json,'$.args_bytes') IS NOT NULL THEN 1 ELSE 0 END)`
 	fields := []string{"duration_ms", "gateway_ms", "forward_ms"}
@@ -29,7 +34,7 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 	}
 	sqlText += ` FROM events WHERE kind='tool_call_end' AND json_valid(payload_json)`
 	var args []any
-	for _, filter := range []struct{ sql, value string }{{" AND json_extract(payload_json,'$.tool_name')=?", q.Tool}, {" AND json_extract(payload_json,'$.server')=?", q.Upstream}} {
+	for _, filter := range []struct{ sql, value string }{{" AND json_extract(payload_json,'$.tool_name')=?", q.Tool}, {" AND json_extract(payload_json,'$.server')=?", q.Upstream}, {" AND json_extract(payload_json,'$.discovery_mode')=?", q.Mode}} {
 		if filter.value != "" {
 			//nolint:gosec // SQL fragments above are constants; selector values are bound below.
 			sqlText += filter.sql
@@ -48,7 +53,7 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 		sqlText += " AND " + normalizedAt + "<?"
 		args = append(args, q.Until.UTC().Format(fixedUTC))
 	}
-	sqlText += " GROUP BY 1,2,3 ORDER BY COUNT(*) DESC,1,2,3 LIMIT ?"
+	sqlText += " GROUP BY " + groupBy + " ORDER BY COUNT(*) DESC,1,2,3,4 LIMIT ?"
 	if q.Limit < 1 || q.Limit > telemetry.MaxMetricGroups+1 {
 		q.Limit = telemetry.MaxMetricGroups + 1
 	}
@@ -63,7 +68,7 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 	groups := []telemetry.MetricGroup{}
 	for rows.Next() {
 		var group telemetry.MetricGroup
-		targets := []any{&group.Tool, &group.Upstream, &group.Outcome, &group.Calls, &group.ArgsBytes, &group.ResultBytes, &group.MetadataSamples}
+		targets := []any{&group.Tool, &group.Upstream, &group.Outcome, &group.Mode, &group.Calls, &group.ArgsBytes, &group.ResultBytes, &group.MetadataSamples}
 		histograms := []*telemetry.Histogram{&group.Duration, &group.Gateway, &group.Forward}
 		for _, hist := range histograms {
 			hist.Buckets = make([]telemetry.Bucket, len(telemetry.HistogramBoundsMs)+1)

@@ -127,3 +127,80 @@ func TestToolMetricsPrioritizeFrequentToolsOverJunkGroups(t *testing.T) {
 		t.Fatal("frequent real tool displaced by junk groups or truncation missing")
 	}
 }
+
+func TestDurableToolMetricsDiscoveryModeDimensionFilterAndCompact(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	add := func(tool, mode string, ok bool, ms, result int64) {
+		t.Helper()
+		call := events.ToolCallEvent{ToolName: tool, Server: "alpha", OK: ok, DurationMs: ms,
+			ToolCallDetails: events.ToolCallDetails{DiscoveryMode: mode, ResultBytes: result, ArgsBytes: 10, GatewayMs: 1, ForwardMs: ms}}
+		raw, _ := json.Marshal(call)
+		if _, _, err := db.InsertEvent(events.ScopeDaemon, "", events.EventTypeToolCallEnd, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 8; i++ {
+		add("read", "search", true, 4, 1000)
+	}
+	add("read", "search", true, 400, 3000) // slow outlier: 9 search calls
+	add("read", "flat", true, 4, 500)
+	add("read", "flat", true, 4, 500)
+	// A row that predates the discovery_mode field.
+	if _, _, err := db.InsertEvent(events.ScopeDaemon, "", events.EventTypeToolCallEnd, `{"tool_name":"read","server":"alpha","ok":true,"duration_ms":4}`); err != nil {
+		t.Fatal(err)
+	}
+	svc := telemetry.QueryService{Source: db}
+	ctx := context.Background()
+
+	// Default behavior is unchanged: modes are not a dimension.
+	out, err := svc.ReadMetrics(ctx, telemetry.MetricsRequest{})
+	if err != nil || len(out.Groups) != 1 || out.Groups[0].Calls != 12 || out.Groups[0].Mode != "" {
+		t.Fatalf("default grouping changed: %+v %v", out.Groups, err)
+	}
+
+	// group_by=mode splits them, ordered by call count; legacy rows keep mode "".
+	out, err = svc.ReadMetrics(ctx, telemetry.MetricsRequest{GroupBy: "mode"})
+	if err != nil || len(out.Groups) != 3 {
+		t.Fatalf("by mode: %+v %v", out.Groups, err)
+	}
+	got := map[string]int64{}
+	for _, g := range out.Groups {
+		got[g.Mode] = g.Calls
+	}
+	if got["search"] != 9 || got["flat"] != 2 || got[""] != 1 {
+		t.Fatalf("mode counts %v", got)
+	}
+
+	// mode filter returns only that mode.
+	out, err = svc.ReadMetrics(ctx, telemetry.MetricsRequest{Mode: "search"})
+	if err != nil || len(out.Groups) != 1 || out.Groups[0].Calls != 9 {
+		t.Fatalf("filter: %+v %v", out.Groups, err)
+	}
+
+	// compact: no histogram arrays, averages and percentile bounds instead.
+	out, err = svc.ReadMetrics(ctx, telemetry.MetricsRequest{Mode: "search", Compact: true})
+	if err != nil || len(out.Compact) != 1 || len(out.Groups) != 0 {
+		t.Fatalf("compact: %+v %v", out, err)
+	}
+	c := out.Compact[0]
+	if c.Calls != 9 || c.AvgResultBytes != (8*1000+3000)/9 || c.P50LeMs == nil || *c.P50LeMs != 5 || c.P95LeMs == nil || *c.P95LeMs != 500 {
+		t.Fatalf("compact summary: %+v p50=%v p95=%v", c, c.P50LeMs, c.P95LeMs)
+	}
+
+	// limit truncates with an explicit flag.
+	out, err = svc.ReadMetrics(ctx, telemetry.MetricsRequest{GroupBy: "mode", Limit: 1})
+	if err != nil || len(out.Groups) != 1 || !out.Truncated || out.Groups[0].Mode != "search" {
+		t.Fatalf("limit: %+v %v", out, err)
+	}
+
+	// invalid selectors are refused, not ignored.
+	for _, bad := range []telemetry.MetricsRequest{{Mode: "both"}, {GroupBy: "tool"}, {Limit: -1}, {Limit: telemetry.MaxMetricGroups + 1}} {
+		if _, err := svc.ReadMetrics(ctx, bad); err == nil {
+			t.Fatalf("accepted invalid request %+v", bad)
+		}
+	}
+}
