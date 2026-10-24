@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -127,5 +128,52 @@ func TestSearchTelemetry_ZeroResultAndUnlinkedCall(t *testing.T) {
 	}
 	if call.AfterSearchID != search.SearchID || call.AfterSearchRank != 0 {
 		t.Fatalf("want latest-search link with rank 0, got id=%q rank=%d", call.AfterSearchID, call.AfterSearchRank)
+	}
+}
+
+// The SDK runs tool handlers on a session-level context, so the label and the
+// MCP session handle must be read from the per-request headers it exposes
+// (RequestExtra.Header). The in-memory transport carries no HTTP headers, so
+// this drives the real middleware with a request that has them, which is the
+// path a deployed forwarder takes.
+func TestLoggingMiddlewareReadsClientLabelAndSessionFromRequestHeaders(t *testing.T) {
+	capture := &gatewayEventCapture{}
+	logging := NewLoggingMiddleware(capture)
+	handler := proxyLoggingMiddleware([]ToolCallMiddleware{logging})(func(context.Context, string, mcpsdk.Request) (mcpsdk.Result, error) {
+		return &mcpsdk.CallToolResult{}, nil
+	})
+	req := &mcpsdk.CallToolRequest{
+		Params: &mcpsdk.CallToolParamsRaw{Name: "alpha_read_widgets"},
+		Extra: &mcpsdk.RequestExtra{Header: http.Header{
+			"X-Tether-Client-Label": {"tether-sysadmin"},
+			"Mcp-Session-Id":        {"RAW-SESSION-HANDLE"},
+		}},
+	}
+	if _, err := handler(context.Background(), "tools/call", req); err != nil {
+		t.Fatal(err)
+	}
+	ends := endEvents(t, capture)
+	if len(ends) != 1 {
+		t.Fatalf("want one end event, got %d", len(ends))
+	}
+	if ends[0].ClientLabel != "tether-sysadmin" {
+		t.Fatalf("client label = %q", ends[0].ClientLabel)
+	}
+	if len(ends[0].MCPSession) != 12 {
+		t.Fatalf("mcp_session = %q (want a 12-hex hash)", ends[0].MCPSession)
+	}
+	for _, ev := range capture.recorded {
+		if strings.Contains(ev.PayloadJSON, "RAW-SESSION-HANDLE") {
+			t.Fatal("raw session handle retained in telemetry")
+		}
+	}
+
+	// No Extra (stdio, in-process) must not panic and must add nothing.
+	capture.recorded = nil
+	if _, err := handler(context.Background(), "tools/call", &mcpsdk.CallToolRequest{Params: &mcpsdk.CallToolParamsRaw{Name: "alpha_read_widgets"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := endEvents(t, capture); len(got) != 1 || got[0].ClientLabel != "" || got[0].MCPSession != "" {
+		t.Fatalf("unlabeled call: %+v", got)
 	}
 }

@@ -274,7 +274,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r = r.WithContext(identity.WithPrincipal(r.Context(), a.caller.Principal))
 	r = r.WithContext(context.WithValue(r.Context(), admissionKey{}, a))
-	r = r.WithContext(withTelemetryHints(r.Context(), r))
 	ids := r.Header.Values("Mcp-Session-Id")
 	if len(ids) > 1 {
 		transportError(w, http.StatusBadRequest, "invalid_mcp_session")
