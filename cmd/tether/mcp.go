@@ -68,6 +68,7 @@ var (
 	mcpForwardDaemon bool
 	mcpDaemonAddress string
 	mcpDiscoveryMode string
+	mcpClientLabel   string
 	mcpProfiles      []string
 	mcpServers       string
 	mcpOnly          string
@@ -87,6 +88,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpTokenStdin, "token-stdin", false, "read the session bearer credential from the first line of stdin (used by a worker's mcp-relay over ssh); fails closed, never falling back to the operator credential")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: TETHER_MCP_SCOPES)")
 	mcpCmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "MCP discovery mode: flat (default) or search (env: TETHER_MCP_DISCOVERY_MODE)")
+	mcpCmd.Flags().StringVar(&mcpClientLabel, "client-label", "", "self-declared caller name recorded in tool-call telemetry as an unverified claim, with --forward-daemon (env: TETHER_CLIENT_LABEL)")
 	mcpCmd.Flags().Bool("no-discover", false, "expose allowed tools directly (same as --discovery-mode flat)")
 	mcpCmd.Flags().StringArrayVar(&mcpProfiles, "profile", nil, "gateway profile ID (env: TETHER_MCP_PROFILE)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
@@ -111,6 +113,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	}
 	if mcpForwardDaemon {
 		return runMCPForwardDaemon(cmd)
+	}
+	if cmd.Flags().Changed("client-label") {
+		return fmt.Errorf("--client-label applies only with --forward-daemon; it would be ignored here")
 	}
 	// Verified daemon credential first; legacy adapter-only flags remain a
 	// local fast check, never a substitute for a daemon bearer credential.

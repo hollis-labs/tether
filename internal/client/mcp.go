@@ -28,6 +28,10 @@ type MCPOptions struct {
 	ClientOptions    *mcpsdk.ClientOptions
 	Profile          *string
 	DiscoveryMode    *string
+	// ClientLabel is a self-declared caller name sent as X-Tether-Client-Label on
+	// every request. The daemon records it as an unverified claim in telemetry;
+	// it is never used for authorization (CW-20261024-0048).
+	ClientLabel string
 }
 
 // ConnectMCP uses this client's frozen credential and daemon HTTP/UDS dialer.
@@ -55,7 +59,7 @@ func (c *Client) ConnectMCP(ctx context.Context, opts MCPOptions) (*mcpsdk.Clien
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	httpClient.Transport = mcpErrorTransport{base: base, onSessionMissing: opts.OnSessionMissing}
+	httpClient.Transport = mcpErrorTransport{base: base, onSessionMissing: opts.OnSessionMissing, clientLabel: opts.ClientLabel}
 	// SDK retries resume SSE via GET/Last-Event-ID; they never resend POST.
 	// No OAuth handler is installed (the only SDK path that re-POSTs).
 	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &httpClient, MaxRetries: 1}
@@ -78,9 +82,15 @@ func (t mcpObservedTransport) Connect(ctx context.Context) (mcpsdk.Connection, e
 type mcpErrorTransport struct {
 	base             http.RoundTripper
 	onSessionMissing func()
+	clientLabel      string
 }
 
 func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.clientLabel != "" {
+		// RoundTrippers must not mutate the caller's request.
+		r = r.Clone(r.Context())
+		r.Header.Set("X-Tether-Client-Label", t.clientLabel)
+	}
 	response, err := t.base.RoundTrip(r)
 	if response != nil && response.StatusCode == http.StatusNotFound && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
 		// A generic route 404 is not proof of expiry. Preserve the response for
