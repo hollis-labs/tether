@@ -21,10 +21,11 @@ func searchTelemetryHarness(t *testing.T) (*mcpsdk.ClientSession, *gatewayEventC
 	a := newTestAdapter(t)
 	s := a.newBareServer()
 	registry := NewToolRegistry()
-	schema := map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}}
+	schema := map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []any{"query"}}
+	long := " " + strings.Repeat("Further explanation of modes, defaults and caveats. ", 12)
 	mustRegister(t, registry, "alpha", nil, []*mcpsdk.Tool{
-		{Name: "alpha_read_widgets", Description: "Read widgets from the alpha store", InputSchema: schema},
-		{Name: "alpha_write_widgets", Description: "Write widgets to the alpha store", InputSchema: schema},
+		{Name: "alpha_read_widgets", Description: "Read widgets from the alpha store." + long, InputSchema: schema},
+		{Name: "alpha_write_widgets", Description: "Write widgets to the alpha store." + long, InputSchema: schema},
 	})
 	gateway := a.gatewayService(registry, nil, mcpgateway.Selection{Mode: mcpgateway.Search}, nil)
 	gateway.Dispatch = func(context.Context, string, map[string]any, map[string]any) (*mcpsdk.CallToolResult, error) {
