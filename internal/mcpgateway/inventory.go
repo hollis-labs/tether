@@ -96,7 +96,12 @@ type Service struct {
 	Policy    *Policy
 	Snapshot  func() Snapshot
 	Score     func(query string, entry Entry) int
-	Dispatch  func(context.Context, string, map[string]any, map[string]any) (*mcpsdk.CallToolResult, error)
+	// ScoreAll, when set, replaces Score for search: it scores every candidate in
+	// one call and returns one score per entry, in order. Corpus-relative scorers
+	// (BM25's inverse document frequency) need the whole candidate set, which the
+	// per-entry Score cannot see. A score of 0 excludes the entry.
+	ScoreAll func(query string, entries []Entry) []int
+	Dispatch func(context.Context, string, map[string]any, map[string]any) (*mcpsdk.CallToolResult, error)
 	// MaxResultBytes caps the encoded size of the items in one response; 0 means
 	// DefaultMaxResultBytes. The first item is always returned, however large.
 	MaxResultBytes int
@@ -261,6 +266,7 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		score int
 	}
 	matches := []scored{}
+	candidates := []Entry{}
 	for _, entry := range snapshot.Entries {
 		if unavailable[entry.Origin] || (req.Servers != nil && !servers[entry.Origin]) {
 			continue
@@ -282,9 +288,22 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		if !tagsMatch {
 			continue
 		}
+		candidates = append(candidates, entry)
+	}
+	var batch []int
+	if search && s.ScoreAll != nil {
+		if batch = s.ScoreAll(req.Query, candidates); len(batch) != len(candidates) {
+			return Result{}, fmt.Errorf("scorer returned %d scores for %d tools", len(batch), len(candidates))
+		}
+	}
+	for i, entry := range candidates {
 		score := 0
 		if search {
-			score = s.Score(req.Query, entry)
+			if batch != nil {
+				score = batch[i]
+			} else {
+				score = s.Score(req.Query, entry)
+			}
 			if score == 0 {
 				continue
 			}

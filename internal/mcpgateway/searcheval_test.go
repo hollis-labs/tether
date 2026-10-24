@@ -38,12 +38,14 @@ var (
 const searchEvalDir = "testdata/searcheval"
 
 // searchEvalScorers are the scorers under evaluation. The first is the
-// production scorer; add BM25 (CW-20261024-0058) here.
+// production scorer; add a scorer here (Score for per-entry, ScoreAll for corpus-relative).
 var searchEvalScorers = []struct {
-	Name  string
-	Score func(string, Entry) int
+	Name     string
+	Score    func(string, Entry) int
+	ScoreAll func(string, []Entry) []int
 }{
-	{"keyword", KeywordScore},
+	{"keyword", KeywordScore, nil},
+	{"bm25", nil, BM25ScoreAll},
 }
 
 // searchEvalOriginTags are the tags the gateway attaches to each origin
@@ -176,10 +178,10 @@ func loadEvalQueries(t testing.TB) evalQuerySet {
 // Rank comes from a limit-50 search (the maximum a caller can ask for); the
 // response size comes from the default call (summary detail, limit 10), which
 // is what an agent actually receives.
-func runSearchEval(t testing.TB, cat *evalCatalog, qs []evalQuery, name string, score func(string, Entry) int) evalBaseline {
+func runSearchEval(t testing.TB, cat *evalCatalog, qs []evalQuery, name string, score func(string, Entry) int, scoreAll func(string, []Entry) []int) evalBaseline {
 	t.Helper()
 	snap := cat.snapshot()
-	svc := &Service{Snapshot: func() Snapshot { return snap }, Score: score}
+	svc := &Service{Snapshot: func() Snapshot { return snap }, Score: score, ScoreAll: scoreAll}
 	type acc struct {
 		n, r1, r5, r10 int
 		rr             float64
@@ -279,7 +281,7 @@ func TestSearchEval(t *testing.T) {
 	cat := loadEvalCatalog(t)
 	qs := loadEvalQueries(t).Queries
 	for _, sc := range searchEvalScorers {
-		got := runSearchEval(t, cat, qs, sc.Name, sc.Score)
+		got := runSearchEval(t, cat, qs, sc.Name, sc.Score, sc.ScoreAll)
 		t.Log("\n" + got.table())
 		if *searchEvalUpdate {
 			raw, err := json.MarshalIndent(got, "", "  ")

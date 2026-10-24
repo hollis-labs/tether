@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/sanitize"
@@ -56,13 +57,13 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 			sort.Slice(snapshot.Origins, func(i, j int) bool { return snapshot.Origins[i].ID < snapshot.Origins[j].ID })
 			return snapshot
 		},
-		Score: mcpgateway.KeywordScore,
 		Dispatch: func(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
 			result, err := router.Handle(ctx, ToolCall{ToolName: name, Args: args, Meta: meta})
 			a.recordProxyRefs(ctx, registry, name, args, result, err)
 			return result, err
 		},
 	}
+	gateway.UseScorer(os.Getenv(mcpgateway.SearchScorerEnv))
 	if a.resolver == nil {
 		a.resolver = &routerRefResolver{router: router, gateway: gateway}
 	}

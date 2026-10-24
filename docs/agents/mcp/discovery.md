@@ -120,3 +120,20 @@ fixture test flags and re-record the baselines. `SEARCH_EVAL_LIVE_INVENTORY=<dum
 makes `TestSearchEvalLiveDrift` report labels whose tools have left the live gateway.
 The real discovery history is small and biased toward a few tools, so the head
 queries mirror usage and the tail and hard queries exist to keep the eval honest.
+
+## Search scorer
+
+`tether_tool_search` ranks with BM25 (the shared `toolselect` ranker from
+`libs/agent/core`): inverse document frequency over each tool's name, title,
+description and origin tags, with an exact-name tier and a name-prefix tier ahead
+of it. The original word-count scorer is still available:
+set `TETHER_MCP_SEARCH_SCORER=keyword` in the daemon's environment and restart to
+switch back; any other value, or unset, is BM25.
+
+On the search-eval fixture (138 queries, 725 tools) BM25 moved recall@5 from 0.594
+to 0.804 and MRR from 0.456 to 0.690, with the median response size and per-search
+latency unchanged (`go test ./internal/mcpgateway -bench SearchScorers`: about
+8 ms per call for both, dominated by the cursor fingerprint). The fixture does not
+include input-schema argument names, so the numbers compare the two scorers on the
+same fields (name, title, description, tags). BM25 does not stem, so "messages"
+does not match "message"; the typo queries in the fixture still miss.
