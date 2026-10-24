@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/budget"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 )
@@ -198,4 +200,37 @@ func notifiedPayload(t *testing.T, body []byte) string {
 		return ""
 	}
 	return string(req.Payload)
+}
+
+// A non-JSON string used to reach the daemon, fail to marshal and come back as
+// internal_error (CW-20261024-0051). It is the caller's input and is refused as
+// such, naming the field, before anything is sent.
+func TestMessagePayloadJSONRefusesNonJSONStringsAsInvalidRequest(t *testing.T) {
+	for _, tool := range []string{"tether_message_send", "tether_message_notify"} {
+		for _, bad := range []string{"just some text", `{"unterminated":`, "{'single': 'quotes'}"} {
+			t.Run(tool+"/"+bad, func(t *testing.T) {
+				a := newTestAdapterWithDaemon(t)
+				args := map[string]any{"from": "msg://agent/agent-mux/sender", "to": "msg://agent/agent-mux/recipient", "kind": "notice", "payload_json": bad}
+				var err error
+				if tool == "tether_message_send" {
+					_, err = a.handleMessageSend(context.Background(), args)
+				} else {
+					_, err = a.handleMessageNotify(context.Background(), args)
+				}
+				if err == nil {
+					t.Fatal("a non-JSON payload must be refused")
+				}
+				var te *budget.ToolError
+				if !errors.As(err, &te) {
+					t.Fatalf("want a typed tool error, got %T: %v", err, err)
+				}
+				if te.Code != "invalid_request" || te.Field != "payload_json" {
+					t.Fatalf("code=%q field=%q (want invalid_request on payload_json): %s", te.Code, te.Field, te.Message)
+				}
+				if strings.Contains(te.Message, "marshal") || !strings.Contains(te.Message, "not valid JSON") {
+					t.Fatalf("message should explain the problem in the caller's terms: %s", te.Message)
+				}
+			})
+		}
+	}
 }
