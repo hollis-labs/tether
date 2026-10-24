@@ -108,7 +108,7 @@ func discoverySchema(search bool) map[string]any {
 	return schema
 }
 func (a *Adapter) registerSearchTool(s *gomcp.Server, gateway *mcpgateway.Service) {
-	a.addTool(s, gomcp.Tool{Name: "tether_tool_search", Description: "Search eligible tools by a nonempty query. Use detail=schema for the real input/output schemas; otherwise hydrate exact names with tether_tool_list. Filters narrow this endpoint's inventory; results report incomplete upstream discovery. Execute with tether_tool_call.", InputSchema: discoverySchema(true), Handler: func(_ context.Context, args map[string]any) (any, error) {
+	a.addTool(s, gomcp.Tool{Name: "tether_tool_search", Description: "Search eligible tools by a nonempty query. Use detail=schema for the real input/output schemas; otherwise hydrate exact names with tether_tool_list. Filters narrow this endpoint's inventory; results report incomplete upstream discovery. Execute with tether_tool_call.", InputSchema: discoverySchema(true), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		req, err := discoveryRequest(args)
 		if err != nil {
 			return nil, toolError("invalid_request", err.Error())
@@ -117,6 +117,15 @@ func (a *Adapter) registerSearchTool(s *gomcp.Server, gateway *mcpgateway.Servic
 		if err != nil {
 			return nil, toolError("invalid_request", err.Error())
 		}
+		names := make([]string, 0, len(out.Items))
+		for _, item := range out.Items {
+			names = append(names, item.Name)
+		}
+		detail := req.Detail
+		if detail == "" {
+			detail = "summary"
+		}
+		telemetry.SetSearch(ctx, telemetry.Search{Query: req.Query, Results: out.Returned, Detail: detail, Truncated: out.Truncated, Names: names})
 		return out, nil
 	}}, Reads("eligible tool metadata"))
 }
@@ -140,6 +149,7 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, gateway *mcpgateway.Service)
 			telemetry.SetErrorClass(ctx, events.ToolErrorValidation)
 			return errorResult("name is required"), nil
 		}
+		telemetry.SetResolved(ctx, name)
 		arguments, ok := args["arguments"].(map[string]any)
 		if !ok {
 			telemetry.SetErrorClass(ctx, events.ToolErrorValidation)

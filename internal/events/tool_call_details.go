@@ -27,6 +27,36 @@ type ToolCallDetails struct {
 	SpanID         string         `json:"span_id,omitempty"`
 	GatewayMs      int64          `json:"gateway_ms"`
 	ForwardMs      int64          `json:"forward_ms"`
+
+	// ClientLabel is the caller's self-declared name (CW-20261024-0048). It is a
+	// claim, never identity: operator-token clients share one verified principal,
+	// so this is the only way to tell them apart in telemetry. Bounded and
+	// charset-restricted at the edge; never used for authorization.
+	ClientLabel string `json:"client_label,omitempty"`
+	// MCPSession is a short hash of the transport session handle, grouping one
+	// client connection's calls without storing the handle itself.
+	MCPSession string `json:"mcp_session,omitempty"`
+
+	// Search describes a tether_tool_search call; nothing here stores argument
+	// values other than the normalized query terms (a query is not a secret).
+	// Kept comparable (no slices or pointers): callers compare details with ==.
+	// A search event is identified by SearchID; SearchTerms is space-joined.
+	SearchID        string `json:"search_id,omitempty"`
+	SearchTerms     string `json:"search_terms,omitempty"`
+	SearchResults   int    `json:"search_results,omitempty"`
+	SearchZero      bool   `json:"search_zero,omitempty"`
+	SearchDetail    string `json:"search_detail,omitempty"`
+	SearchTruncated bool   `json:"search_truncated,omitempty"`
+
+	// AfterSearchID/Rank link a later call to the search that preceded it from the
+	// same connection: Rank is the 1-based position of the called tool in that
+	// search's results (0 = it was not among them).
+	AfterSearchID   string `json:"after_search_id,omitempty"`
+	AfterSearchRank int    `json:"after_search_rank,omitempty"`
+	AfterSearchMs   int64  `json:"after_search_ms,omitempty"`
+
+	// ResolvedTool is the downstream tool a tether_tool_call dispatch targeted.
+	ResolvedTool string `json:"resolved_tool,omitempty"`
 }
 
 func TruncateToolCallError(s string) string {

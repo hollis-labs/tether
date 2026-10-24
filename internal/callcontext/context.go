@@ -26,6 +26,8 @@ type Snapshot struct {
 
 type contextKey struct{}
 type claimKey struct{}
+type clientLabelKey struct{}
+type mcpSessionKey struct{}
 
 func WithClaimedSession(ctx context.Context, sessionID string) context.Context {
 	return context.WithValue(ctx, claimKey{}, sessionID)
@@ -43,4 +45,41 @@ func WithSnapshot(ctx context.Context, s Snapshot) context.Context {
 func FromContext(ctx context.Context) (Snapshot, bool) {
 	s, ok := ctx.Value(contextKey{}).(Snapshot)
 	return s, ok
+}
+
+// WithClientLabel carries the caller's self-declared label. It is a claim.
+func WithClientLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, clientLabelKey{}, label)
+}
+
+func ClientLabel(ctx context.Context) string {
+	label, _ := ctx.Value(clientLabelKey{}).(string)
+	return label
+}
+
+// WithMCPSession carries a short hash of the MCP transport session handle.
+func WithMCPSession(ctx context.Context, hash string) context.Context {
+	return context.WithValue(ctx, mcpSessionKey{}, hash)
+}
+
+func MCPSession(ctx context.Context) string {
+	hash, _ := ctx.Value(mcpSessionKey{}).(string)
+	return hash
+}
+
+// ValidClientLabel reports whether s is an acceptable client label: 1-64 of
+// letters, digits and . _ : @ / -. Anything else is dropped, not repaired.
+func ValidClientLabel(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '_', r == ':', r == '@', r == '/', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
