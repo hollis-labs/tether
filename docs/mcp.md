@@ -1805,6 +1805,20 @@ and absent context leaves IDs empty. `proxy_events` remains a compatibility
 query projection. Both it and canonical events share the default 90-day age
 retention; the live in-memory feed is not the history source.
 
+Search-mode observability (CW-20261024-0048). A `tether_tool_search` event also
+records `search_id`, `search_terms` (the normalized query words, space-joined:
+lowercase alphanumerics, at most 12), `search_results`, `search_zero`,
+`search_detail` and `search_truncated`. A later call from the same connection
+carries `after_search_id` and `after_search_rank` (1-based position of that tool in
+the search results; `0` means it was not among them and was made within two
+minutes of the search), plus `after_search_ms`; results-containing links are kept for
+15 minutes. `client_label` and `mcp_session` identify the caller connection (see
+the forwarder notes in `agents/mcp/daemon-ownership.md`). Argument and result
+values are never recorded; the query words are, because a query is not a secret.
+`tether_gateway_status` reports, per origin and in total, how many eligible tools
+declare an `outputSchema`, annotations and a title (`output_schema_tools`,
+`annotated_tools`, `titled_tools`).
+
 #### `tether_tool_metrics`
 
 Read completed-call counters and cumulative latency histograms grouped by
@@ -1813,6 +1827,16 @@ exact tool, upstream and outcome. The matching HTTP route is
 Optional `tool` and `upstream` selectors are exact matches, and `since`/`until`
 are inclusive/exclusive RFC3339 time bounds. Invalid selectors return
 `invalid_request` consistently across MCP, HTTP and CLI.
+
+Additive options (CW-20261024-0048), all refused when invalid rather than
+ignored: `mode` (`flat`|`search`) keeps only calls made in that discovery mode;
+`group_by=mode` adds the mode as a grouping dimension (an empty `mode` on a group
+means the event predates the field); `limit` (1-1,000) caps the groups returned;
+`compact=true` returns `compact` rows (`calls`, `avg_args_bytes`,
+`avg_result_bytes`, `avg_ms`, `p50_le_ms`, `p95_le_ms`) instead of histogram
+`groups`, defaulting to the top 25 groups. `p50_le_ms`/`p95_le_ms` are the upper
+bound of the histogram bucket holding that percentile (`null` means above 5,000 ms),
+not exact quantiles. HTTP query parameters and CLI flags mirror these names.
 
 These queries are GLOBAL and unscoped: they aggregate all callers without
 caller identity or session filtering. Each query scans retained `tool_call_end`

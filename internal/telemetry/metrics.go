@@ -36,9 +36,12 @@ type Histogram struct {
 	Buckets []Bucket `json:"buckets"`
 }
 type MetricGroup struct {
-	Tool            string    `json:"tool"`
-	Upstream        string    `json:"upstream"`
-	Outcome         string    `json:"outcome"`
+	Tool     string `json:"tool"`
+	Upstream string `json:"upstream"`
+	Outcome  string `json:"outcome"`
+	// Mode is the discovery mode (flat|search); set only when grouping by mode.
+	// An empty value under group_by=mode means the event predates the field.
+	Mode            string    `json:"mode,omitempty"`
 	Calls           int64     `json:"calls"`
 	ArgsBytes       int64     `json:"args_bytes"`
 	ResultBytes     int64     `json:"result_bytes"`
@@ -52,17 +55,78 @@ type MetricsRequest struct {
 	Upstream string `json:"upstream,omitempty"`
 	Since    string `json:"since,omitempty"`
 	Until    string `json:"until,omitempty"`
+	// Mode filters to one discovery mode (flat|search). GroupBy "mode" adds the
+	// mode as a grouping dimension. Compact returns CompactGroup rows (averages
+	// and p50/p95 bounds, no bucket arrays) and defaults Limit to 25. Limit caps
+	// the groups returned, highest call count first (CW-20261024-0048).
+	Mode    string `json:"mode,omitempty"`
+	GroupBy string `json:"group_by,omitempty"`
+	Compact bool   `json:"compact,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
 }
 type MetricsQuery struct {
-	Tool, Upstream string
-	Since, Until   time.Time
-	Limit          int
+	Tool, Upstream, Mode string
+	ByMode               bool
+	Since, Until         time.Time
+	Limit                int
+}
+
+// CompactGroup is the token-cheap form of MetricGroup. P50LeMs/P95LeMs are the
+// upper bound in ms of the histogram bucket holding that percentile (nil means
+// above the last bound, 5000ms); they are bucket bounds, not exact quantiles.
+type CompactGroup struct {
+	Tool           string `json:"tool"`
+	Upstream       string `json:"upstream"`
+	Outcome        string `json:"outcome"`
+	Mode           string `json:"mode,omitempty"`
+	Calls          int64  `json:"calls"`
+	AvgArgsBytes   int64  `json:"avg_args_bytes"`
+	AvgResultBytes int64  `json:"avg_result_bytes"`
+	AvgMs          int64  `json:"avg_ms"`
+	P50LeMs        *int64 `json:"p50_le_ms"`
+	P95LeMs        *int64 `json:"p95_le_ms"`
 }
 type MetricsResponse struct {
-	Groups    []MetricGroup `json:"groups"`
-	Truncated bool          `json:"truncated"`
-	Window    string        `json:"window"`
+	Groups    []MetricGroup  `json:"groups"`
+	Compact   []CompactGroup `json:"compact,omitempty"`
+	Truncated bool           `json:"truncated"`
+	Window    string         `json:"window"`
 }
+
+// Compact reduces g to its token-cheap summary.
+func (g MetricGroup) Compact() CompactGroup {
+	c := CompactGroup{Tool: g.Tool, Upstream: g.Upstream, Outcome: g.Outcome, Mode: g.Mode, Calls: g.Calls}
+	if g.Calls > 0 {
+		c.AvgArgsBytes = g.ArgsBytes / g.Calls
+		c.AvgResultBytes = g.ResultBytes / g.Calls
+		c.AvgMs = g.Duration.SumMs / g.Calls
+	}
+	c.P50LeMs = g.Duration.percentileBound(0.50)
+	c.P95LeMs = g.Duration.percentileBound(0.95)
+	return c
+}
+
+// percentileBound returns the upper bound of the first cumulative bucket that
+// holds at least fraction p of the calls, or nil when only the +Inf bucket does.
+func (h Histogram) percentileBound(p float64) *int64 {
+	if h.Count == 0 {
+		return nil
+	}
+	target := int64(float64(h.Count)*p + 0.999999)
+	if target < 1 {
+		target = 1
+	}
+	for _, b := range h.Buckets {
+		if b.Count >= target {
+			return b.UpperMs
+		}
+	}
+	return nil
+}
+
+// DefaultCompactGroups is the group cap for compact responses without a limit.
+const DefaultCompactGroups = 25
+
 type MetricsSource interface {
 	QueryToolCallMetrics(context.Context, MetricsQuery) ([]MetricGroup, error)
 }
@@ -75,9 +139,31 @@ func (e *QueryError) Error() string { return e.Message }
 type QueryService struct{ Source MetricsSource }
 
 func (s QueryService) ReadMetrics(ctx context.Context, req MetricsRequest) (MetricsResponse, error) {
-	q := MetricsQuery{Tool: req.Tool, Upstream: req.Upstream, Limit: MaxMetricGroups + 1}
+	q := MetricsQuery{Tool: req.Tool, Upstream: req.Upstream, Mode: req.Mode, Limit: MaxMetricGroups + 1}
 	if len(req.Tool) > 256 || len(req.Upstream) > 256 {
 		return MetricsResponse{}, &QueryError{"tool/upstream identifier too long"}
+	}
+	switch req.Mode {
+	case "", "flat", "search":
+	default:
+		return MetricsResponse{}, &QueryError{"mode must be flat or search"}
+	}
+	switch req.GroupBy {
+	case "":
+	case "mode":
+		q.ByMode = true
+	default:
+		return MetricsResponse{}, &QueryError{"group_by must be mode"}
+	}
+	if req.Limit < 0 || req.Limit > MaxMetricGroups {
+		return MetricsResponse{}, &QueryError{fmt.Sprintf("limit must be between 1 and %d", MaxMetricGroups)}
+	}
+	limitCap := MaxMetricGroups
+	if req.Compact {
+		limitCap = DefaultCompactGroups
+	}
+	if req.Limit > 0 {
+		limitCap = req.Limit
 	}
 	for _, field := range []struct {
 		name, value string
@@ -99,11 +185,18 @@ func (s QueryService) ReadMetrics(ctx context.Context, req MetricsRequest) (Metr
 		return MetricsResponse{}, err
 	}
 	out := MetricsResponse{Groups: groups, Window: "retained_events"}
-	if len(out.Groups) > MaxMetricGroups {
-		out.Groups = out.Groups[:MaxMetricGroups]
+	if len(out.Groups) > limitCap {
+		out.Groups = out.Groups[:limitCap]
 		out.Truncated = true
 	}
 	if out.Groups == nil {
+		out.Groups = []MetricGroup{}
+	}
+	if req.Compact {
+		out.Compact = make([]CompactGroup, 0, len(out.Groups))
+		for _, g := range out.Groups {
+			out.Compact = append(out.Compact, g.Compact())
+		}
 		out.Groups = []MetricGroup{}
 	}
 	return out, nil

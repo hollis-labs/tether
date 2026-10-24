@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpforward"
@@ -28,6 +29,19 @@ func runMCPForwardDaemon(cmd *cobra.Command) error {
 		return err
 	}
 	opts := client.MCPOptions{}
+	label := mcpClientLabel
+	if label == "" {
+		label = os.Getenv("TETHER_CLIENT_LABEL")
+	}
+	if label != "" {
+		if !callcontext.ValidClientLabel(label) {
+			// stdout carries the MCP stream. A bad label must not take the
+			// client's tools away, so say so on stderr and connect without it.
+			fmt.Fprintf(os.Stderr, "tether: ignoring invalid client label (1-64 of letters, digits and . _ : @ / -)\n")
+		} else {
+			opts.ClientLabel = label
+		}
+	}
 	if len(mcpProfiles) > 1 {
 		return fmt.Errorf("--forward-daemon accepts one --profile")
 	}

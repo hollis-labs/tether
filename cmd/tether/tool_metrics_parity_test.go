@@ -55,7 +55,7 @@ func TestToolMetrics_MCPHTTPCLIParity(t *testing.T) {
 	}
 	oldCatalog := catalogPath
 	t.Cleanup(func() { catalogPath = oldCatalog })
-	for _, failure := range []string{"", "internal", "invalid"} {
+	for _, failure := range []string{"", "internal", "invalid", "compact", "badlimit"} {
 		t.Run(failure, func(t *testing.T) {
 			source := metricParitySource{}
 			if failure == "internal" {
@@ -68,10 +68,20 @@ func TestToolMetrics_MCPHTTPCLIParity(t *testing.T) {
 			flags := []string{"--json"}
 			path := "/events/tool-metrics"
 			args := map[string]any{}
-			if failure == "invalid" {
+			switch failure {
+			case "invalid":
 				flags = append(flags, "--since=invalid")
 				path += "?since=invalid"
 				args["since"] = "invalid"
+			case "compact":
+				// Additive options (CW-20261024-0048) must mean the same on every surface.
+				flags = append(flags, "--compact", "--limit=5", "--group-by=mode")
+				path += "?compact=true&limit=5&group_by=mode"
+				args["compact"], args["limit"], args["group_by"] = true, 5, "mode"
+			case "badlimit":
+				flags = append(flags, "--limit=2000")
+				path += "?limit=2000"
+				args["limit"] = 2000
 			}
 			if err := cmd.ParseFlags(flags); err != nil {
 				t.Fatal(err)
@@ -98,9 +108,9 @@ func TestToolMetrics_MCPHTTPCLIParity(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := result.Content[0].(*mcpsdk.TextContent).Text
-			if failure != "" {
+			if failure != "" && failure != "compact" {
 				code := "internal_error"
-				if failure == "invalid" {
+				if failure == "invalid" || failure == "badlimit" {
 					code = "invalid_request"
 				}
 				var httpErr struct{ Error struct{ Code string } }
@@ -127,6 +137,9 @@ func TestToolMetrics_MCPHTTPCLIParity(t *testing.T) {
 			}
 			if cliErr != nil || result.IsError || !reflect.DeepEqual(httpOut, mcpOut) || !reflect.DeepEqual(httpOut, cliOut) {
 				t.Fatalf("HTTP %+v MCP %+v CLI %+v/%v", httpOut, mcpOut, cliOut, cliErr)
+			}
+			if failure == "compact" && (len(httpOut.Compact) != 1 || len(httpOut.Groups) != 0 || httpOut.Compact[0].Calls != 3) {
+				t.Fatalf("compact response shape: %+v", httpOut)
 			}
 		})
 	}

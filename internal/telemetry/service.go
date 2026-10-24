@@ -62,6 +62,15 @@ func (s *Service) Start(ctx context.Context, call Call) (context.Context, *Obser
 	}
 	sc := span.SpanContext()
 	details := events.ToolCallDetails{Profile: call.Profile, DiscoveryMode: call.Mode, ArgsBytes: call.ArgsBytes}
+	if label := callcontext.ClientLabel(ctx); callcontext.ValidClientLabel(label) {
+		details.ClientLabel = label
+	}
+	details.MCPSession = callcontext.MCPSession(ctx)
+	if !IsDiscoveryTool(call.Name) {
+		if id, rank, age, ok := searches.link(linkKeyFor(ctx, attribution.PrincipalID), call.Name, now); ok {
+			details.AfterSearchID, details.AfterSearchRank, details.AfterSearchMs = id, rank, age.Milliseconds()
+		}
+	}
 	if sc.IsValid() {
 		details.TraceID = sc.TraceID().String()
 		details.SpanID = sc.SpanID().String()
