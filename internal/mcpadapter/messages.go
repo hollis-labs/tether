@@ -25,7 +25,7 @@ var validMsgKinds = map[messaging.Kind]struct{}{
 }
 
 func (a *Adapter) registerMessageTools(s *gomcp.Server) {
-	a.addTool(s, gomcp.Tool{
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name:        "tether_message_send",
 		Description: "Send a message envelope via the tether messaging store. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
@@ -38,9 +38,9 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 			gomcp.StringProp("idempotency_key", "Optional key; repeating it from the same sender returns the earlier message instead of storing a second one. Default: a fresh key per call, reused if the call is retried", false),
 		),
 		Handler: a.handleMessageSend,
-	}, Writes())
+	}), Writes())
 
-	a.addTool(s, gomcp.Tool{
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name:        "tether_message_notify",
 		Description: "Send a message envelope and best-effort wake a live recipient session with a mailbox notification turn. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
@@ -57,7 +57,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 			gomcp.BooleanProp("no_wake", "Store the message but skip wake injection", false),
 		),
 		Handler: a.handleMessageNotify,
-	}, Writes())
+	}), Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_get",
