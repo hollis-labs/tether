@@ -27,6 +27,7 @@ require (
 )
 
 require (
+	github.com/hollis-labs/libs/agent/core v0.4.0
 	github.com/hollis-labs/libs/mesh/eventbus v0.2.0
 	github.com/hollis-labs/libs/security/redact v0.2.0
 )
