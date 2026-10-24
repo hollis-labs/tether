@@ -86,3 +86,37 @@ For paginated discovery, `next_cursor` continues the same query; `truncated`
 means more matches exist. `complete: false` and `unavailable_servers` mean the
 inventory is incomplete, not that the unavailable app has no matching tool.
 Use [Troubleshoot](troubleshoot.md) for connection and visibility failures.
+
+## Measuring discovery
+
+`make search-eval` scores tool discovery against a versioned fixture and prints
+recall@1, recall@5, recall@10, MRR and median response bytes per scorer, overall
+and for the head (most-used tools), tail (rarely used) and hard (near-duplicate,
+synonym, cross-origin, typo) query groups. It fails if the numbers differ from the
+committed `baseline_<scorer>.json`, so a scorer change has to show its effect.
+
+The fixture lives in `internal/mcpgateway/testdata/searcheval/`:
+
+- `catalog.json` is a pinned snapshot of the 725-tool operator inventory (names,
+  origins, descriptions, annotations, required argument names; no schema bodies
+  and no argument values), with a sha256 over its entries. Expectations are only
+  meaningful against a fixed catalog, so editing it by hand fails the digest check.
+- `queries.json` holds the labeled queries: intent-only text, the tools that
+  satisfy it (any one counts), a category, and `review: true` where the labeler
+  was unsure. The first set is AI-labeled and says so; it has not been human
+  reviewed, so treat small differences between scorers on `review` queries with
+  care. A label whose tool is missing from the snapshot fails loudly as `STALE LABEL`.
+- `baseline_keyword.json` is the committed result of the production scorer, with
+  the rank of the first expected tool for every query so a change shows what moved.
+
+To evaluate another scorer (BM25, the code-mode experiment), add it to
+`searchEvalScorers` in `searcheval_test.go`, record its baseline with
+`-args -search-eval-update`, and compare the two tables.
+
+To refresh the snapshot after the catalog changes, dump the live inventory and run
+`go test ./internal/mcpgateway -run TestSearchEvalSnapshot -args -search-eval-snapshot-from=<dump.json>`
+(set `SEARCH_EVAL_CAPTURED` and `SEARCH_EVAL_SOURCE`), then relabel anything the
+fixture test flags and re-record the baselines. `SEARCH_EVAL_LIVE_INVENTORY=<dump.json>`
+makes `TestSearchEvalLiveDrift` report labels whose tools have left the live gateway.
+The real discovery history is small and biased toward a few tools, so the head
+queries mirror usage and the tail and hard queries exist to keep the eval honest.

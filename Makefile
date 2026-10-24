@@ -1,4 +1,4 @@
-.PHONY: changelog-check changelog-assemble changelog-test all build install go-install uninstall run sysop-build sysop-install sysop-check release-build release-install package-release test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean clean-coverage
+.PHONY: search-eval changelog-check changelog-assemble changelog-test all build install go-install uninstall run sysop-build sysop-install sysop-check release-build release-install package-release test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean clean-coverage
 
 # ---------------------------------------------------------------------------
 # Install / release metadata
@@ -85,6 +85,13 @@ test:
 	else \
 		go test $(if $(TEST_TIMEOUT),-timeout $(TEST_TIMEOUT)) -coverpkg=./... -coverprofile=coverage.out ./...; \
 	fi
+
+# Tool-discovery eval (CW-20261024-0056): recall@1/5/10, MRR and median response
+# bytes for each registered scorer, checked against the committed baseline.
+# Re-record after an intentional scorer or fixture change:
+#   go test ./internal/mcpgateway -run 'TestSearchEval$$' -count=1 -args -search-eval-update
+search-eval:
+	@go test ./internal/mcpgateway -run 'TestSearchEval' -count=1 -v | grep -v '^=== RUN'
 
 test-race:
 	@test -n "$(strip $(RACE_PKGS))" || { echo "test-race: RACE_PKGS is empty; refusing to run no packages" >&2; exit 1; }
