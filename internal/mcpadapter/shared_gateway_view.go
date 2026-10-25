@@ -222,6 +222,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		a.registerSearchTool(s, gateway)
 		a.registerListTool(s, gateway)
 		a.registerCallTool(s, gateway)
+		live.pinTools(opts.Profile.Profile)
 	}
 	a.registerGatewayStatus(s, gateway)
 	unsubscribe = r.Subscribe(func(refresh ToolRefreshResult) {
@@ -234,7 +235,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 			a.logger().Error("daemon MCP view refresh refused", "reason", err.Error())
 			return
 		}
-		if selection.Mode == mcpgateway.Flat {
+		if selection.Mode == mcpgateway.Flat || live.pinned != nil {
 			live.applyRefresh(refresh)
 		}
 	})

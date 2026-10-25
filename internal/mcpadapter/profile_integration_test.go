@@ -325,3 +325,64 @@ func TestProfileRefResolverUsesEligibility(t *testing.T) {
 		t.Fatal("excluded resolver dispatched")
 	}
 }
+
+// CW-20261024-0057: in search mode a profile's pinned tools are listed with real schemas beside
+// the four gateway tools and are callable by name; everything else stays behind search. Flat
+// mode already lists every eligible tool, so pinned changes nothing there.
+func TestProfilePinnedToolsHybridSearch(t *testing.T) {
+	raw, _ := json.Marshal(mcpgateway.Profile{Pinned: []string{"alpha_probe", "tether_health"}})
+	t.Setenv("TETHER_PROXY_HELPER_PROFILE_JSON", string(raw))
+	catalog, _ := proxyCatalog(t, "alpha", "beta")
+	cs := connectProxyMode(t, catalog, "search", false, "alpha", "beta")
+
+	names := listToolNames(t, cs)
+	want := []string{"alpha_probe", "tether_gateway_status", "tether_health", "tether_tool_call", "tether_tool_list", "tether_tool_search"}
+	got := slices.Clone(names)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("hybrid surface = %v, want %v", names, want)
+	}
+	res, err := cs.ListTools(context.Background(), &mcpsdk.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "alpha_probe" && (tool.InputSchema == nil || tool.Meta["anthropic/alwaysLoad"] != true) {
+			t.Fatalf("pinned tool lacks its schema or always-load mark: %+v", tool)
+		}
+	}
+	if _, isErr := tetherCallIfSearch(t, cs, "flat", "alpha_probe"); isErr {
+		t.Fatal("pinned tool was not callable by name")
+	}
+	// The long tail is still reachable through the gateway.
+	if _, isErr := tetherCallIfSearch(t, cs, "search", "beta_probe"); isErr {
+		t.Fatal("unpinned tool unreachable through tether_tool_call")
+	}
+
+	flat := connectProxyMode(t, catalog, "flat", false, "alpha", "beta")
+	flatNames := listToolNames(t, flat)
+	if !slices.Contains(flatNames, "beta_probe") || !slices.Contains(flatNames, "alpha_probe") {
+		t.Fatalf("pinned narrowed the flat surface: %v", flatNames)
+	}
+}
+
+func TestProfilePinnedRejectsInfrastructureAndDuplicates(t *testing.T) {
+	for _, p := range []mcpgateway.Profile{{Pinned: []string{"a", "a"}}, {Pinned: []string{""}}} {
+		if err := p.Validate(); err == nil {
+			t.Errorf("Validate accepted %v", p.Pinned)
+		}
+	}
+	snapshot := mcpgateway.Snapshot{Entries: []mcpgateway.Entry{{Tool: &mcpsdk.Tool{Name: "x_one"}, Origin: "x"}}, Origins: []mcpgateway.OriginStatus{{ID: "x", Status: "connected"}}}
+	policy := mcpgateway.Policy{Selection: mcpgateway.ProfileSelection{ID: "p", Profile: &mcpgateway.Profile{Pinned: []string{"tether_tool_search"}}}}
+	if err := policy.ValidateNames(snapshot); err == nil {
+		t.Error("infrastructure pin accepted")
+	}
+	policy.Selection.Profile.Pinned = []string{"no_such_tool"}
+	if err := policy.ValidateNames(snapshot); err == nil {
+		t.Error("unknown pin accepted once discovery is complete")
+	}
+	policy.Selection.Profile.Pinned = []string{"x_one"}
+	if err := policy.ValidateNames(snapshot); err != nil {
+		t.Errorf("valid pin refused: %v", err)
+	}
+}

@@ -20,13 +20,19 @@ func ValidateMode(value string) error {
 
 // Profile selects upstreams and filters final wire names in every call path.
 type Profile struct {
-	Servers       []string  `yaml:"servers" json:"servers"`
-	Tools         ToolRules `yaml:"tools" json:"tools"`
-	ReadOnly      bool      `yaml:"read_only" json:"read_only"`
-	Order         []string  `yaml:"order" json:"order,omitempty"`
-	AlwaysLoad    []string  `yaml:"always_load" json:"always_load,omitempty"`
-	Instructions  string    `yaml:"instructions" json:"instructions,omitempty"`
-	DiscoveryMode *string   `yaml:"discovery_mode" json:"discovery_mode,omitempty"`
+	Servers    []string  `yaml:"servers" json:"servers"`
+	Tools      ToolRules `yaml:"tools" json:"tools"`
+	ReadOnly   bool      `yaml:"read_only" json:"read_only"`
+	Order      []string  `yaml:"order" json:"order,omitempty"`
+	AlwaysLoad []string  `yaml:"always_load" json:"always_load,omitempty"`
+	// Pinned lists tools a search-mode endpoint also exposes by name beside the four
+	// gateway tools (CW-20261024-0057): the few a role really uses are listed with their
+	// real schemas and callable directly, and everything else stays reachable through
+	// tether_tool_search. Pinned tools must pass the profile's own tool rules, are
+	// marked always-load, and are ignored in flat mode, which lists every eligible tool.
+	Pinned        []string `yaml:"pinned" json:"pinned,omitempty"`
+	Instructions  string   `yaml:"instructions" json:"instructions,omitempty"`
+	DiscoveryMode *string  `yaml:"discovery_mode" json:"discovery_mode,omitempty"`
 	// ResultCap overrides the gateway result cap for this profile (CW-20261024-0052).
 	ResultCap *ResultCap `yaml:"result_cap" json:"result_cap,omitempty"`
 }

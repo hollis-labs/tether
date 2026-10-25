@@ -58,6 +58,34 @@ type liveProxyCatalog struct {
 	router   *ProxyRouter
 	allowed  map[string]struct{}
 	firehose bool
+	// pinned, when set, makes this a hybrid search endpoint (CW-20261024-0057): only the
+	// profile's pinned tools are registered on the SDK server beside the gateway tools,
+	// whatever the allowed set says.
+	pinned map[string]struct{}
+}
+
+// pinTools registers the profile's pinned tools (search mode only) so they are listed with
+// their real schemas and callable by name, and remembers them for refreshes. Pins that are
+// not registered yet, because their upstream is still starting, are added when it refreshes.
+func (c *liveProxyCatalog) pinTools(profile *mcpgateway.Profile) {
+	if profile == nil || len(profile.Pinned) == 0 {
+		return
+	}
+	c.pinned = make(map[string]struct{}, len(profile.Pinned))
+	for _, name := range profile.Pinned {
+		c.pinned[name] = struct{}{}
+	}
+	c.addProxyTools(c.onlyPinned(c.registry.AllDefinitions())...)
+}
+
+func (c *liveProxyCatalog) onlyPinned(defs []*mcpsdk.Tool) []*mcpsdk.Tool {
+	out := make([]*mcpsdk.Tool, 0, len(c.pinned))
+	for _, def := range defs {
+		if _, ok := c.pinned[def.Name]; ok {
+			out = append(out, def)
+		}
+	}
+	return out
 }
 
 func (c *liveProxyCatalog) applyRefresh(refresh ToolRefreshResult) {
@@ -75,6 +103,9 @@ func (c *liveProxyCatalog) applyRefresh(refresh ToolRefreshResult) {
 }
 
 func (c *liveProxyCatalog) filterNativeTools(serverID string, defs []*mcpsdk.Tool) []*mcpsdk.Tool {
+	if c.pinned != nil {
+		return c.onlyPinned(defs)
+	}
 	if !c.firehose {
 		if _, ok := c.allowed[serverID]; !ok {
 			return nil
@@ -86,6 +117,15 @@ func (c *liveProxyCatalog) filterNativeTools(serverID string, defs []*mcpsdk.Too
 }
 
 func (c *liveProxyCatalog) filterNativeToolNames(serverID string, names []string) []string {
+	if c.pinned != nil {
+		out := make([]string, 0, len(names))
+		for _, name := range names {
+			if _, ok := c.pinned[name]; ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
 	if !c.firehose {
 		if _, ok := c.allowed[serverID]; !ok {
 			return nil
@@ -479,6 +519,7 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		a.registerSearchTool(s, gateway)
 		a.registerListTool(s, gateway)
 		a.registerCallTool(s, gateway)
+		live.pinTools(opts.Profile.Profile)
 	}
 	a.registerGatewayStatus(s, gateway)
 	return s.Run(ctx)

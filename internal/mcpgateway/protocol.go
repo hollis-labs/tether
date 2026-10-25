@@ -25,13 +25,21 @@ func (s *Service) ProtocolList(registered []*mcpsdk.Tool, infrastructure func(st
 			eligible[entry.Tool.Name] = entry
 		}
 	}
+	// Search mode lists the profile's pinned tools beside the gateway front; an excluded or
+	// unavailable pin is simply absent (it is not in eligible), never restored.
+	pinned := map[string]bool{}
+	if s.Selection.Mode == Search && policy.Selection.Profile != nil {
+		for _, name := range policy.Selection.Profile.Pinned {
+			pinned[name] = true
+		}
+	}
 	entries := []Entry{}
 	for _, tool := range registered {
 		if infrastructure(tool.Name) {
 			entries = append(entries, Entry{Tool: tool, Origin: "tether"})
 			continue
 		}
-		if s.Selection.Mode == Flat {
+		if s.Selection.Mode == Flat || pinned[tool.Name] {
 			if entry, ok := eligible[tool.Name]; ok {
 				entries = append(entries, entry)
 			}
