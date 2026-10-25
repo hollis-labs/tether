@@ -140,11 +140,15 @@ func (s *Store) EventsSinceContext(ctx context.Context, sinceSeq int64) ([]event
 	return scanEvents(rows)
 }
 
+// streamBoundsSQL is the oldest and newest event id as two scalar subqueries; a single
+// SELECT of MIN(id) and MAX(id) scans the whole events table (see environmentBoundsSQL).
+const streamBoundsSQL = `SELECT (SELECT MIN(id) FROM events), (SELECT MAX(id) FROM events)`
+
 // StreamBoundsContext reports the oldest and newest events-table sequence
 // (events.PagedPersister).
 func (s *Store) StreamBoundsContext(ctx context.Context) (earliest, head int64, err error) {
 	var lo, hi sql.NullInt64
-	if err = s.db.QueryRowContext(ctx, `SELECT MIN(id), MAX(id) FROM events`).Scan(&lo, &hi); err != nil {
+	if err = s.db.QueryRowContext(ctx, streamBoundsSQL).Scan(&lo, &hi); err != nil {
 		return 0, 0, err
 	}
 	return lo.Int64, hi.Int64, nil
