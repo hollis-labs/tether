@@ -3,9 +3,21 @@
 A headless `agy -p` run has nobody to answer a permission prompt. Without an
 allow rule every MCP tool call is auto-denied: the run exits 0 with an empty
 response and a stderr hint ("a tool required the "mcp" permission that headless
-mode cannot prompt for"). Tether launches agy in accept-edits, so before this
-change an agy agent could not call Tether's tools at all unless the launch was
-`bypass` (`--dangerously-skip-permissions`, which approves everything).
+mode cannot prompt for"). `--dangerously-skip-permissions` approves everything
+and avoids that, but it is not per-tool.
+
+**Where this matters today.** A hub-local launch (no `worker:`) runs agy in
+accept-edits unless the agent's `permission_mode` is `bypass`, so its agent could
+not call Tether's tools at all; the allowlist fixes that. A **worker-hosted** launch
+(`worker: <id>`, which is every agy launch in the live catalog) is started by
+`tether-worker` with `--dangerously-skip-permissions` already in the launch's extra
+args, so MCP calls work there without any allowlist and the allowlist changes
+nothing about what the agent may do. It becomes meaningful on workers only when
+agy is moved off bypass for least privilege, and then it needs a policy for the
+non-MCP tools too (commands, file writes, URL reads), which stay denied headless.
+Verified 2026-10-25: a `tether-agy` session on agent-os built its private HOME
+and called `tether_whoami` successfully, but it did so under bypass, which on its
+own explains the success.
 
 ## Turning it on
 
