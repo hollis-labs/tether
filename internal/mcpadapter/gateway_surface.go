@@ -75,9 +75,10 @@ func gatewaySurfaceMiddleware(gateway *mcpgateway.Service) mcpsdk.Middleware {
 			}
 			result.Tools = tools
 			result.NextCursor = cursorOut
-			// Filtering changes the page: don't claim cache lifetimes from an SDK page
-			// whose members differ. Tool schemas and metadata themselves pass unchanged.
-			result.TTLMs = 0
+			// Filtering changes the page, so the SDK page's hints (zero TTL, public) say
+			// nothing about it; set ours (CW-20261024-0054). Tool schemas and metadata
+			// themselves pass unchanged.
+			result.TTLMs, result.CacheScope = listCacheHints(gateway.Selection.Mode)
 			return result, nil
 		}
 	}

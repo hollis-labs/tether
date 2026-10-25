@@ -150,7 +150,9 @@ func TestSharedGatewayView_EmptyUpstreamGrantKeepsNativeTools(t *testing.T) {
 		t.Fatal("verified scopes were bypassed by native dispatch")
 	}
 	v.Close()
-	if _, err := cs.ListTools(ctx, nil); err == nil {
+	// Ping, not ListTools: a client now caches tools/list for its ttlMs
+	// (CW-20261024-0054), so a list can succeed from the cache after Close.
+	if err := cs.Ping(ctx, nil); err == nil {
 		t.Fatal("view Close left protocol session live")
 	}
 }
