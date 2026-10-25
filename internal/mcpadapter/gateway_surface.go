@@ -78,7 +78,7 @@ func gatewaySurfaceMiddleware(gateway *mcpgateway.Service) mcpsdk.Middleware {
 			// Filtering changes the page, so the SDK page's hints (zero TTL, public) say
 			// nothing about it; set ours (CW-20261024-0054). Tool schemas and metadata
 			// themselves pass unchanged.
-			result.TTLMs, result.CacheScope = listCacheHints(gateway.Selection.Mode)
+			result.TTLMs, result.CacheScope = listCacheTTLMs(gateway.Selection.Mode), listCacheScope
 			return result, nil
 		}
 	}

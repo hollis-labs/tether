@@ -20,10 +20,14 @@ const (
 	flatListTTLMs = 30_000
 )
 
-// listCacheHints returns the ttlMs and cacheScope for a tools/list result in mode.
-func listCacheHints(mode mcpgateway.Mode) (ttlMs int, scope string) {
+// listCacheScope is "private" in every mode: the list depends on the caller's profile and
+// credentials, so a shared intermediary must not reuse it.
+const listCacheScope = "private"
+
+// listCacheTTLMs returns the ttlMs for a tools/list result in mode.
+func listCacheTTLMs(mode mcpgateway.Mode) int {
 	if mode == mcpgateway.Search {
-		return searchListTTLMs, "private"
+		return searchListTTLMs
 	}
-	return flatListTTLMs, "private"
+	return flatListTTLMs
 }

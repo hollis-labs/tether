@@ -163,11 +163,11 @@ func knownUnavailable(origin OriginStatus) bool {
 }
 
 func truncateReason(s string) string {
-	const max = 240
-	if len(s) <= max {
+	const limit = 240
+	if len(s) <= limit {
 		return s
 	}
-	cut := max
+	cut := limit
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
