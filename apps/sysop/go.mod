@@ -15,6 +15,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/hollis-labs/libs/agent/core v0.4.0 // indirect
 	github.com/hollis-labs/libs/core/forums v0.3.0 // indirect
+	github.com/hollis-labs/libs/core/panics v0.1.0 // indirect
 	github.com/hollis-labs/libs/security/auth v0.1.0 // indirect
 	github.com/hollis-labs/libs/security/policy v0.1.0 // indirect
 	github.com/hollis-labs/libs/security/redact v0.2.0 // indirect
@@ -46,8 +47,8 @@ require (
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
-	github.com/hollis-labs/libs/core/util v0.4.0 // indirect
-	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0 // indirect
+	github.com/hollis-labs/libs/core/util v0.6.0 // indirect
+	github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0 // indirect
 	github.com/hollis-labs/libs/ui/ui-go v0.1.0
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

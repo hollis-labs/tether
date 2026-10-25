@@ -32,7 +32,10 @@ require (
 	github.com/hollis-labs/libs/security/redact v0.2.0
 )
 
-require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+require (
+	github.com/hollis-labs/libs/core/panics v0.1.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+)
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
@@ -82,8 +85,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
-	github.com/hollis-labs/libs/core/util v0.4.0
-	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0
+	github.com/hollis-labs/libs/core/util v0.6.0
+	github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0
 	github.com/hollis-labs/libs/security/auth v0.1.0
 	github.com/hollis-labs/libs/security/secrets v0.1.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
