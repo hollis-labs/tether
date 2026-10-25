@@ -19,6 +19,7 @@ publication are carved out as narrow scopes.
 | `tether.ai` | `ai.invoke` | AI chat, stream, embeddings, decide | `tether.operate` |
 | `tether.events` | events | event publication | `tether.operate`, `tether.worker` |
 | `tether.registry` | `registry.write` | registry and scoped-binding writes | `tether.maintain`, `tether.admin` |
+| `tether.registry_read` | - | registry reads (`GET /registry/{kind}`, `GET /registry/{kind}/{id}`) | `tether.read`, `tether.registry`, `tether.maintain`, `tether.admin` |
 | `tether.catalog` | `catalog.write` | catalog file writes (tools, session callers) | `tether.maintain`, `tether.admin` |
 
 Rules:
@@ -34,6 +35,12 @@ Rules:
   issued token carry the canonical set. `DefaultMCPScopes` (message.write,
   registry.write, groups.write) therefore yields `tether.messages`,
   `tether.registry`, `tether.groups` and nothing broader.
+- A service token may hold only `tether.events`, `tether.read`, `tether.messages`,
+  `tether.registry` and `tether.registry_read`. A registry-only service (enrolls and
+  looks up actors, cannot send or read mail) is `tether.registry` alone: it contains
+  `tether.registry_read` but not `tether.read`, which gates `/messages/list`, `/inbox`,
+  `/watch` and `GET /messages/{id}`. On the local listener these scopes are enforced only in
+  identity `enforce` mode; in `observe` they are attributed, not enforced.
 - Event publication is grantable to service principals and worker devices. It
   grants no event reads: those still require `tether.read`. Admin alone cannot
   publish. Agent session tokens do not receive `tether.events` by default; an

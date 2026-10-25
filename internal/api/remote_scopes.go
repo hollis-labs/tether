@@ -14,21 +14,22 @@ import (
 )
 
 const (
-	readScope     = identity.ScopeRead
-	operateScope  = identity.ScopeOperate
-	terminalScope = identity.ScopeTerminal
-	maintainScope = identity.ScopeMaintain
-	registryScope = identity.ScopeRegistry
-	sessionsScope = identity.ScopeSessions
-	messagesScope = identity.ScopeMessages
-	groupsScope   = identity.ScopeGroups
-	teamsScope    = identity.ScopeTeams
-	aiScope       = identity.ScopeAI
-	inputScope    = identity.ScopeInput
-	adminScope    = identity.ScopeAdmin
-	localScope    = "local-only"
-	publicScope   = "public"
-	selfScope     = "current-device"
+	readScope         = identity.ScopeRead
+	operateScope      = identity.ScopeOperate
+	terminalScope     = identity.ScopeTerminal
+	maintainScope     = identity.ScopeMaintain
+	registryScope     = identity.ScopeRegistry
+	registryReadScope = identity.ScopeRegistryRead
+	sessionsScope     = identity.ScopeSessions
+	messagesScope     = identity.ScopeMessages
+	groupsScope       = identity.ScopeGroups
+	teamsScope        = identity.ScopeTeams
+	aiScope           = identity.ScopeAI
+	inputScope        = identity.ScopeInput
+	adminScope        = identity.ScopeAdmin
+	localScope        = "local-only"
+	publicScope       = "public"
+	selfScope         = "current-device"
 )
 
 type RouteScope struct {
@@ -204,8 +205,8 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/registry/scoped-bindings", "/registry/scoped-bindings", map[string]string{"POST": registryScope}),
 	routeScope("/registry/scoped-bindings/resolve", "/registry/scoped-bindings/resolve", map[string]string{"GET": readScope}),
 	routeScope("/registry/scoped-bindings/revisions", "/registry/scoped-bindings/revisions", map[string]string{"GET": readScope}),
-	routeScope("/registry/", "/registry/{kind}", map[string]string{"GET": readScope, "POST": registryScope}, "registry-kind"),
-	routeScope("/registry/", "/registry/{kind}/{id}", map[string]string{"GET": readScope, "PATCH": registryScope, "DELETE": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}", map[string]string{"GET": registryReadScope, "POST": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}", map[string]string{"GET": registryReadScope, "PATCH": registryScope, "DELETE": registryScope}, "registry-kind"),
 	routeScope("/registry/", "/registry/{kind}/{id}/sync", map[string]string{"POST": registryScope}, "registry-kind"),
 	routeScope("/registry/", "/registry/{kind}/{id}/merge", map[string]string{"POST": registryScope}, "registry-kind"),
 	routeScope("/whoami", "/whoami", map[string]string{"GET": readScope}),

@@ -63,3 +63,45 @@ func TestObserveLocalScope(t *testing.T) {
 		}
 	}
 }
+
+// A registry-only service principal (CW-20261024-0094: Nanite's enrollment credential)
+// can administer and read the registry but cannot send, read or list mail, read
+// sessions or workers, or launch anything. tether.read keeps reading the registry.
+func TestRegistryOnlyServicePrincipalIsLimitedToTheRegistry(t *testing.T) {
+	registryOnly := identity.Principal{Verified: true, ID: "msg://service/nanite-registry/dev", Kind: "service", TokenID: "j", Scopes: []string{"tether.registry"}}
+	readOnly := identity.Principal{Verified: true, ID: "msg://service/viewer/dev", Kind: "service", TokenID: "j", Scopes: []string{"tether.read"}}
+	messagesOnly := identity.Principal{Verified: true, ID: "msg://service/mailer/dev", Kind: "service", TokenID: "j", Scopes: []string{"tether.messages"}}
+	const urn = "/registry/agents/msg%3A%2F%2Fagent%2Fagent-mux%2Fagt_x"
+	for _, tc := range []struct {
+		who          string
+		p            identity.Principal
+		method, path string
+		allow        bool
+	}{
+		{"registry-only", registryOnly, "GET", "/registry/agents?substrate=nanite&external_id=a%2Fb", true},
+		{"registry-only", registryOnly, "GET", urn, true},
+		{"registry-only", registryOnly, "POST", "/registry/agents", true},
+		{"registry-only", registryOnly, "PATCH", urn, true},
+		{"registry-only", registryOnly, "DELETE", urn, true},
+		{"registry-only", registryOnly, "GET", "/messages/list", false},
+		{"registry-only", registryOnly, "GET", "/messages/inbox", false},
+		{"registry-only", registryOnly, "GET", "/messages/watch", false},
+		{"registry-only", registryOnly, "GET", "/messages/abc", false},
+		{"registry-only", registryOnly, "POST", "/messages", false},
+		{"registry-only", registryOnly, "POST", "/messages/notify", false},
+		{"registry-only", registryOnly, "GET", "/sessions", false},
+		{"registry-only", registryOnly, "POST", "/sessions", false},
+		{"registry-only", registryOnly, "GET", "/workers", false},
+		{"read-only", readOnly, "GET", "/registry/agents", true},
+		{"read-only", readOnly, "GET", urn, true},
+		{"read-only", readOnly, "POST", "/registry/agents", false},
+		{"read-only", readOnly, "DELETE", urn, false},
+		{"messages-only", messagesOnly, "GET", "/registry/agents", false},
+		{"messages-only", messagesOnly, "POST", "/registry/agents", false},
+	} {
+		got := ObserveLocalScope(httptest.NewRequest(tc.method, tc.path, nil), tc.p)
+		if !got.Known || got.WouldAllow != tc.allow {
+			t.Errorf("%s %s %s: would-allow=%v known=%v (required %q), want allow=%v", tc.who, tc.method, tc.path, got.WouldAllow, got.Known, got.Required, tc.allow)
+		}
+	}
+}

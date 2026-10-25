@@ -819,3 +819,24 @@ func TestIssueTwoRotationsAndPruneInsideTheWindow(t *testing.T) {
 		t.Fatalf("the token does not verify: %v", err)
 	}
 }
+
+// A registry-only service token can be issued (CW-20261024-0094); administering
+// devices, the catalog or sessions still cannot.
+func TestIssueServiceRegistryScopes(t *testing.T) {
+	is, _ := newIssuer(t)
+	tok, _, err := is.IssueService(operatorP, ServiceRequest{App: "nanite-registry", Audience: "tether", Scopes: []string{"tether.registry"}, Label: "nanite-registry"})
+	if err != nil {
+		t.Fatalf("a registry-only service token must be issuable: %v", err)
+	}
+	if c := claimsOf(t, tok.Token); c.Scope != "tether.registry" || c.Sub != "msg://service/nanite-registry/dev" {
+		t.Fatalf("claims %+v", c)
+	}
+	if _, _, err := is.IssueService(operatorP, ServiceRequest{App: "x", Audience: "tether", Scopes: []string{"tether.registry", "tether.registry_read"}}); err != nil {
+		t.Fatalf("registry and registry_read together: %v", err)
+	}
+	for _, scopes := range [][]string{{"tether.admin"}, {"tether.maintain"}, {"tether.catalog"}, {"tether.sessions"}, {"tether.registry", "tether.catalog"}, {"tether.operate"}} {
+		if _, _, err := is.IssueService(operatorP, ServiceRequest{App: "x", Audience: "tether", Scopes: scopes}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%v must stay refused for a service token, got %v", scopes, err)
+		}
+	}
+}
