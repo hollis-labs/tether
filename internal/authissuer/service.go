@@ -30,9 +30,10 @@ const (
 )
 
 // serviceTetherScopes is the dev allowlist of Tether scopes a service token may
-// hold: publish events, read, and the message APIs. Nothing that administers
-// Tether, launches sessions or touches the catalog.
-var serviceTetherScopes = []string{"tether.events", "tether.read", "tether.messages"}
+// hold: publish events, read, the message APIs, and the registry (writes and
+// reads, CW-20261024-0094: a service that enrolls and looks up actors). Nothing
+// that administers devices or the catalog, or launches sessions.
+var serviceTetherScopes = []string{"tether.events", "tether.read", "tether.messages", "tether.registry", "tether.registry_read"}
 
 var (
 	envRe   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)

@@ -26,12 +26,16 @@ const (
 	// device scopes: a device is never paired with them and holds them
 	// implicitly through the broader scope that contains them (narrowContainedIn).
 	ScopeRegistry = "registry" // registry.write
-	ScopeCatalog  = "catalog"  // catalog.write
-	ScopeSessions = "sessions" // session.write
-	ScopeMessages = "messages" // message.write
-	ScopeGroups   = "groups"   // groups.write
-	ScopeTeams    = "teams"    // team.write
-	ScopeAI       = "ai"       // ai.invoke
+	// ScopeRegistryRead is registry reads only. A credential for registry
+	// administration (a service that registers and looks up actors) can read the
+	// registry without holding tether.read, which also opens mail, sessions and workers.
+	ScopeRegistryRead = "registry_read"
+	ScopeCatalog      = "catalog"  // catalog.write
+	ScopeSessions     = "sessions" // session.write
+	ScopeMessages     = "messages" // message.write
+	ScopeGroups       = "groups"   // groups.write
+	ScopeTeams        = "teams"    // team.write
+	ScopeAI           = "ai"       // ai.invoke
 	// ScopeEvents authorizes event publication, independently of event reads.
 	ScopeEvents = "events"
 	// ScopeInput is a route marker, not a grantable scope: session input and
@@ -121,7 +125,7 @@ const AppScopePrefix = "tether."
 func CanonicalScope(s string) string {
 	switch s {
 	case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker,
-		ScopeRegistry, ScopeCatalog, ScopeSessions, ScopeMessages, ScopeGroups, ScopeTeams, ScopeAI, ScopeEvents:
+		ScopeRegistry, ScopeRegistryRead, ScopeCatalog, ScopeSessions, ScopeMessages, ScopeGroups, ScopeTeams, ScopeAI, ScopeEvents:
 		return AppScopePrefix + s
 	}
 	return s
@@ -156,13 +160,16 @@ var legacyScopeNeeds = map[string]string{
 // line with ADR 0062 (independent capabilities).
 var narrowContainedIn = map[string][]string{
 	AppScopePrefix + ScopeRegistry: {AppScopePrefix + ScopeMaintain, AppScopePrefix + ScopeAdmin},
-	AppScopePrefix + ScopeCatalog:  {AppScopePrefix + ScopeMaintain, AppScopePrefix + ScopeAdmin},
-	AppScopePrefix + ScopeSessions: {AppScopePrefix + ScopeOperate},
-	AppScopePrefix + ScopeMessages: {AppScopePrefix + ScopeOperate},
-	AppScopePrefix + ScopeGroups:   {AppScopePrefix + ScopeOperate},
-	AppScopePrefix + ScopeTeams:    {AppScopePrefix + ScopeOperate},
-	AppScopePrefix + ScopeAI:       {AppScopePrefix + ScopeOperate},
-	AppScopePrefix + ScopeEvents:   {AppScopePrefix + ScopeOperate, AppScopePrefix + ScopeWorker},
+	// Registry reads are held by every scope that already reads the registry or
+	// administers it: read keeps working unchanged, registry (writes) can read what it writes.
+	AppScopePrefix + ScopeRegistryRead: {AppScopePrefix + ScopeRead, AppScopePrefix + ScopeRegistry, AppScopePrefix + ScopeMaintain, AppScopePrefix + ScopeAdmin},
+	AppScopePrefix + ScopeCatalog:      {AppScopePrefix + ScopeMaintain, AppScopePrefix + ScopeAdmin},
+	AppScopePrefix + ScopeSessions:     {AppScopePrefix + ScopeOperate},
+	AppScopePrefix + ScopeMessages:     {AppScopePrefix + ScopeOperate},
+	AppScopePrefix + ScopeGroups:       {AppScopePrefix + ScopeOperate},
+	AppScopePrefix + ScopeTeams:        {AppScopePrefix + ScopeOperate},
+	AppScopePrefix + ScopeAI:           {AppScopePrefix + ScopeOperate},
+	AppScopePrefix + ScopeEvents:       {AppScopePrefix + ScopeOperate, AppScopePrefix + ScopeWorker},
 }
 
 // IsLegacyChildScope reports whether s is one of the pre-unification MCP child scopes.
