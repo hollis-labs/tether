@@ -41,6 +41,16 @@ probe has a fresh cache; narrow the operator's inherited `TETHER_MCP_SERVERS`
 selection when examining a large upstream portfolio. Collision-only pool status
 and startup checks never invoke metadata/schema lint.
 
+**Why the lint and `unexamined_tools` counts move.** They are a function of how many
+status passes have run since the declarations were accepted, not of the upstreams.
+A fresh process (or an upstream whose tool list just changed) starts with every
+declaration unexamined; each status call then examines the next 128 and the count
+falls (for example 575, then 380, then 190, then 0 on a 700-tool gateway); the lint
+totals rise by the findings those passes produce. A restart or reconnect that
+re-accepts declarations resets the cache for them. Once `unexamined_tools` is 0 the
+numbers are stable until an upstream changes. Read lint totals only when
+`unexamined_tools` is 0; before that they are a lower bound.
+
 Metadata lint is **report-only**: findings never block startup, rewrite schemas,
 infer safety or remove tools. Title, annotations, schemas and other supported
 metadata remain authored values. Annotation hints are advisory; they do not grant

@@ -18,7 +18,7 @@ func (s *Service) ProtocolList(registered []*mcpsdk.Tool, infrastructure func(st
 		policy = &Policy{}
 	}
 	snapshot := policy.Eligible(s.Snapshot())
-	unavailable, _ := availability(snapshot)
+	unavailable, _, _, _ := availability(snapshot)
 	eligible := map[string]Entry{}
 	for _, entry := range snapshot.Entries {
 		if !unavailable[entry.Origin] {

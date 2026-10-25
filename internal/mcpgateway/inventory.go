@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -77,6 +78,11 @@ type Result struct {
 	OriginCounts       map[string]int `json:"origin_counts,omitempty"`
 	Complete           bool           `json:"complete"`
 	UnavailableServers []string       `json:"unavailable_servers"`
+	// UnavailableReasons says once, per unavailable origin, why it is. IncompleteServers
+	// lists the subset that is only temporarily absent (starting, reconnecting), which is
+	// what makes Complete false; see availability.
+	UnavailableReasons map[string]string `json:"unavailable_reasons,omitempty"`
+	IncompleteServers  []string          `json:"incomplete_servers,omitempty"`
 }
 type Request struct {
 	Query   string   `json:"query,omitempty"`
@@ -111,17 +117,61 @@ type Service struct {
 // matches the starting default of the gateway result cap (CW-20261024-0052).
 const DefaultMaxResultBytes = 32 << 10
 
-func availability(snapshot Snapshot) (map[string]bool, []string) {
-	unavailable := map[string]bool{}
-	ids := []string{}
+// availability splits the origins that cannot serve calls into two kinds, and Complete means
+// only the second is empty (CW-20261024-0049):
+//
+//   - unavailable: the origin is known to be down or switched off ("failed" after the restart
+//     limit, "excluded" by the profile or policy). It is reported once, in unavailable_servers
+//     with its reason in unavailable_reasons, and does not make an inventory incomplete: there
+//     is nothing more to wait for, and a permanent gap that flipped complete would teach
+//     callers to ignore the flag.
+//   - incomplete: an origin that should be present but is not yet ("starting", "reconnecting",
+//     or a state this code does not know). Its tools may appear shortly, so the inventory is
+//     not final: complete is false and the origin is in incomplete_servers.
+//
+// Both kinds stay in unavailable_servers, and neither can be called.
+func availability(snapshot Snapshot) (unavailable map[string]bool, ids []string, incomplete []string, reasons map[string]string) {
+	unavailable = map[string]bool{}
+	ids = []string{}
+	reasons = map[string]string{}
 	for _, origin := range snapshot.Origins {
-		if origin.Status != "connected" {
-			unavailable[origin.ID] = true
-			ids = append(ids, origin.ID)
+		if origin.Status == "connected" {
+			continue
+		}
+		unavailable[origin.ID] = true
+		ids = append(ids, origin.ID)
+		reason := origin.Status
+		if reason == "" {
+			reason = "unknown"
+		}
+		if origin.Error != "" {
+			reason += ": " + origin.Error
+		}
+		reasons[origin.ID] = truncateReason(reason)
+		if !knownUnavailable(origin) {
+			incomplete = append(incomplete, origin.ID)
 		}
 	}
 	sort.Strings(ids)
-	return unavailable, ids
+	sort.Strings(incomplete)
+	return unavailable, ids, incomplete, reasons
+}
+
+// knownUnavailable reports whether an origin's absence is settled rather than in progress.
+func knownUnavailable(origin OriginStatus) bool {
+	return origin.Status == "failed" || origin.Status == "excluded"
+}
+
+func truncateReason(s string) string {
+	const max = 240
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 func (s *Service) List(req Request) (Result, error)   { return s.find(req, false) }
 func (s *Service) Search(req Request) (Result, error) { return s.find(req, true) }
@@ -159,7 +209,7 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 	if s.Policy != nil {
 		snapshot = s.Policy.Eligible(snapshot)
 	}
-	unavailable, unavailableServers := availability(snapshot)
+	unavailable, unavailableServers, incompleteServers, reasons := availability(snapshot)
 	knownServers := map[string]bool{}
 	for _, origin := range snapshot.Origins {
 		if s.Policy == nil || s.Policy.Selection.Profile == nil {
@@ -186,7 +236,10 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		}
 		servers[id] = true
 	}
-	out := Result{Items: []Item{}, Complete: len(unavailableServers) == 0, UnavailableServers: unavailableServers}
+	out := Result{Items: []Item{}, Complete: len(incompleteServers) == 0, UnavailableServers: unavailableServers, IncompleteServers: incompleteServers}
+	if len(reasons) > 0 {
+		out.UnavailableReasons = reasons
+	}
 	// list always hydrates real schemas; search honors names|summary|schema.
 	detail := "schema"
 	if search {
@@ -398,7 +451,7 @@ func (s *Service) ResolveTarget(name string) (Entry, error) {
 	if s.Policy != nil {
 		snapshot = s.Policy.Eligible(snapshot)
 	}
-	unavailable, _ := availability(snapshot)
+	unavailable, _, _, _ := availability(snapshot)
 	for _, entry := range snapshot.Entries {
 		if entry.Tool.Name != name {
 			continue
@@ -461,11 +514,17 @@ type Status struct {
 	AnnotatedTools    int            `json:"annotated_tools"`
 	TitledTools       int            `json:"titled_tools"`
 	Exclusions        map[string]int `json:"exclusions"`
-	Complete          bool           `json:"complete"`
-	Name              string         `json:"name,omitempty"`
-	Visible           *bool          `json:"visible,omitempty"`
-	Reason            string         `json:"reason,omitempty"`
-	Tool              *Item          `json:"tool,omitempty"`
+	// Complete is false only for an origin that is temporarily absent
+	// (IncompleteServers) or a name collision; an origin that is known to be down
+	// is listed in UnavailableServers with its reason and does not flip it.
+	Complete           bool              `json:"complete"`
+	UnavailableServers []string          `json:"unavailable_servers"`
+	UnavailableReasons map[string]string `json:"unavailable_reasons,omitempty"`
+	IncompleteServers  []string          `json:"incomplete_servers,omitempty"`
+	Name               string            `json:"name,omitempty"`
+	Visible            *bool             `json:"visible,omitempty"`
+	Reason             string            `json:"reason,omitempty"`
+	Tool               *Item             `json:"tool,omitempty"`
 }
 
 func (s *Service) Status(name string) Status {
@@ -474,8 +533,8 @@ func (s *Service) Status(name string) Status {
 	if s.Policy != nil {
 		snapshot = s.Policy.Eligible(snapshot)
 	}
-	unavailable, ids := availability(snapshot)
-	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: append([]OriginStatus{}, snapshot.Origins...), EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0 && len(original.Collisions) == 0, Name: name, Exclusions: map[string]int{}}
+	unavailable, ids, incomplete, reasons := availability(snapshot)
+	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: append([]OriginStatus{}, snapshot.Origins...), EligibleTools: len(snapshot.Entries), Complete: len(incomplete) == 0 && len(original.Collisions) == 0, UnavailableServers: ids, UnavailableReasons: reasons, IncompleteServers: incomplete, Name: name, Exclusions: map[string]int{}}
 	byOrigin := map[string]int{}
 	for i := range out.Origins {
 		origin := &out.Origins[i]

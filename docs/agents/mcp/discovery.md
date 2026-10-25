@@ -83,8 +83,19 @@ Then call `tether_tool_call`, using the schema to construct `arguments`:
 
 In flat mode, call `tether_session_list` directly with `{}` instead.
 For paginated discovery, `next_cursor` continues the same query; `truncated`
-means more matches exist. `complete: false` and `unavailable_servers` mean the
-inventory is incomplete, not that the unavailable app has no matching tool.
+means more matches exist. `unavailable_servers` lists every app that cannot serve calls
+right now, with the reason in `unavailable_reasons`; the matches of those apps are not in
+the results, so a tool that is missing may belong to one of them. Two kinds, and only one
+of them flips `complete`:
+
+- **unavailable** (`failed` after the restart limit, or `excluded`): known down or switched
+  off. Reported once, with its reason. `complete` stays true, because nothing more is coming
+  until someone fixes it; a permanent gap that flipped the flag would teach callers to
+  ignore it.
+- **incomplete** (`starting`, `reconnecting`, or a state not recognised): should be present
+  and is not yet. `complete` is false and the app is in `incomplete_servers`; retry shortly.
+
+`tether_gateway_status` carries the same three fields.
 Use [Troubleshoot](troubleshoot.md) for connection and visibility failures.
 
 ## Measuring discovery
