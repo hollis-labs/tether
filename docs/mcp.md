@@ -834,7 +834,7 @@ already load their directory for each call.
 List all projects defined in the catalog.
 
 #### `tether_catalog_list_agents`
-List all agent profiles.
+List agent profiles, brief by default: the small fields plus `prompt_bytes` (the size of the system prompt, agent prompt and body that were left out); `env`, `spec`, `provider_overrides` and `prompts` are omitted too. 25 per page sorted by `id`; `next_cursor` fetches the next page. Narrow with `query` (substring of id, name, description or a role) or `role` (exact). `verbose=true` returns full records; `tether_agent_show` returns one agent in full. Paging contract: [list tools](agents/mcp/budgets.md#list-tools-page-and-stay-brief).
 
 #### `tether_catalog_list_providers`
 List all provider definitions.
@@ -1264,6 +1264,10 @@ Search by filter; all filters AND together, results ordered alphabetically on `d
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `kind` | string | ✓ | Entity kind to search: 'agent' or 'project'. |
+| `query` | string | — | Case-insensitive substring over display_name, title, role, description, project, urn and capabilities. |
+| `limit` | number | — | Rows per page, 1-200 (default 25). |
+| `cursor` | string | — | `next_cursor` from the previous page. |
+| `verbose` | boolean | — | Full profiles instead of brief rows (urn, kind, display_name, title, role, project, status). |
 | `capability` | string | — | Filter to rows that carry this capability string. |
 | `project` | string | — | Filter on project (exact match). |
 | `role` | string | — | Filter on role (exact match). |
