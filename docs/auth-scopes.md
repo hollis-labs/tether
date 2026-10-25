@@ -53,6 +53,38 @@ Rules:
 - Not carved: `delivery.write` (message redrive/purge) remains a separate legacy
   check; it is not in `mcp_scopes` and no canonical twin exists yet.
 
+## Service tokens: which listener accepts them
+
+A service token (`tether service-token issue`, principal `msg://service/<app>/<env>`) is
+accepted on the **local** listener, and on the **remote** listener for exactly one
+request, `POST /events` (event publication). Every other route on the remote listener
+(and on the public edge that fronts it) refuses a service token with
+`401 verified caller identity required`, because the remote surface authenticates paired
+device credentials only (see [device-only remote authentication](caller-identity.md#device-only-remote-authentication)).
+A 401 on a registry, message or session route from a service is therefore the wrong
+surface, not a bad token.
+
+A service that runs on the hub host and needs the registry (or any other non-events
+route) uses the daemon's unix socket with `Authorization: Bearer <token>`; the host is
+ignored. On the hub the socket is `/var/lib/fabric/tether/run/tetherd.sock`, owned by the
+Tether user and group-writable, so the caller must run as that user or in its group:
+
+```sh
+# the token goes through curl's stdin config so it is not on a command line
+printf 'header = "Authorization: Bearer %s"\n' "$(cat /path/to/token)" |
+  curl -s -K - --unix-socket /var/lib/fabric/tether/run/tetherd.sock \
+    "http://localhost/registry/agents?substrate=nanite&external_id=<id>"
+```
+
+In a Go client, use an `http.Transport` whose `DialContext` dials the socket
+(`net.Dial("unix", path)`). `GET /auth/context` on the same socket reports the
+verified principal and kind for a token (`{"verified":false}` once it is revoked or
+invalid; in `observe` mode the HTTP status is still 200). Revoke with
+`tether service-token revoke <jti>`; verifiers pick the revocation up within one
+deny-list poll (30 seconds by default). A service on another machine cannot use a
+service token for these routes; it needs a paired device credential, whose scopes are
+much broader.
+
 ## Basalisk workload capabilities
 
 Exact device capabilities support current assurance reads and transport:
