@@ -39,6 +39,45 @@ Mode resolves at startup; restart the client endpoint to apply a change.
 `--servers` restricts reachability in both modes, as described in
 [Limit tools](limit-tools.md).
 
+## Client guidance: which mode, and what the client sees
+
+**Default for hosted agents (Claude Code, Codex, AGY): flat with a role profile.**
+A role profile pins the tools that role actually uses (the role's tool table is
+derived from observed calls, CW-20261024-0057), so the client sees a few dozen
+named tools instead of the whole portfolio, and permissions, hooks and audit still
+match on real tool names. Flat without a profile exposes every connected tool
+(689 on the hub today), which is why profiles exist.
+
+**Choose search** when the host cannot carry a profile or the tool set is open-ended:
+an orchestrator that must reach any app, an ad-hoc session, a small-context model.
+The cost is one extra round trip to find a tool and the loss of name-level
+permissions.
+
+**Claude Code defers MCP tools itself.** In a search-mode session the four gateway
+tools were not callable until Claude Code loaded them through its own tool search,
+so a Claude Code agent sits behind two discovery layers: the client's, then ours. If
+that is a problem for a role, prefer a flat role profile for Claude Code agents; the
+client's deferral then covers fewer, more relevant tools.
+
+**Hook and permission authors.** In search mode every downstream call arrives as
+`tether_tool_call`. The stable field to match is the call's own `name` argument
+(`tool_input.name` in a Claude Code `PreToolUse` hook; `arguments` is the downstream
+tool's input). It is the downstream tool's real name, the same name flat mode would
+have used, so a rule like "deny `torque_task_delete`" is written once against `name`
+and works through the dispatcher. `tether_tool_call` is annotated as destructive on
+purpose: a rule that needs read-only certainty cannot get it from the dispatcher's own
+annotations and should match on `name`.
+
+**Caching.** `tools/list` carries `ttlMs` and `cacheScope`. The search front is four
+fixed tools, byte-identical across restarts and across upstream changes (a test
+asserts this), so it is sent with a 5-minute TTL; the flat list follows the
+upstreams and gets 30 seconds. Both are `private`: the list depends on the caller's
+profile and credentials. Clients must still treat a cached list as stale on
+`notifications/tools/list_changed`, which the gateway sends when an upstream's tools
+change. The search catalog needs no re-index step: `tether_tool_search` and
+`tether_tool_list` read the live inventory on each call, so a tool an upstream adds
+is findable as soon as the gateway has accepted it (a test covers this).
+
 ## Search, hydrate, call
 
 The following blocks are tool arguments, not shell commands. In search mode,
@@ -83,8 +122,19 @@ Then call `tether_tool_call`, using the schema to construct `arguments`:
 
 In flat mode, call `tether_session_list` directly with `{}` instead.
 For paginated discovery, `next_cursor` continues the same query; `truncated`
-means more matches exist. `complete: false` and `unavailable_servers` mean the
-inventory is incomplete, not that the unavailable app has no matching tool.
+means more matches exist. `unavailable_servers` lists every app that cannot serve calls
+right now, with the reason in `unavailable_reasons`; the matches of those apps are not in
+the results, so a tool that is missing may belong to one of them. Two kinds, and only one
+of them flips `complete`:
+
+- **unavailable** (`failed` after the restart limit, or `excluded`): known down or switched
+  off. Reported once, with its reason. `complete` stays true, because nothing more is coming
+  until someone fixes it; a permanent gap that flipped the flag would teach callers to
+  ignore it.
+- **incomplete** (`starting`, `reconnecting`, or a state not recognised): should be present
+  and is not yet. `complete` is false and the app is in `incomplete_servers`; retry shortly.
+
+`tether_gateway_status` carries the same three fields.
 Use [Troubleshoot](troubleshoot.md) for connection and visibility failures.
 
 ## Measuring discovery

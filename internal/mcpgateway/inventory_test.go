@@ -27,7 +27,7 @@ func TestEnumerationHydrationAndCursorBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Items[0].Name != "a_one" || !first.Truncated || first.Complete || !reflect.DeepEqual(first.UnavailableServers, []string{"b"}) {
+	if first.Items[0].Name != "a_one" || !first.Truncated || !first.Complete || !reflect.DeepEqual(first.UnavailableServers, []string{"b"}) {
 		t.Fatalf("page: %+v", first)
 	}
 	last, err := svc.List(Request{Limit: 1, Cursor: first.NextCursor})
@@ -101,5 +101,44 @@ func TestSearchDetailAndUnavailableCalls(t *testing.T) {
 	unavailable, err := svc.List(Request{Names: []string{"a_one"}})
 	if err != nil || unavailable.Items[0].InputSchema != nil || unavailable.Items[0].Error == "" {
 		t.Fatalf("unavailable schema leaked: %+v %v", unavailable, err)
+	}
+}
+
+// CW-20261024-0049: an origin that is known to be down is unavailable, reported once with its
+// reason, and does not make the inventory incomplete; one that is only temporarily absent does.
+func TestKnownFailedOriginIsUnavailableNotIncomplete(t *testing.T) {
+	svc, snapshot := inventoryService() // origin b is "failed" with Error "offline"
+
+	res, err := svc.List(Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Complete || len(res.IncompleteServers) != 0 {
+		t.Fatalf("a known-failed origin made the inventory incomplete: %+v", res)
+	}
+	if !reflect.DeepEqual(res.UnavailableServers, []string{"b"}) || res.UnavailableReasons["b"] != "failed: offline" {
+		t.Fatalf("unavailable = %v reasons = %v", res.UnavailableServers, res.UnavailableReasons)
+	}
+	if st := svc.Status(""); !st.Complete || !reflect.DeepEqual(st.UnavailableServers, []string{"b"}) || st.UnavailableReasons["b"] != "failed: offline" {
+		t.Fatalf("status: complete=%v unavailable=%v reasons=%v", st.Complete, st.UnavailableServers, st.UnavailableReasons)
+	}
+
+	for _, transient := range []string{"starting", "reconnecting", "somethingnew"} {
+		snapshot.Origins[1].Status = transient
+		res, err = svc.List(Request{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Complete || !reflect.DeepEqual(res.IncompleteServers, []string{"b"}) {
+			t.Fatalf("%s: complete=%v incomplete=%v", transient, res.Complete, res.IncompleteServers)
+		}
+		if st := svc.Status(""); st.Complete {
+			t.Fatalf("%s: status reported complete", transient)
+		}
+	}
+
+	snapshot.Origins[1].Status = "excluded"
+	if res, _ = svc.List(Request{}); !res.Complete {
+		t.Fatal("an excluded origin made the inventory incomplete")
 	}
 }

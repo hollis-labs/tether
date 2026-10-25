@@ -26,6 +26,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -851,5 +852,73 @@ func TestRegistryTools_Register_HalfAnExternalKeyIsRejected(t *testing.T) {
 		if res := callRegistryTool(t, a, "tether_registry_register", args); !res.IsError {
 			t.Fatalf("a half key must be refused, got: %s", textOf(res))
 		}
+	}
+}
+
+// CW-20261024-0053: query, limit and cursor are honored (they used to be dropped
+// silently), rows are brief by default, and an undeclared argument is refused.
+func TestRegistryTools_Search_QueryLimitCursorBrief(t *testing.T) {
+	a, _ := newRegistryAdapter(t)
+	for i := 0; i < 7; i++ {
+		res := callRegistryTool(t, a, "tether_registry_register", map[string]any{
+			"kind": "agent", "profile": map[string]any{
+				"display_name": fmt.Sprintf("Agent %02d", i),
+				"role":         "worker",
+				"description":  strings.Repeat("long description ", 50),
+				"guidelines":   strings.Repeat("g", 500),
+			},
+		})
+		if res.IsError {
+			t.Fatalf("seed: %s", textOf(res))
+		}
+	}
+
+	var names []string
+	cursor := ""
+	for pages := 0; pages < 10; pages++ {
+		args := map[string]any{"kind": "agent", "limit": float64(3)}
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		body := parseToolJSON(t, callRegistryTool(t, a, "tether_registry_search", args))
+		rows, _ := body["profiles"].([]any)
+		if len(rows) > 3 {
+			t.Fatalf("limit=3 returned %d rows", len(rows))
+		}
+		if body["total"] != float64(7) || body["detail"] != "brief" {
+			t.Fatalf("total/detail = %v/%v", body["total"], body["detail"])
+		}
+		for _, r := range rows {
+			row := r.(map[string]any)
+			if _, has := row["description"]; has {
+				t.Fatalf("brief row carries description: %v", row)
+			}
+			names = append(names, row["display_name"].(string))
+		}
+		next, _ := body["next_cursor"].(string)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(names) != 7 || names[0] != "Agent 00" || names[6] != "Agent 06" {
+		t.Fatalf("paged walk = %v", names)
+	}
+
+	body := parseToolJSON(t, callRegistryTool(t, a, "tether_registry_search", map[string]any{"kind": "agent", "query": "agent 04"}))
+	if rows, _ := body["profiles"].([]any); len(rows) != 1 || body["total"] != float64(1) {
+		t.Fatalf("query matched %v rows, total %v", len(rows), body["total"])
+	}
+
+	full := parseToolJSON(t, callRegistryTool(t, a, "tether_registry_search", map[string]any{"kind": "agent", "limit": float64(1), "verbose": true}))
+	if row := full["profiles"].([]any)[0].(map[string]any); row["description"] == nil || full["detail"] != "full" {
+		t.Fatalf("verbose row is not full: %v", row)
+	}
+
+	if res := callRegistryTool(t, a, "tether_registry_search", map[string]any{"kind": "agent", "querry": "x"}); !res.IsError {
+		t.Fatal("undeclared argument was accepted")
+	}
+	if res := callRegistryTool(t, a, "tether_registry_search", map[string]any{"kind": "agent", "limit": float64(0)}); !res.IsError {
+		t.Fatal("limit=0 was accepted")
 	}
 }

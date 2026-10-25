@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -203,12 +204,20 @@ func (a *Adapter) registerCatalogTools(s *gomcp.Server) {
 		Handler:     a.handleListProjects,
 	}, Reads("validated launch catalog reload and project listing"))
 
-	a.addTool(s, gomcp.Tool{
-		Name:        "tether_catalog_list_agents",
-		Description: "List all agent profiles defined in the tether catalog.",
-		InputSchema: gomcp.EmptyObjectSchema(),
-		Handler:     a.handleListAgents,
-	}, Reads("validated layered launch catalog reload and agent listing"))
+	a.addTool(s, strictArgs(gomcp.Tool{
+		Name: "tether_catalog_list_agents",
+		Description: "List the agent profiles defined in the tether catalog, brief by default: id, name, roles, skills, permissions, provider, model, mcp and the other small fields, " +
+			"without the prompts, body, env, spec or provider overrides (their size is reported as prompt_bytes). Returns 25 per page, sorted by id; next_cursor, when present, fetches the next page. " +
+			"Narrow with query (substring of id, name, description or a role) or role (exact). Pass verbose=true for full records including the prompts, or call tether_agent_show for one agent in full.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("query", "Case-insensitive substring of an agent's id, name, description or one of its roles.", false),
+			gomcp.StringProp("role", "Only agents that carry exactly this role.", false),
+			gomcp.NumberProp("limit", "Agents per page, 1-200 (default 25).", false),
+			gomcp.StringProp("cursor", "next_cursor from the previous page; omit for the first page.", false),
+			gomcp.BooleanProp("verbose", "Return full records including system_prompt, agent_prompt, body, env, spec and provider overrides (large).", false),
+		),
+		Handler: a.handleListAgents,
+	}), Reads("validated layered launch catalog reload and agent listing"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_catalog_list_providers",
@@ -277,22 +286,65 @@ func (a *Adapter) handleListProjects(_ context.Context, _ map[string]any) (any, 
 	}), nil
 }
 
-func (a *Adapter) handleListAgents(_ context.Context, _ map[string]any) (any, error) {
+// agentBrief is an agent record without its large text fields. PromptBytes is the
+// size of what was left out, so a caller can tell a short agent from a long one.
+type agentBrief struct {
+	config.Agent
+	PromptBytes int `json:"prompt_bytes,omitempty"`
+}
+
+func briefAgent(agent config.Agent) agentBrief {
+	left := len(agent.SystemPrompt) + len(agent.AgentPrompt) + len(agent.Body)
+	agent.SystemPrompt, agent.AgentPrompt, agent.Body = "", "", ""
+	agent.Spec, agent.Env, agent.ProviderOverrides, agent.Prompts = nil, nil, nil, nil
+	return agentBrief{Agent: agent, PromptBytes: left}
+}
+
+func agentMatches(agent config.Agent, query, role string) bool {
+	if role != "" && !slices.Contains(agent.Roles, role) {
+		return false
+	}
+	if query == "" {
+		return true
+	}
+	haystack := strings.ToLower(agent.ID + "\n" + agent.Name + "\n" + agent.Description + "\n" + strings.Join(agent.Roles, "\n"))
+	return strings.Contains(haystack, query)
+}
+
+func (a *Adapter) handleListAgents(_ context.Context, args map[string]any) (any, error) {
+	page, perr := parseListPage(args)
+	if perr != nil {
+		return nil, perr
+	}
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
 		return nil, catalogReloadToolError(err)
 	}
+	query, role := strings.ToLower(str(args, "query")), str(args, "role")
 	agents := make([]config.Agent, 0, len(cat.Agents))
 	for _, agent := range cat.Agents {
-		agents = append(agents, agent)
+		if agentMatches(agent, query, role) {
+			agents = append(agents, agent)
+		}
 	}
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
-	return toolJSON(map[string]any{
-		"ok":           true,
-		"agents":       agents,
-		"count":        len(agents),
-		"catalog_read": catalogRead,
-	}), nil
+	keys := make([]string, len(agents))
+	for i, agent := range agents {
+		keys[i] = agent.ID
+	}
+	start, end, next := page.window(keys)
+	var rows any
+	if page.Verbose {
+		rows = agents[start:end]
+	} else {
+		brief := make([]agentBrief, 0, end-start)
+		for _, agent := range agents[start:end] {
+			brief = append(brief, briefAgent(agent))
+		}
+		rows = brief
+	}
+	out := pageEnvelope(map[string]any{"ok": true, "agents": rows, "catalog_read": catalogRead}, end-start, len(agents), next, page.Verbose)
+	return toolJSON(out), nil
 }
 
 func (a *Adapter) handleListProviders(_ context.Context, _ map[string]any) (any, error) {

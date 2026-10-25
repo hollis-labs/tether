@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 
@@ -38,16 +39,38 @@ func (a *Adapter) registerObservationTools(s *gomcp.Server) {
 	a.registerEventsWaitTool(s)
 }
 
+// maxEventPayloadBytes caps the payload_json of one event in a history listing. A page of
+// 100 events with 10 KiB payloads is a megabyte; the listing is for finding the event, and
+// full_payload=true (or the event's own tool) fetches it whole.
+const maxEventPayloadBytes = 2048
+
+// defaultEventLimit is the page size of the history listings when the caller names none.
+const defaultEventLimit = 25
+
+// eventPayload applies the per-event payload cap. It returns the payload to send, whether
+// it was cut, and the original size when it was.
+func eventPayload(payload string, full bool) (string, bool, int) {
+	if full || len(payload) <= maxEventPayloadBytes {
+		return payload, false, 0
+	}
+	cut := maxEventPayloadBytes
+	for cut > 0 && !utf8.RuneStart(payload[cut]) {
+		cut--
+	}
+	return payload[:cut], true, len(payload)
+}
+
 // ─── tether_session_events ───────────────────────────────────────────────────────
 
 func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
-	a.addTool(s, gomcp.Tool{
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name: "tether_session_events",
 		Description: "List historical lifecycle events for a session. " +
-			"Returns events in descending seq order (newest first).",
+			"Returns events in descending seq order (newest first), 25 per page by default; pass next_cursor as cursor for older ones. Payloads over 2 KiB are cut (payload_truncated); full_payload=true returns them whole.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
-			gomcp.NumberProp("limit", "Max events to return (default 100, max 1000)", false),
+			gomcp.NumberProp("limit", "Max events to return (default 25, max 1000)", false),
+			gomcp.BooleanProp("full_payload", "Return each event's payload_json whole; by default payloads over 2 KiB are cut and marked payload_truncated with payload_bytes giving the full size.", false),
 			gomcp.NumberProp("cursor", "Pagination cursor: smallest seq from previous page; omit on first page", false),
 		),
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
@@ -56,9 +79,10 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 				return nil, toolError("invalid_request", "session_id required")
 			}
 
-			limit := intArg(args, "limit", 100)
+			full := boolArg(args, "full_payload")
+			limit := intArg(args, "limit", defaultEventLimit)
 			if limit <= 0 {
-				limit = 100
+				limit = defaultEventLimit
 			}
 			if limit > 1000 {
 				limit = 1000
@@ -81,22 +105,25 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 
 			// Build DTO slice to expose consistent field names over the wire.
 			type eventDTO struct {
-				Seq         int64  `json:"seq"`
-				At          string `json:"at"`
-				Scope       string `json:"scope"`
-				SessionID   string `json:"session_id,omitempty"`
-				Kind        string `json:"kind"`
-				PayloadJSON string `json:"payload_json,omitempty"`
+				Seq              int64  `json:"seq"`
+				At               string `json:"at"`
+				Scope            string `json:"scope"`
+				SessionID        string `json:"session_id,omitempty"`
+				Kind             string `json:"kind"`
+				PayloadJSON      string `json:"payload_json,omitempty"`
+				PayloadTruncated bool   `json:"payload_truncated,omitempty"`
+				PayloadBytes     int    `json:"payload_bytes,omitempty"`
 			}
 			out := make([]eventDTO, 0, len(evs))
 			for _, ev := range evs {
+				pj, cut, n := eventPayload(ev.PayloadJSON, full)
 				out = append(out, eventDTO{
 					Seq:         ev.Seq,
 					At:          ev.At.UTC().Format(time.RFC3339Nano),
 					Scope:       ev.Scope,
 					SessionID:   ev.SessionID,
 					Kind:        ev.Kind,
-					PayloadJSON: ev.PayloadJSON,
+					PayloadJSON: pj, PayloadTruncated: cut, PayloadBytes: n,
 				})
 			}
 
@@ -112,7 +139,7 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 			}
 			return toolJSON(result), nil
 		},
-	}, Reads("GET /sessions/{id}/events"))
+	}), Reads("GET /sessions/{id}/events"))
 }
 
 // ─── tether_session_checkpoints ─────────────────────────────────────────────────
@@ -250,20 +277,21 @@ func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 // ─── tether_events_history ──────────────────────────────────────────────────────
 
 func (a *Adapter) registerEventsHistoryTool(s *gomcp.Server) {
-	a.addTool(s, gomcp.Tool{
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name: "tether_events_history",
 		Description: "Query durable daemon/session/broker event history from the shared events table. " +
-			"Returns newest first.",
+			"Returns newest first, 25 per page by default; pass next_cursor as cursor for older ones. Payloads over 2 KiB are cut (payload_truncated); full_payload=true returns them whole.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("scope", "Optional scope allow-list as comma-separated daemon, session, broker.", false),
 			gomcp.StringProp("kind", "Optional comma-separated event kind allow-list.", false),
 			gomcp.StringProp("session_id", "Optional exact session id filter.", false),
 			gomcp.NumberProp("since_seq", "Only return events with seq greater than this value.", false),
 			gomcp.NumberProp("cursor", "Pagination cursor; return events with seq less than this value.", false),
-			gomcp.NumberProp("limit", "Max events to return (default 100, max 1000).", false),
+			gomcp.NumberProp("limit", "Max events to return (default 25, max 1000).", false),
+			gomcp.BooleanProp("full_payload", "Return each event's payload_json whole; by default payloads over 2 KiB are cut and marked payload_truncated with payload_bytes giving the full size.", false),
 		),
 		Handler: a.handleEventsHistory,
-	}, Reads("GET /events"))
+	}), Reads("GET /events"))
 }
 
 func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) (any, error) {
@@ -272,18 +300,24 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 		return nil, err
 	}
 	type eventDTO struct {
-		Seq         int64  `json:"seq"`
-		At          string `json:"at"`
-		Scope       string `json:"scope"`
-		SessionID   string `json:"session_id,omitempty"`
-		Kind        string `json:"kind"`
-		PayloadJSON string `json:"payload_json,omitempty"`
+		Seq              int64  `json:"seq"`
+		At               string `json:"at"`
+		Scope            string `json:"scope"`
+		SessionID        string `json:"session_id,omitempty"`
+		Kind             string `json:"kind"`
+		PayloadJSON      string `json:"payload_json,omitempty"`
+		PayloadTruncated bool   `json:"payload_truncated,omitempty"`
+		PayloadBytes     int    `json:"payload_bytes,omitempty"`
 	}
 	kinds := splitCSVArg(args, "kind")
 	sessionID := str(args, "session_id")
 	sinceSeq := int64(intArg(args, "since_seq", 0))
 	cursor := int64(intArg(args, "cursor", 0))
-	limit := intArg(args, "limit", 100)
+	full := boolArg(args, "full_payload")
+	limit := intArg(args, "limit", defaultEventLimit)
+	if limit <= 0 {
+		limit = defaultEventLimit
+	}
 
 	var out []eventDTO
 	var nextCursor int64
@@ -302,13 +336,14 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 		nextCursor = rows.NextCursor
 		out = make([]eventDTO, 0, len(rows.Events))
 		for _, ev := range rows.Events {
+			pj, cut, n := eventPayload(ev.PayloadJSON, full)
 			out = append(out, eventDTO{
 				Seq:         ev.Seq,
 				At:          ev.At,
 				Scope:       ev.Scope,
 				SessionID:   ev.SessionID,
 				Kind:        ev.Kind,
-				PayloadJSON: ev.PayloadJSON,
+				PayloadJSON: pj, PayloadTruncated: cut, PayloadBytes: n,
 			})
 		}
 	} else {
@@ -325,13 +360,14 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 		}
 		out = make([]eventDTO, 0, len(rows))
 		for _, ev := range rows {
+			pj, cut, n := eventPayload(ev.PayloadJSON, full)
 			out = append(out, eventDTO{
 				Seq:         ev.Seq,
 				At:          ev.At.UTC().Format(time.RFC3339Nano),
 				Scope:       ev.Scope,
 				SessionID:   ev.SessionID,
 				Kind:        ev.Kind,
-				PayloadJSON: ev.PayloadJSON,
+				PayloadJSON: pj, PayloadTruncated: cut, PayloadBytes: n,
 			})
 		}
 		if len(rows) == limit && len(rows) > 0 {

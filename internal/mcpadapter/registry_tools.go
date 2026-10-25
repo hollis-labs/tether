@@ -64,6 +64,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
@@ -135,14 +136,18 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 		Handler: a.handleRegistryLookupBy,
 	}, Reads("registry lookup by external id"))
 
-	a.addTool(s, gomcp.Tool{
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name: "tether_registry_search",
 		Description: "Search the registry by filter. All filters combine with AND. Result ordering is " +
 			"alphabetical on display_name. Default excludes status='deprecated'; pass " +
 			"status='deprecated' to return only deprecated rows, or status='*' to return " +
-			"all statuses. Read-only; no scope required.",
+			"all statuses. Rows are brief by default (urn, kind, display_name, title, role, project, status); " +
+			"pass verbose=true for full profiles. Returns 25 per page; next_cursor, when present, fetches the next page. " +
+			"query is a case-insensitive substring over display_name, title, role, description, project, urn and capabilities. " +
+			"Read-only; no scope required.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringEnumProp("kind", "Entity kind to search: 'agent' or 'project'.", true, "agent", "project"),
+			gomcp.StringProp("query", "Case-insensitive substring over display_name, title, role, description, project, urn and capabilities.", false),
 			gomcp.StringProp("role", "Filter on role (exact match).", false),
 			gomcp.StringProp("title", "Filter on title (exact match).", false),
 			gomcp.StringProp("project", "Filter on project (exact match).", false),
@@ -150,9 +155,12 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			gomcp.StringProp("skill_name", "Filter to rows that carry a skill with this name.", false),
 			gomcp.StringProp("status", "Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all.", false),
 			gomcp.StringProp("tag", "Filter to rows that carry this tag string in tags.", false),
+			gomcp.NumberProp("limit", "Rows per page, 1-200 (default 25).", false),
+			gomcp.StringProp("cursor", "next_cursor from the previous page; omit for the first page.", false),
+			gomcp.BooleanProp("verbose", "Return full profiles instead of brief rows (large).", false),
 		),
 		Handler: a.handleRegistrySearch,
-	}, Reads("registry search"))
+	}), Reads("registry search"))
 
 	a.addTool(s, gomcp.Tool{
 		Name: "tether_registry_update_self",
@@ -356,6 +364,10 @@ func (a *Adapter) handleRegistrySearch(ctx context.Context, args map[string]any)
 	if err != nil {
 		return nil, err
 	}
+	page, err := parseListPage(args)
+	if err != nil {
+		return nil, err
+	}
 	f := registry.Filter{
 		Role:       str(args, "role"),
 		Title:      str(args, "title"),
@@ -368,17 +380,60 @@ func (a *Adapter) handleRegistrySearch(ctx context.Context, args map[string]any)
 	if a.client == nil {
 		return nil, toolError("internal_error", "tether_registry_search requires daemon routing; start MCP with tether mcp")
 	}
-	out, err := a.client.Registry().Search(ctx, kind, f)
+	found, err := a.client.Registry().Search(ctx, kind, f)
 	if err != nil {
 		if isDaemonUnreachable(err) {
 			return nil, daemonUnreachableError(err)
 		}
 		return nil, mapRegistryErr(err)
 	}
-	if out == nil {
-		out = []registry.Profile{}
+	query := strings.ToLower(str(args, "query"))
+	rows := make([]registry.Profile, 0, len(found))
+	for _, p := range found {
+		if query == "" || profileMatches(p, query) {
+			rows = append(rows, p)
+		}
 	}
-	return toolJSON(map[string]any{"ok": true, "profiles": out}), nil
+	// Sort key is lower(display_name) then urn: the urn makes every key unique, so the
+	// cursor (the last key returned) never skips or repeats a row.
+	sort.SliceStable(rows, func(i, j int) bool { return profileKey(rows[i]) < profileKey(rows[j]) })
+	keys := make([]string, len(rows))
+	for i, p := range rows {
+		keys[i] = profileKey(p)
+	}
+	start, end, next := page.window(keys)
+	var out any
+	if page.Verbose {
+		out = rows[start:end]
+	} else {
+		brief := make([]profileBrief, 0, end-start)
+		for _, p := range rows[start:end] {
+			brief = append(brief, profileBrief{URN: p.URN, Kind: p.Kind, DisplayName: p.DisplayName, Title: p.Title, Role: p.Role, Project: p.Project, Status: p.Status})
+		}
+		out = brief
+	}
+	return toolJSON(pageEnvelope(map[string]any{"ok": true, "profiles": out}, end-start, len(rows), next, page.Verbose)), nil
+}
+
+// profileBrief is the default row of tether_registry_search.
+type profileBrief struct {
+	URN         string          `json:"urn"`
+	Kind        registry.Kind   `json:"kind"`
+	DisplayName string          `json:"display_name"`
+	Title       string          `json:"title,omitempty"`
+	Role        string          `json:"role,omitempty"`
+	Project     string          `json:"project,omitempty"`
+	Status      registry.Status `json:"status"`
+}
+
+func profileKey(p registry.Profile) string {
+	return strings.ToLower(p.DisplayName) + "\x00" + p.URN
+}
+
+func profileMatches(p registry.Profile, query string) bool {
+	fields := []string{p.DisplayName, p.Title, p.Role, p.Description, p.Project, p.URN}
+	fields = append(fields, p.Capabilities...)
+	return strings.Contains(strings.ToLower(strings.Join(fields, "\n")), query)
 }
 
 // handleRegistryUpdateSelf services tether_registry_update_self. The patch

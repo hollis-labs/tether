@@ -29,7 +29,7 @@ func (p Profile) Validate() error {
 			}
 		}
 	}
-	for _, names := range [][]string{p.Servers, p.Order, p.AlwaysLoad} {
+	for _, names := range [][]string{p.Servers, p.Order, p.AlwaysLoad, p.Pinned} {
 		seen := map[string]bool{}
 		for _, name := range names {
 			if name == "" || seen[name] {
@@ -139,6 +139,7 @@ func CloneProfile(p Profile) Profile {
 	p.Tools.Deny = slices.Clone(p.Tools.Deny)
 	p.Order = slices.Clone(p.Order)
 	p.AlwaysLoad = slices.Clone(p.AlwaysLoad)
+	p.Pinned = slices.Clone(p.Pinned)
 	if p.DiscoveryMode != nil {
 		value := *p.DiscoveryMode
 		p.DiscoveryMode = &value
@@ -150,7 +151,7 @@ func (p Policy) Decorate(entry Entry) Entry {
 	if profile == nil {
 		return entry
 	}
-	for _, name := range profile.AlwaysLoad {
+	for _, name := range slices.Concat(profile.AlwaysLoad, profile.Pinned) {
 		if name == entry.Tool.Name {
 			tool := *entry.Tool
 			tool.Meta = mcpsdk.Meta{}
@@ -206,13 +207,13 @@ func (p Policy) ValidateNames(snapshot Snapshot) error {
 	for _, entry := range snapshot.Entries {
 		known[entry.Tool.Name] = true
 	}
-	for _, names := range [][]string{profile.Order, profile.AlwaysLoad} {
+	for _, names := range [][]string{profile.Order, profile.AlwaysLoad, profile.Pinned} {
 		for _, name := range names {
 			if IsInfrastructure(name) {
-				return fmt.Errorf("profile order/always_load cannot reference gateway infrastructure %q", name)
+				return fmt.Errorf("profile order/always_load/pinned cannot reference gateway infrastructure %q", name)
 			}
 			if !known[name] && len(p.NameWarnings(snapshot)) == 0 {
-				return fmt.Errorf("profile %q references unknown order/always_load tool %q", p.Selection.ID, name)
+				return fmt.Errorf("profile %q references unknown order/always_load/pinned tool %q", p.Selection.ID, name)
 			}
 		}
 	}
@@ -267,7 +268,7 @@ func (p Policy) NameWarnings(snapshot Snapshot) []string {
 	}
 	missing := false
 	pinnedOrigins := map[string]bool{}
-	for _, names := range [][]string{p.Selection.Profile.Order, p.Selection.Profile.AlwaysLoad} {
+	for _, names := range [][]string{p.Selection.Profile.Order, p.Selection.Profile.AlwaysLoad, p.Selection.Profile.Pinned} {
 		for _, name := range names {
 			origin, exists := known[name]
 			if !exists && !IsInfrastructure(name) {
@@ -281,7 +282,7 @@ func (p Policy) NameWarnings(snapshot Snapshot) []string {
 	var warnings []string
 	for _, origin := range snapshot.Origins {
 		if origin.ID != "tether" && origin.Status != "connected" && origin.Status != "excluded" && (missing || pinnedOrigins[origin.ID]) {
-			warnings = append(warnings, fmt.Sprintf("upstream %s unavailable; profile order/always_load validation deferred until discovery recovers", origin.ID))
+			warnings = append(warnings, fmt.Sprintf("upstream %s unavailable; profile order/always_load/pinned validation deferred until discovery recovers", origin.ID))
 		}
 	}
 	return warnings

@@ -54,7 +54,7 @@ func TestStatusCountsExclusionsAndAvailabilityPerOrigin(t *testing.T) {
 	s := Service{Selection: Selection{Mode: Flat}, Snapshot: func() Snapshot { return snapshot }, Policy: &Policy{Selection: ProfileSelection{ID: "reads", Source: "argument", Profile: &Profile{Servers: []string{"alpha", "gamma"}, ReadOnly: true, Tools: ToolRules{Allow: []string{"*_read"}, Deny: []string{"*delete*"}}}}}}
 	status := s.Status("alpha_read")
 	excluded := map[string]int{"profile deny": 1, "profile read_only requires readOnlyHint=true": 1, "profile allow": 1, "profile servers": 1}
-	if status.CatalogedTools != 6 || status.EligibleTools != 2 || status.AvailableTools != 1 || status.HiddenTools != 4 || status.Complete || !reflect.DeepEqual(status.Exclusions, excluded) {
+	if status.CatalogedTools != 6 || status.EligibleTools != 2 || status.AvailableTools != 1 || status.HiddenTools != 4 || !status.Complete || !reflect.DeepEqual(status.Exclusions, excluded) {
 		t.Fatalf("counts=%+v", status)
 	}
 	if status.Tool == nil || status.Tool.Origin != "alpha" || status.Tool.Annotations != read || status.Visible == nil || !*status.Visible {

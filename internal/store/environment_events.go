@@ -20,10 +20,19 @@ type EnvironmentWindow struct {
 	GapReason         string
 }
 
+// environmentBoundsSQL reads the newest and oldest event id. MIN and MAX each sit in
+// their own scalar subquery on purpose: SQLite answers a lone MIN(id) or MAX(id) from
+// the end of the rowid b-tree in O(log n), but a SELECT holding BOTH (or one combined
+// with another expression over the same table) loses that shortcut and scans the whole
+// events table. On the hub (1.8M events, 2.7 GB) the combined form took 92 ms warm and
+// seconds cold on every snapshot, events read and tether_session_health call
+// (CW-20261024-0055). The scan is asserted away by TestEventBoundsQueriesDoNotScanEvents.
+const environmentBoundsSQL = `SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name='events'),0), COALESCE((SELECT MAX(id) FROM events),0)), COALESCE((SELECT MIN(id) FROM events),0)`
+
 // environmentBounds retains the allocated high-water even after every event
 // has been purged. MAX(id) alone would silently rewind that cursor.
 func environmentBounds(ctx context.Context, tx *sql.Tx) (head, earliest int64, err error) {
-	err = tx.QueryRowContext(ctx, `SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name='events'),0), COALESCE(MAX(id),0)), COALESCE(MIN(id),0) FROM events`).Scan(&head, &earliest)
+	err = tx.QueryRowContext(ctx, environmentBoundsSQL).Scan(&head, &earliest)
 	if earliest == 0 {
 		earliest = head + 1
 	}

@@ -394,6 +394,25 @@ mcp:
       discovery_mode: search
 ```
 
+`pinned` makes a search-mode endpoint hybrid: the named tools are listed beside the four
+gateway tools with their real schemas, marked always-load, and callable by name, while
+every other eligible tool stays reachable through `tether_tool_search`, `tether_tool_list`
+and `tether_tool_call`. Use it to give a role the 20-40 tools it really uses without
+losing the long tail. Pins follow the same rules as `order`/`always_load` (exact final
+names, no gateway infrastructure, unknown names fail startup once discovery is complete)
+and must still pass the profile's own `tools`, `read_only` and `servers` rules; an excluded
+pin is absent, never restored. In flat mode `pinned` changes nothing, because every
+eligible tool is listed already.
+
+```yaml
+mcp:
+  profiles:
+    dispatch-worker:
+      discovery_mode: search
+      pinned: [tether_whoami, tether_message_list, tether_message_get, tether_message_send,
+               tether_message_consume, torque_task_get, torque_comment_add]
+```
+
 A profile may also set `result_cap` (`default_bytes`, per-tool `tools`) to change the
 gateway result cap; see [Budgets and policies](agents/mcp/budgets.md#tool-result-cap).
 
@@ -834,7 +853,7 @@ already load their directory for each call.
 List all projects defined in the catalog.
 
 #### `tether_catalog_list_agents`
-List all agent profiles.
+List agent profiles, brief by default: the small fields plus `prompt_bytes` (the size of the system prompt, agent prompt and body that were left out); `env`, `spec`, `provider_overrides` and `prompts` are omitted too. 25 per page sorted by `id`; `next_cursor` fetches the next page. Narrow with `query` (substring of id, name, description or a role) or `role` (exact). `verbose=true` returns full records; `tether_agent_show` returns one agent in full. Paging contract: [list tools](agents/mcp/budgets.md#list-tools-page-and-stay-brief).
 
 #### `tether_catalog_list_providers`
 List all provider definitions.
@@ -1264,6 +1283,10 @@ Search by filter; all filters AND together, results ordered alphabetically on `d
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `kind` | string | ✓ | Entity kind to search: 'agent' or 'project'. |
+| `query` | string | — | Case-insensitive substring over display_name, title, role, description, project, urn and capabilities. |
+| `limit` | number | — | Rows per page, 1-200 (default 25). |
+| `cursor` | string | — | `next_cursor` from the previous page. |
+| `verbose` | boolean | — | Full profiles instead of brief rows (urn, kind, display_name, title, role, project, status). |
 | `capability` | string | — | Filter to rows that carry this capability string. |
 | `project` | string | — | Filter on project (exact match). |
 | `role` | string | — | Filter on role (exact match). |

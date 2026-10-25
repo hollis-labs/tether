@@ -126,7 +126,7 @@ func TestUnavailableUpstreamCountsSeparateAcceptedCacheFromObservation(t *testin
 		t.Fatalf("stale available count or lost cache: %+v", status)
 	}
 	view := gateway.Status("alpha_read")
-	if view.CatalogedTools != 1 || view.AvailableTools != 0 || view.Complete || view.Reason != "origin unavailable" || !view.Origins[0].InventoryExamined || view.Origins[0].AvailableTools != 0 {
+	if view.CatalogedTools != 1 || view.AvailableTools != 0 || !view.Complete || view.Reason != "origin unavailable" || !view.Origins[0].InventoryExamined || view.Origins[0].AvailableTools != 0 {
 		t.Fatalf("gateway counts=%+v", view)
 	}
 }

@@ -113,6 +113,25 @@ Each tool-call event records `result_original_bytes` (before the cap),
             torque_task_list: 16384
   ```
 
+## List tools page and stay brief
+
+The result cap above is the safety net. The fix is at the source: tools that list
+records return brief rows, a page at a time, and refuse an argument they do not
+declare instead of ignoring it (CW-20261024-0053).
+
+| Tool | Default page | Brief by default | Notes |
+|---|---|---|---|
+| `tether_catalog_list_agents` | 25, max 200 | yes (`prompt_bytes` reports what was left out) | `query`, `role`, `verbose` |
+| `tether_registry_search` | 25, max 200 | yes | `query`, `verbose`, plus the existing exact filters |
+| `tether_events_history`, `tether_session_events` | 25, max 1000 | payloads over 2 KiB are cut (`payload_truncated`, `payload_bytes`) | `full_payload=true` returns them whole |
+
+Contract for the paged tools: sorted by a stable key; the response carries `count`
+(this page), `total` (all matches), `detail` (`brief` or `full`) and, when more
+remain, `next_cursor`. Pass it back as `cursor` with the same filters. A cursor is
+the last key returned, so adding or removing records between calls never repeats
+or skips a row. An invalid `limit` or `cursor` is an `invalid_request` naming the
+field. The event tools keep their numeric `next_cursor`.
+
 ## Planned MCP policy
 
 CW-20261001-0555 covers per-agent quotas, rate limits, approval-required tools
