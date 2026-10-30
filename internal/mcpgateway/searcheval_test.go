@@ -301,14 +301,11 @@ func (b evalBaseline) table() string {
 		row(c, b.ByCategory[c])
 	}
 	if len(b.NoMatch) > 0 {
-		any, total := 0, 0
+		total := 0
 		for _, n := range b.NoMatch {
 			total += n
-			if n > 0 {
-				any++
-			}
 		}
-		fmt.Fprintf(&sb, "  nomatch  n=%-4d returned_any=%d of %d, tools returned in total=%d (lower is better)\n", len(b.NoMatch), any, len(b.NoMatch), total)
+		fmt.Fprintf(&sb, "  nomatch  n=%-4d returned_any=%d of %d, tools returned in total=%d (lower is better)\n", len(b.NoMatch), noMatchAny(b), len(b.NoMatch), total)
 	}
 	return sb.String()
 }
