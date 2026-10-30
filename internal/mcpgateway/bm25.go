@@ -9,7 +9,7 @@ import (
 )
 
 // bm25Variant switches the index inputs the search-eval experiments compare (CW-20261024-0115).
-// The zero value is the shipped behaviour; tests set searchVariant to measure a change.
+// The zero value is the shipped behavior; tests set searchVariant to measure a change.
 type bm25Variant struct {
 	// ArgNames adds each tool's input-schema property names to its searchable text.
 	ArgNames bool
@@ -154,7 +154,7 @@ func stem(w string) string {
 
 // withStems returns text followed by the stems of its words that differ from the word.
 func withStems(text string) string {
-	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !('a' <= r && r <= 'z' || '0' <= r && r <= '9') })
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') })
 	seen := map[string]bool{}
 	var extra []string
 	for _, w := range words {
