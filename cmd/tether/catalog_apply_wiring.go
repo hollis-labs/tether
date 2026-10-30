@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/catalogapply"
@@ -26,6 +29,7 @@ func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 		Root:       svc.CatalogRoot,
 		BackupRoot: backupRoot,
 		Approver:   catalogapply.NewApprover(approverFile),
+		TTL:        catalogPlanTTL(os.Getenv("TETHER_CATALOG_PLAN_TTL")),
 		Reload: func(ctx context.Context) ([]string, error) {
 			rep, err := svc.ReloadCatalog(ctx)
 			if err != nil {
@@ -51,4 +55,16 @@ func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 			return ids, nil
 		},
 	}
+}
+
+// catalogPlanTTL parses TETHER_CATALOG_PLAN_TTL (a Go duration such as 4h) so a
+// dev window can keep catalog plans approvable longer than the 15 minute
+// default. Empty, invalid or out-of-range (under 1m or over 24h) values keep the
+// default; approval itself is unchanged and still needs the operator passphrase.
+func catalogPlanTTL(raw string) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || d < time.Minute || d > 24*time.Hour {
+		return 0
+	}
+	return d
 }
