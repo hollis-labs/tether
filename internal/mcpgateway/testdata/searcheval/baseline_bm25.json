@@ -3,10 +3,10 @@
   "catalog_sha256": "05bde8e57021a5cb1f6a8b896b69e4aedbb89350d8eb23e042e270c4e18699e0",
   "overall": {
     "queries": 173,
-    "recall_at_1": 0.659,
+    "recall_at_1": 0.6647,
     "recall_at_5": 0.8439,
     "recall_at_10": 0.8728,
-    "mrr": 0.7362,
+    "mrr": 0.7391,
     "median_response_bytes": 3155
   },
   "by_category": {
@@ -52,10 +52,10 @@
     },
     "tail": {
       "queries": 55,
-      "recall_at_1": 0.8182,
+      "recall_at_1": 0.8364,
       "recall_at_5": 0.9636,
       "recall_at_10": 0.9636,
-      "mrr": 0.877,
+      "mrr": 0.8861,
       "median_response_bytes": 3065
     }
   },
@@ -137,7 +137,7 @@
     "t015": 1,
     "t016": 1,
     "t017": 1,
-    "t018": 2,
+    "t018": 1,
     "t019": 1,
     "t020": 1,
     "t021": 1,

@@ -181,8 +181,9 @@ original word-count scorer is still available:
 set `TETHER_MCP_SEARCH_SCORER=keyword` in the daemon's environment and restart to
 switch back; any other value, or unset, is BM25.
 
-On the search-eval fixture (170 queries, 725 tools) the shipped ranking reaches
-recall@5 0.841 and MRR 0.737; the word-count scorer reaches 0.588 and 0.465. Median
+On the search-eval fixture (173 scored queries, 725 tools; the 25 low-confidence labels were
+reviewed by a human on 2026-10-30) the shipped ranking reaches recall@5 0.844 and MRR 0.739;
+the word-count scorer reaches 0.595 and 0.472. Median
 response size is unchanged (about 3.2 KB) and per-search latency is about 8 ms for
 either (`go test ./internal/mcpgateway -bench SearchScorers`, dominated by the cursor
 fingerprint).
