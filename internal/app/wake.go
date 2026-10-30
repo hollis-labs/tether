@@ -159,7 +159,7 @@ const (
 )
 
 // wakeRetryJitter returns a factor in [0.8, 1.2). A variable so tests can pin it.
-var wakeRetryJitter = func() float64 { return 0.8 + 0.4*rand.Float64() }
+var wakeRetryJitter = func() float64 { return 0.8 + 0.4*rand.Float64() } //nolint:gosec // G404: retry jitter spreads load, it is not a security value
 
 // wakeRetryDelay is the delay before the next wake attempt of a delivery that
 // has now been attempted attempt times: base * 2^(attempt-1) capped at
