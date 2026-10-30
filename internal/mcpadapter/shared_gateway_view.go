@@ -3,6 +3,8 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"sync"
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
@@ -42,6 +44,18 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		known[id] = enabled
 	}
 	grant := append([]string{}, opts.ServerFilter...)
+	// Origins the grant names that the running daemon does not have yet (a server a catalog apply added after
+	// the daemon started) degrade that origin, not the whole view: they are reported as pending a reload
+	// instead of failing every connection of the principal (CW-20261024-0097). A server the daemon knows but
+	// has disabled is still refused below, and an id the live catalog does not know never reaches here (the
+	// transport validated the grant against it).
+	var pending []string
+	for _, id := range grant {
+		if _, running := r.known[id]; id != "tether" && !running && !slices.Contains(pending, id) {
+			pending = append(pending, id)
+			known[id] = true // lets SelectOrigins pass it through; it is removed again below
+		}
+	}
 	for _, floor := range opts.AuthorityProfiles {
 		if floor.Profile == nil {
 			return nil, mcpgateway.ErrInvalidSessionMCPPolicy
@@ -58,6 +72,14 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err != nil {
 		return nil, err
 	}
+	running := selected[:0:0]
+	for _, id := range selected {
+		if slices.Contains(pending, id) {
+			continue
+		}
+		running = append(running, id)
+	}
+	selected = running
 	upstreams, err := r.OpenView("verified principal "+a.principal.ID, selected, selection)
 	if err != nil {
 		return nil, err
@@ -178,6 +200,11 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 				origins = append(origins, origin)
 			}
 		}
+		for _, id := range pending {
+			origins = append(origins, mcpgateway.OriginStatus{ID: id, Status: "pending_restart",
+				Error: "added to the catalog after the daemon started; reload the daemon to start it"})
+		}
+		sort.Slice(origins, func(i, j int) bool { return origins[i].ID < origins[j].ID })
 		full.Origins = origins
 		return full
 	}

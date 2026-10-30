@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -58,6 +59,20 @@ func (s *Service) ReloadCatalog(_ context.Context) (*config.ReloadReport, error)
 	if config.GlobalDiffers(old, fresh) {
 		report.RestartRequired = append(report.RestartRequired,
 			"global.yaml changed: daemon, identity, AI, MCP gateway and module settings are read at start and still need a restart")
+	}
+	// A server the catalog now enables that the running daemon never started is not live after this reload:
+	// its upstream proxy opens at daemon start. Say so (CW-20261024-0097); operator MCP views meanwhile
+	// list it as pending_restart instead of failing.
+	var added []string
+	for id, enabled := range fresh.MCPServerEnabled {
+		if was, known := old.MCPServerEnabled[id]; enabled && (!known || !was) {
+			added = append(added, id)
+		}
+	}
+	sort.Strings(added)
+	for _, id := range added {
+		report.RestartRequired = append(report.RestartRequired,
+			"mcp-servers/"+id+".yaml enables an MCP upstream the running daemon has not started; it stays pending_restart in tether_gateway_status until the daemon is reloaded")
 	}
 	next := *fresh
 	next.Global = old.Global

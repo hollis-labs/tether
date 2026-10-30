@@ -252,3 +252,47 @@ func TestSharedGatewayView_ProfileAndGrantApplyToEveryPath(t *testing.T) {
 		})
 	}
 }
+
+// CW-20261024-0097: a catalog apply added a server the running daemon did not start. Every operator view then
+// failed with "unknown or disabled MCP server ID" and sysadmin agents lost the gateway until a reload. The new
+// origin must degrade alone: the view prepares, native tools are served, and status says a reload is needed.
+func TestSharedGatewayView_GrantedOriginNotYetRunningIsPendingNotFatal(t *testing.T) {
+	r, err := NewSharedUpstreams(nil, daemonTestRoots(t), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session-p", Kind: "session", SessionID: "s", Scopes: []string{"message.write"}})
+	a, err := NewVerifiedAdapter(ctx, &app.Service{Catalog: &config.Catalog{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := r.NewGatewayView(ctx, a, ProxyOptions{ServerFilter: []string{"chrome-devtools"}})
+	if err != nil {
+		t.Fatalf("a granted origin the daemon has not started made the whole view fail: %v", err)
+	}
+	defer v.Close()
+	cs := connectDaemonView(ctx, t, v)
+	if !slices.Contains(listToolNames(t, cs), "tether_catalog_list_projects") {
+		t.Fatal("native tools disappeared while an origin was pending")
+	}
+	status := v.Service.Status("")
+	var found bool
+	for _, o := range status.Origins {
+		if o.ID == "chrome-devtools" {
+			found = true
+			if o.Status != "pending_restart" || !strings.Contains(o.Error, "reload") {
+				t.Fatalf("pending origin = %+v", o)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("pending origin missing from status: %+v", status.Origins)
+	}
+	if status.Complete || !slices.Contains(status.IncompleteServers, "chrome-devtools") {
+		t.Fatalf("status must say the inventory is incomplete until the reload: complete=%v incomplete=%v", status.Complete, status.IncompleteServers)
+	}
+}
