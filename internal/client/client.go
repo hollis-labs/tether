@@ -1388,6 +1388,19 @@ func (c *Client) MessageRetentionCandidates(ctx context.Context, olderThanHours 
 	return out.Candidates, nil
 }
 
+// MessageRetentionSummary GETs /messages/retention/candidates?summary=1: the
+// report-only backlog view (counts by status and age group, top recipients).
+// The result is the decoded JSON object, passed through untouched.
+func (c *Client) MessageRetentionSummary(ctx context.Context) (map[string]any, error) {
+	var out struct {
+		Summary map[string]any `json:"summary"`
+	}
+	if err := c.getJSON(ctx, "/messages/retention/candidates?summary=1", &out); err != nil {
+		return nil, err
+	}
+	return out.Summary, nil
+}
+
 // MessagePurgeResult mirrors internal/api's messagePurgeResponse (T09).
 type MessagePurgeResult struct {
 	MessageID string `json:"message_id"`

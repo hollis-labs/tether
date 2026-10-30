@@ -53,6 +53,7 @@ var clientMethodWrites = map[string]bool{
 	"MessageThread":              false,
 	"MessageTrace":               false,
 	"MessageRetentionCandidates": false,
+	"MessageRetentionSummary":    false,
 	"WaitSession":                false,
 	"WaitSessionResult":          false,
 	"Whoami":                     false,

@@ -40,6 +40,8 @@ import (
 type RetentionStore interface {
 	ListRetentionCandidates(ctx context.Context, olderThan time.Time) ([]store.RetentionCandidate, error)
 	PurgeMessageBody(ctx context.Context, messageID, authorizedBy string) (bool, error)
+	// RetentionSummary is the report-only backlog view behind ?summary=1 (CW-20261030-0177).
+	RetentionSummary(ctx context.Context, now time.Time) (store.RetentionSummary, error)
 }
 
 // registerRetentionRoutes mounts GET /messages/retention/candidates as an
@@ -78,6 +80,17 @@ func (s *Server) handleRetentionCandidates(w http.ResponseWriter, r *http.Reques
 	}
 	if s.Retention == nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, "retention not configured")
+		return
+	}
+	if v := r.URL.Query().Get("summary"); v == "1" || v == "true" {
+		// Counts by status and by age group with the top recipients: bounded however
+		// large the backlog is, and read-only like the candidate list.
+		sum, err := s.Retention.RetentionSummary(r.Context(), time.Now())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"summary": sum})
 		return
 	}
 	hours := defaultRetentionCandidateHours

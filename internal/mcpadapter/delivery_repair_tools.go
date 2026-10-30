@@ -57,6 +57,7 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 			"excluded). No scope required.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.NumberProp("older_than_hours", "Lookback window in hours; 0 or omitted uses the daemon's default.", false),
+			gomcp.BooleanProp("summary", "Return a bounded backlog report instead of the per-message list: delivery counts by status and by age group (stale pending, retry_scheduled, dead-lettered over 30 days, settled over 90 days) with the top recipients of each. Report only; nothing is expired or purged.", false),
 		),
 		Handler: a.handleMessageRetentionCandidatesTool,
 	}, Reads("GET /messages/retention/candidates: reports, deletes nothing"))
@@ -121,6 +122,16 @@ func (a *Adapter) handleMessageRedriveTool(ctx context.Context, args map[string]
 func (a *Adapter) handleMessageRetentionCandidatesTool(ctx context.Context, args map[string]any) (any, error) {
 	if a.client == nil {
 		return nil, toolError("internal_error", "tether_message_retention_candidates requires daemon routing; start MCP with tether mcp")
+	}
+	if boolArg(args, "summary") {
+		sum, err := a.client.MessageRetentionSummary(ctx)
+		if err != nil {
+			if isDaemonUnreachable(err) {
+				return nil, daemonUnreachableError(err)
+			}
+			return nil, classifyClientErr(err, "")
+		}
+		return toolJSON(map[string]any{"ok": true, "summary": sum}), nil
 	}
 	out, err := a.client.MessageRetentionCandidates(ctx, intArg(args, "older_than_hours", 0))
 	if err != nil {
