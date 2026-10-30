@@ -70,13 +70,14 @@ func (p listPage) window(keys []string) (start, end int, next string) {
 	return start, end, next
 }
 
-// pageByteBudget is the encoded size a brief page aims to stay under, so a default call fits the 16 KB
-// response target whatever the rows happen to weigh (the 25-agent page measured 19 KB on the hub).
-// A page always holds at least one row and the cursor carries on from the last row returned.
-const pageByteBudget = 12 << 10
+// A tool result is sent twice: as the text content and again as structuredContent. The gateway's result
+// size, and the 16 KB default-response target, count both, so a page budget is set on the text at half the
+// target. (Measured on the hub: a 25-agent page was 8.9 KB of text and 19 KB of result_bytes.)
+// pageByteBudget is the encoded size of a brief page's rows, so the whole result stays under about 14 KB.
+const pageByteBudget = 7 << 10
 
 // eventPageBudget is the same bound for event listings, whose rows carry payloads.
-const eventPageBudget = 14 << 10
+const eventPageBudget = 7 << 10
 
 // fitBudget returns how many leading rows encode within budget bytes (at least one, at most len(rows)).
 func fitBudget[T any](rows []T, budget int) int {

@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -343,8 +344,8 @@ func TestObservationTools_EventsHistoryPageStaysUnderTheByteBudget(t *testing.T)
 		if res.IsError {
 			t.Fatalf("error: %s", textOf(res))
 		}
-		if n := len(textOf(res)); n > 16<<10 {
-			t.Fatalf("page %d is %d bytes, over the 16 KB target", page, n)
+		if full, _ := json.Marshal(res); len(full) > 16<<10 {
+			t.Fatalf("page %d is %d result bytes, over the 16 KB target", page, len(full))
 		}
 		body := parseToolJSON(t, res)
 		for _, e := range body["events"].([]any) {

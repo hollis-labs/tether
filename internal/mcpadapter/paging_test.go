@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -174,9 +175,9 @@ func TestAgentListPageStaysUnderTheByteBudgetAndWalksEverything(t *testing.T) {
 		if err != nil || res.IsError {
 			t.Fatalf("list: %v %v", err, textOf(res))
 		}
-		raw := textOf(res)
-		if len(raw) > 16<<10 {
-			t.Fatalf("page %d is %d bytes, over the 16 KB target", pages, len(raw))
+		full, _ := json.Marshal(res) // content text plus structuredContent: what the gateway counts as result_bytes
+		if len(full) > 16<<10 {
+			t.Fatalf("page %d is %d result bytes, over the 16 KB target", pages, len(full))
 		}
 		body := parseToolJSON(t, res)
 		for _, r := range body["agents"].([]any) {
