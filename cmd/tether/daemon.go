@@ -1396,6 +1396,7 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 	if remote.Enabled && !profile.Enabled(environment.RemoteListener) {
 		return daemon.Config{}, fmt.Errorf("remote listener requires modules.remote_listener")
 	}
+	app.SetSessionTokenTTLSetting(cat.Global.Identity.SessionTokenTTL)
 	return daemon.Config{
 		RemoteListener:      remote,
 		Modules:             profile,
