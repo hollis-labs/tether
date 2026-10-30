@@ -12,25 +12,58 @@ import (
 )
 
 // Remote service tokens (CW-20261019-0044, PR 3). The remote listener accepts
-// stored tth_ device credentials and, on exactly one route, an issued service
-// JWT. The route list is closed and has one entry: POST /events.
+// stored tth_ device credentials and, on a closed list of exact routes, an
+// issued service JWT: POST /events (scope events), and POST /messages and
+// POST /messages/notify (scope messages, send only; CW-20261030-0198).
 //
 // The two credential families never cross: a bearer is dispatched by format with
 // no fallthrough, a device credential never takes the JWT path, and a JWT on
 // any other route (or any variant of this one) is refused exactly as before.
 
-// ServiceJWTMethod and ServiceJWTPath are the one route a service JWT may use remotely.
+// ServiceJWTMethod and ServiceJWTPath are the events route a service JWT may use remotely.
 const (
 	ServiceJWTMethod = http.MethodPost
 	ServiceJWTPath   = "/events"
 )
+
+// serviceJWTRoutes is the closed list of exact POST routes a service JWT may use
+// remotely, with the scope each requires. A scope for one route never opens
+// another: tether.messages does not publish events and tether.events does not
+// send mail.
+var serviceJWTRoutes = map[string]string{
+	"/events":          ScopeEvents,
+	"/messages":        ScopeMessages,
+	"/messages/notify": ScopeMessages,
+}
+
+// serviceRouteName returns the listed route equal to path (the map key, never the
+// request's own string), or "-" for a path off the list.
+func serviceRouteName(path string) string {
+	for route := range serviceJWTRoutes {
+		if route == path {
+			return route
+		}
+	}
+	return "-"
+}
+
+// ServiceJWTScope returns the scope a service JWT needs for method and path, and
+// whether the route is on the closed list at all.
+func ServiceJWTScope(method, path string) (string, bool) {
+	if method != ServiceJWTMethod {
+		return "", false
+	}
+	scope, ok := serviceJWTRoutes[path]
+	return scope, ok
+}
 
 var servicePrincipalRe = regexp.MustCompile(`^msg://service/[a-z][a-z0-9-]{0,31}/[a-z][a-z0-9-]{0,31}$`)
 
 type serviceEventsKey struct{}
 
 // ServiceEventsRequest reports whether this request was admitted by the remote
-// service JWT path. Only that path sets it, after full verification.
+// service JWT path (on any route of the closed list). Only that path sets it,
+// after full verification. The route's scope is judged by ServiceJWTScope.
 func ServiceEventsRequest(ctx context.Context) bool {
 	ok, _ := ctx.Value(serviceEventsKey{}).(bool)
 	return ok
@@ -123,11 +156,12 @@ func (l *AttemptLimiter) Refund() {
 	}
 }
 
-// serviceJWTRequest reports whether r is exactly POST /events, no query, no
-// variant, and returns its JWT bearer if there is one (three dot-separated
-// parts, not a tth_ credential).
+// serviceJWTRequest reports whether r is exactly one of the closed list of POST
+// routes (/events, /messages, /messages/notify), no query, no variant, and
+// returns its JWT bearer if there is one (three dot-separated parts, not a tth_
+// credential).
 func serviceJWTRequest(r *http.Request) (string, bool) {
-	if r.Method != ServiceJWTMethod || r.URL.Path != ServiceJWTPath || r.URL.EscapedPath() != ServiceJWTPath ||
+	if _, listed := ServiceJWTScope(r.Method, r.URL.Path); !listed || r.URL.EscapedPath() != r.URL.Path ||
 		r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.Fragment != "" || r.URL.Opaque != "" {
 		return "", false
 	}
@@ -149,7 +183,8 @@ func serviceJWTRequest(r *http.Request) (string, bool) {
 // handleServiceJWT authenticates a service JWT for POST /events. It writes the
 // refusal itself, or calls next with the verified principal.
 func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string, record func(context.Context, Observation) error, next http.Handler) {
-	obs := Observation{At: time.Now().UTC(), Mode: Enforce, Method: r.Method, Route: ServiceJWTPath, Authentication: "invalid"}
+	need, _ := ServiceJWTScope(r.Method, r.URL.Path)
+	obs := Observation{At: time.Now().UTC(), Mode: Enforce, Method: r.Method, Route: r.URL.Path, Authentication: "invalid"}
 	// One unit is reserved before the expensive verification and kept only if the
 	// attempt is a refused credential (401). Everything else gives it back, on
 	// every path including a panic, so a success, a 403 scope refusal, a 503 and
@@ -195,19 +230,19 @@ func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string
 		return
 	}
 	obs.Authentication, obs.Verified, obs.PrincipalID = "verified", true, p.ID
-	if !ScopeGranted(p.Scopes, ScopeEvents) {
+	if !ScopeGranted(p.Scopes, need) {
 		obs.Event = "service_jwt_scope_required"
 		if record != nil {
 			_ = record(r.Context(), obs)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":{"code":"scope_required","message":"required scope: tether.events"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"scope_required","message":"required scope: ` + AppScopePrefix + need + `"}}`))
 		return
 	}
 	p.Verified = true
 	// Audit-style line: principal and a jti prefix only, never the token.
-	log.Printf("identity: remote service JWT accepted sub=%s jti=%.8s route=POST %s", p.ID, p.TokenID, ServiceJWTPath)
+	log.Printf("identity: remote service JWT accepted sub=%s jti=%.8s route=POST %s scope=%s", p.ID, p.TokenID, serviceRouteName(r.URL.Path), need)
 	if record != nil {
 		obs.Event = "service_jwt_accepted"
 		_ = record(r.Context(), obs)
