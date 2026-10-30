@@ -140,6 +140,14 @@
     {"id": "x031", "query": "mesage send to agnet", "expect": ["tether_message_send"], "category": "hard", "usage_calls": 6180, "note": "typos"},
     {"id": "x032", "query": "how do I give an agent more tools", "expect": ["tether_agent_edit", "tether_catalog_plan"], "category": "hard", "usage_calls": 93, "note": "intent only", "review": true},
     {"id": "x033", "query": "which hub services are failing", "expect": ["cerberus_resource_list", "cerberus_resource_status", "cerberus_portfolio_health"], "category": "hard", "usage_calls": 41, "review": true},
-    {"id": "x034", "query": "save a task result for later review", "expect": ["torque_artifact_create"], "category": "hard", "usage_calls": 470, "review": true}
+    {"id": "x034", "query": "save a task result for later review", "expect": ["torque_artifact_create"], "category": "hard", "usage_calls": 470, "review": true},
+    {"id": "r001", "query": "tool call telemetry proxy events stats error class latency", "expect": ["tether_tool_metrics", "tether_proxy_events", "tether_events_tool_calls"], "category": "regression", "note": "CW-20261024-0114: keyword ranking put card_show, panel_open and python_run above tether_tool_metrics"},
+    {"id": "r002", "query": "torque_task_get", "expect": ["torque_task_get"], "category": "regression", "note": "exact name must rank first"},
+    {"id": "r003", "query": "tether_message_send", "expect": ["tether_message_send"], "category": "regression", "note": "exact name must rank first"},
+    {"id": "r004", "query": "cerberus_resource_status", "expect": ["cerberus_resource_status"], "category": "regression", "note": "exact name must rank first"},
+    {"id": "r005", "query": "tether_catalog_plan", "expect": ["tether_catalog_plan"], "category": "regression", "note": "exact name must rank first"},
+    {"id": "r006", "query": "tether_session_hea", "expect": ["tether_session_health"], "category": "regression", "note": "name prefix"},
+    {"id": "r007", "query": "tether_catalog_pl", "expect": ["tether_catalog_plan"], "category": "regression", "note": "name prefix"},
+    {"id": "r008", "query": "torque_comment_ad", "expect": ["torque_comment_add"], "category": "regression", "note": "name prefix"}
   ]
 }

@@ -2,12 +2,12 @@
   "scorer": "keyword",
   "catalog_sha256": "8e2bb4a8cda6c312f17d495ebe374fa8c195d2bf1351848df12241c7049d094a",
   "overall": {
-    "queries": 138,
-    "recall_at_1": 0.3478,
-    "recall_at_5": 0.5942,
-    "recall_at_10": 0.6377,
-    "mrr": 0.4555,
-    "median_response_bytes": 3277
+    "queries": 146,
+    "recall_at_1": 0.363,
+    "recall_at_5": 0.6027,
+    "recall_at_10": 0.6438,
+    "mrr": 0.468,
+    "median_response_bytes": 3271
   },
   "by_category": {
     "hard": {
@@ -25,6 +25,14 @@
       "recall_at_10": 0.6531,
       "mrr": 0.4529,
       "median_response_bytes": 3303
+    },
+    "regression": {
+      "queries": 8,
+      "recall_at_1": 0.625,
+      "recall_at_5": 0.75,
+      "recall_at_10": 0.75,
+      "mrr": 0.6837,
+      "median_response_bytes": 3231
     },
     "tail": {
       "queries": 55,
@@ -85,6 +93,14 @@
     "h047": 1,
     "h048": 1,
     "h049": 1,
+    "r001": 1,
+    "r002": 1,
+    "r003": 1,
+    "r004": 1,
+    "r005": 1,
+    "r006": 19,
+    "r007": 12,
+    "r008": 3,
     "t001": 1,
     "t002": 1,
     "t003": 3,

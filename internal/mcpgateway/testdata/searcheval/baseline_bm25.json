@@ -2,12 +2,12 @@
   "scorer": "bm25",
   "catalog_sha256": "8e2bb4a8cda6c312f17d495ebe374fa8c195d2bf1351848df12241c7049d094a",
   "overall": {
-    "queries": 138,
-    "recall_at_1": 0.6014,
-    "recall_at_5": 0.8043,
-    "recall_at_10": 0.8551,
-    "mrr": 0.6904,
-    "median_response_bytes": 3153
+    "queries": 146,
+    "recall_at_1": 0.6233,
+    "recall_at_5": 0.8151,
+    "recall_at_10": 0.863,
+    "mrr": 0.7074,
+    "median_response_bytes": 3143
   },
   "by_category": {
     "hard": {
@@ -25,6 +25,14 @@
       "recall_at_10": 0.8367,
       "mrr": 0.6179,
       "median_response_bytes": 3174
+    },
+    "regression": {
+      "queries": 8,
+      "recall_at_1": 1,
+      "recall_at_5": 1,
+      "recall_at_10": 1,
+      "mrr": 1,
+      "median_response_bytes": 3125
     },
     "tail": {
       "queries": 55,
@@ -85,6 +93,14 @@
     "h047": 1,
     "h048": 1,
     "h049": 1,
+    "r001": 1,
+    "r002": 1,
+    "r003": 1,
+    "r004": 1,
+    "r005": 1,
+    "r006": 1,
+    "r007": 1,
+    "r008": 1,
     "t001": 1,
     "t002": 1,
     "t003": 2,

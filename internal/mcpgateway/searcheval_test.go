@@ -389,7 +389,7 @@ func TestSearchEvalFixture(t *testing.T) {
 			t.Errorf("%s: STALE LABEL: expected tool(s) %v are not in the pinned snapshot; re-snapshot or relabel", q.ID, stale)
 		}
 	}
-	for _, c := range []string{"head", "tail", "hard"} {
+	for _, c := range []string{"head", "tail", "hard"} { // "regression" is small by design
 		if cats[c] < 20 {
 			t.Errorf("category %q has %d queries; want at least 20", c, cats[c])
 		}
@@ -502,4 +502,64 @@ func TestSearchEvalLiveDrift(t *testing.T) {
 		}
 	}
 	t.Logf("live gateway has %d tools, snapshot %d; %d live tools are not in the snapshot", len(liveSet), len(pinned), added)
+}
+
+// searchEvalRank returns the 1-based position of each named tool in the BM25 ranking of query
+// over the pinned catalog (0 when it is not returned).
+func searchEvalRanks(t *testing.T, query string, names ...string) map[string]int {
+	t.Helper()
+	cat := loadEvalCatalog(t)
+	entries := cat.snapshot().Entries
+	scores := BM25ScoreAll(query, entries)
+	type hit struct {
+		name  string
+		score int
+	}
+	var hits []hit
+	for i, e := range entries {
+		if scores[i] > 0 {
+			hits = append(hits, hit{e.Tool.Name, scores[i]})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	ranks := map[string]int{}
+	for _, n := range names {
+		ranks[n] = 0
+	}
+	for i, h := range hits {
+		if _, ok := ranks[h.name]; ok {
+			ranks[h.name] = i + 1
+		}
+	}
+	return ranks
+}
+
+// CW-20261024-0114: before BM25 the keyword scorer ranked card_show, panel_open and python_run above
+// tether_tool_metrics for this query, because they matched generic words. They must stay below it.
+func TestSearchRegressionTelemetryQuery(t *testing.T) {
+	const query = "tool call telemetry proxy events stats error class latency"
+	r := searchEvalRanks(t, query, "tether_tool_metrics", "card_show", "panel_open", "python_run")
+	if r["tether_tool_metrics"] == 0 || r["tether_tool_metrics"] > 5 {
+		t.Fatalf("tether_tool_metrics rank = %d, want in the top 5", r["tether_tool_metrics"])
+	}
+	for _, noise := range []string{"card_show", "panel_open", "python_run"} {
+		if r[noise] != 0 && r[noise] < r["tether_tool_metrics"] {
+			t.Errorf("%s (rank %d) outranks tether_tool_metrics (rank %d)", noise, r[noise], r["tether_tool_metrics"])
+		}
+	}
+}
+
+// The N2b gate: no regression on exact names and name prefixes. An exact name is first; a unique prefix
+// of a tool's name finds that tool in the top 3.
+func TestSearchRegressionExactNameAndPrefix(t *testing.T) {
+	for _, name := range []string{"torque_task_get", "tether_message_send", "cerberus_resource_status", "tether_catalog_plan", "tesseract_recall", "tether_session_health"} {
+		if got := searchEvalRanks(t, name, name)[name]; got != 1 {
+			t.Errorf("exact name %q ranks %d, want 1", name, got)
+		}
+	}
+	for prefix, want := range map[string]string{"tether_session_hea": "tether_session_health", "tether_catalog_pl": "tether_catalog_plan", "torque_comment_ad": "torque_comment_add"} {
+		if got := searchEvalRanks(t, prefix, want)[want]; got == 0 || got > 3 {
+			t.Errorf("prefix %q finds %q at rank %d, want top 3", prefix, want, got)
+		}
+	}
 }
