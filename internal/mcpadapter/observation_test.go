@@ -316,3 +316,51 @@ func TestObservationTools_EventsWaitEnvironmentDrainsFramesBeforeEOF(t *testing.
 		}
 	}
 }
+
+// A page of events with large payloads stops at the byte budget, and next_cursor resumes from the last
+// event returned so nothing is skipped (CW-20261024-0053 follow-up).
+func TestObservationTools_EventsHistoryPageStaysUnderTheByteBudget(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "obs.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	payload := `{"blob":"` + strings.Repeat("x", 1900) + `"}`
+	for i := 0; i < 40; i++ {
+		if _, _, err := db.InsertEvent(events.ScopeDaemon, "", "daemon.started", payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := New(&app.Service{Store: db}, "", nil)
+	seen := map[float64]bool{}
+	cursor := 0.0
+	for page := 0; page < 20; page++ {
+		args := map[string]any{"limit": 40}
+		if cursor > 0 {
+			args["cursor"] = cursor
+		}
+		res := callObservationTool(t, a, "tether_events_history", args)
+		if res.IsError {
+			t.Fatalf("error: %s", textOf(res))
+		}
+		if n := len(textOf(res)); n > 16<<10 {
+			t.Fatalf("page %d is %d bytes, over the 16 KB target", page, n)
+		}
+		body := parseToolJSON(t, res)
+		for _, e := range body["events"].([]any) {
+			seq := e.(map[string]any)["seq"].(float64)
+			if seen[seq] {
+				t.Fatalf("event %v returned twice", seq)
+			}
+			seen[seq] = true
+		}
+		next, _ := body["next_cursor"].(float64)
+		if next == 0 || len(body["events"].([]any)) == 0 {
+			break
+		}
+		cursor = next
+	}
+	if len(seen) != 40 {
+		t.Fatalf("walk saw %d of 40 events", len(seen))
+	}
+}

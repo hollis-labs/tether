@@ -9,6 +9,7 @@ package mcpadapter
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -67,6 +68,30 @@ func (p listPage) window(keys []string) (start, end int, next string) {
 		next = base64.RawURLEncoding.EncodeToString([]byte(keys[end-1]))
 	}
 	return start, end, next
+}
+
+// pageByteBudget is the encoded size a brief page aims to stay under, so a default call fits the 16 KB
+// response target whatever the rows happen to weigh (the 25-agent page measured 19 KB on the hub).
+// A page always holds at least one row and the cursor carries on from the last row returned.
+const pageByteBudget = 12 << 10
+
+// eventPageBudget is the same bound for event listings, whose rows carry payloads.
+const eventPageBudget = 14 << 10
+
+// fitBudget returns how many leading rows encode within budget bytes (at least one, at most len(rows)).
+func fitBudget[T any](rows []T, budget int) int {
+	used := 0
+	for i, r := range rows {
+		raw, err := json.Marshal(r)
+		if err != nil {
+			return len(rows)
+		}
+		used += len(raw) + 1
+		if used > budget && i > 0 {
+			return i
+		}
+	}
+	return len(rows)
 }
 
 // pageEnvelope adds the paging fields every list tool reports: how many rows this page

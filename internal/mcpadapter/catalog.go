@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -340,6 +341,12 @@ func (a *Adapter) handleListAgents(_ context.Context, args map[string]any) (any,
 		brief := make([]agentBrief, 0, end-start)
 		for _, agent := range agents[start:end] {
 			brief = append(brief, briefAgent(agent))
+		}
+		// Brief rows vary in size (a long skills list); keep the page under the byte budget.
+		if n := fitBudget(brief, pageByteBudget); n < len(brief) {
+			brief = brief[:n]
+			end = start + n
+			next = base64.RawURLEncoding.EncodeToString([]byte(keys[end-1]))
 		}
 		rows = brief
 	}
