@@ -155,3 +155,34 @@ func TestReloadCatalogIsSafeAgainstConcurrentReaders(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// CW-20261024-0097: adding an enabled MCP server through a catalog apply used to report activation=immediate even
+// though the daemon only starts upstreams at launch, which hid why the new server was missing.
+func TestReloadCatalogSaysANewMCPServerNeedsARestart(t *testing.T) {
+	svc, root := reloadService(t)
+	writeCat(t, root, "mcp-servers/fresh-upstream.yaml", "id: fresh-upstream\ntransport: http\nurl: http://127.0.0.1:9/mcp\nenabled: true\n")
+	report, err := svc.ReloadCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var said bool
+	for _, r := range report.RestartRequired {
+		if strings.Contains(r, "mcp-servers/fresh-upstream.yaml") && strings.Contains(r, "not started") {
+			said = true
+		}
+	}
+	if !said {
+		t.Fatalf("a newly enabled MCP server must be reported as needing a restart: %+v", report.RestartRequired)
+	}
+	// A server that was already enabled, edited, is not a restart.
+	writeCat(t, root, "mcp-servers/fresh-upstream.yaml", "id: fresh-upstream\ntransport: http\nurl: http://127.0.0.1:9/mcp\nenabled: true\ntags: [x]\n")
+	report, err = svc.ReloadCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range report.RestartRequired {
+		if strings.Contains(r, "fresh-upstream") {
+			t.Fatalf("an edit to a server the daemon already knows is not a restart: %v", report.RestartRequired)
+		}
+	}
+}

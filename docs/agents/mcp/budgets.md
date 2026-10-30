@@ -93,6 +93,13 @@ What the cap does:
   store is full is still cut, with no cursor, and the marker says to narrow the
   call.
 
+- The cap bounds the whole response line, so the gateway reserves 256 bytes of
+  it for the JSON-RPC envelope: a 32 KiB cap cuts a result at 32,512 bytes of
+  tool result, and a continuation page never exceeds the cap on the wire. One
+  item that is itself larger than the cap is delivered whole, because a cut
+  must fall between items (a single `tether_session_events` item has been
+  seen at about 54 KB); narrow the call or fetch that item by id.
+
 Each tool-call event records `result_original_bytes` (before the cap),
 `result_capped`, and `result_cap_skipped`; `result_bytes` is what was sent.
 

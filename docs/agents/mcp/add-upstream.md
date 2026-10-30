@@ -52,3 +52,13 @@ actual tool names using [Discovery](discovery.md). A catalog entry does not
 automatically add this server to launched agents: apply
 [their grant](limit-tools.md#grant-servers-to-a-launched-agent) and restart the
 client endpoint after configuration changes.
+
+## A new server needs a daemon reload
+
+The daemon starts its upstream proxies when it starts. Adding an enabled server to
+the catalog (by hand, or with `tether_catalog_apply`) reloads the catalog, but does not
+start the new upstream: the apply reports it under `restart_required`, and the server
+shows as `pending_restart` in `tether_gateway_status` (so `complete` is false) until
+the daemon is reloaded. Everything else keeps working meanwhile; before CW-20261024-0097
+an unstarted server in a principal's grant made every operator MCP connection fail.
+Changes to a server the daemon already runs (arguments, tags) are picked up live.

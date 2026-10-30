@@ -1,9 +1,13 @@
 package mcpadapter
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
 )
@@ -121,5 +125,75 @@ func TestEventPayloadCap(t *testing.T) {
 	}
 	if whole, cut, _ := eventPayload(big, true); whole != big || cut {
 		t.Fatal("full_payload did not return the payload whole")
+	}
+}
+
+func TestFitBudgetKeepsAtLeastOneRowAndStopsAtTheBudget(t *testing.T) {
+	rows := []string{strings.Repeat("a", 100), strings.Repeat("b", 100), strings.Repeat("c", 100)}
+	if n := fitBudget(rows, 250); n != 2 {
+		t.Fatalf("fits %d, want 2", n)
+	}
+	if n := fitBudget(rows, 10); n != 1 {
+		t.Fatalf("a row larger than the budget must still be returned, got %d", n)
+	}
+	if n := fitBudget(rows, 1<<20); n != 3 {
+		t.Fatalf("fits %d, want all 3", n)
+	}
+	if n := fitBudget([]string{}, 10); n != 0 {
+		t.Fatalf("empty = %d", n)
+	}
+}
+
+// CW-20261024-0053 follow-up: the default 25-agent page measured 19 KB on the hub, over the 16 KB target.
+// A brief page now stops at a byte budget and the cursor continues from the last row returned.
+func TestAgentListPageStaysUnderTheByteBudgetAndWalksEverything(t *testing.T) {
+	cat := &config.Catalog{Agents: map[string]config.Agent{}}
+	for i := 0; i < 60; i++ {
+		a := config.Agent{}
+		a.ID = fmt.Sprintf("agent-%02d", i)
+		a.Name = "Agent " + a.ID
+		for j := 0; j < 30; j++ { // a long skills list makes each brief row heavy
+			a.Skills = append(a.Skills, fmt.Sprintf("a-rather-long-skill-name-%02d", j))
+		}
+		cat.Agents[a.ID] = a
+	}
+	adapter := newTestAdapter(t)
+	adapter.svc.Catalog = cat
+	s := gomcp.NewServer("t", "0")
+	adapter.registerTools(s)
+	cs := connectInMemory(t, s)
+
+	var seen []string
+	cursor := ""
+	for pages := 0; pages < 60; pages++ {
+		args := map[string]any{}
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_catalog_list_agents", Arguments: args})
+		if err != nil || res.IsError {
+			t.Fatalf("list: %v %v", err, textOf(res))
+		}
+		raw := textOf(res)
+		if len(raw) > 16<<10 {
+			t.Fatalf("page %d is %d bytes, over the 16 KB target", pages, len(raw))
+		}
+		body := parseToolJSON(t, res)
+		for _, r := range body["agents"].([]any) {
+			seen = append(seen, r.(map[string]any)["id"].(string))
+		}
+		next, _ := body["next_cursor"].(string)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(seen) != 60 {
+		t.Fatalf("walk saw %d agents, want 60 (no gaps, no repeats)", len(seen))
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i] <= seen[i-1] {
+			t.Fatalf("order/repeat at %d: %s after %s", i, seen[i], seen[i-1])
+		}
 	}
 }

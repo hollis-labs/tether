@@ -74,6 +74,13 @@ type evalTool struct {
 	Description string                  `json:"description"`
 	Annotations *mcpsdk.ToolAnnotations `json:"annotations,omitempty"`
 	Required    []string                `json:"required,omitempty"`
+	// Arguments are the tool's top-level input-schema properties (CW-20261024-0115).
+	Arguments []evalArgument `json:"arguments,omitempty"`
+}
+
+type evalArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 type evalCatalog struct {
@@ -119,6 +126,9 @@ type evalBaseline struct {
 	// Ranks maps query id to the 1-based rank of the first expected tool in the
 	// top 50, or 0 for a miss, so a scorer change shows which queries moved.
 	Ranks map[string]int `json:"ranks"`
+	// NoMatch maps each "nomatch" query id (no tool should match) to how many tools the search returned
+	// in its top 50. Fewer is better; zero is a clean refusal. These queries are not part of the recall metrics.
+	NoMatch map[string]int `json:"no_match_returned,omitempty"`
 }
 
 func (c *evalCatalog) digest() string {
@@ -134,6 +144,17 @@ func (c *evalCatalog) snapshot() Snapshot {
 		schema := map[string]any{"type": "object"}
 		if len(e.Required) > 0 {
 			schema["required"] = e.Required
+		}
+		if len(e.Arguments) > 0 {
+			props := map[string]any{}
+			for _, a := range e.Arguments {
+				prop := map[string]any{}
+				if a.Description != "" {
+					prop["description"] = a.Description
+				}
+				props[a.Name] = prop
+			}
+			schema["properties"] = props
 		}
 		snap.Entries = append(snap.Entries, Entry{
 			Tool:   &mcpsdk.Tool{Name: e.Name, Title: e.Title, Description: e.Description, Annotations: e.Annotations, InputSchema: schema},
@@ -190,7 +211,16 @@ func runSearchEval(t testing.TB, cat *evalCatalog, qs []evalQuery, name string, 
 	byCat := map[string]*acc{}
 	all := &acc{}
 	ranks := map[string]int{}
+	noMatch := map[string]int{}
 	for _, q := range qs {
+		if q.Category == "nomatch" {
+			res, err := svc.Search(Request{Query: q.Query, Detail: "names", Limit: 50})
+			if err != nil {
+				t.Fatalf("%s: search %q: %v", q.ID, q.Query, err)
+			}
+			noMatch[q.ID] = len(res.Items)
+			continue
+		}
 		wanted := map[string]bool{}
 		for _, e := range q.Expect {
 			wanted[e] = true
@@ -243,6 +273,9 @@ func runSearchEval(t testing.TB, cat *evalCatalog, qs []evalQuery, name string, 
 		}
 	}
 	out := evalBaseline{Scorer: name, Catalog: cat.digest(), Overall: metrics(all), ByCategory: map[string]evalMetrics{}, Ranks: ranks}
+	if len(noMatch) > 0 {
+		out.NoMatch = noMatch
+	}
 	for c, a := range byCat {
 		out.ByCategory[c] = metrics(a)
 	}
@@ -266,6 +299,13 @@ func (b evalBaseline) table() string {
 	sort.Strings(cats)
 	for _, c := range cats {
 		row(c, b.ByCategory[c])
+	}
+	if len(b.NoMatch) > 0 {
+		total := 0
+		for _, n := range b.NoMatch {
+			total += n
+		}
+		fmt.Fprintf(&sb, "  nomatch  n=%-4d returned_any=%d of %d, tools returned in total=%d (lower is better)\n", len(b.NoMatch), noMatchAny(b), len(b.NoMatch), total)
 	}
 	return sb.String()
 }
@@ -372,7 +412,11 @@ func TestSearchEvalFixture(t *testing.T) {
 		}
 		ids[q.ID] = true
 		cats[q.Category]++
-		if strings.TrimSpace(q.Query) == "" || len(q.Expect) == 0 {
+		if q.Category == "nomatch" {
+			if strings.TrimSpace(q.Query) == "" || len(q.Expect) != 0 {
+				t.Errorf("%s: a nomatch query needs text and no expected tool", q.ID)
+			}
+		} else if strings.TrimSpace(q.Query) == "" || len(q.Expect) == 0 {
 			t.Errorf("%s: needs a query and at least one expected tool", q.ID)
 		}
 		if evalValueLike.MatchString(q.Query) || evalIDLike.MatchString(q.Query) || evalSecret.MatchString(q.Query) {
@@ -389,7 +433,7 @@ func TestSearchEvalFixture(t *testing.T) {
 			t.Errorf("%s: STALE LABEL: expected tool(s) %v are not in the pinned snapshot; re-snapshot or relabel", q.ID, stale)
 		}
 	}
-	for _, c := range []string{"head", "tail", "hard"} {
+	for _, c := range []string{"head", "tail", "hard"} { // "regression" is small by design
 		if cats[c] < 20 {
 			t.Errorf("category %q has %d queries; want at least 20", c, cats[c])
 		}
@@ -437,7 +481,7 @@ func TestSearchEvalSnapshot(t *testing.T) {
 	for _, d := range dump {
 		cat.Entries = append(cat.Entries, evalTool{
 			Name: d.Name, Origin: d.Origin, Title: d.Title, Description: d.Description,
-			Annotations: d.Annotations, Required: requiredArgs(d.InputSchema),
+			Annotations: d.Annotations, Required: requiredArgs(d.InputSchema), Arguments: evalArguments(d.InputSchema),
 		})
 	}
 	sort.Slice(cat.Entries, func(i, j int) bool { return cat.Entries[i].Name < cat.Entries[j].Name })
@@ -502,4 +546,134 @@ func TestSearchEvalLiveDrift(t *testing.T) {
 		}
 	}
 	t.Logf("live gateway has %d tools, snapshot %d; %d live tools are not in the snapshot", len(liveSet), len(pinned), added)
+}
+
+// searchEvalRank returns the 1-based position of each named tool in the BM25 ranking of query
+// over the pinned catalog (0 when it is not returned).
+func searchEvalRanks(t *testing.T, query string, names ...string) map[string]int {
+	t.Helper()
+	cat := loadEvalCatalog(t)
+	entries := cat.snapshot().Entries
+	scores := BM25ScoreAll(query, entries)
+	type hit struct {
+		name  string
+		score int
+	}
+	var hits []hit
+	for i, e := range entries {
+		if scores[i] > 0 {
+			hits = append(hits, hit{e.Tool.Name, scores[i]})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	ranks := map[string]int{}
+	for _, n := range names {
+		ranks[n] = 0
+	}
+	for i, h := range hits {
+		if _, ok := ranks[h.name]; ok {
+			ranks[h.name] = i + 1
+		}
+	}
+	return ranks
+}
+
+// CW-20261024-0114: before BM25 the keyword scorer ranked card_show, panel_open and python_run above
+// tether_tool_metrics for this query, because they matched generic words. They must stay below it.
+func TestSearchRegressionTelemetryQuery(t *testing.T) {
+	const query = "tool call telemetry proxy events stats error class latency"
+	r := searchEvalRanks(t, query, "tether_tool_metrics", "card_show", "panel_open", "python_run")
+	if r["tether_tool_metrics"] == 0 || r["tether_tool_metrics"] > 5 {
+		t.Fatalf("tether_tool_metrics rank = %d, want in the top 5", r["tether_tool_metrics"])
+	}
+	for _, noise := range []string{"card_show", "panel_open", "python_run"} {
+		if r[noise] != 0 && r[noise] < r["tether_tool_metrics"] {
+			t.Errorf("%s (rank %d) outranks tether_tool_metrics (rank %d)", noise, r[noise], r["tether_tool_metrics"])
+		}
+	}
+}
+
+// The N2b gate: no regression on exact names and name prefixes. An exact name is first; a unique prefix
+// of a tool's name finds that tool in the top 3.
+func TestSearchRegressionExactNameAndPrefix(t *testing.T) {
+	for _, name := range []string{"torque_task_get", "tether_message_send", "cerberus_resource_status", "tether_catalog_plan", "tesseract_recall", "tether_session_health"} {
+		if got := searchEvalRanks(t, name, name)[name]; got != 1 {
+			t.Errorf("exact name %q ranks %d, want 1", name, got)
+		}
+	}
+	for prefix, want := range map[string]string{"tether_session_hea": "tether_session_health", "tether_catalog_pl": "tether_catalog_plan", "torque_comment_ad": "torque_comment_add"} {
+		if got := searchEvalRanks(t, prefix, want)[want]; got == 0 || got > 3 {
+			t.Errorf("prefix %q finds %q at rank %d, want top 3", prefix, want, got)
+		}
+	}
+}
+
+// evalArguments lists a schema's top-level properties with a trimmed description.
+func evalArguments(schema any) []evalArgument {
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return nil
+	}
+	props, _ := m["properties"].(map[string]any)
+	var out []evalArgument
+	for name, raw := range props {
+		a := evalArgument{Name: name}
+		if prop, ok := raw.(map[string]any); ok {
+			if d, ok := prop["description"].(string); ok {
+				a.Description = truncateRunes(d, 160)
+			}
+		}
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// TestSearchEvalVariants compares index variants on the same fixture (CW-20261024-0115). It only reports;
+// the shipped default is whatever bm25Variant{} does, and a change is kept only when this table shows
+// recall@5 and MRR improve with the exact-name and prefix cases (category "regression") not worse.
+func TestSearchEvalVariants(t *testing.T) {
+	if os.Getenv("SEARCH_EVAL_VARIANTS") == "" {
+		t.Skip("set SEARCH_EVAL_VARIANTS=1 to compare index variants (about 45s)")
+	}
+	cat := loadEvalCatalog(t)
+	qs := loadEvalQueries(t).Queries
+	variants := []struct {
+		name string
+		v    bm25Variant
+	}{
+		{"baseline", bm25Variant{}},
+		{"args:names", bm25Variant{ArgNames: true}},
+		{"args:names+desc", bm25Variant{ArgDescriptions: true}},
+		{"stem", bm25Variant{Stem: true}},
+		{"name-boost x1", bm25Variant{NameBoost: 1}},
+		{"name-boost x2", bm25Variant{NameBoost: 2}},
+		{"name-boost x3", bm25Variant{NameBoost: 3}},
+		{"name-boost x4", bm25Variant{NameBoost: 4}},
+		{"name-boost x2+args", bm25Variant{NameBoost: 2, ArgNames: true}},
+		{"name-boost x3+stopwords", bm25Variant{NameBoost: 3, ExtraStopwords: true}},
+		{"args:names+stem", bm25Variant{ArgNames: true, Stem: true}},
+		{"args:names+desc+stem", bm25Variant{ArgDescriptions: true, Stem: true}},
+	}
+	shipped := searchVariant
+	defer func() { searchVariant = shipped }()
+	var sb strings.Builder
+	for _, tc := range variants {
+		searchVariant = tc.v
+		b := runSearchEval(t, cat, qs, tc.name, nil, BM25ScoreAll)
+		fmt.Fprintf(&sb, "%-22s recall@1=%.3f recall@5=%.3f recall@10=%.3f MRR=%.3f  hard@5=%.3f regression@1=%.3f nomatch_any=%d/%d | heldout r@1=%.3f r@5=%.3f MRR=%.3f | x009=%d x011=%d\n",
+			tc.name, b.Overall.Recall1, b.Overall.Recall5, b.Overall.Recall10, b.Overall.MRR, b.ByCategory["hard"].Recall5, b.ByCategory["regression"].Recall1, noMatchAny(b), len(b.NoMatch),
+			b.ByCategory["heldout"].Recall1, b.ByCategory["heldout"].Recall5, b.ByCategory["heldout"].MRR, b.Ranks["x009"], b.Ranks["x011"])
+	}
+	t.Logf("\n%s", sb.String())
+}
+
+func noMatchAny(b evalBaseline) int {
+	n := 0
+	for _, r := range b.NoMatch {
+		if r > 0 {
+			n++
+		}
+	}
+	return n
 }

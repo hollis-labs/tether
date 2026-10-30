@@ -127,6 +127,10 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 				})
 			}
 
+			trimmed := false
+			if n := fitBudget(out, eventPageBudget); n < len(out) {
+				out, trimmed = out[:n], true
+			}
 			result := map[string]any{
 				"ok":          true,
 				"events":      out,
@@ -134,7 +138,9 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 				"next_cursor": int64(0),
 			}
 			// When we filled the page, the caller may need to continue paging.
-			if len(evs) == limit && len(evs) > 0 {
+			if trimmed {
+				result["next_cursor"] = out[len(out)-1].Seq
+			} else if len(evs) == limit && len(evs) > 0 {
 				result["next_cursor"] = evs[len(evs)-1].Seq
 			}
 			return toolJSON(result), nil
@@ -373,6 +379,10 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 		if len(rows) == limit && len(rows) > 0 {
 			nextCursor = rows[len(rows)-1].Seq
 		}
+	}
+	if n := fitBudget(out, eventPageBudget); n < len(out) {
+		out = out[:n]
+		nextCursor = out[len(out)-1].Seq
 	}
 	return toolJSON(map[string]any{
 		"ok":          true,
