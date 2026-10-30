@@ -35,6 +35,13 @@ const (
 // that administers devices or the catalog, or launches sessions.
 var serviceTetherScopes = []string{"tether.events", "tether.read", "tether.messages", "tether.registry", "tether.registry_read"}
 
+// operatorAppTetherScopes are the extra write scopes a service token may hold for
+// an app the operator treats as itself (CW-20261030-0190: Tachyon), keyed by app id.
+// Nothing here administers devices.
+var operatorAppTetherScopes = map[string][]string{
+	"tachyon": {"tether.catalog", "tether.sessions", "tether.groups", "tether.teams", "tether.ai"},
+}
+
 var (
 	envRe   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	labelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,63}$`)
@@ -182,7 +189,7 @@ func serviceScopes(req ServiceRequest) ([]string, error) {
 			return nil, invalid("unknown tether scope")
 		}
 		for _, s := range out {
-			if !slices.Contains(serviceTetherScopes, s) {
+			if !slices.Contains(serviceTetherScopes, s) && !slices.Contains(operatorAppTetherScopes[req.App], s) {
 				return nil, invalid("a service token may hold only %s", strings.Join(serviceTetherScopes, ", "))
 			}
 		}
