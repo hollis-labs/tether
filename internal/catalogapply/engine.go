@@ -127,6 +127,13 @@ type Engine struct {
 	Reload func(ctx context.Context) (restartRequired []string, err error)
 	Now    func() time.Time
 	TTL    time.Duration
+	// DelegatedPrivileged is the one switch that widens delegated approval
+	// (ApprovalRequest.Delegated) from non-privileged plans to every plan.
+	// Off by default: privileged plans stay operator-approved.
+	DelegatedPrivileged bool
+	// DelegatedApps names the apps whose service principals (msg://service/<app>/<env>)
+	// may approve by delegation. Empty means no delegation.
+	DelegatedApps []string
 
 	mu      sync.Mutex
 	plans   map[string]*Plan
@@ -503,6 +510,17 @@ func (e *Engine) ValidateBundle(files []File, opt Options) (catalogcheck.Report,
 	return catalogcheck.Run(root), nil
 }
 
+// DelegatedApprover reports whether the service principal id belongs to a
+// delegated app.
+func (e *Engine) DelegatedApprover(principalID string) bool {
+	for _, app := range e.DelegatedApps {
+		if principalID == "msg://service/"+app || strings.HasPrefix(principalID, "msg://service/"+app+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // Get returns a copy of a plan.
 func (e *Engine) Get(id string) (*Plan, bool) {
 	e.mu.Lock()
@@ -523,12 +541,16 @@ type ApprovalRequest struct {
 	AckPrivileged bool
 	// AllowRunning permits changing definitions that live sessions use.
 	AllowRunning bool
+	// Delegated is an approval by a trusted service (the caller has already
+	// authenticated it) instead of the operator's passphrase. It covers only
+	// plans with no privileged changes unless Engine.DelegatedPrivileged is set.
+	Delegated bool
 }
 
 // Approve records a human's approval. The approver must have read the plan's
 // digest and know the approval passphrase.
 func (e *Engine) Approve(req ApprovalRequest) (*Plan, error) {
-	if e.Approver == nil {
+	if e.Approver == nil && !req.Delegated {
 		return nil, ErrNoPassphrase
 	}
 	e.mu.Lock()
@@ -549,14 +571,19 @@ func (e *Engine) Approve(req ApprovalRequest) (*Plan, error) {
 	if req.Digest != p.Digest {
 		return nil, fmt.Errorf("digest mismatch: the approval names a different plan content than %q holds", p.ID)
 	}
+	if req.Delegated && len(p.Privileged) > 0 && !e.DelegatedPrivileged {
+		return nil, fmt.Errorf("plan %q makes privileged changes; only the operator approves those (`tether catalog approve`)", p.ID)
+	}
 	if len(p.Privileged) > 0 && !req.AckPrivileged {
 		return nil, fmt.Errorf("plan %q makes privileged changes; confirm them explicitly", p.ID)
 	}
 	if len(p.RunningSessions) > 0 && !req.AllowRunning {
 		return nil, fmt.Errorf("plan %q touches definitions used by running sessions %v; allow that explicitly or stop them", p.ID, p.RunningSessions)
 	}
-	if err := e.Approver.Verify(req.Passphrase); err != nil {
-		return nil, err
+	if !req.Delegated {
+		if err := e.Approver.Verify(req.Passphrase); err != nil {
+			return nil, err
+		}
 	}
 	now := e.now().UTC()
 	p.State, p.ApprovedAt, p.AllowRunning = StateApproved, &now, req.AllowRunning

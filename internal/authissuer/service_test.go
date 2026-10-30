@@ -840,3 +840,17 @@ func TestIssueServiceRegistryScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestIssueServiceTachyonOperatorScopes(t *testing.T) {
+	is, _ := newIssuer(t)
+	scopes := []string{"tether.read", "tether.catalog", "tether.sessions", "tether.messages", "tether.registry", "tether.ai", "tether.events"}
+	if _, _, err := is.IssueService(operatorP, ServiceRequest{App: "tachyon", Audience: "tether", Scopes: scopes, Label: "tachyon"}); err != nil {
+		t.Fatalf("tachyon must be issuable the operator-app scopes: %v", err)
+	}
+	if _, _, err := is.IssueService(operatorP, ServiceRequest{App: "tachyon", Audience: "tether", Scopes: []string{"tether.admin"}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("tachyon must not hold tether.admin, got %v", err)
+	}
+	if _, _, err := is.IssueService(operatorP, ServiceRequest{App: "other", Audience: "tether", Scopes: []string{"tether.catalog"}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("another app must not hold tether.catalog, got %v", err)
+	}
+}

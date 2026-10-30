@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 
 	"github.com/hollis-labs/tether/internal/app"
@@ -26,6 +27,10 @@ func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 		Root:       svc.CatalogRoot,
 		BackupRoot: backupRoot,
 		Approver:   catalogapply.NewApprover(approverFile),
+		// Tachyon is the operator's own app (CW-20261030-0190): it approves non-privileged
+		// plans by delegation. TETHER_CATALOG_DELEGATED_PRIVILEGED=1 widens that to every plan.
+		DelegatedApps:       []string{"tachyon"},
+		DelegatedPrivileged: os.Getenv("TETHER_CATALOG_DELEGATED_PRIVILEGED") == "1",
 		Reload: func(ctx context.Context) ([]string, error) {
 			rep, err := svc.ReloadCatalog(ctx)
 			if err != nil {
