@@ -152,6 +152,21 @@ func jsonCompact(v any) string {
 	return strings.TrimSuffix(buf.String(), "\n")
 }
 
+// capEnvelopeHeadroom is reserved under the cap for what the transport wraps around a result: the
+// JSON-RPC envelope (jsonrpc, id, result) and anything added on the way out. resultSize measures the
+// CallToolResult alone, so without it a page sized exactly to the cap exceeded it on the wire by up to
+// ~130 bytes (CW-20261024-0126). The configurable minimum cap is 1024, so the effective cap is never
+// below 768.
+const capEnvelopeHeadroom = 256
+
+// effectiveCap is the size a CallToolResult may take for the whole response to fit the configured cap.
+func effectiveCap(limit int) int {
+	if limit > capEnvelopeHeadroom*2 {
+		return limit - capEnvelopeHeadroom
+	}
+	return limit
+}
+
 func resultSize(res *mcpsdk.CallToolResult) int {
 	raw, err := json.Marshal(res)
 	if err != nil {
@@ -323,6 +338,7 @@ func (p *ResultPager) Cap(tool string, readOnly bool, res *mcpsdk.CallToolResult
 	}
 	size := resultSize(res)
 	report := CapReport{OriginalBytes: size, DeliveredBytes: size}
+	limit = effectiveCap(limit)
 	if size <= limit || res.IsError || !readOnly {
 		return res, report
 	}
@@ -455,6 +471,7 @@ func (p *ResultPager) Next(cursor string, limit int) (*mcpsdk.CallToolResult, Ca
 	if limit <= 0 {
 		limit = DefaultResultCapBytes
 	}
+	limit = effectiveCap(limit)
 	base := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{}}}
 	marker := pageMarker{Truncated: true, Path: pathString(s.path), Total: len(items)}
 	build := func(k int) *mcpsdk.CallToolResult {

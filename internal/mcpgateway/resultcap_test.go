@@ -224,3 +224,66 @@ func TestResultCapConfig(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261024-0126: the cap is on the whole response line, not on the CallToolResult alone. Small items
+// make every page fill to within a few bytes of the limit, so a missing envelope reserve shows at once.
+func TestCapPagesNeverExceedTheLimitOnTheWire(t *testing.T) {
+	const limit = 8 << 10
+	rows := make([]string, 2000)
+	for i := range rows {
+		rows[i] = fmt.Sprintf("r%04d", i)
+	}
+	raw, _ := json.Marshal(rows)
+	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: string(raw)}}}
+	wire := func(r *mcpsdk.CallToolResult) int {
+		line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1234567890, "result": r})
+		return len(line)
+	}
+	p := NewResultPager()
+	first, rep := p.Cap("t", true, res, limit)
+	if !rep.Truncated {
+		t.Fatal("expected the result to be cut")
+	}
+	if n := wire(first); n > limit {
+		t.Fatalf("first page is %d bytes on the wire, over the %d limit", n, limit)
+	}
+	text := first.Content[0].(*mcpsdk.TextContent).Text
+	var marker struct {
+		Gateway struct {
+			Cursor string `json:"cursor"`
+		} `json:"gateway_truncated"`
+	}
+	_ = json.Unmarshal([]byte(text), &marker)
+	cursor := marker.Gateway.Cursor
+	for pages := 0; cursor != "" && pages < 100; pages++ {
+		page, rep, err := p.Next(cursor, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := wire(page); n > limit {
+			t.Fatalf("continuation page %d is %d bytes on the wire, over the %d limit", pages, n, limit)
+		}
+		cursor = ""
+		if rep.Truncated {
+			var m struct {
+				Gateway struct {
+					Cursor string `json:"cursor"`
+				} `json:"gateway_truncated"`
+			}
+			_ = json.Unmarshal([]byte(page.Content[0].(*mcpsdk.TextContent).Text), &m)
+			cursor = m.Gateway.Cursor
+		}
+	}
+}
+
+func TestEffectiveCapKeepsAFloor(t *testing.T) {
+	if got := effectiveCap(32 << 10); got != 32<<10-capEnvelopeHeadroom {
+		t.Fatalf("effectiveCap(32KiB) = %d", got)
+	}
+	if got := effectiveCap(1024); got != 768 {
+		t.Fatalf("effectiveCap(1024) = %d, want 768", got)
+	}
+	if got := effectiveCap(300); got != 300 {
+		t.Fatalf("a tiny cap must not go negative or shrink further, got %d", got)
+	}
+}
