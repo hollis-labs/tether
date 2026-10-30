@@ -60,6 +60,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -146,6 +147,40 @@ var (
 	wakeBusyRetryBackoff    = 5 * time.Second
 	wakeOfflineRetryBackoff = 30 * time.Second
 )
+
+const (
+	// wakeRetryBackoffCap bounds the exponential growth of a wake retry delay.
+	wakeRetryBackoffCap = 300 * time.Second
+	// wakeMaxAttempts is how many wake attempts one delivery gets before the
+	// retry delay jumps to the message-age bound: the mail is not lost (it sits
+	// in the inbox, and the recipient pulls it), the wake just stops hammering
+	// a session that never became free (CW-20261030-0176).
+	wakeMaxAttempts = 12
+)
+
+// wakeRetryJitter returns a factor in [0.8, 1.2). A variable so tests can pin it.
+var wakeRetryJitter = func() float64 { return 0.8 + 0.4*rand.Float64() } //nolint:gosec // G404: retry jitter spreads load, it is not a security value
+
+// wakeRetryDelay is the delay before the next wake attempt of a delivery that
+// has now been attempted attempt times: base * 2^(attempt-1) capped at
+// wakeRetryBackoffCap, with +/-20% jitter. From wakeMaxAttempts on the delay is
+// the message-age bound, after which the sweep no longer wakes for the mail.
+func wakeRetryDelay(attempt int, base time.Duration) time.Duration {
+	if base <= 0 {
+		return base
+	}
+	if attempt >= wakeMaxAttempts && wakeMaxMessageAge > 0 {
+		return wakeMaxMessageAge
+	}
+	d := base
+	for i := 1; i < attempt && d < wakeRetryBackoffCap; i++ {
+		d *= 2
+	}
+	if d > wakeRetryBackoffCap {
+		d = wakeRetryBackoffCap
+	}
+	return time.Duration(float64(d) * wakeRetryJitter())
+}
 
 // wakeParkSet is the sweep's memory of deliveries whose recipient had no
 // live session the last time it looked (CW-20261001-0012). Without it the
@@ -621,11 +656,11 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 
 	health, ok := rt.health(sessionID)
 	if !ok {
-		nackRetryable(ctx, ds, lease, "session not running", wakeOfflineRetryBackoff)
+		nackRetryable(ctx, ds, lease, "session not running", wakeRetryDelay(observationNumber, wakeOfflineRetryBackoff))
 		return api.WakeOutcome{Reason: "offline-race", SessionID: sessionID}
 	}
 	if health.Health.State == agentsessions.LiveStateProcessing {
-		nackRetryable(ctx, ds, lease, "session busy", wakeBusyRetryBackoff)
+		nackRetryable(ctx, ds, lease, "session busy", wakeRetryDelay(observationNumber, wakeBusyRetryBackoff))
 		return api.WakeOutcome{Reason: "busy", SessionID: sessionID}
 	}
 	// Recheck after the health call, immediately before submitting. A new
@@ -633,7 +668,7 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	// grants this in-flight claim authority to submit. A rebind between this
 	// check and SendTurn remains a residual race, since they are not atomic.
 	if _, blocked := checkWakeBinding(ctx, reg, to, sessionID, bindingGeneration); blocked.Reason != "" {
-		nackRetryable(ctx, ds, lease, blocked.Reason+": "+blocked.Detail, wakeOfflineRetryBackoff)
+		nackRetryable(ctx, ds, lease, blocked.Reason+": "+blocked.Detail, wakeRetryDelay(observationNumber, wakeOfflineRetryBackoff))
 		return blocked
 	}
 
@@ -939,6 +974,11 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 	ring := append(append([]string{}, keys[start:]...), keys[:start]...)
 
 	attempted, processed := 0, 0
+	// One wake attempt per recipient session per pass while it is busy: the wake
+	// text only says there is unread mail, so a second attempt for another
+	// message of a session that was just found busy adds an attempt row and an
+	// event but no information (CW-20261030-0176). The other rows stay ready.
+	busySessions := map[string]bool{}
 	var left []delivery.RecipientDelivery
 	lastServed := last
 	for round := 0; ; round++ {
@@ -983,6 +1023,9 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 					continue
 				}
 			}
+			if busySessions[lr.sessionID] {
+				continue
+			}
 			park.release(lr.rd.ID)
 			processed++
 			lastServed = key
@@ -1005,6 +1048,9 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			}
 			if outcome.Attempted {
 				attempted++
+			}
+			if outcome.Reason == "busy" || outcome.Reason == "offline-race" {
+				busySessions[lr.sessionID] = true
 			}
 		}
 		if !sawRow {
