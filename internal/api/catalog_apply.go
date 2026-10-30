@@ -102,6 +102,18 @@ func catalogApprover(r *http.Request) bool {
 	return identity.IsOperatorCredential(p)
 }
 
+// catalogDelegatedApprover reports whether the caller is a service principal that
+// holds catalog.write and is named in the delegated-approver list. It is checked
+// only after catalogApprover refuses; the engine still refuses privileged plans.
+func (s *Server) catalogDelegatedApprover(r *http.Request) bool {
+	p, ok := identity.FromContext(r.Context())
+	if !ok || p.Kind != "service" || p.TokenID == "" || !identity.ScopeGranted(p.Scopes, catalogWriteScope) {
+		return false
+	}
+	d, ok := s.CatalogApply.(interface{ DelegatedApprover(principalID string) bool })
+	return ok && d.DelegatedApprover(p.ID)
+}
+
 func (s *Server) handleCatalogPlans(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -180,9 +192,13 @@ func (s *Server) handleCatalogPlanItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCatalogApprove(w http.ResponseWriter, r *http.Request, id string) {
+	delegated := false
 	if !catalogApprover(r) {
-		writeError(w, http.StatusForbidden, CodeForbidden, "a plan is approved by the local operator on the daemon's own socket, not by a session, a device or a remote caller")
-		return
+		if !s.catalogDelegatedApprover(r) {
+			writeError(w, http.StatusForbidden, CodeForbidden, "a plan is approved by the local operator on the daemon's own socket, not by a session, a device or a remote caller")
+			return
+		}
+		delegated = true
 	}
 	var req CatalogApproveRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
@@ -191,7 +207,7 @@ func (s *Server) handleCatalogApprove(w http.ResponseWriter, r *http.Request, id
 	}
 	plan, err := s.CatalogApply.Approve(catalogapply.ApprovalRequest{
 		PlanID: id, Digest: req.Digest, Passphrase: req.Passphrase,
-		AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning,
+		AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning, Delegated: delegated,
 	})
 	switch {
 	case err == nil:

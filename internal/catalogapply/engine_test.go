@@ -452,3 +452,26 @@ func TestDiff(t *testing.T) {
 		t.Errorf("create diff: %s", c)
 	}
 }
+
+func TestDelegatedApproval(t *testing.T) {
+	e := newEngine(t)
+	e.DelegatedApps = []string{"tachyon"}
+	ctx := context.Background()
+	if !e.DelegatedApprover("msg://service/tachyon/dev") || e.DelegatedApprover("msg://service/tachyonic/dev") || e.DelegatedApprover("msg://service/other/dev") {
+		t.Fatal("DelegatedApprover matched the wrong principals")
+	}
+	plain, _ := e.PlanBundle(ctx, Bundle{Name: "plain", Files: []File{{Path: "agents/x.yaml", Content: "id: x\n"}}}, Options{})
+	if _, err := e.Approve(ApprovalRequest{PlanID: plain.ID, Digest: plain.Digest, Delegated: true}); err != nil {
+		t.Fatalf("delegated approval of a non-privileged plan: %v", err)
+	}
+	priv, _ := e.PlanBundle(ctx, Bundle{Name: "perm", Files: []File{
+		{Path: "agents/general.yaml", Content: "id: general\nname: General\npermissions:\n  permission_mode: bypass\n"},
+	}}, Options{})
+	if _, err := e.Approve(ApprovalRequest{PlanID: priv.ID, Digest: priv.Digest, Delegated: true, AckPrivileged: true}); err == nil || !strings.Contains(err.Error(), "only the operator") {
+		t.Fatalf("delegated approval of a privileged plan: %v", err)
+	}
+	e.DelegatedPrivileged = true // the single widening switch
+	if _, err := e.Approve(ApprovalRequest{PlanID: priv.ID, Digest: priv.Digest, Delegated: true, AckPrivileged: true}); err != nil {
+		t.Fatalf("widened delegation: %v", err)
+	}
+}
