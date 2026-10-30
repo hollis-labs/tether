@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-const sessionTokenTTL = 7 * 24 * time.Hour
-
 var workerScopes = []string{"session.write", "message.write", "catalog.write"}
 
 // narrowToLauncher returns the part of granted that the launching principal
@@ -106,7 +104,7 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	if mode == string(identity.Off) {
 		return "", nil
 	}
-	expires := time.Now().UTC().Add(sessionTokenTTL)
+	expires := time.Now().UTC().Add(sessionTokenTTL())
 	granted := slices.Clone(workerScopes)
 	if s.TeamsEnabled {
 		granted = append(granted, "team.write") // mcpadapter.ScopeTeamWrite; only when teams run

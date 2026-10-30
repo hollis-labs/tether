@@ -143,7 +143,7 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		revokeBinding()
 		return undo, err
 	}
-	expires := time.Now().UTC().Add(sessionTokenTTL)
+	expires := time.Now().UTC().Add(sessionTokenTTL())
 	self := "msg://session/local/" + row.ID
 	// CreatedBy records who launched the session, as the hub-local path does
 	// (mintSessionCredential). Without it every worker-hosted session credential
@@ -248,7 +248,7 @@ func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, s
 		return noop
 	}
 	grant := map[string][]string{"tether": canonical}
-	if err := s.AgentTokens.RegisterSessionGrant(row.ID, device, grant, time.Now().Add(sessionTokenTTL)); err != nil {
+	if err := s.AgentTokens.RegisterSessionGrant(row.ID, device, grant, time.Now().Add(sessionTokenTTL())); err != nil {
 		log.Printf("worker session %s: agent token grant failed", row.ID)
 		return noop
 	}

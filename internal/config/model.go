@@ -53,6 +53,10 @@ type IdentityConfig struct {
 	// and logs it (dev posture), anything else, including omission, records the request
 	// and answers 202 without issuing. Local listener only.
 	ServiceRequest string `yaml:"service_request,omitempty"`
+	// SessionTokenTTL is the lifetime of session tth_ tokens, a Go duration
+	// ("168h"), or "0"/"never" for a very distant expiry. Omission keeps 7d.
+	// TETHER_SESSION_TOKEN_TTL overrides it.
+	SessionTokenTTL string `yaml:"session_token_ttl,omitempty"`
 	// MCPGrants is operator-provisioned authority for service/interactive
 	// principals. Omission grants no upstreams, never the operator's inventory.
 	MCPGrants map[string]PrincipalMCPGrant `yaml:"mcp_grants,omitempty"`
