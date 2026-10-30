@@ -20,7 +20,13 @@ type bm25Variant struct {
 	Stem bool
 	// NameBoost repeats the words of a tool's name in its title so they weigh more.
 	NameBoost int
+	// ExtraStopwords drops common short words the shared list leaves in ("is", "to", "my", ...), so a
+	// query made only of them matches nothing instead of an arbitrary set of tools.
+	ExtraStopwords bool
 }
+
+// extraStopwords are English function words missing from toolselect's built-in list.
+var extraStopwords = []string{"is", "are", "to", "in", "of", "on", "at", "by", "or", "as", "an", "it", "its", "be", "do", "does", "my", "me", "we", "us", "so", "if", "he", "she", "them", "their", "there", "then", "than", "too", "very", "also", "your", "yours", "our"}
 
 // defaultNameBoost is how many extra times a tool's name words are weighed (CW-20261024-0115). Measured
 // on the search-eval fixture and on 24 held-out queries written before the experiment: recall@5 0.812 to
@@ -63,7 +69,11 @@ func BM25ScoreAll(query string, entries []Entry) []int {
 		// A single token may be a tool name or a name prefix; only phrases are expanded.
 		query = withStems(query)
 	}
-	hits, err := toolselect.Rank(toolselect.Catalog{Tools: tools}, query, nil)
+	var opts []toolselect.Option
+	if v.ExtraStopwords {
+		opts = append(opts, toolselect.WithStopwords(extraStopwords...))
+	}
+	hits, err := toolselect.Rank(toolselect.Catalog{Tools: tools}, query, nil, opts...)
 	if err != nil {
 		return keywordScoreAll(query, entries)
 	}

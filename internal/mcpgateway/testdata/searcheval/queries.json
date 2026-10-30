@@ -172,6 +172,17 @@
     {"id": "y021", "query": "preview what a routing rule would do before applying it", "expect": ["preview_route"], "category": "heldout", "note": "written before the CW-20261024-0115 variants were run on it"},
     {"id": "y022", "query": "write a file in the developer sandbox", "expect": ["dev_write"], "category": "heldout", "note": "written before the CW-20261024-0115 variants were run on it"},
     {"id": "y023", "query": "show me an example of a UI component from the registry", "expect": ["get_item_examples_from_registries"], "category": "heldout", "note": "written before the CW-20261024-0115 variants were run on it"},
-    {"id": "y024", "query": "stop the performance recording and get the trace", "expect": ["performance_stop_trace"], "category": "heldout", "note": "written before the CW-20261024-0115 variants were run on it"}
+    {"id": "y024", "query": "stop the performance recording and get the trace", "expect": ["performance_stop_trace"], "category": "heldout", "note": "written before the CW-20261024-0115 variants were run on it"},
+    {"id": "o001", "query": "tangent inbox list items turns", "expect": ["tangent_inbox_list", "tangent_turns_await"], "category": "observed", "note": "a real agent search term (hub telemetry 2026-10-24); labeled by the sysadmin agent, not by what the agent called next (the call was not linked)", "review": true},
+    {"id": "o002", "query": "tether catalog plan skills write file", "expect": ["tether_catalog_plan", "tether_catalog_files"], "category": "observed", "note": "a real agent search term (hub telemetry 2026-10-25)", "review": true},
+    {"id": "o003", "query": "tangent markdown document", "expect": ["tangent_artifact_create", "tangent_output_render"], "category": "observed", "note": "a real agent search term (hub telemetry 2026-10-29)", "review": true},
+    {"id": "n001", "query": "book a flight to paris", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"},
+    {"id": "n002", "query": "what is the weather tomorrow", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"},
+    {"id": "n003", "query": "translate this paragraph into french", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"},
+    {"id": "n004", "query": "play some music", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"},
+    {"id": "n005", "query": "order a pizza for dinner", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"},
+    {"id": "n006", "query": "calculate my income tax", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"},
+    {"id": "n007", "query": "water the plants every morning", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"},
+    {"id": "n008", "query": "tell me a joke", "expect": [], "category": "nomatch", "note": "no tool should match: measures false positives"}
   ]
 }

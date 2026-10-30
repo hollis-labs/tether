@@ -203,6 +203,14 @@ case still first. Reproduce with
 | argument names | 0.818 | 0.710 | 0.745 | hard-query recall@5 fell 0.647 to 0.618; not shipped |
 | argument names and descriptions | 0.818 | 0.682 | 0.641 | worse; not shipped |
 | light stemming ("messages" to "message") | 0.800 | 0.672 | 0.644 | worse everywhere; not shipped |
+| extra English stopwords ("is", "to", "my", ...) on top of x3 | 0.832 | 0.739 | 0.799 | recall@5 fell 0.844 to 0.832 on two lists tried; not shipped |
+
+**False positives.** Eight "no tool should match" queries ("book a flight to paris", "what is the
+weather tomorrow", ...) return tools for 5 of 8: a query of common short words such as "is" and "to" matches
+an arbitrary set (up to 50 tools). The search has no relevance floor to refuse with, because the
+scores it sorts on are ranks, not BM25 values. Extra stopwords cut this to 3 or 4 of 8 but cost recall,
+so for now an agent should read a search as a ranked list, not as proof that a tool exists. A relevance floor
+(expose the BM25 value, drop hits under a fraction of the top hit) is the next experiment.
 
 The shared ranker scores one combined text, so "name over tags over description"
 weighting is approximated by repeating the name words in the title field. Two queries

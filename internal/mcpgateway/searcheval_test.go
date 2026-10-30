@@ -126,6 +126,9 @@ type evalBaseline struct {
 	// Ranks maps query id to the 1-based rank of the first expected tool in the
 	// top 50, or 0 for a miss, so a scorer change shows which queries moved.
 	Ranks map[string]int `json:"ranks"`
+	// NoMatch maps each "nomatch" query id (no tool should match) to how many tools the search returned
+	// in its top 50. Fewer is better; zero is a clean refusal. These queries are not part of the recall metrics.
+	NoMatch map[string]int `json:"no_match_returned,omitempty"`
 }
 
 func (c *evalCatalog) digest() string {
@@ -208,7 +211,16 @@ func runSearchEval(t testing.TB, cat *evalCatalog, qs []evalQuery, name string, 
 	byCat := map[string]*acc{}
 	all := &acc{}
 	ranks := map[string]int{}
+	noMatch := map[string]int{}
 	for _, q := range qs {
+		if q.Category == "nomatch" {
+			res, err := svc.Search(Request{Query: q.Query, Detail: "names", Limit: 50})
+			if err != nil {
+				t.Fatalf("%s: search %q: %v", q.ID, q.Query, err)
+			}
+			noMatch[q.ID] = len(res.Items)
+			continue
+		}
 		wanted := map[string]bool{}
 		for _, e := range q.Expect {
 			wanted[e] = true
@@ -261,6 +273,9 @@ func runSearchEval(t testing.TB, cat *evalCatalog, qs []evalQuery, name string, 
 		}
 	}
 	out := evalBaseline{Scorer: name, Catalog: cat.digest(), Overall: metrics(all), ByCategory: map[string]evalMetrics{}, Ranks: ranks}
+	if len(noMatch) > 0 {
+		out.NoMatch = noMatch
+	}
 	for c, a := range byCat {
 		out.ByCategory[c] = metrics(a)
 	}
@@ -284,6 +299,16 @@ func (b evalBaseline) table() string {
 	sort.Strings(cats)
 	for _, c := range cats {
 		row(c, b.ByCategory[c])
+	}
+	if len(b.NoMatch) > 0 {
+		any, total := 0, 0
+		for _, n := range b.NoMatch {
+			total += n
+			if n > 0 {
+				any++
+			}
+		}
+		fmt.Fprintf(&sb, "  nomatch  n=%-4d returned_any=%d of %d, tools returned in total=%d (lower is better)\n", len(b.NoMatch), any, len(b.NoMatch), total)
 	}
 	return sb.String()
 }
@@ -390,7 +415,11 @@ func TestSearchEvalFixture(t *testing.T) {
 		}
 		ids[q.ID] = true
 		cats[q.Category]++
-		if strings.TrimSpace(q.Query) == "" || len(q.Expect) == 0 {
+		if q.Category == "nomatch" {
+			if strings.TrimSpace(q.Query) == "" || len(q.Expect) != 0 {
+				t.Errorf("%s: a nomatch query needs text and no expected tool", q.ID)
+			}
+		} else if strings.TrimSpace(q.Query) == "" || len(q.Expect) == 0 {
 			t.Errorf("%s: needs a query and at least one expected tool", q.ID)
 		}
 		if evalValueLike.MatchString(q.Query) || evalIDLike.MatchString(q.Query) || evalSecret.MatchString(q.Query) {
@@ -625,6 +654,7 @@ func TestSearchEvalVariants(t *testing.T) {
 		{"name-boost x3", bm25Variant{NameBoost: 3}},
 		{"name-boost x4", bm25Variant{NameBoost: 4}},
 		{"name-boost x2+args", bm25Variant{NameBoost: 2, ArgNames: true}},
+		{"name-boost x3+stopwords", bm25Variant{NameBoost: 3, ExtraStopwords: true}},
 		{"args:names+stem", bm25Variant{ArgNames: true, Stem: true}},
 		{"args:names+desc+stem", bm25Variant{ArgDescriptions: true, Stem: true}},
 	}
@@ -634,9 +664,19 @@ func TestSearchEvalVariants(t *testing.T) {
 	for _, tc := range variants {
 		searchVariant = tc.v
 		b := runSearchEval(t, cat, qs, tc.name, nil, BM25ScoreAll)
-		fmt.Fprintf(&sb, "%-22s recall@1=%.3f recall@5=%.3f recall@10=%.3f MRR=%.3f  hard@5=%.3f regression@1=%.3f | heldout r@1=%.3f r@5=%.3f MRR=%.3f | x009=%d x011=%d\n",
-			tc.name, b.Overall.Recall1, b.Overall.Recall5, b.Overall.Recall10, b.Overall.MRR, b.ByCategory["hard"].Recall5, b.ByCategory["regression"].Recall1,
+		fmt.Fprintf(&sb, "%-22s recall@1=%.3f recall@5=%.3f recall@10=%.3f MRR=%.3f  hard@5=%.3f regression@1=%.3f nomatch_any=%d/%d | heldout r@1=%.3f r@5=%.3f MRR=%.3f | x009=%d x011=%d\n",
+			tc.name, b.Overall.Recall1, b.Overall.Recall5, b.Overall.Recall10, b.Overall.MRR, b.ByCategory["hard"].Recall5, b.ByCategory["regression"].Recall1, noMatchAny(b), len(b.NoMatch),
 			b.ByCategory["heldout"].Recall1, b.ByCategory["heldout"].Recall5, b.ByCategory["heldout"].MRR, b.Ranks["x009"], b.Ranks["x011"])
 	}
 	t.Logf("\n%s", sb.String())
+}
+
+func noMatchAny(b evalBaseline) int {
+	n := 0
+	for _, r := range b.NoMatch {
+		if r > 0 {
+			n++
+		}
+	}
+	return n
 }

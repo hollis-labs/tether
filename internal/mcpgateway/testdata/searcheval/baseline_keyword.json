@@ -2,12 +2,12 @@
   "scorer": "keyword",
   "catalog_sha256": "05bde8e57021a5cb1f6a8b896b69e4aedbb89350d8eb23e042e270c4e18699e0",
   "overall": {
-    "queries": 170,
-    "recall_at_1": 0.3647,
-    "recall_at_5": 0.5882,
-    "recall_at_10": 0.6294,
-    "mrr": 0.4649,
-    "median_response_bytes": 3271
+    "queries": 173,
+    "recall_at_1": 0.3642,
+    "recall_at_5": 0.5954,
+    "recall_at_10": 0.6358,
+    "mrr": 0.4674,
+    "median_response_bytes": 3264
   },
   "by_category": {
     "hard": {
@@ -33,6 +33,14 @@
       "recall_at_10": 0.5417,
       "mrr": 0.4458,
       "median_response_bytes": 3320
+    },
+    "observed": {
+      "queries": 3,
+      "recall_at_1": 0.3333,
+      "recall_at_5": 1,
+      "recall_at_10": 1,
+      "mrr": 0.6111,
+      "median_response_bytes": 3264
     },
     "regression": {
       "queries": 8,
@@ -101,6 +109,9 @@
     "h047": 1,
     "h048": 1,
     "h049": 1,
+    "o001": 1,
+    "o002": 3,
+    "o003": 2,
     "r001": 1,
     "r002": 1,
     "r003": 1,
@@ -222,5 +233,15 @@
     "y022": 13,
     "y023": 0,
     "y024": 1
+  },
+  "no_match_returned": {
+    "n001": 50,
+    "n002": 50,
+    "n003": 50,
+    "n004": 11,
+    "n005": 50,
+    "n006": 0,
+    "n007": 50,
+    "n008": 5
   }
 }

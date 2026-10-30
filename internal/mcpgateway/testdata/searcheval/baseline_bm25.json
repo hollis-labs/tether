@@ -2,11 +2,11 @@
   "scorer": "bm25",
   "catalog_sha256": "05bde8e57021a5cb1f6a8b896b69e4aedbb89350d8eb23e042e270c4e18699e0",
   "overall": {
-    "queries": 170,
-    "recall_at_1": 0.6647,
-    "recall_at_5": 0.8412,
-    "recall_at_10": 0.8706,
-    "mrr": 0.7374,
+    "queries": 173,
+    "recall_at_1": 0.659,
+    "recall_at_5": 0.8439,
+    "recall_at_10": 0.8728,
+    "mrr": 0.7362,
     "median_response_bytes": 3155
   },
   "by_category": {
@@ -33,6 +33,14 @@
       "recall_at_10": 0.875,
       "mrr": 0.7902,
       "median_response_bytes": 3175
+    },
+    "observed": {
+      "queries": 3,
+      "recall_at_1": 0.3333,
+      "recall_at_5": 1,
+      "recall_at_10": 1,
+      "mrr": 0.6667,
+      "median_response_bytes": 3251
     },
     "regression": {
       "queries": 8,
@@ -101,6 +109,9 @@
     "h047": 1,
     "h048": 1,
     "h049": 1,
+    "o001": 2,
+    "o002": 2,
+    "o003": 1,
     "r001": 1,
     "r002": 1,
     "r003": 1,
@@ -222,5 +233,15 @@
     "y022": 4,
     "y023": 0,
     "y024": 1
+  },
+  "no_match_returned": {
+    "n001": 50,
+    "n002": 50,
+    "n003": 0,
+    "n004": 0,
+    "n005": 24,
+    "n006": 0,
+    "n007": 41,
+    "n008": 5
   }
 }
