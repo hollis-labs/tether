@@ -321,7 +321,8 @@ routing events continue unchanged.
 | Evidence | Canonical observations |
 |---|---|
 | New delivery obligation | `message.sent`, `message.queued`, per frozen recipient |
-| Retry failure or expired lease | `message.failed`, with the library's stable reason |
+| Retryable nack (recipient busy or offline; the mail waits in its inbox) | `message.wake_deferred`, not a failure |
+| Expired lease or terminal failure of an attempt | `message.failed`, with the library's stable reason |
 | Deadline or terminal failure | `message.dead_lettered` |
 | Authorized redrive | `message.redriven`, `message.queued` |
 | Mailbox pull / actual remote delivery acknowledgement | `message.delivered` |

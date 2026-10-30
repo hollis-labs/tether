@@ -434,3 +434,42 @@ func TestMessageEventsDeferredRetryRotatesPastPoisonAcrossRestart(t *testing.T) 
 		}
 	}
 }
+
+// A retryable nack (the wake found the recipient busy) is a deferral: it emits
+// message.wake_deferred and no message.failed (CW-20261030-0175).
+func TestMessageEventsRetryableNackIsWakeDeferredNotFailed(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	env := sendEventMessage(t, st)
+	ds := st.DeliveryStore()
+	id, _, _ := st.DeliveryIDForMessage(ctx, env.ID)
+	claim, err := ds.Claim(ctx, delivery.ClaimRequest{DeliveryID: delivery.DeliveryID(id), Holder: "holder", LeaseDuration: time.Minute, BindingGeneration: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := delivery.LeaseRef{DeliveryID: claim.Delivery.ID, AttemptID: claim.Attempt.ID, LeaseToken: claim.Attempt.LeaseToken, BindingGeneration: 7}
+	if _, _, err = ds.Nack(ctx, delivery.NackRequest{Lease: lease, Error: "session busy", Retryable: true, NextAttemptAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, ev := range drainMessages(t, st) {
+		counts[ev.Kind]++
+		if ev.Kind == "message.wake_deferred" {
+			var payload map[string]any
+			if err = json.Unmarshal([]byte(ev.PayloadJSON), &payload); err != nil {
+				t.Fatal(err)
+			}
+			d := payload["delivery"].(map[string]any)
+			if d["state"] != "retry_scheduled" || d["attempt"] != float64(1) {
+				t.Fatal(d)
+			}
+		}
+	}
+	if counts["message.failed"] != 0 || counts["message.wake_deferred"] != 1 {
+		t.Fatal(counts)
+	}
+}

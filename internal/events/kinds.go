@@ -6,6 +6,12 @@ import "github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 // depend on stable kind strings. New kinds should be documented in
 // docs/api/README.md alongside their payload schema.
 const (
+	// KindMessageWakeDeferred is emitted when a wake attempt is nacked retryably
+	// (recipient busy or offline): the mail waits in the recipient inbox and the
+	// delivery is scheduled again. It is not a failure; message.failed is for
+	// terminal outcomes and lapsed leases (CW-20261030-0175).
+	KindMessageWakeDeferred = "message.wake_deferred"
+
 	// KindStreamGap is a synthetic signal a Bus delivers to a subscriber in place
 	// of silent loss: it is never persisted, always bypasses the subscriber's
 	// Filter, and carries Seq = the last sequence the subscriber processed (so an

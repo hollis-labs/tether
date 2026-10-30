@@ -59,7 +59,7 @@ func pipelinePolicies() map[string]admissionPolicy {
 	// denylist sanitizer runs only on a diagnostic copy, even in enforce mode.
 	for _, kind := range []string{
 		KindRoutingReplyDelivered, KindRoutingReplyUndeliverable, KindSessionTurnInterruptRequested, KindSessionTurnInterruptCompleted,
-		catalog.KindMessageSent, catalog.KindMessageQueued, catalog.KindMessageRedriven, catalog.KindMessageFailed, catalog.KindMessageDeadLettered, catalog.KindMessageConsumed,
+		catalog.KindMessageSent, catalog.KindMessageQueued, catalog.KindMessageRedriven, catalog.KindMessageFailed, KindMessageWakeDeferred, catalog.KindMessageDeadLettered, catalog.KindMessageConsumed,
 		"session.request_status", "session.force_closed", "sandbox_rule_unenforced",
 		KindStreamGap, KindSessionShimRetired, KindSessionTurnOutput, KindSessionStateChanged,
 		KindDaemonShutdownSessionsEnded, KindDaemonSessionsSwept, KindDaemonExecutionPolicyChanged, KindAIBudgetRejected,
