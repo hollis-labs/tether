@@ -1552,6 +1552,7 @@ Messages eligible for a privacy-safe body purge.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `older_than_hours` | number | — | Lookback window in hours; 0 or omitted uses the daemon's default. |
+| `summary` | boolean | — | Return a bounded backlog report instead of the per-message list: delivery counts by status and by age group (stale pending over 14 days, retry_scheduled, dead-lettered over 30 days, settled over 90 days) with the top recipients of each. Report only; nothing is expired or purged. |
 
 #### `tether_message_redrive` _(delivery.write)_
 Re-attempt a stuck or dead-lettered delivery. A repair tool — drive it from trace evidence, not as a retry reflex.

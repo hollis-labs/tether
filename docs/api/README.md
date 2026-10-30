@@ -2861,7 +2861,7 @@ Reachable and stable, but documented here only in summary:
 
 | Route | Method | Description |
 |---|---|---|
-| `/messages/retention/candidates` | `GET` | Messages eligible for privacy-safe body purge. Optional `older_than_hours`. |
+| `/messages/retention/candidates` | `GET` | Messages eligible for privacy-safe body purge. Optional `older_than_hours`; `summary=1` returns a bounded backlog report (counts by status and age group, top recipients) instead of the list. Report only. |
 | `/session-groups`, `/session-groups/{id}` | `GET`, `POST` | Session-group membership surface. |
 | `/broker/requests` | `POST` | Legacy broker envelope intake, retained for pre-vNext consumers. |
 | `/logs/daemon` | `GET` | Tail the daemon log. |
