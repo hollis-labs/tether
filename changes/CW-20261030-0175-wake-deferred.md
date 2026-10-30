@@ -1,0 +1,1 @@
+- A retryable wake nack (recipient busy or offline) now emits the quiet event message.wake_deferred instead of message.failed; message.failed is kept for lapsed leases and terminal failures. Alert consumers stop seeing a failure per retry (CW-20261030-0175).

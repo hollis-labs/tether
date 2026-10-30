@@ -265,7 +265,15 @@ func (s *Store) messageTransition(ctx context.Context, tr delivery.Transition) (
 	case delivery.TransitionClaimed, delivery.TransitionConsumed, delivery.TransitionDeadlineExceeded:
 	// Claim is not delivery evidence; consumed/deadline are handled by state below.
 	case delivery.TransitionNacked, delivery.TransitionLeaseExpired:
-		kinds = []string{catalog.KindMessageFailed}
+		// A retryable nack is a deferral, not a failure: the wake found the
+		// recipient busy or offline, the mail sits in its inbox and the delivery
+		// is scheduled again. message.failed is for terminal outcomes and lapsed
+		// leases (CW-20261030-0175).
+		if tr.Reason == delivery.TransitionNacked && tr.To == delivery.DeliveryRetryScheduled {
+			kinds = []string{events.KindMessageWakeDeferred}
+		} else {
+			kinds = []string{catalog.KindMessageFailed}
+		}
 	}
 	if tr.To == delivery.DeliveryDeadLettered {
 		kinds = append(kinds, catalog.KindMessageDeadLettered)
