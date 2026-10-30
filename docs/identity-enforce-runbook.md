@@ -19,10 +19,19 @@ identity:
 
 Points with their own override today: `local_api` (local listener auth
 middleware), `mcp_gateway` (daemon MCP transport, `/mcp` and `/p/<profile>`),
-`teams` (team principal resolution). Everything else follows the global
+`teams` (team principal resolution), `sender` (sender identity, below). Everything else follows the global
 `identity.mode` (see the fail-mode table), including session-token minting
 (global mode only: a point flip changes no token behavior). Startup bind rules use
 the per-point modes, see "Bind rules per point" below.
+
+`sender` (CW-20261024-0023) is the sender-identity check on its own: a message's `from`, and an
+acting-as claim (`?as=`, `by`, `member`), must be an address of the verified principal (its own id, the
+agent identities recorded on its session credential, or an actor covered by `message.send_as` or
+`tether.send_as:<substrate>`). With `identity.points.sender: enforce` and `local_api` left at `observe`,
+a forged sender is answered 403 while route scopes stay attribution-only. Review it before the flip with
+query 4b below: `from_unverified` and `as_unverified` are exactly what `sender: enforce` would refuse.
+The usual causes were a session JWT that did not carry the session's agent addresses (fixed by
+CW-20261024-0023) and a service credential that sends as other actors (give it `tether.send_as:<substrate>`).
 
 Commands (all take `--catalog`, default `~/.tether/catalog`):
 
