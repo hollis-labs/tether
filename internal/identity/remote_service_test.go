@@ -83,7 +83,9 @@ func TestEveryOtherRouteAndVariantStaysRefused(t *testing.T) {
 		{"GET", "/events"}, {"HEAD", "/events"}, {"PUT", "/events"}, {"DELETE", "/events"}, {"PATCH", "/events"},
 		{"POST", "/events/"}, {"POST", "/events?x=1"}, {"POST", "/events?"}, {"POST", "//events"}, {"POST", "/Events"},
 		{"POST", "/events/x"}, {"POST", "/events/stream"}, {"POST", "/proxy/events"}, {"POST", "/%65vents"}, {"POST", "/events%2F"},
-		{"POST", "/events;x"}, {"POST", "/messages"}, {"GET", "/sessions"}, {"POST", "/sessions"}, {"GET", "/environment/events"},
+		{"POST", "/events;x"}, {"POST", "/messages/"}, {"POST", "/messages?x=1"}, {"POST", "/messages/notify/"}, {"POST", "/messages/notify?wake=false"},
+		{"POST", "/messages/inbox"}, {"POST", "/messages/x/consume"}, {"POST", "/%6Dessages"}, {"POST", "/messages%2Fnotify"}, {"GET", "/messages"}, {"GET", "/messages/inbox"}, {"PUT", "/messages"}, {"DELETE", "/messages"},
+		{"GET", "/sessions"}, {"POST", "/sessions"}, {"GET", "/environment/events"},
 		{"POST", "/auth/token"}, {"POST", "/auth/pair"}, {"POST", "/auth/renew"}, {"GET", "/auth/devices"}, {"POST", "/auth/service-tokens"},
 		{"POST", "/worker/v1/connect"}, {"POST", "/mcp"}, {"GET", "/"},
 	} {
@@ -322,6 +324,58 @@ func TestFailureBudgetReservationIsReturnedOnEveryNonFailurePath(t *testing.T) {
 	for i, want := range []int{401, 401, 429} {
 		if w := do(h, "POST", "/events", testJWT); w.Code != want {
 			t.Fatalf("not-live request %d: %d, want %d", i, w.Code, want)
+		}
+	}
+}
+
+func messagesService() Principal {
+	p := goodService()
+	p.ID = "msg://service/tangent/dev"
+	p.TokenID = "jti-live-2"
+	p.Scopes = []string{"tether.messages"}
+	return p
+}
+
+// CW-20261030-0198: a service JWT holding tether.messages sends mail on exactly
+// POST /messages and POST /messages/notify, and the scopes never cross routes.
+func TestServiceJWTSendsMailWithMessagesScopeOnly(t *testing.T) {
+	h, reached, got := remoteWith(ServiceJWT{Verify: stubJWT{p: messagesService()}, Known: live("jti-live-2")}, nil)
+	for _, target := range []string{"/messages", "/messages/notify"} {
+		before := *reached
+		if w := do(h, "POST", target, testJWT); w.Code != 204 || *reached != before+1 || got.ID != "msg://service/tangent/dev" || !got.Verified {
+			t.Fatalf("POST %s: %d reached=%d principal=%+v", target, w.Code, *reached, got)
+		}
+	}
+	// messages scope does not publish events
+	if w := do(h, "POST", "/events", testJWT); w.Code != 403 || !strings.Contains(w.Body.String(), "tether.events") {
+		t.Fatalf("messages-only token on /events: %d %s", w.Code, w.Body)
+	}
+	// events scope does not send mail
+	h2, reached2, _ := remoteWith(ServiceJWT{Verify: stubJWT{p: goodService()}, Known: live("jti-live-1")}, nil)
+	for _, target := range []string{"/messages", "/messages/notify"} {
+		if w := do(h2, "POST", target, testJWT); w.Code != 403 || !strings.Contains(w.Body.String(), "tether.messages") {
+			t.Fatalf("events-only token on %s: %d %s", target, w.Code, w.Body)
+		}
+	}
+	if *reached2 != 0 {
+		t.Fatalf("%d refused requests reached the handler", *reached2)
+	}
+}
+
+func TestServiceJWTMessagesRouteGateMatchesEvents(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		v    stubJWT
+		want int
+	}{
+		{"revoked or invalid", stubJWT{err: ErrInvalidToken}, 401},
+		{"not a recorded service token", stubJWT{p: func() Principal { p := messagesService(); p.TokenID = "unknown"; return p }()}, 401},
+		{"agent kind", stubJWT{p: func() Principal { p := messagesService(); p.Kind = "agent"; return p }()}, 401},
+		{"no scopes", stubJWT{p: func() Principal { p := messagesService(); p.Scopes = nil; return p }()}, 403},
+	} {
+		h, reached, _ := remoteWith(ServiceJWT{Verify: c.v, Known: live("jti-live-2")}, nil)
+		if w := do(h, "POST", "/messages/notify", testJWT); w.Code != c.want || *reached != 0 {
+			t.Errorf("%s: %d reached=%d, want %d", c.name, w.Code, *reached, c.want)
 		}
 	}
 }

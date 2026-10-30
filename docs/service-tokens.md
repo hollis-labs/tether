@@ -174,13 +174,26 @@ launches agents (Torque) does not need the operator to hand-issue each token.
 ## Reaching the hub from another host (remote listener)
 
 The hub's remote listener (behind Tailscale Serve, the URL the workers already
-use) accepts a service token on **exactly one route: `POST /events`**, so a
-service on agent-os or worker-1 publishes events with its own token and no device
-pairing. Paired worker devices keep working on the same route.
+use) accepts a service token on a **closed list of three exact routes**, so a
+service on agent-os or worker-1 needs no device pairing:
+
+| Route | Scope | Use |
+|---|---|---|
+| `POST /events` | `tether.events` | publish events |
+| `POST /messages` | `tether.messages` | send mail (stored, no wake) |
+| `POST /messages/notify` | `tether.messages` | send mail and wake the recipient |
+
+A scope opens only its own routes: `tether.messages` does not publish events and
+`tether.events` does not send mail. `tether.messages` is send-only here: no mailbox
+read, inbox, consume or session route accepts a service token. The sender is
+stamped as the token's own principal (`msg://service/<app>/<env>`); a `from` naming
+any other address is refused under enforce. Unlike `POST /events`, the two mail
+routes need the `Tether-Protocol: 1` header like every other remote route. Paired
+worker devices keep working on the same routes.
 
 How it is checked, in this order, all required:
 
-1. The request is exactly `POST /events`: no query string (not even a bare `?`),
+1. The request is exactly one of the three routes above: no query string (not even a bare `?`),
    no trailing slash, no subpath, no other case, no encoded or doubled slash, no
    other method. Anything else, with the same token, is refused 401 as before.
 2. The bearer is a three-part JWT (a `tth_` device credential never takes this
@@ -191,7 +204,7 @@ How it is checked, in this order, all required:
 4. `kind` is `service`, the principal is `msg://service/<app>/<env>`, a `jti` is
    present, and that `jti` is a **live record of IssueService** (not revoked, not
    expired): a token the issuer minted any other way is not accepted here.
-5. The scope `tether.events` is granted (else 403 `scope_required`).
+5. The route's scope (`tether.events` or `tether.messages`) is granted (else 403 `scope_required`).
 
 Then the ingest rules apply: the service is bound to its app (an event naming
 another app is 403 `app_mismatch`), the actor is the service principal, and the

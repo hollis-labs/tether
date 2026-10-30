@@ -631,7 +631,7 @@ func TestRemoteListenerAcceptsAServiceJWTOnlyOnPostEvents(t *testing.T) {
 	// Everywhere else the (other, live) service JWT is refused, with and without the header.
 	live, _ := issue("cerberus", "events")
 	for _, c := range []struct{ method, target string }{
-		{"GET", "/events"}, {"POST", "/events/"}, {"POST", "/events?x=1"}, {"POST", "/messages"}, {"GET", "/sessions"},
+		{"GET", "/events"}, {"POST", "/events/"}, {"POST", "/events?x=1"}, {"POST", "/messages/inbox"}, {"GET", "/messages"}, {"GET", "/sessions"},
 		{"GET", "/environment/events"}, {"POST", "/auth/token"}, {"POST", "/auth/pair"}, {"GET", "/auth/denylist/x"}, {"POST", "/mcp"},
 	} {
 		for _, v := range []string{"", "1"} {
@@ -646,6 +646,30 @@ func TestRemoteListenerAcceptsAServiceJWTOnlyOnPostEvents(t *testing.T) {
 		t.Fatal("a refused service JWT reached the ingest")
 	}
 	_ = read
+
+	// A tether.messages service JWT is admitted on the two mail routes (and needs the
+	// protocol header there, unlike /events); an events-only one is 403, and the
+	// messages one is refused on /events.
+	mail, _ := issue("tangent", "tether.messages")
+	for _, target := range []string{"/messages", "/messages/notify"} {
+		if w := do("POST", target, "", mail); w.Code != 409 {
+			t.Errorf("messages JWT POST %s without the protocol header: %d, want 409", target, w.Code)
+		}
+		if w := do("POST", target, "1", mail); w.Code == 401 || w.Code == 403 {
+			t.Errorf("messages JWT POST %s: %d, want it admitted", target, w.Code)
+		}
+		if w := do("POST", target, "1", live); w.Code != 403 {
+			t.Errorf("events-only JWT POST %s: %d, want 403", target, w.Code)
+		}
+	}
+	if w := do("POST", "/events", "", mail); w.Code != 403 {
+		t.Errorf("messages-only JWT POST /events: %d, want 403", w.Code)
+	}
+	for _, c := range []struct{ method, target string }{{"GET", "/messages/inbox"}, {"GET", "/messages"}, {"POST", "/messages/x/consume"}, {"POST", "/sessions"}} {
+		if w := do(c.method, c.target, "1", mail); w.Code != 401 && w.Code != 404 {
+			t.Errorf("messages JWT %s %s: %d, want refused", c.method, c.target, w.Code)
+		}
+	}
 
 	// Without the ingest on, a service JWT is just another refused bearer.
 	s.EventIngest = nil
