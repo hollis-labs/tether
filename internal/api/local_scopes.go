@@ -38,6 +38,9 @@ func WouldAllowLocal(p identity.Principal, scope string) bool {
 	case selfScope:
 		return p.Kind == "device" || slices.Contains(p.Scopes, "*")
 	}
+	if (scope == registryScope || scope == registryReadScope) && len(identity.Qualifiers(p.Scopes, identity.AppScopePrefix+identity.ScopeRegistry)) > 0 {
+		return true // a substrate-limited registry grant; the handlers narrow it (substrate_scope.go)
+	}
 	if p.TokenID != "" { // issued token: namespaced scopes, no local-custody authority
 		return scope != localScope && identity.ScopeGranted(p.Scopes, scope)
 	}

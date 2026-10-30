@@ -222,3 +222,20 @@ without verifying further, so a flood of garbage bearers cannot burn CPU.
 Successful requests are never charged to it. Accepted requests are logged as
 `remote service JWT accepted sub=... jti=<8 chars>` and recorded in the identity
 audit; the token is never logged.
+
+## Lifetime, and limiting a token to one substrate
+
+`tether service-token issue --ttl 720h` gives the token a lifetime (minimum 5 minutes; default
+ten years, revoked by jti). An expired token is refused by every verifier with no deny-list
+entry, so a short TTL bounds a credential that leaks or is forgotten. `tether service-token
+rotate-key --reissue` keeps each token's original lifetime, so rotation never turns a short
+token into a ten-year one. To replace an expiring token, issue a new one and revoke the old by jti.
+
+`--scope tether.registry:nanite` and `--scope tether.send_as:nanite` limit a grant to actors of one
+substrate; see [auth scopes](auth-scopes.md). Example, an enrollment credential that can manage only
+Nanite's actors and expires in 30 days:
+
+```sh
+tether service-token issue --app nanite-registry --label "nanite enrollment" \
+  --scope tether.registry:nanite --ttl 720h --out-file /path/registry.token
+```

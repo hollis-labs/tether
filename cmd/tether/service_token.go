@@ -24,12 +24,14 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 	var req api.ServiceTokenRequest
 	var outFile string
 	var asJSON bool
+	var ttl time.Duration
 	issue := &cobra.Command{Use: "issue", Short: "Issue a service token; the token is printed once", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := factory()
 			if err != nil {
 				return err
 			}
+			req.TTLSeconds = int(ttl / time.Second)
 			var out api.ServiceTokenResponse
 			if err := client.call(cmd.Context(), http.MethodPost, api.ServiceTokensPath, req, &out); err != nil {
 				return err
@@ -60,7 +62,8 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 	issue.Flags().StringVar(&req.App, "app", "", "the app the token is for; the principal is msg://service/<app>/<env>")
 	issue.Flags().StringVar(&req.Env, "env", "", "environment segment of the principal (default dev)")
 	issue.Flags().StringVar(&req.Audience, "audience", "tether", "the app that verifies the token (tether for Tether's own API)")
-	issue.Flags().StringSliceVar(&req.Scopes, "scope", nil, "scope, <audience>.<verb> (for tether: events, read, messages); repeatable")
+	issue.Flags().StringSliceVar(&req.Scopes, "scope", nil, "scope, <audience>.<verb> (for tether: events, read, messages, registry); repeatable. tether.registry:<substrate> and tether.send_as:<substrate> limit a grant to actors of one substrate")
+	issue.Flags().DurationVar(&ttl, "ttl", 0, "token lifetime, e.g. 720h (minimum 5m); default is ten years, revoked by jti")
 	issue.Flags().StringVar(&req.Label, "label", "", "short label shown in listings")
 	issue.Flags().BoolVar(&req.AllowWildcard, "allow-wildcard", false, "dev only: allow <audience>.*")
 	issue.Flags().StringVar(&outFile, "out-file", "", "write the token to this new 0600 file instead of stdout")

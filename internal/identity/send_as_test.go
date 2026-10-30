@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 func TestPrincipalMayActAsAndDefaultAddress(t *testing.T) {
@@ -52,5 +53,32 @@ func TestRecordObservationPersistsEvent(t *testing.T) {
 	var event string
 	if err := db.DB().QueryRow(`SELECT event FROM identity_audit WHERE route='/messages'`).Scan(&event); err != nil || event != "from_unverified" {
 		t.Fatalf("event = %q err=%v", event, err)
+	}
+}
+
+func TestStoreSessionAddressesReadsOnlyALiveSessionCredential(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, db := identityStore(t)
+	ctx := context.Background()
+	if err := db.CreateSession(store.SessionRow{ID: "s1", State: "created"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	live := identity.Principal{ID: "msg://session/local/s1", Kind: "session", SessionID: "s1", Scopes: []string{"read"},
+		Addresses: []string{"msg://session/local/s1", "msg://agent/agent-mux/agt_x"}}
+	if _, err := s.MintSessionForLaunch(ctx, live); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SessionAddresses(ctx, "s1")
+	if err != nil || len(got) != 2 || got[1] != "msg://agent/agent-mux/agt_x" {
+		t.Fatalf("live = %v %v", got, err)
+	}
+	if got, err := s.SessionAddresses(ctx, "nope"); err != nil || len(got) != 0 {
+		t.Fatalf("unknown = %v %v", got, err)
+	}
+	if err := s.RevokeSession(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.SessionAddresses(ctx, "s1"); len(got) != 0 {
+		t.Fatalf("revoked session still reports addresses: %v", got)
 	}
 }

@@ -280,6 +280,43 @@ func (s *Store) SessionOwner(ctx context.Context, sessionID string) (string, err
 	return "", nil
 }
 
+// SessionAddresses returns the addresses recorded on a session's live
+// credential: its own id plus the agent identities it was launched to act as
+// (CW-20261024-0023). The daemon wrote them at launch, so they are not caller
+// supplied. A session whose credential is revoked, expired or missing yields
+// none, and the caller then falls back to the session id alone.
+func (s *Store) SessionAddresses(ctx context.Context, sessionID string) ([]string, error) {
+	if s == nil || s.db == nil || sessionID == "" {
+		return nil, fmt.Errorf("identity store unavailable")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT addresses_json, expires_at FROM principals
+        WHERE kind = 'session' AND session_id = ? AND revoked_at IS NULL
+        ORDER BY created_at DESC`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("lookup session addresses: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw string
+		var expires sql.NullString
+		if err = rows.Scan(&raw, &expires); err != nil {
+			return nil, fmt.Errorf("lookup session addresses: %w", err)
+		}
+		if expires.Valid {
+			at, parseErr := time.Parse(time.RFC3339Nano, expires.String)
+			if parseErr != nil || !at.After(time.Now()) {
+				continue
+			}
+		}
+		var addresses []string
+		if err = json.Unmarshal([]byte(raw), &addresses); err != nil {
+			return nil, fmt.Errorf("lookup session addresses: %w", err)
+		}
+		return addresses, nil
+	}
+	return nil, rows.Err()
+}
+
 // SessionGrantedScopes returns the scopes most recently granted to a session's
 // credential, whether or not that credential is still live: it answers "what
 // authority did this session hold", which bounds anything it spawns or that is

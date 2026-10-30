@@ -2,6 +2,7 @@ package identity
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -240,4 +241,34 @@ func ScopesCover(granted, requested []string) bool {
 		}
 	}
 	return true
+}
+
+// QualifierSep separates a scope from the substrate it is limited to:
+// "tether.registry:nanite" lets a credential register, update and deregister only
+// actors that carry an external id of substrate "nanite"; "tether.send_as:nanite" lets
+// it author messages as such actors. A qualified scope never satisfies the plain scope
+// (ScopeGranted compares whole strings), so code that does not narrow by substrate cannot
+// be reached through one by accident (CW-20261024-0023, CW-20261025-0001).
+const QualifierSep = ":"
+
+// ScopeSendAsSubstrate is the base of the qualified send-as scope.
+const ScopeSendAsSubstrate = AppScopePrefix + "send_as"
+
+var substrateRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// ValidSubstrate reports whether s may qualify a scope.
+func ValidSubstrate(s string) bool { return substrateRe.MatchString(s) }
+
+// Qualifiers returns the substrates the credential's qualified grants of base are
+// limited to ("tether.registry:nanite" yields "nanite" for base "tether.registry"),
+// sorted and without duplicates.
+func Qualifiers(granted []string, base string) []string {
+	var out []string
+	for _, g := range granted {
+		if b, sub, ok := strings.Cut(g, QualifierSep); ok && b == base && ValidSubstrate(sub) && !slices.Contains(out, sub) {
+			out = append(out, sub)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

@@ -60,7 +60,13 @@ type IdentityConfig struct {
 
 // IdentityPoints are the enforcement points whose mode can be set
 // independently of identity.mode. Every other consumer follows identity.mode.
-var IdentityPoints = []string{"local_api", "mcp_gateway", "teams"}
+//
+// "sender" is the sender-identity check: a message's from, and an acting-as claim
+// (?as=, by, member), must be an address of the verified principal. It can be
+// enforced alone (identity.points.sender: enforce) while local_api stays at observe,
+// so forged senders are refused without also enforcing route scopes
+// (CW-20261024-0023).
+var IdentityPoints = []string{"local_api", "mcp_gateway", "teams", "sender"}
 
 type PrincipalMCPGrant struct {
 	Servers []string `yaml:"servers" json:"servers"`

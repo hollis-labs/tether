@@ -840,3 +840,98 @@ func TestIssueServiceRegistryScopes(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261025-0001: a service token can have a short lifetime, and rotation keeps it short.
+func TestServiceTokenTTL(t *testing.T) {
+	is, _ := newIssuer(t)
+	base := ServiceRequest{App: "nanite", Audience: "tether", Scopes: []string{"events"}}
+	_, def, err := is.IssueService(operatorP, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := def.ExpiresAt.Sub(def.IssuedAt); got < ServiceTokenLifetime-time.Minute {
+		t.Fatalf("default lifetime = %s", got)
+	}
+	short := base
+	short.TTL = 2 * time.Hour
+	_, rec, err := is.IssueService(operatorP, short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.ExpiresAt.Sub(rec.IssuedAt); got != 2*time.Hour {
+		t.Fatalf("ttl lifetime = %s, want 2h", got)
+	}
+	for _, bad := range []time.Duration{time.Minute, -time.Hour, ServiceTokenLifetime + time.Hour} {
+		r := base
+		r.TTL = bad
+		if _, _, err := is.IssueService(operatorP, r); err == nil {
+			t.Errorf("ttl %s accepted", bad)
+		}
+	}
+	res, err := is.RotateServiceKey(operatorP, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res.Reissued {
+		got := r.Record.ExpiresAt.Sub(r.Record.IssuedAt)
+		switch r.Record.Replaces {
+		case rec.JTI:
+			if got != 2*time.Hour {
+				t.Errorf("reissued short token lifetime = %s, want 2h", got)
+			}
+		case def.JTI:
+			if got < ServiceTokenLifetime-time.Minute {
+				t.Errorf("reissued default token lifetime = %s", got)
+			}
+		}
+	}
+}
+
+func TestServiceTokenQualifiedScopes(t *testing.T) {
+	is, _ := newIssuer(t)
+	issue := func(scopes ...string) ([]string, error) {
+		_, rec, err := is.IssueService(operatorP, ServiceRequest{App: "nanite-registry", Audience: "tether", Scopes: scopes})
+		return rec.Scopes, err
+	}
+	got, err := issue("tether.registry:nanite", "tether.send_as:nanite", "tether.messages")
+	if err != nil || strings.Join(got, " ") != "tether.messages tether.registry:nanite tether.send_as:nanite" {
+		t.Fatalf("qualified issue = %v %v", got, err)
+	}
+	if got, err = issue("tether.registry:nanite"); err != nil || len(got) != 1 {
+		t.Fatalf("qualified only = %v %v", got, err)
+	}
+	for _, bad := range [][]string{
+		{"tether.send_as"},               // no plain send-as for a service token
+		{"tether.read:nanite"},           // only registry and send_as can be qualified
+		{"tether.registry:Nanite"},       // substrate is lowercase
+		{"tether.registry:"},             // empty substrate
+		{"tether.registry:a b"},          // plain characters only
+		{"tether.admin:nanite"},          // not a service scope at all
+		{"tether.registry:nanite:extra"}, // one qualifier
+	} {
+		if _, err := issue(bad...); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+}
+
+func TestQualifiedScopesSurviveVerification(t *testing.T) {
+	is, _ := newIssuer(t)
+	tok, _, err := is.IssueService(operatorP, ServiceRequest{App: "nanite-registry", Audience: "tether", Scopes: []string{"tether.registry:nanite", "tether.send_as:nanite"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := verifierFor(t, is).Verify(context.Background(), tok.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := identity.Qualifiers(p.Scopes, "tether.registry"); len(got) != 1 || got[0] != "nanite" {
+		t.Fatalf("registry qualifiers = %v (scopes %v)", got, p.Scopes)
+	}
+	if got := identity.Qualifiers(p.Scopes, identity.ScopeSendAsSubstrate); len(got) != 1 || got[0] != "nanite" {
+		t.Fatalf("send_as qualifiers = %v", got)
+	}
+	if identity.ScopeGranted(p.Scopes, identity.ScopeRegistry) || p.MayActAs("msg://agent/agent-mux/anyone") {
+		t.Fatalf("a qualified grant satisfied the plain scope: %v", p.Scopes)
+	}
+}

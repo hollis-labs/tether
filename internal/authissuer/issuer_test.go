@@ -419,3 +419,56 @@ func (c countingStored) Verify(ctx context.Context, token string) (identity.Prin
 	*c.calls++
 	return c.inner.Verify(ctx, token)
 }
+
+type addrStored struct {
+	fakeStored
+	bySession map[string][]string
+	fail      bool
+}
+
+func (a addrStored) SessionAddresses(_ context.Context, sid string) ([]string, error) {
+	if a.fail {
+		return nil, errors.New("store down")
+	}
+	return a.bySession[sid], nil
+}
+
+// CW-20261024-0023: an agent JWT is bound to a session by sid but used to carry only the session id,
+// so under enforce it could not author as the agent the session was launched to act as.
+func TestAgentJWTCarriesTheSessionsRecordedAddresses(t *testing.T) {
+	is, _ := newIssuer(t)
+	operator := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	ctx := context.Background()
+	session := SessionPrincipalID("s9")
+	recorded := []string{session, "msg://agent/agent-mux/designer", "msg://agent/agent-mux/agt_coombqpx69"}
+	stored := addrStored{bySession: map[string][]string{"s9": recorded}}
+	v, err := NewVerifier(stored, is)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"read"}, SessionID: "s9"})
+	p, err := v.Verify(ctx, tok.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.MayActAs("msg://agent/agent-mux/agt_coombqpx69") || !p.MayActAs(session) || p.MayActAs("msg://agent/agent-mux/other") {
+		t.Fatalf("addresses = %v", p.Addresses)
+	}
+	if len(p.Addresses) != 3 {
+		t.Fatalf("duplicate or extra addresses: %v", p.Addresses)
+	}
+	// A session with no live credential, and a failing lookup, fall back to the session id alone.
+	tok2, _ := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"read"}, SessionID: "s10"})
+	if p, _ := v.Verify(ctx, tok2.Token); len(p.Addresses) != 1 || p.Addresses[0] != SessionPrincipalID("s10") {
+		t.Fatalf("unknown session addresses = %v", p.Addresses)
+	}
+	failing, _ := NewVerifier(addrStored{fail: true}, is)
+	if p, _ := failing.Verify(ctx, tok.Token); len(p.Addresses) != 1 {
+		t.Fatalf("failed lookup widened addresses: %v", p.Addresses)
+	}
+	// A token with no session never gains addresses.
+	plain, _ := is.Exchange(operator, Request{Audience: "tether", Scopes: []string{"read"}})
+	if p, _ := v.Verify(ctx, plain.Token); len(p.Addresses) != 1 {
+		t.Fatalf("sessionless token addresses = %v", p.Addresses)
+	}
+}

@@ -651,7 +651,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			DeliveryRepair:   s.DeliveryRepair,
 			Retention:        s.Retention,
 			RoutingReplies:   s.RoutingReplies,
-			IdentityMode:     s.Config.IdentityMode,
+			IdentityMode:     s.Config.IdentityModeFor("sender"),
 			IdentityAudit:    s.recordIdentityObservation,
 		})
 		// Mount api at every top-level path it owns. Keeping the list

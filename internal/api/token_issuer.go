@@ -55,6 +55,8 @@ type ServiceTokenRequest struct {
 	Scopes        []string `json:"scopes"`
 	Label         string   `json:"label,omitempty"`
 	AllowWildcard bool     `json:"allow_wildcard,omitempty"`
+	// TTLSeconds is the token lifetime; 0 keeps the ten-year "no expiry" default.
+	TTLSeconds int `json:"ttl_seconds,omitempty"`
 }
 
 // ServiceTokenResponse is the answer to POST /auth/service-tokens: the token,
@@ -182,7 +184,7 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		if !decodeDeviceBody(w, r, &req) {
 			return
 		}
-		tok, rec, err := is.IssueService(p, authissuer.ServiceRequest{App: req.App, Env: req.Env, Audience: req.Audience, Scopes: req.Scopes, Label: req.Label, AllowWildcard: req.AllowWildcard})
+		tok, rec, err := is.IssueService(p, authissuer.ServiceRequest{App: req.App, Env: req.Env, Audience: req.Audience, Scopes: req.Scopes, Label: req.Label, AllowWildcard: req.AllowWildcard, TTL: time.Duration(req.TTLSeconds) * time.Second})
 		switch {
 		case errors.Is(err, authissuer.ErrForbidden):
 			writeError(w, http.StatusForbidden, CodeForbidden, strings.TrimPrefix(err.Error(), "authissuer: "))
