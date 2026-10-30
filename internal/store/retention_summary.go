@@ -90,7 +90,7 @@ func (s *Store) RetentionSummary(ctx context.Context, now time.Time) (RetentionS
 			g.Oldest = *oldest
 		}
 		if g.Count > 0 {
-			rs, err := s.db.QueryContext(ctx, `SELECT recipient_urn, count(*) c FROM messaging_deliveries WHERE `+sp.where+` GROUP BY recipient_urn ORDER BY c DESC, recipient_urn LIMIT ?`,
+			rs, err := s.db.QueryContext(ctx, `SELECT recipient_urn, count(*) c FROM messaging_deliveries WHERE `+sp.where+` GROUP BY recipient_urn ORDER BY c DESC, recipient_urn LIMIT ?`, //nolint:gosec // G202: sp.where is one of the constant clauses above, never caller input
 				append(append([]any{}, sp.args...), retentionTopRecipients)...)
 			if err != nil {
 				return out, fmt.Errorf("store: retention summary: %s recipients: %w", sp.name, err)
