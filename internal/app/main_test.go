@@ -22,6 +22,8 @@ import (
 // (CW-20261001-0142). TMPDIR is canonicalized first (macOS /var symlink). The tests of protection itself set
 // Service.protectionStatus.
 func TestMain(m *testing.M) {
+	// Retry delays are deterministic in tests; the jitter has its own test.
+	wakeRetryJitter = func() float64 { return 1 }
 	if err := testutil.CanonicalizeTempEnv(); err != nil {
 		fmt.Fprintln(os.Stderr, "canonical temp dir:", err)
 		os.Exit(1)
