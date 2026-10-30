@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,11 @@ type Verifier struct {
 	JWT    *auth.JWTVerifier
 	// Issuer is the iss every accepted JWT carries (the JWT verifier pins it).
 	Issuer string
+	// SessionAddresses, when set, returns the addresses recorded on a session's live
+	// stored credential. An agent JWT is bound to a session by its sid claim but carries
+	// only the session id; without this its principal could not author as the agent the
+	// session was launched to act as, and enforce mode would refuse every message it sends.
+	SessionAddresses func(ctx context.Context, sessionID string) ([]string, error)
 }
 
 // VerifierOption adjusts how issued JWTs are verified.
@@ -60,7 +66,13 @@ func NewVerifier(stored identity.Verifier, is *Issuer, opts ...VerifierOption) (
 	if err != nil {
 		return nil, err
 	}
-	return &Verifier{Stored: stored, JWT: jv, Issuer: is.Name}, nil
+	v := &Verifier{Stored: stored, JWT: jv, Issuer: is.Name}
+	if st, ok := stored.(interface {
+		SessionAddresses(ctx context.Context, sessionID string) ([]string, error)
+	}); ok {
+		v.SessionAddresses = st.SessionAddresses
+	}
+	return v, nil
 }
 
 // Verify implements identity.Verifier.
@@ -84,6 +96,17 @@ func (v *Verifier) Verify(ctx context.Context, token string) (identity.Principal
 	if display == "" {
 		display = "Issued token for " + p.ID
 	}
+	addresses := []string{p.ID}
+	if p.Kind == "agent" && p.SessionID != "" && p.ID == SessionPrincipalID(p.SessionID) && v.SessionAddresses != nil {
+		// A lookup failure leaves the session id alone: narrower, never wider.
+		if recorded, err := v.SessionAddresses(ctx, p.SessionID); err == nil {
+			for _, a := range recorded {
+				if a != "" && !slices.Contains(addresses, a) {
+					addresses = append(addresses, a)
+				}
+			}
+		}
+	}
 	return identity.Principal{Verified: true, ID: p.ID, Kind: p.Kind, Display: display, Scopes: append([]string(nil), p.Scopes...),
-		SessionID: p.SessionID, Issuer: v.Issuer, Audience: p.Audience, TokenID: p.TokenID, Parent: p.Parent, ExpiresAt: &exp, Addresses: []string{p.ID}}, nil
+		SessionID: p.SessionID, Issuer: v.Issuer, Audience: p.Audience, TokenID: p.TokenID, Parent: p.Parent, ExpiresAt: &exp, Addresses: addresses}, nil
 }
