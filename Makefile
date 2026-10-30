@@ -90,6 +90,8 @@ test:
 # bytes for each registered scorer, checked against the committed baseline.
 # Re-record after an intentional scorer or fixture change:
 #   go test ./internal/mcpgateway -run 'TestSearchEval$$' -count=1 -args -search-eval-update
+# Compare index variants (stemming, argument names, name emphasis) on the same fixture:
+#   SEARCH_EVAL_VARIANTS=1 go test ./internal/mcpgateway -run TestSearchEvalVariants -count=1 -v
 search-eval:
 	@go test ./internal/mcpgateway -run 'TestSearchEval' -count=1 -v | grep -v '^=== RUN'
 

@@ -176,14 +176,36 @@ queries mirror usage and the tail and hard queries exist to keep the eval honest
 `tether_tool_search` ranks with BM25 (the shared `toolselect` ranker from
 `libs/agent/core`): inverse document frequency over each tool's name, title,
 description and origin tags, with an exact-name tier and a name-prefix tier ahead
-of it. The original word-count scorer is still available:
+of it. The words of a tool's name are weighed three extra times (see below). The
+original word-count scorer is still available:
 set `TETHER_MCP_SEARCH_SCORER=keyword` in the daemon's environment and restart to
 switch back; any other value, or unset, is BM25.
 
-On the search-eval fixture (138 queries, 725 tools) BM25 moved recall@5 from 0.594
-to 0.804 and MRR from 0.456 to 0.690, with the median response size and per-search
-latency unchanged (`go test ./internal/mcpgateway -bench SearchScorers`: about
-8 ms per call for both, dominated by the cursor fingerprint). The fixture does not
-include input-schema argument names, so the numbers compare the two scorers on the
-same fields (name, title, description, tags). BM25 does not stem, so "messages"
-does not match "message"; the typo queries in the fixture still miss.
+On the search-eval fixture (170 queries, 725 tools) the shipped ranking reaches
+recall@5 0.841 and MRR 0.737; the word-count scorer reaches 0.588 and 0.465. Median
+response size is unchanged (about 3.2 KB) and per-search latency is about 8 ms for
+either (`go test ./internal/mcpgateway -bench SearchScorers`, dominated by the cursor
+fingerprint).
+
+### What was tried (CW-20261024-0115)
+
+Each change was measured on the same fixture and on 24 queries written before the
+experiment ("held-out"; they have now been seen, so they are no longer held-out for
+further tuning). Kept only if recall@5 and MRR improved with every exact-name and prefix
+case still first. Reproduce with
+`SEARCH_EVAL_VARIANTS=1 go test ./internal/mcpgateway -run TestSearchEvalVariants -v`.
+
+| Variant | recall@5 | MRR | held-out MRR | Verdict |
+|---|---:|---:|---:|---|
+| baseline (before this change) | 0.812 | 0.709 | 0.717 | |
+| name words x3 (shipped) | 0.841 | 0.737 | 0.790 | kept |
+| name words x4 | 0.841 | 0.743 | 0.790 | no gain held-out; not shipped |
+| argument names | 0.818 | 0.710 | 0.745 | hard-query recall@5 fell 0.647 to 0.618; not shipped |
+| argument names and descriptions | 0.818 | 0.682 | 0.641 | worse; not shipped |
+| light stemming ("messages" to "message") | 0.800 | 0.672 | 0.644 | worse everywhere; not shipped |
+
+The shared ranker scores one combined text, so "name over tags over description"
+weighting is approximated by repeating the name words in the title field. Two queries
+still miss (x009 "find tasks that mention a phrase", x011 "look up prior decisions on this"):
+they are paraphrases with no word in common with the right tool, which needs synonyms
+or embeddings, not a better term weighting. The typo queries in the fixture also miss.

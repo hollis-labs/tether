@@ -74,6 +74,13 @@ type evalTool struct {
 	Description string                  `json:"description"`
 	Annotations *mcpsdk.ToolAnnotations `json:"annotations,omitempty"`
 	Required    []string                `json:"required,omitempty"`
+	// Arguments are the tool's top-level input-schema properties (CW-20261024-0115).
+	Arguments []evalArgument `json:"arguments,omitempty"`
+}
+
+type evalArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 type evalCatalog struct {
@@ -134,6 +141,17 @@ func (c *evalCatalog) snapshot() Snapshot {
 		schema := map[string]any{"type": "object"}
 		if len(e.Required) > 0 {
 			schema["required"] = e.Required
+		}
+		if len(e.Arguments) > 0 {
+			props := map[string]any{}
+			for _, a := range e.Arguments {
+				prop := map[string]any{}
+				if a.Description != "" {
+					prop["description"] = a.Description
+				}
+				props[a.Name] = prop
+			}
+			schema["properties"] = props
 		}
 		snap.Entries = append(snap.Entries, Entry{
 			Tool:   &mcpsdk.Tool{Name: e.Name, Title: e.Title, Description: e.Description, Annotations: e.Annotations, InputSchema: schema},
@@ -437,7 +455,7 @@ func TestSearchEvalSnapshot(t *testing.T) {
 	for _, d := range dump {
 		cat.Entries = append(cat.Entries, evalTool{
 			Name: d.Name, Origin: d.Origin, Title: d.Title, Description: d.Description,
-			Annotations: d.Annotations, Required: requiredArgs(d.InputSchema),
+			Annotations: d.Annotations, Required: requiredArgs(d.InputSchema), Arguments: evalArguments(d.InputSchema),
 		})
 	}
 	sort.Slice(cat.Entries, func(i, j int) bool { return cat.Entries[i].Name < cat.Entries[j].Name })
@@ -562,4 +580,63 @@ func TestSearchRegressionExactNameAndPrefix(t *testing.T) {
 			t.Errorf("prefix %q finds %q at rank %d, want top 3", prefix, want, got)
 		}
 	}
+}
+
+// evalArguments lists a schema's top-level properties with a trimmed description.
+func evalArguments(schema any) []evalArgument {
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return nil
+	}
+	props, _ := m["properties"].(map[string]any)
+	var out []evalArgument
+	for name, raw := range props {
+		a := evalArgument{Name: name}
+		if prop, ok := raw.(map[string]any); ok {
+			if d, ok := prop["description"].(string); ok {
+				a.Description = truncateRunes(d, 160)
+			}
+		}
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// TestSearchEvalVariants compares index variants on the same fixture (CW-20261024-0115). It only reports;
+// the shipped default is whatever bm25Variant{} does, and a change is kept only when this table shows
+// recall@5 and MRR improve with the exact-name and prefix cases (category "regression") not worse.
+func TestSearchEvalVariants(t *testing.T) {
+	if os.Getenv("SEARCH_EVAL_VARIANTS") == "" {
+		t.Skip("set SEARCH_EVAL_VARIANTS=1 to compare index variants (about 45s)")
+	}
+	cat := loadEvalCatalog(t)
+	qs := loadEvalQueries(t).Queries
+	variants := []struct {
+		name string
+		v    bm25Variant
+	}{
+		{"baseline", bm25Variant{}},
+		{"args:names", bm25Variant{ArgNames: true}},
+		{"args:names+desc", bm25Variant{ArgDescriptions: true}},
+		{"stem", bm25Variant{Stem: true}},
+		{"name-boost x1", bm25Variant{NameBoost: 1}},
+		{"name-boost x2", bm25Variant{NameBoost: 2}},
+		{"name-boost x3", bm25Variant{NameBoost: 3}},
+		{"name-boost x4", bm25Variant{NameBoost: 4}},
+		{"name-boost x2+args", bm25Variant{NameBoost: 2, ArgNames: true}},
+		{"args:names+stem", bm25Variant{ArgNames: true, Stem: true}},
+		{"args:names+desc+stem", bm25Variant{ArgDescriptions: true, Stem: true}},
+	}
+	shipped := searchVariant
+	defer func() { searchVariant = shipped }()
+	var sb strings.Builder
+	for _, tc := range variants {
+		searchVariant = tc.v
+		b := runSearchEval(t, cat, qs, tc.name, nil, BM25ScoreAll)
+		fmt.Fprintf(&sb, "%-22s recall@1=%.3f recall@5=%.3f recall@10=%.3f MRR=%.3f  hard@5=%.3f regression@1=%.3f | heldout r@1=%.3f r@5=%.3f MRR=%.3f | x009=%d x011=%d\n",
+			tc.name, b.Overall.Recall1, b.Overall.Recall5, b.Overall.Recall10, b.Overall.MRR, b.ByCategory["hard"].Recall5, b.ByCategory["regression"].Recall1,
+			b.ByCategory["heldout"].Recall1, b.ByCategory["heldout"].Recall5, b.ByCategory["heldout"].MRR, b.Ranks["x009"], b.Ranks["x011"])
+	}
+	t.Logf("\n%s", sb.String())
 }
