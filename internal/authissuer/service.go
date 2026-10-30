@@ -27,6 +27,8 @@ const (
 	// DefaultServiceEnv is the env segment of the service principal when none is given.
 	DefaultServiceEnv = "dev"
 	maxServiceRecords = 256
+	// MinServiceTTL is the shortest service token lifetime an issuer accepts.
+	MinServiceTTL = 5 * time.Minute
 )
 
 // serviceTetherScopes is the dev allowlist of Tether scopes a service token may
@@ -34,6 +36,11 @@ const (
 // reads, CW-20261024-0094: a service that enrolls and looks up actors). Nothing
 // that administers devices or the catalog, or launches sessions.
 var serviceTetherScopes = []string{"tether.events", "tether.read", "tether.messages", "tether.registry", "tether.registry_read"}
+
+// serviceQualifiable are the scopes a service token may hold limited to a substrate. The plain
+// form of tether.send_as does not exist: acting as any sender is message.send_as, an operator
+// grant that no service token may hold.
+var serviceQualifiable = []string{"tether.registry", "tether.send_as"}
 
 var (
 	envRe   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
@@ -55,6 +62,11 @@ type ServiceRequest struct {
 	Label string
 	// AllowWildcard permits <audience>.* (dev only; logged as a warning).
 	AllowWildcard bool
+	// TTL is the token's lifetime. Zero keeps ServiceTokenLifetime ("no expiry", revoked
+	// by jti); otherwise it must be between MinServiceTTL and ServiceTokenLifetime.
+	// An expired token is refused by every verifier without a deny-list entry, so a
+	// short TTL bounds a leaked or forgotten credential (CW-20261025-0001).
+	TTL time.Duration
 }
 
 // ServiceRecord is the issuer's metadata for one service token. It never holds
@@ -139,6 +151,12 @@ func (i *Issuer) mintService(issuedBy string, req ServiceRequest, replaces strin
 	}
 	now := i.Now().UTC()
 	exp := now.Add(ServiceTokenLifetime)
+	if req.TTL != 0 {
+		if req.TTL < MinServiceTTL || req.TTL > ServiceTokenLifetime {
+			return Token{}, ServiceRecord{}, invalid("ttl must be between %s and %s", MinServiceTTL, ServiceTokenLifetime)
+		}
+		exp = now.Add(req.TTL)
+	}
 	c := Claims{Iss: i.Name, Sub: sub, Aud: req.Audience, Scope: strings.Join(scopes, " "), Exp: exp.Unix(), Iat: now.Unix(),
 		JTI: uuid.NewString(), Kind: KindService, Par: issuedBy}
 	// Hold keyLife from choosing the key until the record that names it is saved, so
@@ -177,16 +195,34 @@ func serviceScopes(req ServiceRequest) ([]string, error) {
 		return nil, invalid("request between 1 and 16 scopes")
 	}
 	if req.Audience == TetherAudience {
-		out, err := identity.CanonicalScopes(req.Scopes)
-		if err != nil {
-			return nil, invalid("unknown tether scope")
+		plain, qualified := []string{}, []string{}
+		for _, s := range req.Scopes {
+			if base, sub, ok := strings.Cut(s, identity.QualifierSep); ok {
+				// A substrate-limited grant, "tether.registry:nanite": registry writes, or acting
+				// as a sender, only for actors that carry an external id of that substrate.
+				if !slices.Contains(serviceQualifiable, base) || !identity.ValidSubstrate(sub) {
+					return nil, invalid("a qualified scope must be one of %s with a lowercase substrate, e.g. tether.registry:nanite", strings.Join(serviceQualifiable, ", "))
+				}
+				qualified = append(qualified, s)
+				continue
+			}
+			plain = append(plain, s)
 		}
-		for _, s := range out {
-			if !slices.Contains(serviceTetherScopes, s) {
-				return nil, invalid("a service token may hold only %s", strings.Join(serviceTetherScopes, ", "))
+		out := []string{}
+		if len(plain) > 0 || len(qualified) == 0 {
+			var err error
+			if out, err = identity.CanonicalScopes(plain); err != nil {
+				return nil, invalid("unknown tether scope")
+			}
+			for _, s := range out {
+				if !slices.Contains(serviceTetherScopes, s) {
+					return nil, invalid("a service token may hold only %s", strings.Join(serviceTetherScopes, ", "))
+				}
 			}
 		}
-		return out, nil
+		out = append(out, qualified...)
+		slices.Sort(out)
+		return slices.Compact(out), nil
 	}
 	seen := map[string]bool{}
 	for _, s := range req.Scopes {
@@ -293,7 +329,7 @@ func (i *Issuer) RotateServiceKey(parent identity.Principal, reissue bool) (Rota
 		return res, forbidden("too many live service tokens to re-issue; revoke unused ones first")
 	}
 	for _, old := range res.Pending {
-		tok, rec, err := i.issueServiceFrom(parent, ServiceRequest{App: old.App, Env: old.Env, Audience: old.Audience, Scopes: old.Scopes, Label: old.Label}, old.JTI, true)
+		tok, rec, err := i.issueServiceFrom(parent, ServiceRequest{App: old.App, Env: old.Env, Audience: old.Audience, Scopes: old.Scopes, Label: old.Label, TTL: reissueTTL(old)}, old.JTI, true)
 		if err != nil {
 			return res, err
 		}
@@ -337,4 +373,15 @@ func (i *Issuer) ServiceKeyInUse(kid string) bool { return i.State.serviceKeyInU
 // if it is live here, so only tokens minted through IssueService qualify.
 func (i *Issuer) LiveService(jti string) bool {
 	return i.State.liveService(jti, i.Now())
+}
+
+// reissueTTL is the lifetime a re-issued token keeps: the original's, so rotating a
+// signing key never turns a short-lived token into a ten-year one. A token that had
+// the default lifetime re-issues with the default.
+func reissueTTL(old ServiceRecord) time.Duration {
+	d := old.ExpiresAt.Sub(old.IssuedAt)
+	if d <= 0 || d >= ServiceTokenLifetime-time.Hour {
+		return 0
+	}
+	return d
 }

@@ -66,6 +66,16 @@ func (c *deviceAdminClient) call(ctx context.Context, method, path string, body,
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		// The daemon's own reason (for example "label must be at most 64 plain characters") says
+		// what to fix; its error bodies carry no credential.
+		var failure struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if data, readErr := io.ReadAll(io.LimitReader(res.Body, 4096)); readErr == nil && json.Unmarshal(data, &failure) == nil && failure.Error.Message != "" {
+			return fmt.Errorf("local device administration refused (HTTP %d): %s", res.StatusCode, failure.Error.Message)
+		}
 		return fmt.Errorf("local device administration refused (HTTP %d)", res.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))

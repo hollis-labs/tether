@@ -413,7 +413,10 @@ func applyRouteScopes(w http.ResponseWriter, r *http.Request, next http.Handler,
 			writeError(w, 403, "scope_required", "route requires a paired device credential")
 			return
 		}
-		if scope != selfScope && !has(scope) {
+		// A substrate-limited registry grant covers the registry routes that can narrow by substrate
+		// (substrate_scope.go); every other route still needs the plain scope.
+		qualified := (scope == registryScope || scope == registryReadScope) && payload == "registry-kind" && holdsQualifiedRegistry(r)
+		if scope != selfScope && !has(scope) && !qualified {
 			writeError(w, 403, "scope_required", "required scope: "+scope)
 			return
 		}

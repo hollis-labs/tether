@@ -46,6 +46,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -315,6 +316,11 @@ func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		writeRegistryError(w, err)
 		return
+	}
+	if allowed, limited := registrySubstrateLimit(r); limited && (!keyed || !slices.Contains(allowed, substrate)) {
+		if !s.refuseOutsideSubstrate(w, r, allowed, "this registration") {
+			return
+		}
 	}
 	// Strip caller-supplied identity / timestamp fields so the storage
 	// path's defaults apply. Service.Register already rejects a non-empty
@@ -623,6 +629,9 @@ func projectProfiles(ps []registry.Profile, f includeFields) any {
 // semantics). LastUpdatedBy is required at the service layer; missing
 // it surfaces as ErrInvalidRequest → 400.
 func (s *Server) handleRegistryUpdate(w http.ResponseWriter, r *http.Request, urn string) {
+	if !s.checkRegistryEntry(w, r, urn) {
+		return
+	}
 	var patch registry.UpdatePatch
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
@@ -642,6 +651,9 @@ func (s *Server) handleRegistryUpdate(w http.ResponseWriter, r *http.Request, ur
 // Returns the soft-deleted Profile (status='deprecated'), not 204, so
 // callers can read the bumped updated_at without a follow-up GET.
 func (s *Server) handleRegistryDeregister(w http.ResponseWriter, r *http.Request, urn string) {
+	if !s.checkRegistryEntry(w, r, urn) {
+		return
+	}
 	out, err := s.Registry.Deregister(r.Context(), urn)
 	if err != nil {
 		writeRegistryError(w, err)

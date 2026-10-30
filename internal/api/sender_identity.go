@@ -81,7 +81,7 @@ func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messag
 		mark("stamped")
 		return true
 	}
-	if p.MayActAs(canonicalAddress(env.From)) {
+	if p.MayActAs(canonicalAddress(env.From)) || s.mayActAsViaSubstrate(r, p, canonicalAddress(env.From)) {
 		mark("verified")
 		return true
 	}
@@ -117,7 +117,7 @@ func canonicalClaim(claimed string) string {
 // middleware. It reports whether the handler may continue.
 func (s *Server) verifyClaim(w http.ResponseWriter, r *http.Request, claimed, unverifiedEvent, refusedEvent, what string) bool {
 	p, ok := verifiedPrincipal(r)
-	if !ok || claimed == "" || p.MayActAs(canonicalClaim(claimed)) {
+	if !ok || claimed == "" || p.MayActAs(canonicalClaim(claimed)) || s.mayActAsViaSubstrate(r, p, canonicalClaim(claimed)) {
 		return true
 	}
 	if s.enforcing() {

@@ -41,6 +41,17 @@ Rules:
   `tether.registry_read` but not `tether.read`, which gates `/messages/list`, `/inbox`,
   `/watch` and `GET /messages/{id}`. On the local listener these scopes are enforced only in
   identity `enforce` mode; in `observe` they are attributed, not enforced.
+- A service token may hold `tether.registry` and `tether.send_as` limited to one substrate by
+  a qualifier: `tether.registry:nanite` registers, updates and deregisters only actors that
+  carry an external id of substrate `nanite` (a register must be keyed under that substrate;
+  sync, merge, bootstrap, reonboard and scoped bindings need the unrestricted scope) and reads
+  the registry; `tether.send_as:nanite` lets the credential author messages, and read as, an
+  actor that carries such an external id. There is no unqualified `tether.send_as` for a
+  service token. A qualified scope never satisfies the plain one (`ScopeGranted` compares
+  whole strings), so code that does not narrow by substrate cannot be reached through it.
+  Actors share the `msg://agent/agent-mux/` namespace whatever their substrate, so the
+  registry's external ids, not the URN, decide. Observe mode records a violation
+  (`registry_substrate_unverified`); enforce mode answers 403.
 - Event publication is grantable to service principals and worker devices. It
   grants no event reads: those still require `tether.read`. Admin alone cannot
   publish. Agent session tokens do not receive `tether.events` by default; an
