@@ -118,6 +118,9 @@ type CreateSessionInput struct {
 	// Server-set after the API has checked the caller is the operator and the id is
 	// well-formed; never decoded from a client into this struct.
 	App string
+
+	// Continuity is "", "fresh" or "relaunch"; see api.LaunchRequest.Continuity.
+	Continuity string
 }
 
 // TaskIDEnv is the environment variable that carries the launcher-asserted task id

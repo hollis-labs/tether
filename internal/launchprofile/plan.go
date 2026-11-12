@@ -31,6 +31,10 @@ type Plan struct {
 	// App is the app the hub stamps on the session row at creation (CW-20261020-0036).
 	// Never serialized, so a stored or caller-supplied plan cannot carry one in.
 	App string `json:"-"`
+	// Continuity is "relaunch" when the launcher asked for this session to continue
+	// the logical agent's previous one. Never serialized: it is a creation-time
+	// instruction, and the outcome lives on the session row (intent, parent).
+	Continuity string `json:"-"`
 	// ResumeProviderSessionID is set only by explicit or boot recovery. LaunchSession
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.

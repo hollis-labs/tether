@@ -290,3 +290,42 @@ func TestForwardedContextAdmitsBoundAgentTokenOnly(t *testing.T) {
 		t.Fatalf("operator-minted narrow token forwarded session attribution: %v", h)
 	}
 }
+
+func TestForwardedContextCarriesContinuationAndStripsForgery(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	origin, _ := url.Parse("https://upstream.example/mcp")
+	var seen http.Header
+	transport := &forwardedContextTransport{origin: origin, serviceToken: "upstream-service", base: contextRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		seen = req.Header.Clone()
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}")), Request: req}, nil
+	})}
+	do := func(ctx context.Context) http.Header {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin.String(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-Tether-Continues-Session-Id", "forged")
+		req.Header.Set("X-Tether-Logical-Agent-Id", "forged")
+		resp, err := transport.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return seen
+	}
+	ctx := sessionEgressContext("one")
+	snap, _ := callcontext.FromContext(ctx)
+	snap.ContinuesSessionID, snap.LogicalAgentID = "prev", "agent"
+	got := do(callcontext.WithSnapshot(ctx, snap))
+	if got.Get("X-Tether-Continues-Session-Id") != "prev" || got.Get("X-Tether-Logical-Agent-Id") != "agent" {
+		t.Fatalf("headers = %v", got)
+	}
+	// A fresh session sends no continuation header, and a forged one never passes.
+	got = do(sessionEgressContext("one"))
+	if v := got.Get("X-Tether-Continues-Session-Id"); v != "" {
+		t.Fatalf("forged continuation header survived: %q", v)
+	}
+	if v := got.Get("X-Tether-Logical-Agent-Id"); v != "" {
+		t.Fatalf("forged logical agent header survived: %q", v)
+	}
+}

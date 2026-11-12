@@ -46,6 +46,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 	out.SessionResolved = true
 	out.SessionID, out.WorkstreamID, out.TaskID = row.ID, row.WorkstreamID.String, row.TaskID.String
 	out.LaunchID, out.ProjectID, out.LogicalAgentID = row.LaunchID, row.ProjectID, row.LogicalAgentID
+	out.Intent, out.ContinuesSessionID = row.Intent, row.ParentSessionID.String
 	if bindings != nil && row.LogicalAgentID != "" {
 		target := registry.LogicalAgentBindingTarget(row.LogicalAgentID)
 		if binding, err := bindings.CurrentBinding(ctx, target); err == nil && binding.SessionID == row.ID && binding.TargetURN == target {

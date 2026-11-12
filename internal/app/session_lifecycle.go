@@ -154,6 +154,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	}
 	stampTaskID(plan, in.TaskID)
 	plan.App = in.App
+	plan.Continuity = in.Continuity
 	return plan, nil
 }
 
@@ -238,7 +239,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		App:            nullableApp(plan.App),
 	}
 	s.sealTeamPlanEvidence(plan, "")
-	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {
+	if err = s.createContinued(row, plan, key); err != nil {
 		return nil, err
 	}
 

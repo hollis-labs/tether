@@ -1,13 +1,17 @@
 package app
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
@@ -157,4 +161,41 @@ func (s *Service) stopCascadeMember(id string) error {
 		return nil
 	}
 	return err
+}
+
+// continuation returns the intent and parent a new session row records. Only an
+// explicit Continuity of "relaunch" yields anything but fresh/no parent, so every
+// existing launch is unchanged. The parent comes from the daemon's own session
+// records: the newest earlier session row of the same logical agent in any
+// state, never from the dying session, so a row that never reached completed
+// after a crash or power loss still counts as ended. It is a newest-row
+// heuristic, not proof the parent ended: it can be a still-running duplicate
+// launch or a row from another launch of the same agent. A store error is
+// logged and the launch falls back to fresh.
+func (s *Service) continuation(plan *launch.Plan) (string, sql.NullString) {
+	if plan == nil || plan.Continuity != "relaunch" || plan.LogicalAgentID == "" {
+		return "", sql.NullString{}
+	}
+	prev, err := s.Store.LatestSessionForLogicalAgent(plan.LogicalAgentID)
+	if err != nil {
+		log.Printf("app: relaunch parent lookup for %q failed, launching fresh: %v", plan.LogicalAgentID, err)
+		return "", sql.NullString{}
+	}
+	if prev == "" {
+		return "", sql.NullString{}
+	}
+	return "resume", sql.NullString{String: prev, Valid: true}
+}
+
+// createContinued picks the continuation parent and inserts the row under one
+// lock for a relaunch, so concurrent relaunches of the same agent each see the
+// other's row and form a chain instead of sharing a parent. Other launches skip
+// the lock.
+func (s *Service) createContinued(row store.SessionRow, plan *launch.Plan, key *store.SessionIdempotency) error {
+	if plan != nil && plan.Continuity == "relaunch" {
+		s.continuationMu.Lock()
+		defer s.continuationMu.Unlock()
+	}
+	row.Intent, row.ParentSessionID = s.continuation(plan)
+	return s.Store.CreateSessionKeyed(row, plan, key)
 }

@@ -27,6 +27,10 @@ type Snapshot struct {
 	LaunchID        string `json:"launch_id,omitempty"`
 	ProjectID       string `json:"project_id,omitempty"`
 	LogicalAgentID  string `json:"logical_agent_id,omitempty"`
+	// Intent is how the session came to exist (fresh, resume, ...);
+	// ContinuesSessionID is its parent_session_id, the session it continues.
+	Intent             string `json:"intent,omitempty"`
+	ContinuesSessionID string `json:"continues_session_id,omitempty"`
 }
 
 type contextKey struct{}
