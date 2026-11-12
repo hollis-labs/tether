@@ -124,6 +124,26 @@ identity:
       servers: [loom]
 ```
 
+A grant may also name one catalog agent:
+
+```yaml
+identity:
+  mcp_grants:
+    "msg://service/sysadmin-cerberus/dev":
+      servers: [cerberus]
+      agent: sysadmin-cerberus
+```
+
+`agent` carries only that agent's machine designation: when the agent has
+`machine_authority: true` and `machine_access: read-write`, the principal's
+calls to a machine-changing upstream listed in `servers` are read-write.
+Without `agent`, or with an agent that lacks that designation, the principal
+is read-only there. It grants no upstream, scope or session policy of the
+agent, and an unknown agent id fails grant validation. This is how an agent
+that Tether did not launch (so it has no session credential) gets write access
+to a machine upstream without sharing the operator credential, which is always
+read-only on the daemon transport.
+
 These entries do not mint a credential or change its scopes. Missing mappings,
 omitted/null `servers`, and `servers: []` grant zero upstreams. There is no
 wildcard/all alias. An operator principal explicitly has the enabled inventory;

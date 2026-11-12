@@ -22,9 +22,12 @@ type Caller struct {
 	Principal identity.Principal
 	Policy    mcpgateway.SessionPolicy
 	// MachineAccess is the calling agent's catalog machine_access, resolved
-	// from the stored session snapshot's agent. Empty means read-only: only
-	// session credentials of a machine_authority agent can carry read-write,
-	// and daemon views never honor the dev-mode escape hatch.
+	// from the stored session snapshot's agent, or for a service/interactive
+	// principal from the agent its operator-provisioned mcp_grants entry
+	// names. Empty means read-only: only a credential bound in one of those
+	// two ways to a machine_authority agent can carry read-write. The operator
+	// credential never does, and daemon views never honor the dev-mode escape
+	// hatch.
 	MachineAccess string
 }
 
@@ -54,6 +57,9 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 		return Caller{}, fmt.Errorf("daemon MCP catalog unavailable")
 	}
 	policy := mcpgateway.SessionPolicy{}
+	// machineAgent is the catalog agent whose machine designation this
+	// credential carries. It is taken from daemon-owned state only.
+	machineAgent := ""
 	boundAgent := identity.IsBoundAgentToken(p)
 	switch {
 	case p.Kind == "session" || boundAgent:
@@ -92,6 +98,7 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 		if err != nil {
 			return Caller{}, err
 		}
+		machineAgent = cat.PrincipalGrantAgent(p.ID)
 	default:
 		return Caller{}, identity.ErrInvalidToken
 	}
@@ -110,7 +117,10 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 	}
 	access := ""
 	if p.Kind == "session" {
-		if agent, ok := cat.Agents[policy.AgentID]; ok && agent.MachineAuthority && agent.MachineAccess == launch.MachineAccessReadWrite {
+		machineAgent = policy.AgentID
+	}
+	if machineAgent != "" {
+		if agent, ok := cat.Agents[machineAgent]; ok && agent.MachineAuthority && agent.MachineAccess == launch.MachineAccessReadWrite {
 			access = launch.MachineAccessReadWrite
 		}
 	}

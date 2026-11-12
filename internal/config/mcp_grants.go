@@ -21,6 +21,18 @@ func (c *Catalog) PrincipalMCPServers(principalID string) ([]string, error) {
 	return append([]string{}, grant.Servers...), nil
 }
 
+// PrincipalGrantAgent returns the catalog agent id this verified principal's
+// grant is bound to, or "" when the grant names none or names an agent the
+// catalog does not have. Callers must obtain principalID from identity
+// middleware, never a request selector.
+func (c *Catalog) PrincipalGrantAgent(principalID string) string {
+	id := c.Global.Identity.MCPGrants[principalID].Agent
+	if _, ok := c.Agents[id]; !ok {
+		return ""
+	}
+	return id
+}
+
 // ValidateMCPGrant checks names without spawning upstreams or resolving secrets.
 func (c *Catalog) ValidateMCPGrant(owner string, ids []string) error {
 	var issues []error
@@ -57,6 +69,9 @@ func (c *Catalog) ValidateMCPGrants() error {
 	var issues []error
 	for id, grant := range c.Global.Identity.MCPGrants {
 		issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("identity principal %q mcp_grants.servers", id), grant.Servers))
+		if _, ok := c.Agents[grant.Agent]; grant.Agent != "" && !ok {
+			issues = append(issues, fmt.Errorf("%w: identity principal %q mcp_grants.agent names %q: unknown agent", ErrInvalidMCPGrant, id, grant.Agent))
+		}
 	}
 	for id, p := range c.Projects {
 		issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("project %q mcp.servers", id), p.MCP.Servers))
