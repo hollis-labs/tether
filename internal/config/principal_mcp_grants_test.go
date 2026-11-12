@@ -49,3 +49,29 @@ func TestPrincipalMCPGrants_LoadAndValidate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPrincipalMCPGrants_AgentBinding(t *testing.T) {
+	cat := &Catalog{MCPServerEnabled: map[string]bool{"valid": true}, Agents: map[string]LaunchProfile{"known": {}}}
+	cat.Global.Identity.MCPGrants = map[string]PrincipalMCPGrant{
+		"bound":   {Servers: []string{"valid"}, Agent: "known"},
+		"unbound": {Servers: []string{"valid"}},
+	}
+	if err := cat.ValidateMCPGrants(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cat.PrincipalGrantAgent("bound"); got != "known" {
+		t.Fatalf("bound agent=%q", got)
+	}
+	for _, id := range []string{"unbound", "missing"} {
+		if got := cat.PrincipalGrantAgent(id); got != "" {
+			t.Fatalf("%s agent=%q", id, got)
+		}
+	}
+	cat.Global.Identity.MCPGrants["typo"] = PrincipalMCPGrant{Servers: []string{"valid"}, Agent: "gone"}
+	if err := cat.ValidateMCPGrants(); !errors.Is(err, ErrInvalidMCPGrant) || !strings.Contains(err.Error(), `"typo"`) || !strings.Contains(err.Error(), `"gone"`) {
+		t.Fatalf("validation=%v", err)
+	}
+	if got := cat.PrincipalGrantAgent("typo"); got != "" {
+		t.Fatalf("unknown agent resolved to %q", got)
+	}
+}

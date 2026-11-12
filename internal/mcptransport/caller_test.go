@@ -7,6 +7,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
@@ -113,5 +114,47 @@ func TestCallerResolver_BoundAgentTokenBindsToItsSession(t *testing.T) {
 		if _, err := r.Resolve(identity.WithPrincipal(context.Background(), p)); err == nil {
 			t.Errorf("%s: resolved a gateway caller", name)
 		}
+	}
+}
+
+// A service or interactive principal carries read-write machine access only
+// through an mcp_grants entry bound to a machine_authority read-write agent.
+// The operator credential and unbound principals stay read-only.
+func TestCallerResolver_MachineAccessFromGrantAgent(t *testing.T) {
+	cat := &config.Catalog{MCPServerEnabled: map[string]bool{"cerberus": true}}
+	cat.Agents = map[string]config.LaunchProfile{
+		"rw":        {MachineAuthority: true, MachineAccess: launch.MachineAccessReadWrite},
+		"ro":        {MachineAuthority: true, MachineAccess: launch.MachineAccessReadOnly},
+		"unflagged": {MachineAccess: launch.MachineAccessReadWrite},
+	}
+	servers := []string{"cerberus"}
+	cat.Global.Identity.MCPGrants = map[string]config.PrincipalMCPGrant{
+		"svc-rw":        {Servers: servers, Agent: "rw"},
+		"svc-ro":        {Servers: servers, Agent: "ro"},
+		"svc-unflagged": {Servers: servers, Agent: "unflagged"},
+		"svc-unknown":   {Servers: servers, Agent: "gone"},
+		"svc-unbound":   {Servers: servers},
+		"int-rw":        {Servers: servers, Agent: "rw"},
+	}
+	r := CallerResolver{Catalog: func(context.Context) (*config.Catalog, error) { return cat, nil }}
+	for _, tc := range []struct {
+		p    identity.Principal
+		want string
+	}{
+		{identity.Principal{ID: "svc-rw", Kind: "service"}, launch.MachineAccessReadWrite},
+		{identity.Principal{ID: "int-rw", Kind: "interactive"}, launch.MachineAccessReadWrite},
+		{identity.Principal{ID: "svc-ro", Kind: "service"}, ""},
+		{identity.Principal{ID: "svc-unflagged", Kind: "service"}, ""},
+		{identity.Principal{ID: "svc-unknown", Kind: "service"}, ""},
+		{identity.Principal{ID: "svc-unbound", Kind: "service"}, ""},
+		{identity.Principal{ID: "svc-other", Kind: "service"}, ""},
+		{identity.Principal{ID: identity.OperatorID, Kind: "operator"}, ""},
+	} {
+		t.Run(tc.p.ID, func(t *testing.T) {
+			caller, err := r.Resolve(identity.WithPrincipal(context.Background(), tc.p))
+			if err != nil || caller.MachineAccess != tc.want || caller.Policy.AgentID != "" {
+				t.Fatalf("caller=%+v err=%v", caller, err)
+			}
+		})
 	}
 }
