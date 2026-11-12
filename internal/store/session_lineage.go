@@ -62,10 +62,11 @@ func (s *Store) ChildCountSince(id, cutoff string) (int, error) {
 }
 
 // LatestSessionForLogicalAgent returns the newest session row of a logical agent
-// in any state, or "" when it has none.
+// in any state, or "" when it has none. created_at has one-second resolution, so
+// ties break on rowid (insertion order), not the random id.
 func (s *Store) LatestSessionForLogicalAgent(logicalAgentID string) (string, error) {
 	var id string
-	err := s.db.QueryRow(`SELECT id FROM sessions WHERE logical_agent_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, logicalAgentID).Scan(&id)
+	err := s.db.QueryRow(`SELECT id FROM sessions WHERE logical_agent_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`, logicalAgentID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
