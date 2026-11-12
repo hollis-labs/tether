@@ -68,6 +68,13 @@ var IdentityPoints = []string{"local_api", "mcp_gateway", "teams"}
 
 type PrincipalMCPGrant struct {
 	Servers []string `yaml:"servers" json:"servers"`
+	// Agent optionally binds this principal to one catalog agent. The binding
+	// carries exactly one thing: when that agent has machine_authority and
+	// machine_access read-write, the principal's calls to a machine-changing
+	// upstream it is granted in Servers are read-write. Absent, or naming an
+	// agent without that designation, the principal stays read-only there. It
+	// grants no upstream, scope or session policy of the agent.
+	Agent string `yaml:"agent,omitempty" json:"agent,omitempty"`
 }
 
 func (c IdentityConfig) EffectiveMode() string {
