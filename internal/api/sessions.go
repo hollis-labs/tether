@@ -281,6 +281,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
 		return
 	}
+	if req.Continuity != "" && req.Continuity != "fresh" && req.Continuity != "relaunch" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, `continuity must be "fresh" or "relaunch"`)
+		return
+	}
 	taskID, taskOK := s.taskStamp(w, r, req.TaskID)
 	if !taskOK {
 		return
@@ -312,7 +316,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var err error
 	// A keyed request always takes the input path: that is where the
 	// request digest is computed and the key recorded.
-	if req.Worker != "" || req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" || req.TaskID != "" || req.App != "" {
+	if req.Worker != "" || req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" || req.TaskID != "" || req.App != "" || req.Continuity != "" {
 		// v005-08 Tier-2 path: caller-provided payload (any field set routes here).
 		res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
 			Worker:             req.Worker,
@@ -331,6 +335,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			IdempotencyPrincipal: idemPrincipal,
 			TaskID:               req.TaskID,
 			App:                  req.App,
+			Continuity:           req.Continuity,
 		})
 	} else if req.BootPrompt != "" {
 		res, err = s.Service.CreateSessionWithBootPrompt(req.Launch, req.BootPrompt)

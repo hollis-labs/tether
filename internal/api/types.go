@@ -201,6 +201,15 @@ type LaunchRequest struct {
 	// (403 app_not_permitted for an agent or session; dropped and audited for any other
 	// caller). It is set at creation and never changed. Omit it for no app.
 	App string `json:"app,omitempty"`
+
+	// Continuity says whether this launch continues the logical agent's previous
+	// conversation. "" and "fresh" start clean (intent fresh, no parent, the
+	// behaviour before this field existed). "relaunch" makes the daemon record
+	// intent "resume" with parent_session_id set to the most recent earlier
+	// session of the same logical agent, taken from its own records; with no such
+	// session, or no logical agent, the launch is fresh. It changes lineage
+	// records only: it resumes no provider conversation.
+	Continuity string `json:"continuity,omitempty"`
 }
 
 // ResumeOptions carries the optional arguments of a resume.
@@ -251,6 +260,9 @@ type CreateSessionInput struct {
 	TaskID string
 	// App is the validated, operator-asserted app. See LaunchRequest.App.
 	App string
+
+	// Continuity is the validated LaunchRequest.Continuity.
+	Continuity string
 	// PromptInput records who asked for PromptAppend (server-set from the
 	// authenticated request; CW-20261021-0010). Nil means not recorded (unknown).
 	PromptInput *identity.InputOrigin

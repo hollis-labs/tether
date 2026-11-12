@@ -1,0 +1,1 @@
+- `POST /sessions` takes `continuity: "relaunch"`: the session is recorded as intent `resume` with `parent_session_id` set to the logical agent's previous session from the daemon's own rows; omitted or `fresh` is unchanged. `/auth/context` adds `intent` and `continues_session_id`, forwarded as `X-Tether-Continues-Session-Id` (CW-20261112-0059).

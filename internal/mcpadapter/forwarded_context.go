@@ -130,12 +130,13 @@ func (t *forwardedContextTransport) RoundTrip(req *http.Request) (*http.Response
 		setContextHeader(out.Header, "X-Tether-Launch-Id", s.LaunchID)
 		setContextHeader(out.Header, "X-Tether-Project-Id", s.ProjectID)
 		setContextHeader(out.Header, "X-Tether-Logical-Agent-Id", s.LogicalAgentID)
+		setContextHeader(out.Header, "X-Tether-Continues-Session-Id", s.ContinuesSessionID)
 	}
 	return t.base.RoundTrip(out)
 }
 
 func safeForwardedContext(s callcontext.Snapshot) bool {
-	for _, value := range []string{s.SessionID, s.AgentURN, s.WorkstreamID, s.LaunchID, s.ProjectID, s.LogicalAgentID} {
+	for _, value := range []string{s.SessionID, s.AgentURN, s.WorkstreamID, s.LaunchID, s.ProjectID, s.LogicalAgentID, s.ContinuesSessionID} {
 		if len(value) > 512 {
 			return false
 		}

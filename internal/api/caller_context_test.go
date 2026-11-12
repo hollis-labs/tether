@@ -112,3 +112,17 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveCallerContextReportsContinuation(t *testing.T) {
+	sessions := &fakeLaunchService{getRes: map[string]*store.SessionRow{
+		"new":   {ID: "new", Intent: "resume", ParentSessionID: sql.NullString{String: "old", Valid: true}},
+		"clean": {ID: "clean", Intent: "fresh"},
+	}}
+	for id, want := range map[string][2]string{"new": {"resume", "old"}, "clean": {"fresh", ""}} {
+		ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:" + id, Kind: "session", SessionID: id})
+		got := ResolveCallerContext(ctx, sessions, nil)
+		if got.Intent != want[0] || got.ContinuesSessionID != want[1] {
+			t.Fatalf("%s: %+v", id, got)
+		}
+	}
+}

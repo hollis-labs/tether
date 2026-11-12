@@ -1,6 +1,10 @@
 package store
 
-import "fmt"
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+)
 
 // ChildSessionIDs returns the ids of sessions whose parent_session_id is id,
 // oldest first.
@@ -55,4 +59,15 @@ func (s *Store) ChildCountSince(id, cutoff string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE parent_session_id=? AND created_at>=?`, id, cutoff).Scan(&n)
 	return n, err
+}
+
+// LatestSessionForLogicalAgent returns the newest session row of a logical agent
+// in any state, or "" when it has none.
+func (s *Store) LatestSessionForLogicalAgent(logicalAgentID string) (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM sessions WHERE logical_agent_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, logicalAgentID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }

@@ -3,7 +3,8 @@
 The daemon verifies caller credentials before resolving call attribution.
 `GET /auth/context` accepts no session selector. Its response has `verified`,
 `source`, `principal_id`, `principal_kind`, `session_id`, `agent_urn`, `workstream_id`,
-`launch_id`, `project_id`, and `logical_agent_id`. Empty fields are omitted.
+`launch_id`, `project_id`, `logical_agent_id`, `intent` and
+`continues_session_id`. Empty fields are omitted.
 `verified` is the single caller-identity flag (see `docs/caller-identity.md`,
 "The verified flag"): true for any principal resolved from a bearer credential
 (operator, session, device, service). `session_resolved: true` is the narrower
@@ -173,6 +174,7 @@ forwarded-user trust. Agent attribution confers no operator-confirm authority.
 | `X-Tether-Launch-Id` | `launch_id` |
 | `X-Tether-Project-Id` | `project_id` |
 | `X-Tether-Logical-Agent-Id` | `logical_agent_id` |
+| `X-Tether-Continues-Session-Id` | `continues_session_id`, only when the session continues another |
 
 Empty optional fields are omitted. Each field is at most 512 visible ASCII
 bytes; an unsafe/oversized field suppresses actor headers while preserving the

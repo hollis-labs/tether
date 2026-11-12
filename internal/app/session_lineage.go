@@ -1,12 +1,14 @@
 package app
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/workerhub"
 )
@@ -157,4 +159,21 @@ func (s *Service) stopCascadeMember(id string) error {
 		return nil
 	}
 	return err
+}
+
+// continuation returns the intent and parent a new session row records. Only an
+// explicit Continuity of "relaunch" yields anything but fresh/no parent, so every
+// existing launch is unchanged. The parent comes from the daemon's own session
+// records (the latest earlier session of the same logical agent, in any state),
+// never from the dying session, so a row that never reached completed after a
+// crash or power loss still counts as ended.
+func (s *Service) continuation(plan *launch.Plan) (string, sql.NullString) {
+	if plan == nil || plan.Continuity != "relaunch" || plan.LogicalAgentID == "" {
+		return "", sql.NullString{}
+	}
+	prev, err := s.Store.LatestSessionForLogicalAgent(plan.LogicalAgentID)
+	if err != nil || prev == "" {
+		return "", sql.NullString{}
+	}
+	return "resume", sql.NullString{String: prev, Valid: true}
 }
