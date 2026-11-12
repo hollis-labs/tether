@@ -1,6 +1,6 @@
 module github.com/hollis-labs/tether/apps/sysop
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/hollis-labs/libs/harness/core v0.16.0
