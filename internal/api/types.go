@@ -204,7 +204,7 @@ type LaunchRequest struct {
 
 	// Continuity says whether this launch continues the logical agent's previous
 	// conversation. "" and "fresh" start clean (intent fresh, no parent, the
-	// behaviour before this field existed). "relaunch" makes the daemon record
+	// behavior before this field existed). "relaunch" makes the daemon record
 	// intent "resume" with parent_session_id set to the most recent earlier
 	// session of the same logical agent, taken from its own records; with no such
 	// session, or no logical agent, the launch is fresh. It changes lineage
