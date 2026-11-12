@@ -58,6 +58,7 @@ type Service struct {
 	messageEventsStop func()
 	admitMu           sync.Mutex        // guards admitPending
 	admitPending      map[string]string // sessionID -> projectID reserved by admitLaunch
+	continuationMu    sync.Mutex        // serializes relaunch parent lookup + insert
 	lineageMu         sync.Mutex        // serializes lineage check + child insert
 	// LineageLimits caps plain session lineage; zero means unlimited.
 	LineageLimits LineageLimits

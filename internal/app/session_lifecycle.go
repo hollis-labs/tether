@@ -238,9 +238,8 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		TaskID:         nullableTaskID(plan.TaskID),
 		App:            nullableApp(plan.App),
 	}
-	row.Intent, row.ParentSessionID = s.continuation(plan)
 	s.sealTeamPlanEvidence(plan, "")
-	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {
+	if err = s.createContinued(row, plan, key); err != nil {
 		return nil, err
 	}
 

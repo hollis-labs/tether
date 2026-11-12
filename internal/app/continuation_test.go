@@ -1,6 +1,7 @@
 package app
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
@@ -13,6 +14,12 @@ import (
 // session, taken from the daemon's rows (the old row is left in state created,
 // as after a crash); every other launch stays fresh with no parent.
 func TestRelaunchContinuity(t *testing.T) {
+	svc := relaunchHarness(t)
+	runRelaunchContinuity(t, svc)
+}
+
+func relaunchHarness(t *testing.T) *Service {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	svc := bindingHarness(t)
 	svc.CatalogRoot = t.TempDir()
@@ -24,7 +31,11 @@ func TestRelaunchContinuity(t *testing.T) {
 		Launches:  map[string]config.Launch{"l1": {ID: "l1", Project: "p", Agent: "worker", Provider: "stub"}},
 	}
 	svc.factories = map[string]RuntimeFactory{"stub": func(p *launch.Plan) (agentsessions.Runtime, error) { return stub.New(p) }}
+	return svc
+}
 
+func runRelaunchContinuity(t *testing.T, svc *Service) {
+	t.Helper()
 	create := func(continuity string) (intent, parent string) {
 		t.Helper()
 		l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", Continuity: continuity})
@@ -68,5 +79,52 @@ func TestContinuationWithoutAgentIsFresh(t *testing.T) {
 	s := &Service{}
 	if intent, parent := s.continuation(&launch.Plan{Continuity: "relaunch"}); intent != "" || parent.Valid {
 		t.Fatalf("got %q/%+v", intent, parent)
+	}
+}
+
+// Concurrent relaunches of one agent each see the other's row and form a chain;
+// none shares a parent, and every parent is an earlier session.
+func TestConcurrentRelaunchesDoNotShareParent(t *testing.T) {
+	svc := relaunchHarness(t)
+	first, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 8
+	ids := make([]string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", Continuity: "relaunch"})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			ids[i] = l.SessionID
+		}(i)
+	}
+	wg.Wait()
+	parents := map[string]bool{}
+	for _, id := range ids {
+		if id == "" {
+			t.Fatal("a relaunch failed")
+		}
+		row, err := svc.Store.GetSession(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := row.ParentSessionID.String
+		if row.Intent != "resume" || p == "" || p == id {
+			t.Fatalf("session %s intent=%q parent=%q", id, row.Intent, p)
+		}
+		if parents[p] {
+			t.Fatalf("parent %s chosen by more than one relaunch", p)
+		}
+		parents[p] = true
+	}
+	if !parents[first.SessionID] {
+		t.Fatalf("no relaunch continued the first session; parents=%v", parents)
 	}
 }

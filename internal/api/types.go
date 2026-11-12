@@ -205,8 +205,10 @@ type LaunchRequest struct {
 	// Continuity says whether this launch continues the logical agent's previous
 	// conversation. "" and "fresh" start clean (intent fresh, no parent, the
 	// behavior before this field existed). "relaunch" makes the daemon record
-	// intent "resume" with parent_session_id set to the most recent earlier
-	// session of the same logical agent, taken from its own records; with no such
+	// intent "resume" with parent_session_id set to the newest earlier
+	// session row of the same logical agent in any state, taken from its own
+	// records (it may be a still-running duplicate or a row from another launch of
+	// the same agent; it is not proof the parent ended); with no such
 	// session, or no logical agent, the launch is fresh. It changes lineage
 	// records only: it resumes no provider conversation.
 	Continuity string `json:"continuity,omitempty"`
