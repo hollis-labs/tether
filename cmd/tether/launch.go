@@ -33,6 +33,7 @@ var (
 	launchBootPromptOR string
 	launchIdemKey      string
 	launchReplace      bool
+	launchContinuity   string
 	launchTorqueTasks  []string
 	launchTask         string
 	launchTorqueURL    string
@@ -81,7 +82,11 @@ var launchCmd = &cobra.Command{
 
 		taskID := launchTaskStamp(launchTask, launchTorqueTasks)
 		var res api.LaunchResponse
-		if taskID != "" || launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
+		if launchContinuity != "" && launchContinuity != "fresh" && launchContinuity != "relaunch" {
+			return fmt.Errorf(`--continuity must be "fresh" or "relaunch"`)
+		}
+
+		if launchContinuity != "" || taskID != "" || launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Worker:          launchWorker,
 				Launch:          launchID,
@@ -95,6 +100,7 @@ var launchCmd = &cobra.Command{
 				Injection:       injection,
 				IdempotencyKey:  idemKey,
 				TaskID:          taskID,
+				Continuity:      launchContinuity,
 
 				ReplaceIdempotency: launchReplace,
 			})
@@ -149,6 +155,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchPromptAppend, "prompt-append", "", "append launch-time instructions to the composed boot prompt")
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
 	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are scoped to the authenticated caller); \"auto\" derives a stable key from the launch, worker and --torque-task ids")
+	launchCmd.Flags().StringVar(&launchContinuity, "continuity", "", `"relaunch" records the session as a continuation (intent resume, parent = the agent's newest earlier session); default "fresh"`)
 	launchCmd.Flags().BoolVar(&launchReplace, "replace", false, "with --idempotency-key: rebind the key to this launch when the session it was bound to has ended (a live session refuses)")
 	launchCmd.Flags().StringVar(&launchTask, "task", "", "stamp the session with this Torque task id (accepted only from the operator credential this CLI presents); defaults to the task given by a single --torque-task")
 	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
