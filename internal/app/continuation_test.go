@@ -1,6 +1,8 @@
 package app
 
 import (
+	"github.com/hollis-labs/tether/internal/api"
+	"strings"
 	"sync"
 	"testing"
 
@@ -126,5 +128,23 @@ func TestConcurrentRelaunchesDoNotShareParent(t *testing.T) {
 	}
 	if !parents[first.SessionID] {
 		t.Fatalf("no relaunch continued the first session; parents=%v", parents)
+	}
+}
+
+// A logical agent whose launch_id cache was never written still resumes from
+// the launch recorded on its newest session row.
+func TestResumeFallsBackToSessionLaunchID(t *testing.T) {
+	svc := relaunchHarness(t)
+	l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE logical_agents SET launch_id=NULL WHERE id='worker'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = l
+	_, err = svc.ResumeLogicalAgent("worker", api.ResumeOptions{})
+	if err != nil && strings.Contains(err.Error(), "never launched") {
+		t.Fatalf("resume ignored the session's launch_id: %v", err)
 	}
 }

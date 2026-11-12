@@ -74,6 +74,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 			gomcp.StringProp("worker", "Optional. Place the session on this connected outpost (label or id). Defaults to the launch's `worker:` when it declares one. Fails with worker_unavailable when the worker is not enrolled or offline.", false),
 			gomcp.BooleanProp("require_worker", "Optional. Refuse with worker_not_configured when no worker resolves (none passed and the launch declares no `worker:`) instead of running the session on the hub.", false),
 			gomcp.StringProp("idempotency_key", "Optional. Makes the create idempotent: a retry with the same key and the same request returns the session the first one created (replayed=true); the same key with a different request fails with idempotency_conflict. Keys are scoped to the authenticated caller, so another caller's identical key never collides with yours.", false),
+			gomcp.StringProp("continuity", "Optional: fresh (default) or relaunch. relaunch records this session as a continuation of the logical agent's newest earlier session (intent resume, parent_session_id set); it changes lineage records only and resumes no provider conversation. Any other value fails with invalid_request. Fixed at create; tether_session_launch takes no continuity.", false),
 			gomcp.StringProp("injection", "Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.", false),
 		),
 		Handler: a.handleSessionCreate,
@@ -284,8 +285,12 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 	idempotencyKey := str(args, "idempotency_key")
 	worker := str(args, "worker")
 	requireWorker := boolArg(args, "require_worker")
+	continuity := str(args, "continuity")
+	if continuity != "" && continuity != "fresh" && continuity != "relaunch" {
+		return nil, toolError("invalid_request", `continuity must be "fresh" or "relaunch"`)
+	}
 	// A keyed request always takes the input path, where the key is recorded.
-	withInput := requireWorker || worker != "" || idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != ""
+	withInput := requireWorker || worker != "" || idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != "" || continuity != ""
 
 	if a.client != nil {
 		// Daemon-routed path (production "tether mcp"): the daemon owns session
@@ -303,6 +308,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 			PromptAppend:    promptAppend,
 			Injection:       injection,
 			IdempotencyKey:  idempotencyKey,
+			Continuity:      continuity,
 		}
 		var res api.LaunchResponse
 		var err error
@@ -354,6 +360,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 			BootPromptAppend:   promptAppend,
 			Injection:          injection,
 			IdempotencyKey:     idempotencyKey,
+			Continuity:         continuity,
 		})
 	} else if bootPrompt != "" {
 		res, err = a.svc.CreateSessionWithBootPrompt(launchID, bootPrompt)

@@ -91,10 +91,6 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("get logical agent: %w", err)
 	}
-	if la.LaunchID == "" {
-		return api.LaunchResult{}, fmt.Errorf("agent %q has never launched a session; cannot resume", logicalAgentID)
-	}
-
 	detachedID, err := s.Store.DetachedSessionIDForAgent(ctx, logicalAgentID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("check detached agent sessions: %w", err)
@@ -113,6 +109,16 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	parent, err := s.Store.LatestSessionForAgent(ctx, logicalAgentID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("get resume source: %w", err)
+	}
+	// logical_agents.launch_id is a denormalized cache of the last launch
+	// profile; a session created through create/launch may not have written
+	// it. The newest session row records its launch, so fall back to that.
+	launchID := la.LaunchID
+	if launchID == "" && parent != nil {
+		launchID = parent.LaunchID
+	}
+	if launchID == "" {
+		return api.LaunchResult{}, fmt.Errorf("agent %q has never launched a session; cannot resume", logicalAgentID)
 	}
 	if opts.NativeOnly && (parent == nil || parent.ID != opts.SourceSessionID) {
 		return api.LaunchResult{}, nativeOnlyError("canonical source changed or missing")
@@ -166,7 +172,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	}
 
 	// Preserve the original opt-in before resolving the current catalog route.
-	input := launch.Input{LaunchID: la.LaunchID, CatalogRoot: s.CatalogRoot}
+	input := launch.Input{LaunchID: launchID, CatalogRoot: s.CatalogRoot}
 	if sourceID != "" {
 		input.RouteOverrideSet = true
 		input.RouteOverride, err = s.Store.SessionRoute(ctx, sourceID)
@@ -174,7 +180,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 			return api.LaunchResult{}, fmt.Errorf("read resumed session route: %w", err)
 		}
 	}
-	cat, err := s.launchCatalog(la.LaunchID)
+	cat, err := s.launchCatalog(launchID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("read launch catalog: %w", err)
 	}

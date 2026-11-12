@@ -1007,6 +1007,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		ReplaceIdempotency:   in.ReplaceIdempotency,
 		TaskID:               in.TaskID,
 		App:                  in.App,
+		Continuity:           in.Continuity,
 	})
 	if err != nil {
 		return api.LaunchResult{}, err

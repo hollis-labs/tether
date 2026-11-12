@@ -204,3 +204,22 @@ persists attribution in `proxy_events`. Invalid credentials on these routes
 remain audited. Adapter telemetry for verified operator/service principals
 clears the session id, preserving any configured session flag only as a claim,
 to match the daemon row.
+
+## Relaunching a session as a continuation
+
+`continuity` (`fresh`, default, or `relaunch`) is accepted by `POST /sessions`,
+the MCP tool `tether_session_create` and `tether launch --continuity`. It is
+fixed at create; `tether_session_launch` takes none. `relaunch` records intent
+`resume` with `parent_session_id` set to the logical agent's newest earlier
+session; it resumes no provider conversation. Any other value is refused with
+`invalid_request`.
+
+Who must send it:
+
+- Boot recovery (`recovery: auto` agents) resumes through
+  `ResumeLogicalAgent`, which already records intent `resume` and the parent.
+- `tether_logical_agent_resume` does the same, and takes its launch profile from
+  the agent's newest session when `logical_agents.launch_id` was never written.
+- Any other bounce/reboot relaunch (a person, Agent Ops, a script) goes through
+  create/launch and must pass `continuity: "relaunch"` itself. No component in
+  this repository performs those relaunches.
