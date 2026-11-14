@@ -72,6 +72,9 @@ func TestSeatSummaries(t *testing.T) {
 		{"wake.outcome", `{"target":"msg://agent/agent-mux/agt_lpy0gym4eh","delivered":false,"reason":"busy"}`, "wake @photon-tether: not delivered (busy)"},
 		{"session.output", `{"data":"c2VjcmV0","stream":"stdout"}`, "output on stdout"},
 		{"daemon.started", ``, "daemon.started"},
+		{"seat.status", `{"handle":"@photon-tether","state":"blocked","reason":"waiting on the harness tag","owner":"@archie"}`, "@photon-tether blocked: waiting on the harness tag (owner @archie)"},
+		{"seat.status", `{"handle":"@photon-tether","state":"working"}`, "@photon-tether working"},
+		{"message.sent", `{"from":"msg://agent/agent-mux/agt_lpy0gym4eh","to":["msg://agent/agent-mux/agt_lc7m97f5fp"],"msg_kind":"request","envelope_kind":"decision"}`, "@photon-tether sent decision to @archie"},
 	}
 	for _, tc := range cases {
 		got := stampSeat(t, s, events.Event{Kind: tc.kind, PayloadJSON: tc.payload}).Envelope.Summary

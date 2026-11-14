@@ -170,6 +170,15 @@ func Summarize(kind string, p map[string]any, handle func(string) string) string
 		return out
 	case kind == "session.cleared":
 		return "context cleared"
+	case kind == "seat.status":
+		out := join(str(p, "handle"), str(p, "state"))
+		if r := str(p, "reason"); r != "" {
+			out += ": " + r
+		}
+		if o := str(p, "owner"); o != "" {
+			out += " (owner " + o + ")"
+		}
+		return out
 	case kind == "seat.waiting":
 		return join("waiting for", str(p, "waiting_for"))
 	case kind == "seat.unblocked":
@@ -201,7 +210,10 @@ func Summarize(kind string, p map[string]any, handle func(string) string) string
 
 func mailSummary(kind string, p map[string]any, handle func(string) string) string {
 	verb := strings.TrimPrefix(kind, "message.")
-	what := str(p, "msg_kind")
+	what := str(p, "envelope_kind") // a typed message (CW-20261114-0013)
+	if what == "" {
+		what = str(p, "msg_kind")
+	}
 	if what == "" {
 		what = "message"
 	}
