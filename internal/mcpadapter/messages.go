@@ -240,7 +240,8 @@ func (a *Adapter) handleMessageSend(ctx context.Context, args map[string]any) (a
 	msgKind := messaging.Kind(kind)
 	if _, ok := validMsgKinds[msgKind]; !ok {
 		return nil, toolError("invalid_request",
-			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind))
+			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind)+typedMessageHint).
+			WithHelpTool("tether_message_post")
 	}
 	// Validate URN shape before a daemon round trip, matching the other
 	// handlers' fail-fast behavior.
@@ -292,7 +293,8 @@ func (a *Adapter) handleMessageNotify(ctx context.Context, args map[string]any) 
 	msgKind := messaging.Kind(kind)
 	if _, ok := validMsgKinds[msgKind]; !ok {
 		return nil, toolError("invalid_request",
-			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind))
+			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind)+typedMessageHint).
+			WithHelpTool("tether_message_post")
 	}
 	if _, parseErr := messaging.ParseURN(fromURN); parseErr != nil {
 		return nil, toolError("invalid_request", "invalid from URN: "+parseErr.Error())
@@ -569,3 +571,8 @@ func boolArg(args map[string]any, key string) bool {
 		return false
 	}
 }
+
+// typedMessageHint points a caller of the raw message tools at the typed tool
+// (CW-20261114-0013): seats were sending kind "answer" or a top-level body here.
+const typedMessageHint = " To message a seat by @handle (question, update, decision, approval_request, an answer...), use tether_message_post" +
+	" with kind, to:[\"@handle\"] and body; an answer is a reply with in_reply_to and answer.option."

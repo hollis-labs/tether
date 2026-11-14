@@ -2,7 +2,9 @@ package mcpadapter
 
 import (
 	"context"
+
 	"encoding/json"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -102,5 +104,24 @@ func TestTypedMessageToolsRoundTrip(t *testing.T) {
 	declared, _ := card["declared"].(map[string]any)
 	if card["effective"] != "blocked" || declared["owner"] != "@archie" {
 		t.Fatalf("card = %v", card)
+	}
+}
+
+// The raw send tools point a seat at tether_message_post when it passes a
+// top-level body or a typed kind like "answer" (CW-20261114-0013).
+func TestRawSendErrorsPointAtTheTypedTool(t *testing.T) {
+	a := newTypedAdapter(t)
+	ctx := context.Background()
+	send := strictArgs(gomcp.Tool{Name: "tether_message_send", InputSchema: gomcp.InputSchema(
+		gomcp.StringProp("from", "", true), gomcp.StringProp("to", "", true), gomcp.StringProp("kind", "", true), gomcp.StringProp("payload_json", "", false)),
+		Handler: a.handleMessageSend})
+	for name, args := range map[string]map[string]any{
+		"body arg":    {"from": "msg://agent/agent-mux/agt_me", "to": "msg://agent/agent-mux/agt_archie", "kind": "notice", "body": "hi"},
+		"answer kind": {"from": "msg://agent/agent-mux/agt_me", "to": "msg://agent/agent-mux/agt_archie", "kind": "answer"},
+	} {
+		_, err := send.Handler(ctx, args)
+		if err == nil || !strings.Contains(err.Error(), "use tether_message_post") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

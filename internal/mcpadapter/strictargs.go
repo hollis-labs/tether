@@ -88,5 +88,8 @@ func rejectUndeclaredArgs(tool string, declared map[string]struct{}, args map[st
 			break
 		}
 	}
+	if tool == "tether_message_send" || tool == "tether_message_notify" {
+		return toolError("invalid_request", msg+typedMessageHint).WithHelpTool("tether_message_post")
+	}
 	return toolError("invalid_request", msg)
 }
