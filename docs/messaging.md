@@ -63,8 +63,9 @@ An address can be declared an **alias** of another, its **canonical** address
   the operator credential or a `user` principal holds his forms. The rule is one
   way: he acts on mail stored under the agent forms aliased to him. One
   read-only exception: a device he paired that holds `read` (his own console,
-  Tachyon) may GET his mailbox (list, inbox, watch, thread, item), never send,
-  mark read, archive, ack or consume as him. A worker-only device, a device
+  Tachyon) may GET his mailbox (list, watch, thread, item), never pull his inbox
+  (`GET /messages/inbox` marks delivery and settles read mail), send, mark
+  read, archive, ack or consume as him. A worker-only device, a device
   someone else paired and an issued token do not qualify.
 - `GET /whoami` and a registry lookup of any form name the canonical address
   (`canonical_urn`, `aliases`); the lookup returns the profile registered under

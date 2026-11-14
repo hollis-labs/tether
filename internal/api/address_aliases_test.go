@@ -590,8 +590,8 @@ func TestAddressAliasAgentRowNeverActsAsChrispian(t *testing.T) {
 }
 
 // @archie's ruling on #554: Chrispian's own console (Tachyon's device, which he
-// paired, holding read) reads his mailbox (list, inbox, item, thread), but never
-// sends, marks read or archives as him. Agent principals, the agt_rbcnlevo4w row,
+// paired, holding read) reads his mailbox (list, item, thread), but never pulls
+// his inbox (the destructive read), sends, marks read or archives as him. Agent principals, the agt_rbcnlevo4w row,
 // a worker-only device, a device he did not pair and an issued token stay refused.
 func TestAddressAliasOperatorPairedDeviceReadsOnly(t *testing.T) {
 	const agentRow = "msg://agent/agent-mux/agt_rbcnlevo4w"
@@ -616,8 +616,9 @@ func TestAddressAliasOperatorPairedDeviceReadsOnly(t *testing.T) {
 	}
 	reads := func(as string) []string {
 		q := url.Values{"to": {as}, "as": {as}}.Encode()
-		return []string{"/messages/list?" + q, "/messages/inbox?" + q, "/messages/" + env.ID + "?as=" + url.QueryEscape(as), "/messages/thread/" + thread + "?as=" + url.QueryEscape(as)}
+		return []string{"/messages/list?" + q, "/messages/" + env.ID + "?as=" + url.QueryEscape(as), "/messages/thread/" + thread + "?as=" + url.QueryEscape(as)}
 	}
+	inbox := func(as string) string { return "/messages/inbox?" + url.Values{"to": {as}, "as": {as}}.Encode() }
 	for _, as := range []string{identity.OperatorID, aliasCanonicalURN} {
 		for _, path := range reads(as) {
 			if code, raw := h.do(t, http.MethodGet, path, "tachyon", ""); code != http.StatusOK {
@@ -627,6 +628,13 @@ func TestAddressAliasOperatorPairedDeviceReadsOnly(t *testing.T) {
 				if code, raw := h.do(t, http.MethodGet, path, who, ""); code != http.StatusForbidden {
 					t.Fatalf("%s GET %s: %d %s", who, path, code, raw)
 				}
+			}
+		}
+		// Not the inbox pull (it sets delivered_at and settles read mail), nor any GET outside the allowlist.
+		q := url.Values{"to": {as}, "as": {as}}.Encode()
+		for _, path := range []string{inbox(as), "/messages/subscribe?" + q, "/messages?" + q} {
+			if code, raw := h.do(t, http.MethodGet, path, "tachyon", ""); code != http.StatusForbidden {
+				t.Fatalf("operator-paired device GET %s: %d %s", path, code, raw)
 			}
 		}
 		// Reads only: no read mark or archive as him.
@@ -665,5 +673,9 @@ func TestAddressAliasOperatorPairedDeviceReadsOnlyObserve(t *testing.T) {
 	}
 	if code, raw := h.do(t, http.MethodPost, "/messages/"+env.ID+"/read?as="+url.QueryEscape(identity.OperatorID), "tachyon", ""); code != http.StatusForbidden {
 		t.Fatalf("device read mark: %d %s", code, raw)
+	}
+	inbox := "/messages/inbox?" + url.Values{"to": {identity.OperatorID}, "as": {identity.OperatorID}}.Encode()
+	if code, raw := h.do(t, http.MethodGet, inbox, "tachyon", ""); code != http.StatusForbidden {
+		t.Fatalf("device inbox pull: %d %s", code, raw)
 	}
 }

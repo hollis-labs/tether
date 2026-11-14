@@ -212,15 +212,27 @@ func (s *Server) guardMailbox(next http.HandlerFunc) http.HandlerFunc {
 	})
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Chrispian's own console reads his mailbox (@archie's ruling on #554): a device he paired, holding
-		// read, may GET it (list, inbox, watch, thread, item). Never a send, read mark, archive, ack or
-		// consume (all POST), and never an agent principal or an issued token.
-		if r.Method == http.MethodGet && operatorReadDevice(r) && s.hasProtectedForm(r.Context(), r.URL.Query().Get("as")) {
+		// read, may GET it (list, watch, thread, item). Never GET /messages/inbox, the destructive pull (it
+		// marks delivery and settles read mail), never a send, read mark, archive, ack or consume (all POST),
+		// and never an agent principal or an issued token.
+		if r.Method == http.MethodGet && deviceReadRoute(r.URL.Path) && operatorReadDevice(r) && s.hasProtectedForm(r.Context(), r.URL.Query().Get("as")) {
 			s.canonicalizeSeatParams(r)
 			canonical(w, r)
 			return
 		}
 		guarded(w, r)
 	}
+}
+
+// deviceReadRoute is the allowlist of the device read exception: list, watch, thread and a single item.
+// Everything else (the inbox pull, subscribe, the collection, every POST) goes through the normal guard.
+func deviceReadRoute(path string) bool {
+	switch {
+	case path == "/messages/list", path == "/messages/watch", strings.HasPrefix(path, "/messages/thread/"):
+		return true
+	}
+	id, ok := strings.CutPrefix(path, "/messages/")
+	return ok && id != "" && !strings.Contains(id, "/") && id != "inbox" && id != "subscribe" && id != "notify" && id != "request" && id != "aliases"
 }
 
 // operatorReadDevice reports whether the request's verified principal is a device the operator paired that
