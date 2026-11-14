@@ -108,6 +108,11 @@ type LaunchProfile struct {
 	// agent_file/agent_inline override. Optional.
 	URN string `yaml:"urn,omitempty" json:"urn,omitempty"`
 
+	// Handle is the seat's @handle without the @ (CW-20261114-0013), when it
+	// differs from the agent id (cmd-builder-1 answers to @builder-1). Not
+	// inherited through extends: a handle names one seat. Optional.
+	Handle string `yaml:"handle,omitempty" json:"handle,omitempty"`
+
 	// MCPScopes are the scopes of the session-bound credential the hub mints for
 	// this agent's worker sessions (for example message.write, registry.write,
 	// groups.write). Empty means the default set. Closest definition wins.

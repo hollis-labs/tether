@@ -16,6 +16,14 @@ slug of letters, digits, `-` and `_`, starting with a letter; validation rejects
 anything else. Inherited through `extends`; closest definition wins. A catalog
 reload applies it to events written from then on.
 
+## Handle
+
+`handle: <name>` (no `@`) is the seat's `@handle` for typed messages when it
+differs from the agent id (CW-20261114-0013; see
+[typed-messages.md](typed-messages.md)). Not inherited through `extends`.
+Validation refuses an invalid name, or one another agent holds as its handle or
+its id.
+
 ## Boot recovery
 
 Agent definitions take `recovery: never|auto`. Absent means `never`. The

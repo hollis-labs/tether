@@ -61,6 +61,8 @@ func pipelinePolicies() map[string]admissionPolicy {
 	for _, kind := range []string{"seat.waiting", "seat.unblocked"} {
 		add(Metadata, kind, "/waiting_for", "/request_id", "/resolution")
 	}
+	// Declared seat status (CW-20261114-0013).
+	add(Metadata, "seat.status", "/agent_urn", "/handle", "/state", "/reason", "/ref", "/owner", "/expires_at", "/set_by")
 	// Conservative compatibility entries retain every local-consumer byte. Their
 	// denylist sanitizer runs only on a diagnostic copy, even in enforce mode.
 	for _, kind := range []string{

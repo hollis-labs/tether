@@ -71,6 +71,8 @@ type RegistryService interface {
 	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
 	ReonboardProjects(ctx context.Context, catalogRoot string) (registry.ReonboardReport, error)
 	BackfillTetherExternalIDs(ctx context.Context, catalogRoot string) (int, error)
+	BackfillHandles(ctx context.Context, overrides map[string]string) (int, error)
+	AttachExternalID(ctx context.Context, urn, substrate, externalID string) error
 	BackfillOwnership(ctx context.Context) (int, error)
 	BackfillFieldMetadata(ctx context.Context) (int, error)
 	BootstrapFromCerberus(ctx context.Context, cerberusHome string, force bool, writeBack bool) (registry.BootstrapReport, error)
@@ -137,6 +139,7 @@ func (s *Server) registerRegistryRoutes(router *http.ServeMux) {
 		return
 	}
 	router.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
+	router.HandleFunc("/registry/handles", s.handleRegistryHandleSet)
 	router.HandleFunc("/registry/reonboard", s.handleRegistryReonboard)
 	router.HandleFunc("/registry/bindings", s.handleBindingsCollection)
 	router.HandleFunc("/registry/bindings/", s.handleBindingsItem)
@@ -702,6 +705,12 @@ func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request)
 			var attached int
 			attached, err = s.Registry.BackfillTetherExternalIDs(r.Context(), s.RegistryCatalogRoot)
 			report.Attached += attached
+			if err == nil {
+				// Seats get an @handle from their catalog id (CW-20261114-0013).
+				var handles int
+				handles, err = s.Registry.BackfillHandles(r.Context(), s.catalogHandles())
+				report.Attached += handles
+			}
 			if _, bErr := s.Registry.BackfillOwnership(r.Context()); bErr != nil && err == nil {
 				err = bErr
 			}

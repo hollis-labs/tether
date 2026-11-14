@@ -117,8 +117,10 @@ type Server struct {
 	Digests api.DigestStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
-	Channels     api.ChannelService
-	Routing      api.RoutingService
+	// Seats backs typed-message pending replies and seat status (CW-20261114-0013).
+	Seats    api.SeatStore
+	Channels api.ChannelService
+	Routing  api.RoutingService
 	// Teams is supplied only by the opt-in daemon composition path.
 	Teams api.TeamOps
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
@@ -632,6 +634,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			SessionRefs:         s.SessionRefs,
 			Digests:             s.Digests,
 			MessageStore:        s.MessageStore,
+			Seats:               s.Seats,
 			Channels:            s.Channels,
 			Routing:             s.Routing,
 			Teams:               teams,

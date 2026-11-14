@@ -65,8 +65,11 @@ type Deps struct {
 	// /workstreams collection (S5, CW-20260912-0063).
 	Digests      DigestStore
 	MessageStore MessageStore
-	Channels     ChannelService
-	Routing      RoutingService
+	// Seats backs typed-message pending replies and seat status
+	// (CW-20261114-0013); nil disables /status and /messages/pending-replies.
+	Seats    SeatStore
+	Channels ChannelService
+	Routing  RoutingService
 	// ProxyEvents, when non-nil, enables the /proxy/events endpoint for
 	// persisting and querying MCP relay tool call events. Populated by the
 	// daemon when --proxy mode is active. The TUI polls this to populate the
@@ -190,6 +193,7 @@ type Server struct {
 	SessionRefs         SessionRefStore
 	Digests             DigestStore
 	MessageStore        MessageStore
+	Seats               SeatStore
 	Channels            ChannelService
 	Routing             RoutingService
 	ProxyEvents         ProxyEventStore
@@ -248,6 +252,7 @@ func NewHandler(deps Deps) http.Handler {
 		SessionRefs:         deps.SessionRefs,
 		Digests:             deps.Digests,
 		MessageStore:        deps.MessageStore,
+		Seats:               deps.Seats,
 		Channels:            deps.Channels,
 		Routing:             deps.Routing,
 		ProxyEvents:         deps.ProxyEvents,
@@ -286,6 +291,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerTeamRoutes(router)
 	s.registerWorkstreamRoutes(router)
 	s.registerMessageRoutes(router)
+	s.registerTypedMessageRoutes(router)
 	s.registerChannelRoutes(router)
 	s.registerForumRoutes(router)
 	s.registerRoutingRoutes(router)

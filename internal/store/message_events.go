@@ -61,6 +61,7 @@ func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (i
 		return 0, err
 	}
 	attention := []messageEventRecord{}
+	attentionRaw := []string{}
 	for rows.Next() {
 		var id int64
 		var kind, at, raw, team string
@@ -68,6 +69,7 @@ func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (i
 			break
 		}
 		attention = append(attention, messageEventRecord{position: id, at: parseMsgTime(at), teamRun: team, events: []events.Event{messageMetadataEvent(kind, raw, parseMsgTime(at), team)}})
+		attentionRaw = append(attentionRaw, raw)
 	}
 	rowErr := rows.Err()
 	_ = rows.Close()
@@ -76,6 +78,13 @@ func (s *Store) DrainMessageEvents(ctx context.Context, bus events.OutboxBus) (i
 	}
 	if rowErr != nil {
 		return 0, rowErr
+	}
+	// Typed envelopes add their routing fields; read after the rows are closed
+	// (CW-20261114-0013).
+	for i := range attention {
+		if enriched := s.withEnvelopeFields(ctx, attentionRaw[i]); enriched != attentionRaw[i] {
+			attention[i].events[0].PayloadJSON = enriched
+		}
 	}
 	// A missing mailbox row (Enqueue/content commit gap or orphan) must not
 	// stall unrelated mail. Keep its transition reference and retry independently.
@@ -255,6 +264,9 @@ func (s *Store) messageTransition(ctx context.Context, tr delivery.Transition) (
 	if !msg.Group.IsZero() {
 		payload["group"] = msg.Group.URN()
 		payload["group_seq"] = groupSeq
+	}
+	for k, v := range s.messageEnvelopeFields(ctx, messageID) {
+		payload[k] = v
 	}
 	kinds := []string{}
 	switch tr.Reason {
