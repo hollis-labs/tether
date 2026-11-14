@@ -419,6 +419,7 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 	service.mailTriager = service.newMailTriage()
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame
+	service.Workers.Degraded = service.publishWorkerDegraded
 	service.installOutpostMail()
 	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
