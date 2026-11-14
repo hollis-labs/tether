@@ -111,7 +111,7 @@ New code reads no `os.Getenv` for settings, except `TETHER_DATA_DIR`. Each slice
 | (none) | `TETHER_DATA_DIR` (required) | S0 |
 | catalog `defaults.state_db` | `database.sqlite.path` (default `tether.db` in the data directory) | S0 |
 | catalog `daemon.events_retention.{enabled,days,debug_days}` (defaults true, 90, 7; 0 or negative disables) | `tether.*` retention keys with the same defaults and semantics, pinned by a test | S8 (not in S0 on purpose: a wrong default deletes live history) |
-| `TETHER_CATALOG_PLAN_TTL` (hub descriptor env) | to map | catalog slice |
+| `TETHER_CATALOG_PLAN_TTL` (service descriptor env) | to map | catalog slice |
 | `TETHER_LAUNCH_HOST` (unit drop-in) | to map | S9/S10 |
 | `HOLLIS_OTEL_DISABLED` (sysop unit) | dropped with sysop (D4) | S0 note |
 
@@ -126,5 +126,5 @@ At S0, `run()` boots the modules before cobra parses the arguments, so every sub
 - **Never-served packages:** `internal/enrollment`, `fabricbinding`, `fabricenrollment` (no production importer). Their tables are still migrated if they hold rows.
 - **`internal/otel`: dropped.** Checked at S0 on 2026-11-14:
   - The old code exports OTLP to the default `localhost:4318` unless `HOLLIS_OTEL_DISABLED` / `TETHER_OTEL_DISABLED` is set, or to `OTEL_EXPORTER_OTLP_ENDPOINT`.
-  - The live hub unit sets no `OTEL_*` variable, the catalog's `global.yaml` has no telemetry key, and nothing listens on 4318 on the hub host. Every export goes nowhere today.
+  - The running deployment was checked at S0: no exporter is configured and no collector receives the exports, so they go nowhere today. The observation is recorded outside this repository with the cell's deployment notes.
   - If a collector is introduced later, tracing is a Substrate module question (`substrate-gap`), not app code.

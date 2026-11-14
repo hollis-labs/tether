@@ -89,7 +89,7 @@ There is one embedded goose migration set (`migrations/`). It is registered only
 
 ## HTTP
 
-At S0, `httphost` binds `127.0.0.1:8949` (loopback; free on the hub) and serves `/healthz`:
+At S0, `httphost` binds `127.0.0.1:8949` (loopback; a port neither old listener uses) and serves `/healthz`:
 
 ```json
 {"status":"ok","checks":{"database":"ok"}}
