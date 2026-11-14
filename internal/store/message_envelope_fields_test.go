@@ -38,3 +38,30 @@ func TestLifecyclePayloadCarriesEnvelopeRoutingFieldsOnly(t *testing.T) {
 		t.Fatalf("plain message changed: %s", out)
 	}
 }
+
+// Attention is stored only when the sender set it; the lifecycle event carries
+// the effective value, so mail to the operator says attention:human.
+func TestLifecyclePayloadCarriesEffectiveAttention(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	for id, e := range map[string]envelope.Envelope{
+		"to-op":   {Kind: envelope.KindUpdate, To: []string{"@chrispian"}, Body: "b"},
+		"to-ag":   {Kind: envelope.KindUpdate, To: []string{"@archie"}, Body: "b"},
+		"wait-op": {Kind: envelope.KindQuestion, To: []string{"@archie"}, Awaiting: "@chrispian", Body: "b"},
+	} {
+		raw, _ := json.Marshal(e)
+		if _, err := db.db.Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,payload,content_type,created_at) VALUES (?,?,?,?,?,?,?)`,
+			id, "request", "msg://agent/a/x", "msg://user/local/operator", string(raw), envelope.ContentType, "2026-11-14T04:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, want := range map[string]string{"to-op": "human", "to-ag": "agent", "wait-op": "human"} {
+		var got map[string]any
+		if err := json.Unmarshal([]byte(db.withEnvelopeFields(ctx, `{"message_id":"`+id+`"}`)), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["attention"] != want {
+			t.Errorf("%s: attention = %v, want %s", id, got["attention"], want)
+		}
+	}
+}

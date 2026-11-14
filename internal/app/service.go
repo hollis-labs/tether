@@ -188,6 +188,8 @@ type Service struct {
 	// wakePark carries the wake sweep's parked deliveries between ticks.
 	// See wakeParkSet in wake.go.
 	wakePark wakeParkSet
+	// mailTriager gates wakes for seats with mail_triage on (CW-20261114-0017).
+	mailTriager *mailTriage
 
 	// codexExempt holds, by session id, each running codex session that Tether
 	// left to codex's own sandbox, so each turn can be re-checked
@@ -414,6 +416,7 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 		return nil, err
 	}
 	seats.follow(service.CurrentCatalog)
+	service.mailTriager = service.newMailTriage()
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame
 	service.installOutpostMail()

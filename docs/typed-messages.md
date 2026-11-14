@@ -36,7 +36,7 @@ still see an ordinary message of the mapped transport kind.
 | `to` | 1 to 10 `@handles` (`@[a-z][a-z0-9_-]{0,63}`), no repeats, each must resolve. |
 | `re` | Optional: `task:<task id>`, `thread:<id>` or `topic:<slug>`. |
 | `in_reply_to` | Optional message id; must be a message you sent or received. The reply joins its thread. |
-| `attention` | `human`, `agent` or `none`. Default: `human` when `@chrispian` is a recipient or awaited, else `agent`. |
+| `attention` | `human`, `agent` or `none`. Stored only when the sender sets it; readers derive the default (`human` when `@chrispian` is a recipient or awaited, else `agent`). |
 | `awaiting` | Optional `@handle` that must act next; must resolve. |
 | `intent` | Optional tag, `[a-z0-9._-]{1,40}`. |
 | `subject` | Optional card title, one line, at most 120 characters. |

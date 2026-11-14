@@ -175,3 +175,33 @@ func (s *Service) settleLaunchPromptInput(sessionID string, launched bool) {
 		log.Printf("turn input: settle launch prompt for session %s failed: %v", sessionID, err)
 	}
 }
+
+// humanOriginated reports whether the turn in ctx came from a person: typed in
+// chat, or sent by an operator principal. Mail wakes, routed replies, system
+// turns and other agents' turns are not (CW-20261114-0017).
+func humanOriginated(ctx context.Context) bool {
+	note, annotated := turnInputFrom(ctx)
+	source := note.Source
+	if !annotated || source == "" {
+		source = identity.InputSourceFrom(ctx)
+	}
+	switch source {
+	case store.InputMailWake, store.InputRoutingReply, store.InputSystem:
+		return false
+	case store.InputChatSend:
+		return true
+	}
+	class := note.Class
+	if class == "" {
+		p, ok := identity.FromContext(ctx)
+		_, class, _ = identity.ClassifyInputSender(p, ok)
+	}
+	return class == store.ClassOperator
+}
+
+// fyiRidesAlong reports whether a turn may carry the fyi line: a real human
+// prompt, never a slash command (/clear, /compact, ...), which the provider
+// would read as part of the command.
+func fyiRidesAlong(ctx context.Context, text string) bool {
+	return humanOriginated(ctx) && !strings.HasPrefix(strings.TrimSpace(text), "/")
+}

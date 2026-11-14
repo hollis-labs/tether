@@ -379,6 +379,20 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 		// Identity is per agent: the leaf's URN, never an ancestor's.
 		resolved.URN = p.URN
 		resolved.Handle = p.Handle
+		if p.MailTriage != nil {
+			mt := MailTriage{}
+			if resolved.MailTriage != nil {
+				mt = *resolved.MailTriage
+			}
+			if p.MailTriage.Enabled != nil {
+				v := *p.MailTriage.Enabled
+				mt.Enabled = &v
+			}
+			if p.MailTriage.ActionInterval != "" {
+				mt.ActionInterval = p.MailTriage.ActionInterval
+			}
+			resolved.MailTriage = &mt
+		}
 		if p.StopGate != nil {
 			v := *p.StopGate
 			resolved.StopGate = &v

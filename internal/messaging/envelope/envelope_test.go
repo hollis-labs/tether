@@ -42,7 +42,8 @@ func TestValidEnvelopeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(urns) != 1 || urns[0] != dir["@archie"] || e.Schema != Schema || e.Attention != AttentionAgent {
+	// Attention is stored only when the sender set it; the default is derived.
+	if len(urns) != 1 || urns[0] != dir["@archie"] || e.Schema != Schema || e.Attention != "" || e.EffectiveAttention() != AttentionAgent {
 		t.Fatalf("urns=%v schema=%q attention=%q", urns, e.Schema, e.Attention)
 	}
 	// An answer to it.
@@ -114,8 +115,13 @@ func TestApprovalRequestWithoutOptionsAnswersApproveOrDeny(t *testing.T) {
 	if _, err := Check(parent, dir, nil); err != nil {
 		t.Fatal(err)
 	}
-	if parent.Attention != AttentionHuman {
-		t.Fatalf("attention = %q, want human for the operator", parent.Attention)
+	if parent.Attention != "" || parent.EffectiveAttention() != AttentionHuman {
+		t.Fatalf("attention stored %q, effective %q; want none stored and human derived for the operator", parent.Attention, parent.EffectiveAttention())
+	}
+	explicit := Envelope{Kind: KindUpdate, To: []string{"@chrispian"}, Attention: AttentionNone, Body: "x"}
+	explicit.Normalize()
+	if explicit.Attention != AttentionNone || explicit.EffectiveAttention() != AttentionNone {
+		t.Fatal("an explicit attention was overwritten")
 	}
 	for option, ok := range map[string]bool{"approve": true, "deny": true, "a": false} {
 		reply := Envelope{Kind: KindMessage, To: []string{"@archie"}, InReplyTo: "m1", Body: "ok", Answer: &Answer{Option: option}}

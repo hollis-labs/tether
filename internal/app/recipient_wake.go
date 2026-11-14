@@ -18,7 +18,9 @@ func (s *Service) installRecipientWake() {
 		if wakeintent.IsLocalNotify(ctx) {
 			return ""
 		}
-		out := recipientWake(ctx, s.Store, s.Registry, s.runtimeSeam(), env)
+		// A send-time wake is a mail wake: tag its turn input like the sweep's
+		// and notify's (it was recorded as a plain session turn).
+		out := recipientWake(s.mailWakeInputContext(ctx, env.ID), s.Store, s.Registry, s.runtimeSeam(), env)
 		raw, _ := json.Marshal(out)
 		return string(raw)
 	})
@@ -40,6 +42,9 @@ func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, 
 	if intent.NoWake {
 		return api.WakeOutcome{Reason: "no-wake"}
 	}
+	if d := rt.triage.gate(ctx, env); !d.wake {
+		return api.WakeOutcome{Reason: d.reason}
+	}
 	sessionID, err := resolveWakeTarget(ctx, st, reg, rt, env.To)
 	if err != nil {
 		return api.WakeOutcome{Reason: "recipient-unavailable", Detail: err.Error()}
@@ -52,7 +57,11 @@ func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, 
 		text = sweepWakeText(env)
 	}
 	delegated = true
-	return attemptRecipientWake(ctx, st, reg, rt, env.ID, env.To, sessionID, text)
+	out = attemptRecipientWake(ctx, st, reg, rt, env.ID, env.To, sessionID, text)
+	if out.Delivered {
+		rt.triage.woke(ctx, env)
+	}
+	return out
 }
 
 func attemptRecipientWake(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, id string, to messaging.Address, sessionID, text string) api.WakeOutcome {
