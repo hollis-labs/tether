@@ -197,6 +197,15 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		return nil, fmt.Errorf("worker does not support native %s turns; upgrade tether-worker", spec.Provider)
 	}
 	spec.MCPPolicy = true
+	// The Stop-hook reply gate (CW-20261114-0013): per agent over the fleet default, Claude only, and only on a worker
+	// that plants it. An older worker launches without it (the gate fails open by design).
+	if spec.Provider == "claude" && s.cat() != nil && config.EffectiveStopGate(s.cat().Global, s.cat().Agents[p.CatalogAgent()]) {
+		if s.Workers != nil && s.Workers.Supports(row.WorkerID, workerwire.FeatureStopGate) {
+			spec.StopGate = true
+		} else {
+			log.Printf("app: stop gate wanted for session %s but worker %s does not plant it; launching without", row.ID, row.WorkerID)
+		}
+	}
 	undoIdentity, err := s.prepareWorkerIdentity(ctx, row, p, &spec)
 	if err != nil {
 		exit := 1

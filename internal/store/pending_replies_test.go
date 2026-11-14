@@ -14,7 +14,7 @@ func TestPendingRepliesNeedTheAgentsAnswer(t *testing.T) {
 	ctx := context.Background()
 	db := openEventsStore(t)
 	me, archie := "msg://agent/agent-mux/agt_me", "msg://agent/agent-mux/agt_archie"
-	at := time.Date(2026, 11, 14, 4, 0, 0, 0, time.UTC)
+	at := time.Now().UTC().Add(-time.Hour)
 	insert := func(id, from, to, contentType string, e any, inReplyTo string) {
 		t.Helper()
 		raw, _ := json.Marshal(e)
@@ -31,12 +31,18 @@ func TestPendingRepliesNeedTheAgentsAnswer(t *testing.T) {
 	insert("u1", archie, me, envelope.ContentType, envelope.Envelope{Kind: envelope.KindUpdate, Body: "fyi"}, "")                // no reply needed
 	insert("u2", archie, me, envelope.ContentType, envelope.Envelope{Kind: envelope.KindUpdate, Body: "x", Awaiting: "@me"}, "") // awaits me
 	insert("q3", archie, me, envelope.ContentType, envelope.Envelope{Kind: envelope.KindQuestion, Body: "b", Awaiting: "@other"}, "")
-	insert("q4", archie, me, envelope.ContentType, q, "") // read below
+	insert("q4", archie, me, envelope.ContentType, q, "") // read below: still pending (read does not settle a question)
 	insert("p1", archie, me, "application/json", map[string]string{"text": "plain"}, "")
 	if _, err := db.db.Exec(`UPDATE messages SET read_at=? WHERE id='q4'`, at.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := db.PendingReplies(ctx, me, "@me", 10)
+	// Age does not settle a question: an old one still waits (the gate filters by age, not the listing).
+	raw, _ := json.Marshal(q)
+	if _, err := db.db.Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,payload,content_type,created_at) VALUES (?,?,?,?,?,?,?)`,
+		"old", "request", archie, me, string(raw), envelope.ContentType, time.Now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.PendingReplies(ctx, []string{me}, "@me", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +50,8 @@ func TestPendingRepliesNeedTheAgentsAnswer(t *testing.T) {
 	for _, p := range got {
 		ids = append(ids, p.MessageID)
 	}
-	if len(ids) != 2 || ids[0] != "q1" || ids[1] != "u2" || got[0].Subject != "Ship?" || got[0].From != archie {
+	// Newest first.
+	if len(ids) != 4 || ids[0] != "q4" || ids[1] != "u2" || ids[2] != "q1" || ids[3] != "old" || got[0].CreatedAt.IsZero() || got[2].Subject != "Ship?" || got[2].From != archie {
 		t.Fatalf("pending = %+v", got)
 	}
 }
@@ -53,7 +60,7 @@ func TestPendingRepliesAreNotCrowdedOutByUnreadUpdates(t *testing.T) {
 	ctx := context.Background()
 	db := openEventsStore(t)
 	me := "msg://agent/agent-mux/agt_me"
-	at := time.Date(2026, 11, 14, 4, 0, 0, 0, time.UTC)
+	at := time.Now().UTC().Add(-time.Hour)
 	insert := func(id string, e envelope.Envelope) {
 		raw, _ := json.Marshal(e)
 		at = at.Add(time.Second)
@@ -66,8 +73,28 @@ func TestPendingRepliesAreNotCrowdedOutByUnreadUpdates(t *testing.T) {
 		insert(fmt.Sprintf("u%03d", i), envelope.Envelope{Kind: envelope.KindUpdate, Body: "fyi"})
 	}
 	insert("late-q", envelope.Envelope{Kind: envelope.KindQuestion, Body: "?", Options: []envelope.Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
-	got, err := db.PendingReplies(ctx, me, "@me", 20)
+	got, err := db.PendingReplies(ctx, []string{me}, "@me", 20)
 	if err != nil || len(got) != 1 || got[0].MessageID != "late-q" {
 		t.Fatalf("pending = %+v err=%v", got, err)
+	}
+}
+
+// 25 pending questions and a limit of 20: the newest is always in the page.
+func TestPendingRepliesNewestFirstUnderTheLimit(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	me := "msg://agent/agent-mux/agt_me"
+	q, _ := json.Marshal(envelope.Envelope{Kind: envelope.KindQuestion, Body: "?", Options: []envelope.Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
+	start := time.Now().UTC().Add(-48 * time.Hour)
+	for i := 0; i < 25; i++ {
+		at := start.Add(time.Duration(i) * time.Hour)
+		if _, err := db.db.Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,payload,content_type,created_at) VALUES (?,?,?,?,?,?,?)`,
+			fmt.Sprintf("q%02d", i), "request", "msg://agent/agent-mux/agt_x", me, string(q), envelope.ContentType, at.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.PendingReplies(ctx, []string{me}, "@me", 20)
+	if err != nil || len(got) != 20 || got[0].MessageID != "q24" || got[19].MessageID != "q05" {
+		t.Fatalf("page = %d items, first %v, err %v", len(got), got, err)
 	}
 }

@@ -66,18 +66,47 @@ func checkHookBinary(path string) error {
 	return nil
 }
 
-// agentHooksSettings is the --settings JSON: one command hook per event, matcher-less, observe-only.
+// agentHooksSettings is the --settings JSON for activity events only: one command hook per event, matcher-less, observe-only.
 func agentHooksSettings(binary, session, spool string) ([]byte, error) {
-	if !hookSessionID.MatchString(session) {
-		return nil, errors.New("session id is not a safe hook argument")
-	}
-	if !filepath.IsAbs(spool) || !safeShellWord(spool) {
-		return nil, errors.New("spool directory is not an absolute, shell-safe path")
-	}
-	command := fmt.Sprintf("'%s' hook claude --session '%s' --spool '%s'", binary, session, spool)
+	return hooksSettings(binary, session, spool, true, nil)
+}
+
+// stopGateHook is where the Stop-hook reply gate asks the hub (CW-20261114-0013): the hub's /mcp and the session's
+// agent token FILE (a path, never the token).
+type stopGateHook struct {
+	url       string
+	tokenFile string
+	state     string // the ids it already blocked on, in the session workspace
+}
+
+// stopGateTimeoutSeconds bounds the gate's hub round trip on Claude's side; the gate itself gives up sooner and lets
+// the turn end.
+const stopGateTimeoutSeconds = 15
+
+// hooksSettings is the --settings JSON: the activity hooks when events is set, and the Stop-hook reply gate when gate
+// is non-nil (a second hook on Stop).
+func hooksSettings(binary, session, spool string, events bool, gate *stopGateHook) ([]byte, error) {
 	hooks := map[string]any{}
-	for _, event := range claudeHookEvents {
-		hooks[event] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": hookTimeoutSeconds}}}}
+	if events {
+		if !hookSessionID.MatchString(session) {
+			return nil, errors.New("session id is not a safe hook argument")
+		}
+		if !filepath.IsAbs(spool) || !safeShellWord(spool) {
+			return nil, errors.New("spool directory is not an absolute, shell-safe path")
+		}
+		command := fmt.Sprintf("'%s' hook claude --session '%s' --spool '%s'", binary, session, spool)
+		for _, event := range claudeHookEvents {
+			hooks[event] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": hookTimeoutSeconds}}}}
+		}
+	}
+	if gate != nil {
+		if !safeShellWord(gate.url) || !filepath.IsAbs(gate.tokenFile) || !safeShellWord(gate.tokenFile) || !filepath.IsAbs(gate.state) || !safeShellWord(gate.state) {
+			return nil, errors.New("stop gate url, token file or state file is not shell-safe")
+		}
+		command := fmt.Sprintf("'%s' hook stop-gate --url '%s' --token-file '%s' --state '%s'", binary, gate.url, gate.tokenFile, gate.state)
+		entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": stopGateTimeoutSeconds}}}
+		stop, _ := hooks["Stop"].([]any)
+		hooks["Stop"] = append(stop, entry)
 	}
 	return json.MarshalIndent(map[string]any{"hooks": hooks}, "", " ")
 }
@@ -89,15 +118,17 @@ func agentHooksSettings(binary, session, spool string) ([]byte, error) {
 // with Mkdir (not MkdirAll) and, if it already exists (a resume), must be a real directory, not a symlink, owned by this user,
 // mode 0700; and the settings file is written fresh at every launch (temp file, then rename over any previous one) and never
 // reused from disk.
-func (e *Executor) plantAgentHooks(wsRoot, session string) (settings string, err error) {
+func (e *Executor) plantAgentHooks(wsRoot, session string, events bool, gate *stopGateHook) (settings string, err error) {
 	if err := checkHookBinary(e.Binary); err != nil {
 		return "", err
 	}
 	spool := filepath.Join(wsRoot, "events")
-	if err := ensurePrivateDir(spool); err != nil {
-		return "", err
+	if events {
+		if err := ensurePrivateDir(spool); err != nil {
+			return "", err
+		}
 	}
-	raw, err := agentHooksSettings(e.Binary, session, spool)
+	raw, err := hooksSettings(e.Binary, session, spool, events, gate)
 	if err != nil {
 		return "", err
 	}
@@ -157,21 +188,41 @@ func writeFresh(path string, content []byte) error {
 	return nil
 }
 
-// agentHookArgs are the extra claude arguments for a launch with AgentEvents set, or none. Observability only: a refusal
-// launches the session without hooks and logs why; it never fails the launch.
+// agentHookArgs are the extra claude arguments for a launch with AgentEvents or StopGate set, or none. Both fail open:
+// a refusal launches the session without the hook and logs why (and leaves a marker file); it never fails the launch.
 func (e *Executor) agentHookArgs(wsRoot string, spec workerwire.LaunchSpec) []string {
-	if !spec.AgentEvents {
+	if !spec.AgentEvents && !spec.StopGate {
 		return nil
 	}
-	settings, err := e.plantAgentHooks(wsRoot, spec.Session)
+	disabled := func(marker, what, reason string) {
+		log.Printf("worker: %s disabled for session %s: %s", what, spec.Session, reason)
+		_ = writeFresh(filepath.Join(wsRoot, marker), []byte(what+"=disabled:"+strings.ReplaceAll(reason, "\n", " ")+"\n"))
+	}
+	var gate *stopGateHook
+	if spec.StopGate {
+		if why := e.hubHTTPUnavailable(spec); why != "" {
+			disabled("stop-gate.disabled", "stop_gate", why)
+		} else {
+			gate = &stopGateHook{url: e.HubMCPURL, tokenFile: sessionAgentTokenFile(filepath.Join(wsRoot, "mcp-cred")), state: filepath.Join(wsRoot, "stop-gate.state")}
+			_ = os.Remove(filepath.Join(wsRoot, "stop-gate.disabled"))
+		}
+	}
+	if !spec.AgentEvents && gate == nil {
+		return nil
+	}
+	settings, err := e.plantAgentHooks(wsRoot, spec.Session, spec.AgentEvents, gate)
 	if err != nil {
-		// Visible, not silent: a log line and a marker file in the session workspace (agent_events=disabled:<reason>).
-		reason := err.Error()
-		log.Printf("worker: agent events disabled for session %s: %s", spec.Session, reason)
-		marker := "agent_events=disabled:" + strings.ReplaceAll(reason, "\n", " ") + "\n"
-		_ = writeFresh(filepath.Join(wsRoot, "agent-events.disabled"), []byte(marker))
+		// Visible, not silent: a log line and a marker file in the session workspace.
+		if spec.AgentEvents {
+			disabled("agent-events.disabled", "agent_events", err.Error())
+		}
+		if gate != nil {
+			disabled("stop-gate.disabled", "stop_gate", err.Error())
+		}
 		return nil
 	}
-	_ = os.Remove(filepath.Join(wsRoot, "agent-events.disabled")) // a resume that works clears an earlier refusal
+	if spec.AgentEvents {
+		_ = os.Remove(filepath.Join(wsRoot, "agent-events.disabled")) // a resume that works clears an earlier refusal
+	}
 	return []string{"--settings", settings}
 }

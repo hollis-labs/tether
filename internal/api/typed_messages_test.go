@@ -290,3 +290,34 @@ func TestReservedOperatorHandleNeverNamesAnAgent(t *testing.T) {
 		t.Fatal("an agent is named @chrispian")
 	}
 }
+
+// A worker session knows itself as msg://agent/agent-mux/<id> (TETHER_AGENT_URN) while mail is addressed to its
+// catalog urn (agt_...): pending replies must match either form, and a reply from either settles.
+func TestPendingRepliesMatchEveryAddressOfTheSeat(t *testing.T) {
+	h := newTypedHarness(t)
+	q := `{"kind":"question","to":["@photon-tether"],"body":"?","options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}`
+	code, raw := h.do(t, http.MethodPost, "/messages/post?as="+archieURN, q)
+	var out MessagePostResponse
+	if code != http.StatusCreated || json.Unmarshal(raw, &out) != nil {
+		t.Fatalf("post: %d %s", code, raw)
+	}
+	for _, as := range []string{meURN, "msg://agent/agent-mux/photon-tether"} {
+		code, raw = h.do(t, http.MethodGet, "/messages/pending-replies?as="+as, "")
+		var p PendingRepliesResponse
+		if code != http.StatusOK || json.Unmarshal(raw, &p) != nil || len(p.Pending) != 1 {
+			t.Fatalf("as %s: %d %s", as, code, raw)
+		}
+	}
+	// Replying as the binding-target form settles it for both.
+	reply := `{"kind":"message","to":["@archie"],"in_reply_to":"` + out.IDs[0] + `","body":"a","answer":{"option":"a"}}`
+	if code, raw = h.do(t, http.MethodPost, "/messages/post?as=msg://agent/agent-mux/photon-tether", reply); code != http.StatusCreated {
+		t.Fatalf("reply: %d %s", code, raw)
+	}
+	for _, as := range []string{meURN, "msg://agent/agent-mux/photon-tether"} {
+		_, raw = h.do(t, http.MethodGet, "/messages/pending-replies?as="+as, "")
+		var p PendingRepliesResponse
+		if json.Unmarshal(raw, &p) != nil || len(p.Pending) != 0 {
+			t.Fatalf("as %s after reply: %s", as, raw)
+		}
+	}
+}

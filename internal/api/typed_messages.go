@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,7 +33,7 @@ import (
 type SeatStore interface {
 	GetSeatStatus(ctx context.Context, agentURN string) (seatstatus.Declared, bool, error)
 	PutSeatStatus(ctx context.Context, d seatstatus.Declared) (seatstatus.Declared, bool, error)
-	PendingReplies(ctx context.Context, agentURN, handle string, limit int) ([]store.PendingReply, error)
+	PendingReplies(ctx context.Context, agentURNs []string, handle string, limit int) ([]store.PendingReply, error)
 	LatestWorkState(ctx context.Context, sessionID string) (store.EnvironmentWorkState, bool, error)
 	SessionLastEventAt(ctx context.Context, sessionID string) (time.Time, error)
 }
@@ -220,7 +221,10 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 	threadID := ""
 	if e.InReplyTo != "" {
 		p, err := s.MessageStore.Get(ctx, e.InReplyTo)
-		if err != nil || (canonicalAddress(p.From) != from && canonicalAddress(p.To) != from) {
+		// The sender may know itself by another address than the parent used (the
+		// agent-mux binding target vs its catalog urn): any of the seat's addresses counts.
+		mine := s.seatAddresses(ctx, from, e.From)
+		if err != nil || (!slices.Contains(mine, canonicalAddress(p.From)) && !slices.Contains(mine, canonicalAddress(p.To))) {
 			writeEnvelopeError(w, &envelope.Error{Field: "in_reply_to", Reason: "no such message among yours"})
 			return
 		}
@@ -308,7 +312,7 @@ func (s *Server) handlePendingReplies(w http.ResponseWriter, r *http.Request) {
 		as = canonicalAddress(addr)
 	}
 	handle := s.handleFor(r.Context(), as)
-	pending, err := s.Seats.PendingReplies(r.Context(), as, handle, 20)
+	pending, err := s.Seats.PendingReplies(r.Context(), s.seatAddresses(r.Context(), as, handle), handle, 20)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
@@ -540,7 +544,7 @@ func (s *Server) statusCard(ctx context.Context, h, urn string) (StatusCard, err
 			card.Live.UnreadMail = n
 		}
 	}
-	if pending, err := s.Seats.PendingReplies(ctx, urn, h, 50); err == nil {
+	if pending, err := s.Seats.PendingReplies(ctx, s.seatAddresses(ctx, urn, h), h, 50); err == nil {
 		card.Live.PendingReplies = len(pending)
 	}
 	if !found && card.Live.Online {
@@ -614,4 +618,39 @@ func (s *Server) handleRegistryHandleSet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"urn": req.URN, "handle": h})
+}
+
+// seatAddresses is every address a seat is known by: the one asked about, the
+// one its handle resolves to (the catalog/registry URN mail is sent to), and
+// its msg://agent/agent-mux/<catalog id> binding target (what a worker session
+// knows itself as, TETHER_AGENT_URN). Pending replies match on all of them.
+func (s *Server) seatAddresses(ctx context.Context, urn, handle string) []string {
+	out := []string{urn}
+	add := func(u string) {
+		for _, x := range out {
+			if x == u {
+				return
+			}
+		}
+		out = append(out, u)
+	}
+	if handle != "" {
+		if u, ok := s.resolveHandle(ctx, handle); ok {
+			add(u)
+		}
+	}
+	if s.Catalog != nil {
+		if cat, err := s.Catalog.Load(); err == nil && cat != nil {
+			for id, a := range cat.Agents {
+				target := "msg://agent/agent-mux/" + id
+				if a.URN == urn || target == urn || (a.URN != "" && slices.Contains(out, a.URN)) {
+					add(target)
+					if a.URN != "" {
+						add(a.URN)
+					}
+				}
+			}
+		}
+	}
+	return out
 }
