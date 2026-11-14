@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 	"log"
 	"slices"
 	"strings"
@@ -193,4 +196,82 @@ func (s *Service) auditLaunchAttribution(ctx context.Context, sessionID, mode st
 	if err != nil {
 		log.Printf("identity: %s audit for session %s could not be persisted", event, sessionID)
 	}
+}
+
+// Scope bases recorded for a worker session's grant (CW-20261114-0038).
+const (
+	// ScopeBasisLauncher: the launcher's token (and any origin) bounded it.
+	ScopeBasisLauncher = "launcher"
+	// ScopeBasisParentGrant: a resume of the same seat (same logical agent and
+	// launch id) restored what its previous session held, capped by the catalog.
+	ScopeBasisParentGrant = "parent_grant"
+)
+
+// KindSessionScopesNarrowed is published when a launch drops scopes the
+// session's catalog definition asked for.
+const KindSessionScopesNarrowed = "session.scopes_narrowed"
+
+// launchCeilingForSeat is the worker path's ceiling. A resume of the same seat
+// (an internal resume origin whose session has this session's logical agent
+// and launch id) keeps the scopes the seat's previous session was granted,
+// capped by its catalog definition, whoever triggers the resume: a seat
+// relaunched from Tachyon chat or a wake must not silently lose terminal/admin
+// because the device that relaunched it holds less. Nobody gains scopes the
+// seat never held: the parent's recorded grant is the ceiling, and that grant
+// was itself bounded by whoever first launched the seat. Every other launch is
+// launchCeilingFor (bounded by the launcher). Either way a dropped scope
+// publishes session.scopes_narrowed.
+func (s *Service) launchCeilingForSeat(ctx context.Context, row *store.SessionRow, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
+	scopes, attribution, basis, err := s.seatCeiling(ctx, row, granted, narrow)
+	if err == nil && row != nil {
+		s.publishScopesNarrowed(ctx, row.ID, granted, scopes, basis)
+	}
+	return scopes, attribution, basis, err
+}
+
+func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
+	origin, internal := launchOriginFrom(ctx)
+	if internal && origin.Kind == OriginResume && origin.OriginSessionID != "" && row != nil && row.LogicalAgentID != "" && s.Store != nil {
+		parent, perr := s.Store.GetSession(origin.OriginSessionID)
+		if perr == nil && parent != nil && parent.LogicalAgentID == row.LogicalAgentID && parent.LaunchID == row.LaunchID {
+			held, ok, err := identity.NewStore(s.Store.DB()).SessionGrantedScopes(ctx, origin.OriginSessionID)
+			if err != nil {
+				return nil, "", "", fmt.Errorf("%w: the grant of origin session %q cannot be read: %w", ErrLaunchRefused, origin.OriginSessionID, err)
+			}
+			if ok {
+				scopes := slices.Clone(granted)
+				if !slices.Contains(held, "*") {
+					scopes = retainHeld(scopes, held)
+				}
+				return scopes, AttributionOrigin, ScopeBasisParentGrant, nil
+			}
+		}
+	}
+	scopes, attribution, err := s.launchCeilingFor(ctx, granted, narrow)
+	return scopes, attribution, ScopeBasisLauncher, err
+}
+
+// publishScopesNarrowed reports the scopes a launch asked for but did not get.
+func (s *Service) publishScopesNarrowed(ctx context.Context, sessionID string, requested, granted []string, basis string) {
+	var dropped []string
+	for _, sc := range requested {
+		if !slices.Contains(granted, sc) {
+			dropped = append(dropped, sc)
+		}
+	}
+	if len(dropped) == 0 || s.Bus == nil {
+		return
+	}
+	launcher := ""
+	if p, ok := identity.FromContext(ctx); ok {
+		launcher = p.ID
+	}
+	raw, _ := json.Marshal(map[string]any{"requested": requested, "granted": granted, "dropped": dropped, "basis": basis, "launcher": launcher})
+	e := events.Event{Scope: events.ScopeSession, SessionID: sessionID, Kind: KindSessionScopesNarrowed, At: time.Now().UTC(), PayloadJSON: string(raw)}
+	e.Envelope.Class.Category = "state"
+	e.Envelope.Class.Severity = "warning"
+	if err := s.Bus.Publish(context.WithoutCancel(ctx), e); err != nil {
+		log.Printf("launch: publish %s for session %s: %v", KindSessionScopesNarrowed, sessionID, err)
+	}
+	log.Printf("launch: session %s scopes narrowed (basis %s): dropped %v", sessionID, basis, dropped)
 }

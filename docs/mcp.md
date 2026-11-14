@@ -2239,3 +2239,11 @@ host service. Codex remains reported as not protected: its dormant per-turn
 config guard and caller identity are still pending (CW-20261001-0230 and
 CW-20260930-0253). A tampered/replaced MCP configuration or a host service
 performing writes on a tool's behalf remains outside this fix.
+
+### `mcp.servers: ["*"]`
+
+`"*"` in an agent, launch, project or boot-profile `mcp.servers` list means every
+upstream enabled in the catalog that the agent may hold: machine-changing
+upstreams (Cerberus) only with `machine_authority` (CW-20261114-0038). It is
+expanded when the launch is resolved, so the session's grant lists real names;
+an effective grant (`TETHER_MCP_SERVERS`) refuses a literal `*`.

@@ -130,7 +130,7 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 	}
 	// A worker session may not hold more than the principal that launched it.
 	wanted := scopes
-	scopes, attribution, err := s.launchCeilingFor(ctx, wanted, narrowToLauncherWorker)
+	scopes, attribution, _, err := s.launchCeilingForSeat(ctx, row, wanted, narrowToLauncherWorker)
 	if err == nil {
 		err = s.refuseUnboundedWhenEnforced(attribution)
 	}
