@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
@@ -24,19 +25,27 @@ type PendingReply struct {
 // settle rule): it stops pending when the agent replies to it (in_reply_to)
 // or when it is canceled or archived. Age does not settle it; the Stop gate
 // only blocks on recent ones and the watchdog owns the rest.
-func (s *Store) PendingReplies(ctx context.Context, agentURN, handle string, limit int) ([]PendingReply, error) {
+//
+// agentURNs are every address the seat is known by (its catalog/registry URN and
+// the msg://agent/agent-mux/<id> binding target): mail to any of them counts,
+// and a reply from any of them settles it.
+func (s *Store) PendingReplies(ctx context.Context, agentURNs []string, handle string, limit int) ([]PendingReply, error) {
+	if len(agentURNs) == 0 {
+		return []PendingReply{}, nil
+	}
+	in := strings.TrimSuffix(strings.Repeat("?,", len(agentURNs)), ",")
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
 	// NeedsReply in SQL, so a backlog of unread updates cannot crowd real
 	// questions out of the limit; the Go check below is the same rule.
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.from_urn, coalesce(m.payload,''), m.created_at FROM messages m
- WHERE m.to_urn=? AND m.content_type=? AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
+ WHERE m.to_urn IN (`+in+`) AND m.content_type=? AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
    AND json_valid(m.payload)
    AND (json_extract(m.payload,'$.awaiting') = ?
         OR (coalesce(json_extract(m.payload,'$.awaiting'),'') = '' AND json_extract(m.payload,'$.kind') IN ('question','decision','approval_request')))
-   AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.in_reply_to=m.id AND r.from_urn=?)
- ORDER BY m.created_at LIMIT ?`, agentURN, envelope.ContentType, handle, agentURN, limit)
+   AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.in_reply_to=m.id AND r.from_urn IN (`+in+`))
+ ORDER BY m.created_at LIMIT ?`, pendingArgs(agentURNs, handle, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,4 +75,16 @@ func NeedsReply(e envelope.Envelope, handle string) bool {
 		return e.Awaiting == handle
 	}
 	return envelope.HasOptions(e.Kind)
+}
+
+func pendingArgs(urns []string, handle string, limit int) []any {
+	args := make([]any, 0, 2*len(urns)+3)
+	for _, u := range urns {
+		args = append(args, u)
+	}
+	args = append(args, envelope.ContentType, handle)
+	for _, u := range urns {
+		args = append(args, u)
+	}
+	return append(args, limit)
 }

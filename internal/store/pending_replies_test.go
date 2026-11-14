@@ -42,7 +42,7 @@ func TestPendingRepliesNeedTheAgentsAnswer(t *testing.T) {
 		"old", "request", archie, me, string(raw), envelope.ContentType, time.Now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := db.PendingReplies(ctx, me, "@me", 10)
+	got, err := db.PendingReplies(ctx, []string{me}, "@me", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestPendingRepliesAreNotCrowdedOutByUnreadUpdates(t *testing.T) {
 		insert(fmt.Sprintf("u%03d", i), envelope.Envelope{Kind: envelope.KindUpdate, Body: "fyi"})
 	}
 	insert("late-q", envelope.Envelope{Kind: envelope.KindQuestion, Body: "?", Options: []envelope.Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
-	got, err := db.PendingReplies(ctx, me, "@me", 20)
+	got, err := db.PendingReplies(ctx, []string{me}, "@me", 20)
 	if err != nil || len(got) != 1 || got[0].MessageID != "late-q" {
 		t.Fatalf("pending = %+v err=%v", got, err)
 	}
