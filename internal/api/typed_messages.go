@@ -184,6 +184,10 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as: "+err.Error())
 			return
 		}
+	} else if addr, ok := s.seatAddressOfPrincipal(r); ok {
+		// A worker session's credential lists its session address first; a typed
+		// message is from the seat, so stamp the first address that has a handle.
+		stub.From = addr
 	}
 	if !s.applySendIdempotencyKey(w, r, &stub.Metadata) {
 		return
@@ -653,4 +657,22 @@ func (s *Server) seatAddresses(ctx context.Context, urn, handle string) []string
 		}
 	}
 	return out
+}
+
+// seatAddressOfPrincipal is the first of the verified principal's addresses that
+// names a seat with a @handle (stampSender then verifies it like any claim).
+func (s *Server) seatAddressOfPrincipal(r *http.Request) (messaging.Address, bool) {
+	p, ok := verifiedPrincipal(r)
+	if !ok {
+		return messaging.Address{}, false
+	}
+	for _, a := range append([]string{p.DefaultAddress()}, p.Addresses...) {
+		if s.handleFor(r.Context(), a) == "" {
+			continue
+		}
+		if addr, err := messaging.ParseURN(a); err == nil {
+			return addr, true
+		}
+	}
+	return messaging.Address{}, false
 }

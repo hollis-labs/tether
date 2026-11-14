@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
@@ -319,5 +320,36 @@ func TestPendingRepliesMatchEveryAddressOfTheSeat(t *testing.T) {
 		if json.Unmarshal(raw, &p) != nil || len(p.Pending) != 0 {
 			t.Fatalf("as %s after reply: %s", as, raw)
 		}
+	}
+}
+
+// A session credential lists its session address first; the post is stamped
+// from the seat (the first address with a handle), not the session.
+func TestMessagePostStampsTheSeatForASessionPrincipal(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "typed4.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	cat := &config.Catalog{Agents: map[string]config.Agent{
+		"photon-tether": {ID: "photon-tether", URN: meURN},
+		"archie":        {ID: "archie", URN: archieURN},
+	}}
+	api := NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: db.MessagingStore(), Seats: db, Catalog: fixedCatalog{cat}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := identity.Principal{Verified: true, Kind: "session", ID: "msg://session/local/s1",
+			Addresses: []string{"msg://session/local/s1", "msg://agent/agent-mux/photon-tether", meURN}, Scopes: []string{"*"}}
+		api.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), p)))
+	}))
+	t.Cleanup(srv.Close)
+	h := &typedHarness{srv: srv, db: db}
+	code, raw := h.do(t, http.MethodPost, "/messages/post", `{"kind":"update","to":["@archie"],"body":"hi"}`)
+	var out MessagePostResponse
+	if code != http.StatusCreated || json.Unmarshal(raw, &out) != nil || out.Envelope.From != "@photon-tether" {
+		t.Fatalf("post: %d %s", code, raw)
+	}
+	stored, err := db.MessagingStore().Get(t.Context(), out.IDs[0])
+	if err != nil || stored.Metadata["from_verification"] != "verified" {
+		t.Fatalf("stored = %+v err=%v", stored, err)
 	}
 }
