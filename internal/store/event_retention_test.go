@@ -10,6 +10,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/hollis-labs/tether/internal/callcontext"
+	"github.com/hollis-labs/tether/internal/eventretention"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 func TestEventHistoryRetentionAuditAndRollback(t *testing.T) {
@@ -156,6 +158,52 @@ func TestA2ATaskRetentionPreservesNonTerminalAndRecent(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("preserved %s/%s: %v", binding, state, err)
 			}
+		}
+	}
+}
+
+// The debug pass removes only R-debug rows older than its cutoff; unclassified
+// and other-class rows of the same age stay (CW-20261114-0019).
+func TestDebugEventRetentionRemovesOnlyDebugRows(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	installTestRetention(t, db, "", map[string]eventretention.Class{"session.output": eventretention.Debug, "session.state_changed": eventretention.State})
+	old := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	insert := func(kind string, at time.Time) int64 {
+		t.Helper()
+		e, err := db.InsertEventEnvelope(ctx, events.Event{Scope: events.ScopeSession, SessionID: "s1", Kind: kind, At: at, PayloadJSON: `{}`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e.Seq
+	}
+	oldOutput := insert("session.output", old)
+	newOutput := insert("session.output", time.Now().UTC())
+	oldState := insert("session.state_changed", old)
+	oldUnclassified := insert("session.turn_output", old)
+	if c := rowByID(t, db, oldOutput)["retention_class"]; c != events.RetentionDebug {
+		t.Fatalf("session.output admitted as %v, want R-debug", c)
+	}
+	batch, err := db.DeleteEventHistoryBefore(ctx, "events:debug", time.Now().Add(-7*24*time.Hour), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Removed != 1 || batch.AuditID == 0 {
+		t.Fatalf("batch = %+v, want one removal with a receipt", batch)
+	}
+	exists := func(id int64) bool {
+		var n int
+		if err := db.db.QueryRow(`SELECT COUNT(*) FROM events WHERE id=?`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+	if exists(oldOutput) {
+		t.Fatal("old debug row survived")
+	}
+	for _, id := range []int64{newOutput, oldState, oldUnclassified} {
+		if !exists(id) {
+			t.Fatalf("row %d removed by the debug pass", id)
 		}
 	}
 }

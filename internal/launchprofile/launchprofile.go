@@ -95,6 +95,12 @@ type LaunchProfile struct {
 	// logical agent that has no live session.
 	Recovery string `yaml:"recovery,omitempty" json:"recovery,omitempty"`
 
+	// Cell names the team this agent's seat belongs to (for example "photon").
+	// Tether stamps it on every event the agent's sessions and mail produce, as
+	// scope.cell (CW-20261114-0019). A lowercase slug; closest definition wins,
+	// so a base profile can set it for every seat that extends it. Optional.
+	Cell string `yaml:"cell,omitempty" json:"cell,omitempty"`
+
 	// URN names the stable registry identity (msg://agent/<authority>/<id>) this
 	// agent's worker sessions act as. It is looked up in the registry, never
 	// minted from here, and is NOT inherited through extends: identity belongs
@@ -171,6 +177,23 @@ const (
 // the default (never).
 func ValidRecovery(v string) bool {
 	return v == "" || v == RecoveryNever || v == RecoveryAuto
+}
+
+// ValidCell reports whether v is an accepted cell: empty, or a lowercase slug
+// of letters, digits, '-' and '_' starting with a letter, at most 64 bytes.
+func ValidCell(v string) bool {
+	if v == "" {
+		return true
+	}
+	if len(v) > 64 || v[0] < 'a' || v[0] > 'z' {
+		return false
+	}
+	for _, r := range v {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // RoleManager marks an agent as a manager: a chat-facing agent that delegates

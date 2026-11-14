@@ -316,6 +316,7 @@ type MCPEndpointConfig struct {
 //	events_retention:
 //	  enabled: true # default true
 //	  days: 90      # window; unset means DefaultEventsRetentionDays
+//	  debug_days: 7 # R-debug rows (raw session.output); unset means DefaultDebugEventsRetentionDays
 //
 // Retention is time-based only (decision D-50): a row-count cap could drop a
 // long-running session's recent history at an arbitrary point.
@@ -324,6 +325,30 @@ type EventsRetentionConfig struct {
 	// Days is the window in days. Unset means DefaultEventsRetentionDays;
 	// 0 or negative disables the sweep even when Enabled.
 	Days *int `yaml:"days,omitempty"`
+	// DebugDays is the shorter window for events admitted as R-debug (raw
+	// session.output, CW-20261114-0019). Unset means
+	// DefaultDebugEventsRetentionDays; 0 or negative leaves them on Days.
+	DebugDays *int `yaml:"debug_days,omitempty"`
+}
+
+// DefaultDebugEventsRetentionDays is the R-debug window (the debug class's
+// default full-payload age in internal/eventretention).
+const DefaultDebugEventsRetentionDays = 7
+
+// DebugWindow returns how long R-debug events are kept, or 0 when they follow
+// Window (retention off, or debug_days <= 0).
+func (c EventsRetentionConfig) DebugWindow() time.Duration {
+	if c.Window() == 0 {
+		return 0
+	}
+	days := DefaultDebugEventsRetentionDays
+	if c.DebugDays != nil {
+		days = *c.DebugDays
+	}
+	if days <= 0 {
+		return 0
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 // DefaultEventsRetentionDays is the window when events retention is enabled

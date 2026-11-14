@@ -239,7 +239,17 @@ func New(catalogRoot string) (*Service, error) {
 // startup and freezes the event identity before constructing producers.
 // Ordinary CLI services remain usable for catalog inspection/repair.
 func NewDaemon(catalogRoot string) (*Service, error) {
-	return newService(catalogRoot, true, true)
+	s, err := newService(catalogRoot, true, true)
+	if err != nil {
+		return nil, err
+	}
+	// Admit raw output to the debug retention class for rows written from now
+	// on. A failure leaves rows unclassified (held on the main window, as
+	// before); it does not stop the daemon.
+	if err := s.AdmitEventRetentionClasses(context.Background()); err != nil {
+		log.Printf("app: event retention admission: %v (new rows stay unclassified)", err)
+	}
+	return s, nil
 }
 
 func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Service, error) {
@@ -318,11 +328,17 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 	// The row stage fills worker and the session-bound dimensions for events
 	// published outside the session's own call context.
 	rows := eventstamp.NewRows(stampSessions{db}, 0)
+	// The seat stage runs last: it stamps scope.cell from the catalog agent the
+	// event belongs to and the one-line summary (CW-20261114-0019).
+	seats := &catalogSeats{current: func() *config.Catalog { return cat }}
 	// Session health transitions are derived from the events other code
 	// publishes (internal/sessionhealth); the tracker emits on the same bus.
 	health := sessionhealth.New()
-	bus := events.NewBus(events.BusOptions{Pipeline: pipeline, Persister: db, Stages: []events.Stage{stamp, rows}, Observers: []events.Observer{health}})
+	// seat.waiting / seat.unblocked are derived from session.request_status.
+	seatWaits := newSeatWaitTracker()
+	bus := events.NewBus(events.BusOptions{Pipeline: pipeline, Persister: db, Stages: []events.Stage{stamp, rows, eventstamp.NewSeat(seats)}, Observers: []events.Observer{health, seatWaits}})
 	health.SetPublisher(bus)
+	seatWaits.SetPublisher(bus)
 	// A transaction that wrote outbox event rows calls Store.EventsCommitted after
 	// its commit; that wakes the bus so the rows are published now, not at the
 	// next sweep. Only StartEventsOutbox (the daemon) runs the drainer.
@@ -397,6 +413,7 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 		_ = db.Close()
 		return nil, err
 	}
+	seats.follow(service.CurrentCatalog)
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame
 	service.installOutpostMail()

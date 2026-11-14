@@ -28,6 +28,10 @@ type EventDTO struct {
 	SessionID   string `json:"session_id,omitempty"`
 	Kind        string `json:"kind"`
 	PayloadJSON string `json:"payload_json,omitempty"`
+	// Summary and Cell are the event's one-line summary and its seat's cell
+	// (CW-20261114-0019); empty on rows written before them.
+	Summary string `json:"summary,omitempty"`
+	Cell    string `json:"cell,omitempty"`
 }
 
 type EventListResponse struct {
@@ -43,6 +47,8 @@ func eventToDTO(e events.Event) EventDTO {
 		SessionID:   e.SessionID,
 		Kind:        e.Kind,
 		PayloadJSON: e.PayloadJSON,
+		Summary:     e.Envelope.Summary,
+		Cell:        e.Envelope.Dims.Cell,
 	}
 }
 

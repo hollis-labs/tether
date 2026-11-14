@@ -417,6 +417,7 @@ func (a *Adapter) registerEventsWaitTool(s *gomcp.Server) {
 			gomcp.StringProp("agent_urn", "Environment-cursor mode: scope.agent_urn filter. Comma-separated for several.", false),
 			gomcp.StringProp("run_id", "Environment-cursor mode: scope.run_id filter. Comma-separated for several.", false),
 			gomcp.StringProp("launch_id", "Environment-cursor mode: scope.launch_id filter. Comma-separated for several.", false),
+			gomcp.StringProp("cell", "Environment-cursor mode: scope.cell filter (the seat's team, e.g. photon). Comma-separated for several.", false),
 		),
 		Handler: a.handleEventsWait,
 	}, Reads("event stream subscription; consumes nothing"))
@@ -597,7 +598,7 @@ func (a *Adapter) handleEnvironmentEventsWait(ctx context.Context, args map[stri
 		SeverityMin: str(args, "severity_min"),
 		Scope:       map[string][]string{},
 	}
-	for _, dim := range []string{"task_id", "project_id", "workstream_id", "session_id", "agent_urn", "run_id", "launch_id"} {
+	for _, dim := range []string{"task_id", "project_id", "workstream_id", "session_id", "agent_urn", "run_id", "launch_id", "cell"} {
 		if vals := splitCSVArg(args, dim); len(vals) > 0 {
 			q.Scope[dim] = vals
 		}

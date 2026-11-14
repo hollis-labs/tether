@@ -7,6 +7,15 @@ dynamic boot prompt on top of a launch.
 For provider-specific setup examples, current smoke results, and boot prompt
 generation workflow, see [`docs/launches/`](launches/README.md).
 
+## Cell
+
+`cell: <slug>` names the team the agent's seat belongs to (for example
+`photon`). Tether stamps it on the agent's events as `scope.cell`
+(CW-20261114-0019; see [event-vocabulary.md](event-vocabulary.md)). A lowercase
+slug of letters, digits, `-` and `_`, starting with a letter; validation rejects
+anything else. Inherited through `extends`; closest definition wins. A catalog
+reload applies it to events written from then on.
+
 ## Boot recovery
 
 Agent definitions take `recovery: never|auto`. Absent means `never`. The
