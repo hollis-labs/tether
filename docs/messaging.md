@@ -105,10 +105,16 @@ mailbox's history is listed under the new one. To give a person one address,
 choose it (`msg://user/<authority>/<name>`; the URN grammar needs the authority
 segment, `local` on a single hub) and alias every address they had to it.
 
+A wake finds a session bound to any form of the mailbox: mail stored under the
+canonical address wakes a session bound to an alias, and a delivery queued for an
+address before it became an alias is woken through the canonical address's session.
+The routed-reply and delivery policy treats every form of a participant's address
+as the participant.
+
 Limits: group membership and `tether_group_mentions` are keyed by the member
-address as stored, so a member re-joins under a new address; a delivery already
-queued for an address before it became an alias keeps retrying against that
-address's own session; the alias table is per hub and is not federated.
+address as stored (a member re-joins under a new address; this waits for a
+registry record of its own for the canonical address); the alias table is per hub
+and is not federated.
 
 ## Message Kinds
 
