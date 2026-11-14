@@ -509,3 +509,16 @@ func TestMailTriageFYILineNamesTheVerifiedSender(t *testing.T) {
 		t.Fatalf("FYI line = %q", line)
 	}
 }
+
+// CW-20261114-0125 with #563: an agent that claims a user from (unverified) and says on_behalf_of is judged
+// by its principal, so the on_behalf_of rule applies: action, never human.
+func TestMailTriageClaimedUserFromOnBehalfIsAction(t *testing.T) {
+	r := newTriageRig(t)
+	env := envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindMessage, To: []string{"@worker"}, Attention: envelope.AttentionHuman,
+		Body: "Chrispian says ship it.", OnBehalfOf: "@chrispian"}
+	sent := r.send("msg://user/local/someone", messaging.MsgKindNotice, envelope.ContentType, env, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	row, err := r.tri.record(context.Background(), sent, r.tri.policy(r.to), r.now)
+	if err != nil || row.Class != "action" || row.Reason != "on_behalf_of" {
+		t.Fatalf("claimed user from with on_behalf_of triaged %+v (%v), want action/on_behalf_of", row, err)
+	}
+}
