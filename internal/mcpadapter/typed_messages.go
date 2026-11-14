@@ -60,6 +60,16 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 	}), Reads("lists pending typed messages; changes nothing"))
 
 	a.addTool(s, strictArgs(gomcp.Tool{
+		Name:        "tether_stop_gate_report",
+		Description: "Used by the Stop-hook reply gate: record that it blocked this seat's turn on these pending typed messages. Publishes seat.gate_blocked; changes no message. Requires message.write scope.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringArrayProp("message_ids", "The pending message ids the gate blocked on (1 to 20)", true),
+			gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
+		),
+		Handler: a.handleStopGateReport,
+	}), Writes())
+
+	a.addTool(s, strictArgs(gomcp.Tool{
 		Name: "tether_status_set",
 		Description: "Declare your seat's status: available, working, waiting-decision, waiting-agent, blocked, paused or offline, with a short reason, a ref and an optional expiry. " +
 			"blocked must name an owner (@handle). Re-setting the same status only refreshes its expiry. The operator or a manager may set another seat's status with target. " +
@@ -206,6 +216,31 @@ func (a *Adapter) handleHandleSet(ctx context.Context, args map[string]any) (any
 		return nil, err
 	}
 	out, err := a.client.HandleSet(ctx, str(args, "urn"), str(args, "handle"))
+	if err != nil {
+		if isDaemonUnreachable(err) {
+			return nil, daemonUnreachableError(err)
+		}
+		return nil, classifyClientErr(err, "")
+	}
+	return toolJSON(out), nil
+}
+
+func (a *Adapter) handleStopGateReport(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeMessageWrite); err != nil {
+		return nil, err
+	}
+	if err := a.daemonClientFor("tether_stop_gate_report"); err != nil {
+		return nil, err
+	}
+	var ids []string
+	if raw, ok := args["message_ids"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				ids = append(ids, s)
+			}
+		}
+	}
+	out, err := a.client.StopGateReport(ctx, str(args, "as"), ids)
 	if err != nil {
 		if isDaemonUnreachable(err) {
 			return nil, daemonUnreachableError(err)

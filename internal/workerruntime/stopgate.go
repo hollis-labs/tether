@@ -91,6 +91,18 @@ func RunStopGate(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		fmt.Fprintf(stderr, "tether-worker stop-gate: state: %v; not gating\n", err)
 		return
 	}
+	// Tell the hub, so a block is visible as seat.gate_blocked. Best effort: a
+	// report that fails never changes the decision.
+	ids := make([]string, 0, len(fresh))
+	for _, p := range fresh {
+		ids = append(ids, p.MessageID)
+	}
+	if len(ids) > 20 {
+		ids = ids[:20]
+	}
+	if err := reportBlocked(ctx, &HTTPRelay{URL: hubURL, TokenFile: tokenFile}, as, ids); err != nil {
+		fmt.Fprintf(stderr, "tether-worker stop-gate: report: %v (still blocking)\n", err)
+	}
 	out, err := json.Marshal(map[string]string{"decision": "block", "reason": stopGateReason(fresh)})
 	if err != nil {
 		return
@@ -167,11 +179,41 @@ func stopGateReason(pending []pendingReply) string {
 	return b.String()
 }
 
-// askPendingReplies runs one short MCP session against the hub through the relay's own transport (token re-read per
-// request, https only, no redirects): initialize, initialized, then tools/call tether_pending_replies, in order.
+// askPendingReplies asks the hub tether_pending_replies for this seat.
 func askPendingReplies(ctx context.Context, r *HTTPRelay, as string) ([]pendingReply, error) {
-	if err := r.validate(); err != nil {
+	args := map[string]any{}
+	if as != "" {
+		args["as"] = as
+	}
+	text, err := mcpToolCall(ctx, r, "tether_pending_replies", args)
+	if err != nil {
 		return nil, err
+	}
+	var body struct {
+		Pending []pendingReply `json:"pending"`
+	}
+	if err := json.Unmarshal([]byte(text), &body); err != nil {
+		return nil, fmt.Errorf("pending-replies result: %w", err)
+	}
+	return body.Pending, nil
+}
+
+// reportBlocked tells the hub which messages the gate blocked on (seat.gate_blocked); a test replaces it.
+var reportBlocked = func(ctx context.Context, r *HTTPRelay, as string, ids []string) error {
+	args := map[string]any{"message_ids": ids}
+	if as != "" {
+		args["as"] = as
+	}
+	_, err := mcpToolCall(ctx, r, "tether_stop_gate_report", args)
+	return err
+}
+
+// mcpToolCall runs one short MCP session against the hub through the relay's own transport (token re-read per
+// request, https only, no redirects): initialize, initialized, then one tools/call, in order. It returns the tool's
+// text result.
+func mcpToolCall(ctx context.Context, r *HTTPRelay, tool string, args map[string]any) (string, error) {
+	if err := r.validate(); err != nil {
+		return "", err
 	}
 	var out bytes.Buffer
 	r.out = &out
@@ -181,32 +223,28 @@ func askPendingReplies(ctx context.Context, r *HTTPRelay, as string) ([]pendingR
 		cancel()
 		r.streamWG.Wait()
 	}()
-	args := map[string]any{}
-	if as != "" {
-		args["as"] = as
-	}
 	steps := []map[string]any{
 		{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
 			"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "tether-stop-gate", "version": "1"}}},
 		{"jsonrpc": "2.0", "method": "notifications/initialized"},
-		{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tether_pending_replies", "arguments": args}},
+		{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}},
 	}
 	for _, step := range steps {
 		msg, err := json.Marshal(step)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		if ctx.Err() != nil {
-			return nil, errors.New("hub did not answer in time")
+			return "", errors.New("hub did not answer in time")
 		}
 		r.forward(ctx, msg)
 	}
 	r.closeSession()
-	return parsePendingReplies(out.Bytes())
+	return parseToolResult(out.Bytes(), tool)
 }
 
-// parsePendingReplies finds the tools/call (id 2) response among the relay's output lines.
-func parsePendingReplies(lines []byte) ([]pendingReply, error) {
+// parseToolResult finds the tools/call (id 2) response among the relay's output lines.
+func parseToolResult(lines []byte, tool string) (string, error) {
 	sc := bufio.NewScanner(bytes.NewReader(lines))
 	sc.Buffer(make([]byte, 0, 64<<10), maxRelayLine)
 	for sc.Scan() {
@@ -225,18 +263,12 @@ func parsePendingReplies(lines []byte) ([]pendingReply, error) {
 			continue
 		}
 		if resp.Error != nil {
-			return nil, fmt.Errorf("hub refused tether_pending_replies: %s", resp.Error.Message)
+			return "", fmt.Errorf("hub refused %s: %s", tool, resp.Error.Message)
 		}
 		if resp.Result == nil || resp.Result.IsError || len(resp.Result.Content) == 0 {
-			return nil, errors.New("hub returned no pending-replies result")
+			return "", fmt.Errorf("hub returned no %s result", tool)
 		}
-		var body struct {
-			Pending []pendingReply `json:"pending"`
-		}
-		if err := json.Unmarshal([]byte(resp.Result.Content[0].Text), &body); err != nil {
-			return nil, fmt.Errorf("pending-replies result: %w", err)
-		}
-		return body.Pending, nil
+		return resp.Result.Content[0].Text, nil
 	}
-	return nil, errors.New("hub did not answer tether_pending_replies")
+	return "", fmt.Errorf("hub did not answer %s", tool)
 }

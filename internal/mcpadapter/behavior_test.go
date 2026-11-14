@@ -88,6 +88,7 @@ var clientMethodWrites = map[string]bool{
 	"StatusSet":                     true,
 	"StatusGet":                     false,
 	"HandleSet":                     true,
+	"StopGateReport":                true,
 	"MessageNotify":                 true,
 	"MessageConsume":                true,
 	"MessageCancel":                 true,

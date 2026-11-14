@@ -20,11 +20,13 @@ import (
 
 // gateHub answers the three MCP steps the gate sends and records their order.
 type gateHub struct {
-	mu      sync.Mutex
-	methods []string
-	as      string
-	result  string // tools/call result text; "" means pending:[]
-	status  int    // non-zero: refuse tools/call with this status
+	mu       sync.Mutex
+	methods  []string
+	tools    []string
+	reported []string
+	as       string
+	result   string // tools/call result text; "" means pending:[]
+	status   int    // non-zero: refuse tools/call with this status
 }
 
 func (h *gateHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -45,8 +47,8 @@ func (h *gateHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Method string          `json:"method"`
 		ID     json.RawMessage `json:"id"`
 		Params struct {
-			Name      string            `json:"name"`
-			Arguments map[string]string `json:"arguments"`
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
 		} `json:"params"`
 	}
 	_ = json.Unmarshal(body, &m)
@@ -64,7 +66,17 @@ func (h *gateHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.mu.Lock()
-		h.as = m.Params.Arguments["as"]
+		h.tools = append(h.tools, m.Params.Name)
+		h.as, _ = m.Params.Arguments["as"].(string)
+		if m.Params.Name == "tether_stop_gate_report" {
+			for _, v := range m.Params.Arguments["message_ids"].([]any) {
+				h.reported = append(h.reported, v.(string))
+			}
+			h.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"{\"recorded\":1}"}]}}`, m.ID)
+			return
+		}
 		h.mu.Unlock()
 		text := h.result
 		if text == "" {
@@ -103,8 +115,10 @@ func TestStopGateBlocksOnceWhileARepliesWait(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &d); err != nil || d.Decision != "block" || !strings.Contains(d.Reason, "m1 question") || !strings.Contains(d.Reason, "tether_message_post") {
 		t.Fatalf("decision = %q (%v)", out, err)
 	}
-	if strings.Join(hub.methods, ",") != "initialize,notifications/initialized,tools/call" || hub.as != "msg://agent/agent-mux/agt_me" {
-		t.Fatalf("hub saw %v as %q", hub.methods, hub.as)
+	// Ask, then report the block (seat.gate_blocked), each in order in its own short session.
+	if strings.Join(hub.methods, ",") != "initialize,notifications/initialized,tools/call,initialize,notifications/initialized,tools/call" ||
+		strings.Join(hub.tools, ",") != "tether_pending_replies,tether_stop_gate_report" || strings.Join(hub.reported, ",") != "m1" || hub.as != "msg://agent/agent-mux/agt_me" {
+		t.Fatalf("hub saw %v tools %v reported %v as %q", hub.methods, hub.tools, hub.reported, hub.as)
 	}
 	// The stop that follows our own block is never gated, and the hub is not asked.
 	hub2 := &gateHub{result: hub.result}
@@ -217,5 +231,17 @@ func TestStopGateNewestBlocksBehindABacklog(t *testing.T) {
 	out, _ := runGateState(t, &gateHub{result: pendingJSON(items...)}, `{"stop_hook_active":false}`, state)
 	if !strings.Contains(out, `"block"`) || !strings.Contains(out, "new question") || strings.Contains(out, "b00") || !strings.Contains(out, "1 typed message") {
 		t.Fatalf("decision = %q", out)
+	}
+}
+
+// A report that fails never changes the decision.
+func TestStopGateReportFailureStillBlocks(t *testing.T) {
+	prev := reportBlocked
+	reportBlocked = func(context.Context, *HTTPRelay, string, []string) error { return fmt.Errorf("hub down") }
+	t.Cleanup(func() { reportBlocked = prev })
+	m1 := pendingReply{MessageID: "m1", Kind: "question", From: "x", CreatedAt: time.Now()}
+	out, errOut := runGate(t, &gateHub{result: pendingJSON(m1)}, `{"stop_hook_active":false}`)
+	if !strings.Contains(out, `"block"`) || !strings.Contains(errOut, "report: hub down (still blocking)") {
+		t.Fatalf("out=%q err=%q", out, errOut)
 	}
 }

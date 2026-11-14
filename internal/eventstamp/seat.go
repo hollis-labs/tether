@@ -170,6 +170,8 @@ func Summarize(kind string, p map[string]any, handle func(string) string) string
 		return out
 	case kind == "session.cleared":
 		return "context cleared"
+	case kind == "seat.gate_blocked":
+		return join(str(p, "handle"), fmt.Sprintf("stop gate blocked the turn on %d pending message(s)", num(p, "count")))
 	case kind == "seat.status":
 		out := join(str(p, "handle"), str(p, "state"))
 		if r := str(p, "reason"); r != "" {

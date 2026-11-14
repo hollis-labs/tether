@@ -99,3 +99,13 @@ func (c *Client) postOK(ctx context.Context, path string, body []byte) (json.Raw
 	}
 	return out, nil
 }
+
+// StopGateReport tells the hub the seat's Stop gate blocked a turn on these
+// messages (it publishes seat.gate_blocked).
+func (c *Client) StopGateReport(ctx context.Context, as string, messageIDs []string) (json.RawMessage, error) {
+	body, err := json.Marshal(map[string]any{"message_ids": messageIDs})
+	if err != nil {
+		return nil, err
+	}
+	return c.postOK(ctx, withAs("/messages/pending-replies/blocked", as), body)
+}
