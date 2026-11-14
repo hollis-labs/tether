@@ -226,21 +226,60 @@ func TestNamingLiveProbeCollisionParityNoToolCallsAndTimeout(t *testing.T) {
 	// deadline and stopwatch: otherwise setup can exhaust the deadline before
 	// ProbeNames ever attempts the hung upstream's handshake.
 	hungAdapter := newTestAdapter(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	// The overall deadline is armed only once the hung upstream has started
+	// (its fixture writes "start " to hung.events): spawning the fixture process
+	// can take longer than any fixed budget on a loaded CI runner, and a deadline
+	// that expires first never exercises the handshake timeout
+	// (CW-20261114-0013 follow-up). A watcher cancels the probe 300ms after the
+	// start; 30s without a start fails the test instead of hanging it.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	began := time.Now()
+	eventsPath := filepath.Join(dir, "hung.events")
+	started := make(chan time.Time, 1)
+	go func() {
+		limit := time.After(30 * time.Second)
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-limit:
+				cancel()
+				return
+			case <-tick.C:
+				if b, _ := os.ReadFile(eventsPath); strings.Contains(string(b), "start ") {
+					at := time.Now()
+					started <- at
+					select {
+					case <-time.After(300 * time.Millisecond):
+						cancel()
+					case <-ctx.Done():
+					}
+					return
+				}
+			}
+		}
+	}()
 	_, err = hungAdapter.ProbeNames(ctx, hung, ProxyOptions{})
-	elapsed := time.Since(began)
-	t.Logf("hung upstream probe duration: %s", elapsed)
-	if err == nil || elapsed > 5*time.Second {
-		t.Fatalf("probe did not honor overall deadline: %v %v", elapsed, err)
+	returned := time.Now()
+	var startedAt time.Time
+	select {
+	case startedAt = <-started:
+	default:
+		t.Fatalf("the hung upstream never started within 30s: %v", err)
 	}
-	if !errors.Is(ctx.Err(), context.DeadlineExceeded) || !strings.Contains(err.Error(), "reached its overall timeout") {
+	afterStart := returned.Sub(startedAt)
+	t.Logf("hung upstream probe returned %s after the upstream started", afterStart)
+	if err == nil || afterStart > 5*time.Second {
+		t.Fatalf("probe did not honor the overall deadline: %v after start, err %v", afterStart, err)
+	}
+	if ctx.Err() == nil || !strings.Contains(err.Error(), "reached its overall timeout") {
 		t.Fatalf("probe did not reach upstream timeout: %v (context: %v)", err, ctx.Err())
 	}
-	events, readErr := os.ReadFile(filepath.Join(dir, "hung.events"))
+	events, readErr := os.ReadFile(eventsPath)
 	if readErr != nil || !strings.Contains(string(events), "start ") {
-		t.Fatalf("deadline expired before the hung upstream started: events=%q err=%v", events, readErr)
+		t.Fatalf("the hung upstream did not start: events=%q err=%v", events, readErr)
 	}
 	if strings.Contains(string(events), "call ") {
 		t.Fatal("timeout probe dispatched a tool")
