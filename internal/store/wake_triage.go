@@ -128,6 +128,9 @@ type FYIItem struct {
 	From      string
 	Typed     bool
 	Subject   string
+	// Metadata holds the message's daemon-stamped sender keys (from_verification, from_principal), so a
+	// listing names who actually sent it rather than a from it only claimed (CW-20261114-0125).
+	Metadata map[string]string
 }
 
 // TriageFYIPending lists the seat's pending fyi mail that is still unread,
@@ -136,7 +139,7 @@ func (s *Store) TriageFYIPending(ctx context.Context, seat string, limit int) ([
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT t.message_id, t.recipient, m.from_urn, t.typed, coalesce(m.payload,'') FROM wake_triage t JOIN messages m ON m.id=t.message_id
+	rows, err := s.db.QueryContext(ctx, `SELECT t.message_id, t.recipient, m.from_urn, t.typed, coalesce(m.payload,''), coalesce(m.metadata,'') FROM wake_triage t JOIN messages m ON m.id=t.message_id
  WHERE t.seat=? AND t.class='fyi' AND t.state='pending' AND m.read_at IS NULL AND m.canceled_at IS NULL AND m.archived_at IS NULL
  ORDER BY t.created_at LIMIT ?`, seat, limit)
 	if err != nil {
@@ -147,9 +150,20 @@ func (s *Store) TriageFYIPending(ctx context.Context, seat string, limit int) ([
 	for rows.Next() {
 		var it FYIItem
 		var typed int
-		var payload string
-		if err := rows.Scan(&it.MessageID, &it.Recipient, &it.From, &typed, &payload); err != nil {
+		var payload, meta string
+		if err := rows.Scan(&it.MessageID, &it.Recipient, &it.From, &typed, &payload, &meta); err != nil {
 			return nil, err
+		}
+		if meta != "" {
+			var all map[string]any
+			if json.Unmarshal([]byte(meta), &all) == nil {
+				it.Metadata = map[string]string{}
+				for _, k := range []string{"from_verification", "from_principal"} {
+					if v, ok := all[k].(string); ok {
+						it.Metadata[k] = v
+					}
+				}
+			}
 		}
 		it.Typed = typed == 1
 		it.Subject = payloadSubject(payload)
