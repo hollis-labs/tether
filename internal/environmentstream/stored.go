@@ -76,7 +76,9 @@ func (p StoredIDProjection) MapStored(environmentID string, e events.Event) (Eve
 			ProjectID: v.Dims.ProjectID, WorkstreamID: v.Dims.WorkstreamID, EpicID: v.Dims.EpicID, SprintID: v.Dims.SprintID,
 			PlanID: v.Dims.PlanID, PhaseID: v.Dims.PhaseID, TaskID: v.Dims.TaskID, RunID: v.Dims.RunID, Attempt: attempt,
 			LaunchID: v.Dims.LaunchID, AgentURN: v.Dims.AgentURN, LogicalAgentID: v.Dims.LogicalAgentID, TeamRunID: v.Dims.TeamRunID,
+			Cell: v.Dims.Cell,
 		},
+		Summary: v.Summary,
 		Corr: &runtimeevents.Corr{
 			TraceID: v.Corr.TraceID, SpanID: v.Corr.SpanID, Traceparent: v.Corr.Traceparent, InReplyTo: v.Corr.InReplyTo,
 			CausationID: v.Corr.CausationID, CorrelationID: v.Corr.CorrelationID, ThreadID: v.Corr.ThreadID,
@@ -151,7 +153,7 @@ func (p StoredIDProjection) MapStored(environmentID string, e events.Event) (Eve
 		return Event{}, err
 	}
 	mapped.PayloadDigest = v.PayloadDigest
-	out := Event{EnvironmentID: environmentID, Seq: e.Seq, Event: mapped, Summary: v.Summary, Cell: v.Dims.Cell}
+	out := Event{EnvironmentID: environmentID, Seq: e.Seq, Event: mapped}
 	return out, out.Validate()
 }
 

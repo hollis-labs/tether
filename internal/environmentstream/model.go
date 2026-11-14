@@ -14,66 +14,14 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-// Event is the published mesh envelope plus the two environment coordinates and the summary,
+// Event is the published mesh envelope plus the two environment coordinates,
 // flattened into the SAME JSON object. Neither extension shadows a mesh field.
+// The summary (top-level "summary") and the seat's cell ("scope.cell") are
+// mesh fields (CW-20261114-0019).
 type Event struct {
 	mesh.Event
 	EnvironmentID string `json:"environment_id"`
 	Seq           int64  `json:"seq"`
-	// Summary is the event's one redacted line (CW-20261114-0019), on the wire
-	// as top-level "summary".
-	Summary string `json:"summary,omitempty"`
-	// Cell is the acting seat's cell, on the wire as "scope.cell". It is held
-	// here until mesh/core's EventScope carries Cell itself.
-	Cell string `json:"-"`
-}
-
-// MarshalJSON writes Cell into the scope object, where the contract puts it.
-func (e Event) MarshalJSON() ([]byte, error) {
-	type plain Event
-	raw, err := json.Marshal(plain(e))
-	if err != nil || e.Cell == "" {
-		return raw, err
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, err
-	}
-	scope := map[string]json.RawMessage{}
-	if s, ok := obj["scope"]; ok && len(s) > 0 && string(s) != "null" {
-		if err := json.Unmarshal(s, &scope); err != nil {
-			return nil, err
-		}
-	}
-	if scope["cell"], err = json.Marshal(e.Cell); err != nil {
-		return nil, err
-	}
-	if obj["scope"], err = json.Marshal(scope); err != nil {
-		return nil, err
-	}
-	return json.Marshal(obj)
-}
-
-// UnmarshalJSON reads scope.cell back into Cell.
-func (e *Event) UnmarshalJSON(data []byte) error {
-	type plain Event
-	var p plain
-	if err := json.Unmarshal(data, &p); err != nil {
-		return err
-	}
-	var scoped struct {
-		Scope *struct {
-			Cell string `json:"cell"`
-		} `json:"scope"`
-	}
-	if err := json.Unmarshal(data, &scoped); err != nil {
-		return err
-	}
-	if scoped.Scope != nil {
-		p.Cell = scoped.Scope.Cell
-	}
-	*e = Event(p)
-	return nil
 }
 
 // Map preserves the original kind and payload, including unknown kinds. The

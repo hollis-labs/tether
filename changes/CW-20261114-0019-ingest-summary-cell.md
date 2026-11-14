@@ -1,0 +1,3 @@
+- `POST /events` now stores a producer's `summary` and `scope.cell` (CW-20261114-0019). The hub redacts the summary as it does the payload; a summary that is longer than 200 characters or spans more than one line is still rejected with `schema_invalid`.
+- Bumped `harness/core` to v0.17.0 and `mesh/core` to v0.10.0 (CW-20261114-0019). The environment stream now carries `summary` and `scope.cell` as mesh fields instead of a projection shim; the wire shape is unchanged.
+- Environment stream: a stored event whose actor is a `device` now names that device as its actor instead of falling back to the hub's service actor, because `device` is a mesh actor kind since mesh/core v0.7.0 (CW-20261114-0019).
