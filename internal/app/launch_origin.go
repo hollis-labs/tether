@@ -260,14 +260,14 @@ func (s *Service) launchCeilingForSeat(ctx context.Context, row *store.SessionRo
 }
 
 func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, plan *launch.Plan, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
-	if _, hasPrincipal := identity.FromContext(ctx); hasPrincipal && isChatLaunch(ctx) && s.catalogSeat(plan) {
-		// A chat launch of a catalog seat by an identified caller: granted is the
-		// seat's catalog mcp_scopes (or the default set), so nothing is added, and
-		// the device that asked does not narrow it. It is checked before the
-		// parent grant so the seat gets its catalog scopes whether or not an
-		// earlier session of it was launched narrow. A caller with no principal
-		// (identity observe/off) falls through and stays anonymous_external, so
-		// the enforce-flip guard still counts it.
+	if p, ok := identity.FromContext(ctx); ok && operatorChatCaller(p) && isChatLaunch(ctx) && s.catalogSeat(plan) {
+		// A chat launch of a catalog seat by the operator: granted is the seat's
+		// catalog mcp_scopes (or the default set), so nothing is added, and the
+		// device that asked does not narrow it. It is checked before the parent
+		// grant so the seat gets its catalog scopes whether or not an earlier
+		// session of it was launched narrow. Any other caller, including one with
+		// no principal (identity observe/off, which stays anonymous_external for
+		// the enforce-flip guard), falls through to the launcher bound.
 		return slices.Clone(granted), AttributionCatalog, ScopeBasisCatalog, nil
 	}
 	if parentID := s.seatParent(ctx, row, plan); parentID != "" {
@@ -285,6 +285,22 @@ func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, plan *
 	}
 	scopes, attribution, err := s.launchCeilingFor(ctx, granted, narrow)
 	return scopes, attribution, ScopeBasisLauncher, err
+}
+
+// operatorChatCaller reports whether a chat launch's caller is the operator:
+// the operator credential, or a device the operator paired (Tachyon) rather than
+// a token minted from one. Only these get the catalog basis; any other holder of
+// operate keeps the launcher bound, so launching a seat cannot widen what the
+// caller holds (CW-20261114-0063 review). Same test as the #554 device read
+// exception, without its read-scope requirement.
+func operatorChatCaller(p identity.Principal) bool {
+	if !p.Verified {
+		return false
+	}
+	if p.ID == identity.OperatorID {
+		return true
+	}
+	return p.Kind == "device" && p.TokenID == "" && p.CreatedBy == identity.OperatorID
 }
 
 // catalogSeat reports whether plan launches an agent defined in the live catalog.
