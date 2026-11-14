@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -10,8 +11,10 @@ import (
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -272,4 +275,66 @@ func (r *triageRig) isRead(id string) bool {
 		r.t.Fatal(err)
 	}
 	return readAt != nil
+}
+
+// Senders are named by handle: catalog agents by handle:/id, other seats by
+// their registry handle (archie is not a catalog agent), never as @agt_....
+func TestSenderHandleUsesCatalogThenRegistry(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	archie, err := reg.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Archie"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.AttachExternalID(ctx, archie.URN, "handle", "archie"); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{Store: st, Registry: reg, Catalog: &config.Catalog{Agents: map[string]config.Agent{
+		"cmd-builder-1": {ID: "cmd-builder-1", Handle: "builder-1", URN: "msg://agent/agent-mux/agt_b1"},
+		"photon-tether": {ID: "photon-tether"},
+	}}}
+	for urn, want := range map[string]string{
+		archie.URN:                            "@archie",
+		"msg://agent/agent-mux/agt_b1":        "@builder-1",
+		"msg://agent/agent-mux/photon-tether": "@photon-tether",
+		triageOperator:                        "@chrispian",
+		"msg://agent/agent-mux/agt_unknown":   "",
+	} {
+		if got := s.senderHandle(ctx, urn); got != want {
+			t.Errorf("senderHandle(%s) = %q, want %q", urn, got, want)
+		}
+	}
+	// A caller-registered id never makes a sender render as the operator or as
+	// an invalid handle; the sender then falls back to its address segment.
+	for i, spoofID := range []string{"chrispian", "Bad Handle", "@x"} {
+		sp, err := reg.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: fmt.Sprintf("Spoof %d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := reg.AttachExternalID(ctx, sp.URN, "tether", spoofID); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.senderHandle(ctx, sp.URN); got != "" {
+			t.Errorf("tether id %q named the sender %q", spoofID, got)
+		}
+	}
+	// The triage uses it for the fyi line and the event.
+	r := newTriageRig(t)
+	r.tri.handle = func(_ context.Context, urn string) string {
+		if urn == peer {
+			return "@archie"
+		}
+		return ""
+	}
+	r.wake(r.send(peer, messaging.MsgKindNotice, "", map[string]string{"subject": "Heads up"}, nil))
+	line, _ := r.tri.fyiLine(ctx, seatPolicy{seat: r.to.URN(), handle: "@worker", enabled: true})
+	if !strings.Contains(line, "@archie: Heads up") || strings.Contains(line, "@agt_peer") {
+		t.Fatalf("fyi line = %q", line)
+	}
+	r.mu.Lock()
+	payload := r.events[0].PayloadJSON
+	r.mu.Unlock()
+	if !strings.Contains(payload, `"from_handle":"@archie"`) {
+		t.Fatalf("mail.triaged payload = %s", payload)
+	}
 }
