@@ -119,7 +119,7 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 	// os.Stdin can be an inherited blocking fd, whose Close cannot interrupt
 	// an ongoing syscall read. Duplicate it as a pollable, owned file first.
 	if file, ok := input.(*os.File); ok {
-		fd, e := syscall.Dup(int(file.Fd()))
+		fd, e := syscall.Dup(int(file.Fd())) //nolint:gosec // G115: Fd() of an open *os.File is a small non-negative descriptor that fits int
 		if e != nil {
 			return 0, e
 		}
@@ -132,7 +132,7 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 			_ = syscall.Close(fd)
 			return 0, e
 		}
-		input = os.NewFile(uintptr(fd), file.Name())
+		input = os.NewFile(uintptr(fd), file.Name()) //nolint:gosec // G115: fd comes from a successful syscall.Dup, so it is a small non-negative descriptor that fits uintptr
 	}
 	defer func() { _ = input.Close() }()
 	spec, err := shimhost.ReadDescriptor(opts.DescriptorPath)

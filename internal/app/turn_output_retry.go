@@ -45,7 +45,7 @@ func (s *Service) enqueueOutputRetry(job *turnOutputWrite, recovered bool) {
 	// Permit one large output on its own; never strand it behind the normal
 	// aggregate memory budget. Further workers wait in the durable journal.
 	if r.ctx == nil {
-		r.ctx, r.cancel = context.WithCancel(context.Background())
+		r.ctx, r.cancel = context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is kept in r.cancel and called when the retry pool is stopped
 	}
 	stop := r.ctx
 	if r.active == nil {
@@ -124,7 +124,7 @@ func (s *Service) startOutputRetryReplay() {
 	}
 	r.replayStarted = true
 	if r.ctx == nil {
-		r.ctx, r.cancel = context.WithCancel(context.Background())
+		r.ctx, r.cancel = context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is kept in r.cancel and called when the retry pool is stopped
 	}
 	ctx := r.ctx
 	r.wg.Add(1)

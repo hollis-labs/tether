@@ -41,7 +41,7 @@ func privateFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), path) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
@@ -139,7 +139,7 @@ func Lock(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), path) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()

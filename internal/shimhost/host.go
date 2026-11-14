@@ -325,7 +325,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		if e != nil {
 			return p.prechildFailure(r)
 		}
-		logFile = os.NewFile(uintptr(fd), logPath)
+		logFile = os.NewFile(uintptr(fd), logPath) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 		defer func() { _ = logFile.Close() }()
 	}
 	if err = WritePrivateJSON(r.DescriptorPath, spec); err != nil {

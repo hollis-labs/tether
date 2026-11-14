@@ -731,7 +731,7 @@ func TestInterruptCheckpointCanAdvancePastSnapshot(t *testing.T) {
 }
 
 func TestInterruptCheckpointRejectsIncompleteOrForeignState(t *testing.T) {
-	ready := bridgeState{Cursor: "journal:10", Counter: 4, Init: []byte("init")}
+	ready := bridgeState{Cursor: "journal:10", Init: []byte("init")}
 	for _, tc := range []struct {
 		name, cursor, high string
 		counter            uint64

@@ -231,7 +231,7 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, r *http.Request, id 
 		var err error
 		observations, err = reporter.SessionHealthObservations(r.Context(), id)
 		if err != nil {
-			slog.Warn("session health observations unavailable", "session_id", id)
+			slog.Warn("session health observations unavailable", "session_id", id) //nolint:gosec // G706 false positive: structured slog attrs are quoted/encoded by the handler; id is a session id
 			observations = SessionHealthObservations{}
 		}
 	}
