@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +41,8 @@ type identityRig struct {
 	urn    string
 	handle http.Handler
 	op     string
+	// failStops makes the fake worker refuse every stop command.
+	failStops *atomic.Bool
 }
 
 // newIdentityRig wires a real hub, a real registry and the real daemon route table around a fake
@@ -79,11 +82,20 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 		t.Fatalf("welcome: %+v %v", welcome, err)
 	}
 	specs := make(chan workerwire.LaunchSpec, 8)
+	failStops := &atomic.Bool{}
 	go func() {
 		for {
 			var f workerwire.Frame
 			if ws.ReadJSON(&f) != nil {
 				return
+			}
+			if f.T == "stop" {
+				reply := workerwire.Frame{T: "ack", CmdID: f.CmdID, Session: f.Session}
+				if failStops.Load() {
+					reply.Error = "stop refused"
+				}
+				_ = ws.WriteJSON(reply)
+				continue
 			}
 			var spec workerwire.LaunchSpec
 			_ = json.Unmarshal(f.Spec, &spec)
@@ -107,7 +119,7 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &identityRig{t: t, db: db, ids: ids, svc: svc, hub: hub, worker: workerID, specs: specs, urn: profile.URN, handle: server.Handler(), op: operator}
+	return &identityRig{t: t, db: db, ids: ids, svc: svc, hub: hub, worker: workerID, specs: specs, urn: profile.URN, handle: server.Handler(), op: operator, failStops: failStops}
 }
 
 func (r *identityRig) launch(id, urn string) (workerwire.LaunchSpec, error) {

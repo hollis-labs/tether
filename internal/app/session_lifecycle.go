@@ -155,7 +155,26 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	stampTaskID(plan, in.TaskID)
 	plan.App = in.App
 	plan.Continuity = in.Continuity
+	stampSeatRelaunch(plan, in)
 	return plan, nil
+}
+
+// stampSeatRelaunch records on the plan whether the create may run under the
+// seat's previous grant; see launch.Plan.SeatRelaunch.
+func stampSeatRelaunch(plan *launch.Plan, in CreateSessionInput) {
+	plan.SeatRelaunch = in.seatRelaunch()
+	plan.SeatRelaunchWorker = plan.SeatRelaunch && in.Worker != ""
+}
+
+// seatRelaunch reports whether a create is a relaunch of the seat as the
+// catalog defines it. Any caller payload that reshapes the seat (its boot
+// prompt, agent definition, boot profile, overrides or injected files) makes it
+// a different session that must not run under the seat's previous grant.
+// PromptAppend is allowed: it is a turn's worth of instructions, as a chat turn
+// is, and relaunch notes need it.
+func (in CreateSessionInput) seatRelaunch() bool {
+	return in.Continuity == "relaunch" && in.BootPromptOverride == "" && in.AgentFile == "" && in.AgentInline == "" &&
+		in.BootProfileFile == "" && in.Override == "" && in.Injection == ""
 }
 
 // stampTaskID records the launcher-asserted task id on the plan and in the agent's

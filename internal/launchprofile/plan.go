@@ -35,6 +35,15 @@ type Plan struct {
 	// the logical agent's previous one. Never serialized: it is a creation-time
 	// instruction, and the outcome lives on the session row (intent, parent).
 	Continuity string `json:"-"`
+	// SeatRelaunch is set by the hub at creation (CW-20261114-0038) when a
+	// continuity "relaunch" create left the seat as the catalog defines it: no
+	// boot-prompt, agent, override or injection payload from the caller. Only such
+	// a relaunch may run under the previous session's grant (scope basis
+	// parent_grant); absent means the launcher bounds it. SeatRelaunchWorker
+	// records that the caller named the worker, which must then be the previous
+	// session's worker. Hub-written only: no route decodes a plan from a caller.
+	SeatRelaunch       bool `json:"seat_relaunch,omitempty"`
+	SeatRelaunchWorker bool `json:"seat_relaunch_worker,omitempty"`
 	// ResumeProviderSessionID is set only by explicit or boot recovery. LaunchSession
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.

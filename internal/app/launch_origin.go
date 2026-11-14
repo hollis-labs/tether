@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/session"
 )
 
 // LaunchOriginKind names why the daemon itself started a session.
@@ -212,8 +214,8 @@ const (
 const KindSessionScopesNarrowed = "session.scopes_narrowed"
 
 // launchCeilingForSeat is the worker path's ceiling. A resume of the same seat
-// (an internal resume origin whose session has this session's logical agent
-// and launch id) keeps the scopes the seat's previous session was granted,
+// (an internal resume origin, or a continuity "relaunch" create whose ended
+// parent session, has this session's logical agent and launch id) keeps the scopes the seat's previous session was granted,
 // capped by its catalog definition, whoever triggers the resume: a seat
 // relaunched from Tachyon chat or a wake must not silently lose terminal/admin
 // because the device that relaunched it holds less. Nobody gains scopes the
@@ -221,34 +223,74 @@ const KindSessionScopesNarrowed = "session.scopes_narrowed"
 // was itself bounded by whoever first launched the seat. Every other launch is
 // launchCeilingFor (bounded by the launcher). Either way a dropped scope
 // publishes session.scopes_narrowed.
-func (s *Service) launchCeilingForSeat(ctx context.Context, row *store.SessionRow, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
-	scopes, attribution, basis, err := s.seatCeiling(ctx, row, granted, narrow)
+func (s *Service) launchCeilingForSeat(ctx context.Context, row *store.SessionRow, plan *launch.Plan, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
+	scopes, attribution, basis, err := s.seatCeiling(ctx, row, plan, granted, narrow)
 	if err == nil && row != nil {
 		s.publishScopesNarrowed(ctx, row.ID, granted, scopes, basis)
 	}
 	return scopes, attribution, basis, err
 }
 
-func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
-	origin, internal := launchOriginFrom(ctx)
-	if internal && origin.Kind == OriginResume && origin.OriginSessionID != "" && row != nil && row.LogicalAgentID != "" && s.Store != nil {
-		parent, perr := s.Store.GetSession(origin.OriginSessionID)
-		if perr == nil && parent != nil && parent.LogicalAgentID == row.LogicalAgentID && parent.LaunchID == row.LaunchID {
-			held, ok, err := identity.NewStore(s.Store.DB()).SessionGrantedScopes(ctx, origin.OriginSessionID)
-			if err != nil {
-				return nil, "", "", fmt.Errorf("%w: the grant of origin session %q cannot be read: %w", ErrLaunchRefused, origin.OriginSessionID, err)
+func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, plan *launch.Plan, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
+	if parentID := s.seatParent(ctx, row, plan); parentID != "" {
+		held, ok, err := identity.NewStore(s.Store.DB()).SessionGrantedScopes(ctx, parentID)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("%w: the grant of origin session %q cannot be read: %w", ErrLaunchRefused, parentID, err)
+		}
+		if ok {
+			scopes := slices.Clone(granted)
+			if !slices.Contains(held, "*") {
+				scopes = retainHeld(scopes, held)
 			}
-			if ok {
-				scopes := slices.Clone(granted)
-				if !slices.Contains(held, "*") {
-					scopes = retainHeld(scopes, held)
-				}
-				return scopes, AttributionOrigin, ScopeBasisParentGrant, nil
-			}
+			return scopes, AttributionOrigin, ScopeBasisParentGrant, nil
 		}
 	}
 	scopes, attribution, err := s.launchCeilingFor(ctx, granted, narrow)
 	return scopes, attribution, ScopeBasisLauncher, err
+}
+
+// seatParent returns the earlier session of the same seat whose grant caps
+// this launch, or "" when the launch is not a relaunch of the same seat. Two
+// launches qualify, both requiring the parent to have this row's logical agent
+// and launch id:
+//   - an internal resume (resume.go), whose origin names the source session;
+//   - a create with continuity "relaunch" (CW-20261114-0038 follow-up) that
+//     left the seat as the catalog defines it (plan.SeatRelaunch: no caller
+//     boot prompt, agent, boot profile, override or injection) and, when the
+//     caller named a worker, runs on the parent's worker. Its row records the
+//     newest earlier session of the agent as its parent. That
+//     parent is a newest-row heuristic, so it must also have ended or have a
+//     stop requested (a worker session turns terminal only when the worker
+//     reports the exit, after Tachyon's stop has returned): a relaunch never
+//     copies the grant of a seat that is still running.
+func (s *Service) seatParent(ctx context.Context, row *store.SessionRow, plan *launch.Plan) string {
+	if row == nil || row.LogicalAgentID == "" || s.Store == nil {
+		return ""
+	}
+	sameSeat := func(id string) *store.SessionRow {
+		parent, err := s.Store.GetSession(id)
+		if err != nil || parent == nil || parent.LogicalAgentID != row.LogicalAgentID || parent.LaunchID != row.LaunchID {
+			return nil
+		}
+		return parent
+	}
+	if origin, internal := launchOriginFrom(ctx); internal && origin.Kind == OriginResume && origin.OriginSessionID != "" {
+		if sameSeat(origin.OriginSessionID) != nil {
+			return origin.OriginSessionID
+		}
+		return ""
+	}
+	if plan == nil || !plan.SeatRelaunch || row.Intent != "resume" || !row.ParentSessionID.Valid || row.ParentSessionID.String == row.ID {
+		return ""
+	}
+	parent := sameSeat(row.ParentSessionID.String)
+	if parent == nil || (!session.State(parent.State).Terminal() && !s.stops.requested(parent.ID)) {
+		return ""
+	}
+	if plan.SeatRelaunchWorker && row.WorkerID != parent.WorkerID {
+		return ""
+	}
+	return parent.ID
 }
 
 // publishScopesNarrowed reports the scopes a launch asked for but did not get.
