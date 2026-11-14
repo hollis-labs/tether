@@ -32,6 +32,16 @@ type Host struct {
 	ChildAlive bool   `json:"child_alive"`
 	Orphaned   bool   `json:"orphaned"`
 }
+
+// RestoreCounts is what a worker's start-up restore found under its hosts
+// directory (CW-20261114-0056): sessions re-adopted, dead host dirs skipped,
+// dead dirs moved aside after the grace age, and live hosts whose restore failed.
+type RestoreCounts struct {
+	Live        int `json:"live"`
+	DeadSkipped int `json:"dead_skipped"`
+	Pruned      int `json:"pruned"`
+	Failed      int `json:"failed"`
+}
 type Cursor struct {
 	Session string `json:"session"`
 	FromSeq int64  `json:"from_seq"`
@@ -50,6 +60,8 @@ type Frame struct {
 	Caps      json.RawMessage `json:"caps,omitempty"`
 	Sessions  []Session       `json:"sessions,omitempty"`
 	Hosts     []Host          `json:"hosts,omitempty"`
+	// Restore is set on a worker hello: the counts of its start-up restore.
+	Restore   *RestoreCounts  `json:"restore,omitempty"`
 	Reaped    []string        `json:"reaped,omitempty"`
 	WorkerID  string          `json:"worker_id,omitempty"`
 	Resume    []Cursor        `json:"resume,omitempty"`

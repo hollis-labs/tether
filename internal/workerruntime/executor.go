@@ -70,6 +70,7 @@ type Executor struct {
 	Send     func(workerwire.Frame) error
 	mu       sync.Mutex
 	sessions map[string]*execution
+	restored *workerwire.RestoreCounts
 	Spawn    func(string) (*exec.Cmd, error)
 	// Tokens, when set, lets the executor keep per-session agent token files.
 	Tokens *TokenMinter

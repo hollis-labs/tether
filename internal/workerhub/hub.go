@@ -182,6 +182,9 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), inventory: make(map[string]workerwire.Session), replaying: make(map[string]bool), done: make(chan struct{})}
 	c.features = hello.Features
 	c.hosts = hello.Hosts
+	if r := hello.Restore; r != nil {
+		log.Printf("workerhub: worker %s restored live=%d dead_skipped=%d pruned=%d failed=%d", id, r.Live, r.DeadSkipped, r.Pruned, r.Failed)
+	}
 	for _, s := range hello.Sessions {
 		c.inventory[s.ID] = s
 	}
