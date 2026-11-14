@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -189,4 +190,55 @@ func TestTurnInputsFollowEventRetention(t *testing.T) {
 	if err := db.db.QueryRow(`SELECT COUNT(*) FROM turn_inputs WHERE input_id=?`, recent.ID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("a recent input was removed: %d %v", n, err)
 	}
+}
+
+// CW-20261114-0061: a proven binding names the route its input arrived by, even
+// when the sender class is unknown (a mail wake through the shared operator
+// credential); a doubtful binding names none. Re-reading a bound turn agrees.
+func TestBindTurnInputSourcesOnlyForAProvenBinding(t *testing.T) {
+	ctx := context.Background()
+	sources := func(a TurnAudience) string { return strings.Join(a.Sources, ",") }
+	t.Run("mail wake with an unknown sender", func(t *testing.T) {
+		db := inputStore(t)
+		in, err := db.RecordTurnInput(ctx, TurnInput{SessionID: "s", Source: InputMailWake, SenderClass: ClassUnknown, Basis: BasisSharedOperator})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = db.SettleTurnInput(ctx, in.ID, true)
+		got, _ := db.BindTurnInput(ctx, "s", "t1")
+		if got.Audience != ClassUnknown || got.Basis != BasisSharedOperator || len(got.Classes) != 0 || sources(got) != InputMailWake {
+			t.Fatalf("%+v", got)
+		}
+		if again, _ := db.BindTurnInput(ctx, "s", "t1"); sources(again) != InputMailWake {
+			t.Fatalf("re-read lost the source: %+v", again)
+		}
+	})
+	t.Run("proven class", func(t *testing.T) {
+		db := inputStore(t)
+		record(t, db, "s", ClassOperator, true)
+		if got, _ := db.BindTurnInput(ctx, "s", "t1"); sources(got) != InputChatSend {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("doubtful bindings", func(t *testing.T) {
+		db := inputStore(t)
+		record(t, db, "s", ClassOperator, false) // submitting
+		if got, _ := db.BindTurnInput(ctx, "s", "t1"); got.Basis != "submission_unsettled" || len(got.Sources) != 0 {
+			t.Fatalf("unsettled: %+v", got)
+		}
+		if again, _ := db.BindTurnInput(ctx, "s", "t1"); len(again.Sources) != 0 {
+			t.Fatalf("re-read of an unsettled binding: %+v", again)
+		}
+		db = inputStore(t)
+		record(t, db, "s", ClassOperator, true)
+		record(t, db, "s", ClassOperator, true)
+		a, _ := db.BindTurnInput(ctx, "s", "t1")
+		b, _ := db.BindTurnInput(ctx, "s", "t2")
+		if a.Basis != "queued_inputs_present" || len(a.Sources) != 0 || b.Basis != "queued_input" || len(b.Sources) != 0 {
+			t.Fatalf("queued: %+v %+v", a, b)
+		}
+		if again, _ := db.BindTurnInput(ctx, "s", "t2"); len(again.Sources) != 0 {
+			t.Fatalf("re-read of a queued binding: %+v", again)
+		}
+	})
 }

@@ -19,6 +19,9 @@
     ],
     "input_classes": [
       "system"
+    ],
+    "input_sources": [
+      "session_turn"
     ]
   },
   "message_metadata": {
@@ -26,6 +29,7 @@
     "audience_basis": "authenticated_principal",
     "input_classes": "system",
     "input_ids": "ti_example",
+    "input_sources": "session_turn",
     "kind": "final",
     "session_id": "s1",
     "turn_id": "turn-1"

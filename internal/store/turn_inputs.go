@@ -61,6 +61,21 @@ type TurnAudience struct {
 	Basis    string   `json:"audience_basis"`
 	InputIDs []string `json:"input_ids,omitempty"`
 	Classes  []string `json:"input_classes,omitempty"`
+	// Sources is the route each bound input arrived by (the turn_inputs.source
+	// vocabulary), in InputIDs order. Like Classes it is filled only when the
+	// binding is proven, but it is a fact about the input rather than the sender,
+	// so it is kept when Audience is unknown because the sender class is.
+	Sources []string `json:"input_sources,omitempty"`
+}
+
+// unprovenBinding reports whether an audience basis says the input was not
+// proven to be the one that triggered the turn.
+func unprovenBinding(basis string) bool {
+	switch basis {
+	case "submission_unsettled", "queued_input", "queued_inputs_present", "binding_unavailable", "no_input":
+		return true
+	}
+	return false
 }
 
 // UnknownAudience is the audience of an output with no recorded input.
@@ -133,32 +148,35 @@ func (s *Store) BindTurnInput(ctx context.Context, sessionID, turnID string) (Tu
 		return TurnAudience{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var id, audience, basis string
+	var id, source, audience, basis string
 	var classes sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT input_id, COALESCE(audience,''), COALESCE(audience_basis,''), classes FROM turn_inputs WHERE session_id=? AND turn_id=? ORDER BY seq LIMIT 1`, sessionID, turnID).Scan(&id, &audience, &basis, &classes)
+	err = tx.QueryRowContext(ctx, `SELECT input_id, source, COALESCE(audience,''), COALESCE(audience_basis,''), classes FROM turn_inputs WHERE session_id=? AND turn_id=? ORDER BY seq LIMIT 1`, sessionID, turnID).Scan(&id, &source, &audience, &basis, &classes)
 	switch {
 	case err == nil:
 		out := TurnAudience{Audience: audience, Basis: basis, InputIDs: []string{id}}
 		if classes.Valid && classes.String != "" {
 			out.Classes = strings.Split(classes.String, ",")
 		}
+		if !unprovenBinding(basis) && source != "" {
+			out.Sources = []string{source}
+		}
 		return out, nil
 	case !errors.Is(err, sql.ErrNoRows):
 		return TurnAudience{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT input_id, state, queued, sender_class, basis FROM turn_inputs WHERE session_id=? AND turn_id IS NULL AND state IN ('submitting','accepted') ORDER BY seq`, sessionID)
+	rows, err := tx.QueryContext(ctx, `SELECT input_id, source, state, queued, sender_class, basis FROM turn_inputs WHERE session_id=? AND turn_id IS NULL AND state IN ('submitting','accepted') ORDER BY seq`, sessionID)
 	if err != nil {
 		return TurnAudience{}, err
 	}
 	type candidate struct {
-		id, state, class, basis string
-		queued                  bool
+		id, source, state, class, basis string
+		queued                          bool
 	}
 	var waiting []candidate
 	for rows.Next() {
 		var c candidate
 		var q int
-		if err := rows.Scan(&c.id, &c.state, &q, &c.class, &c.basis); err != nil {
+		if err := rows.Scan(&c.id, &c.source, &c.state, &q, &c.class, &c.basis); err != nil {
 			_ = rows.Close()
 			return TurnAudience{}, err
 		}
@@ -181,9 +199,9 @@ func (s *Store) BindTurnInput(ctx context.Context, sessionID, turnID string) (Tu
 	case len(waiting) > 1:
 		out.Basis = "queued_inputs_present"
 	case first.class == ClassUnknown:
-		out.Basis = first.basis
+		out.Basis, out.Sources = first.basis, []string{first.source}
 	default:
-		out.Audience, out.Basis, out.Classes = first.class, first.basis, []string{first.class}
+		out.Audience, out.Basis, out.Classes, out.Sources = first.class, first.basis, []string{first.class}, []string{first.source}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE turn_inputs SET turn_id=?, audience=?, audience_basis=?, classes=? WHERE input_id=? AND turn_id IS NULL`, turnID, out.Audience, out.Basis, nullString(strings.Join(out.Classes, ",")), first.id)
 	if err != nil {

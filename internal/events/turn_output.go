@@ -37,6 +37,11 @@ type TurnOutputEvent struct {
 	AudienceBasis string   `json:"audience_basis,omitempty"`
 	InputIDs      []string `json:"input_ids,omitempty"`
 	InputClasses  []string `json:"input_classes,omitempty"`
+	// InputSources is the route each bound input arrived by (chat_send,
+	// session_turn, mcp_send_turn, mail_wake, routing_reply, system), in InputIDs
+	// order, present only when the binding is proven (CW-20261114-0061). Unlike
+	// InputClasses it is kept when Audience is unknown; absent means unknown.
+	InputSources []string `json:"input_sources,omitempty"`
 }
 
 // TurnOutputExcerpt is the shared unrouted retention policy for producers and

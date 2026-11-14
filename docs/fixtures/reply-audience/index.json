@@ -5,6 +5,7 @@
     "system",
     "unknown_anonymous",
     "unknown_failed_input_ignored",
+    "unknown_mail_wake",
     "unknown_no_input",
     "unknown_queued_inputs_present",
     "unknown_shared_operator_credential",
