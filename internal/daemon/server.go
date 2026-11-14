@@ -1027,6 +1027,13 @@ func (s *Server) apiMounts() []apiMount {
 		{"/messages/thread/", s.MessageStore != nil},
 		{"/messages/retention/candidates", s.MessageStore != nil},
 
+		// Seat status (CW-20261114-0013). /messages/post and
+		// /messages/pending-replies ride the /messages/ subtree above; /status
+		// and its item form are their own top-level paths and shipped in #540
+		// without a mount (404 in production).
+		{"/status", s.Seats != nil},
+		{"/status/", s.Seats != nil},
+
 		{"/events", s.EventsStore != nil || s.EventIngest != nil},
 		{"/events/stream", s.Bus != nil},
 		{"/proxy/events", s.ProxyEvents != nil},
