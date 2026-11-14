@@ -117,9 +117,10 @@ func (s *Server) resolveHandleAddress(ctx context.Context, h string) (string, bo
 }
 
 // handleFor is the @handle of an address, or "" when it has none. An aliased
-// address answers to the handle of any of its forms, the canonical one first.
+// address answers to the handle of any of its forms, the canonical one first;
+// an agent address never answers to Chrispian's (reachableForms).
 func (s *Server) handleFor(ctx context.Context, urn string) string {
-	for _, form := range s.aliasForms(ctx, urn) {
+	for _, form := range s.reachableForms(ctx, urn) {
 		if h := s.handleForAddress(ctx, form); h != "" {
 			return h
 		}
@@ -394,7 +395,7 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 			writeEnvelopeError(w, &seatstatus.Error{Field: "target", Reason: "unknown handle " + req.Target})
 			return
 		}
-		if !s.sameAddress(ctx, urn, caller) && !s.maySetStatusFor(ctx, r, caller) {
+		if !s.actsFor(ctx, caller, urn) && !s.maySetStatusFor(ctx, r, caller) {
 			writeError(w, http.StatusForbidden, CodeForbidden, "only the operator or a manager may set another seat's status")
 			return
 		}
@@ -680,9 +681,10 @@ func (s *Server) seatAddresses(ctx context.Context, urn, handle string) []string
 			}
 		}
 	}
-	// Mail stored under any form of an aliased address is the seat's too.
+	// Mail stored under any form of an aliased address is the seat's too, but
+	// never Chrispian's mail through an agent alias (reachableForms).
 	for _, u := range slices.Clone(out) {
-		for _, form := range s.aliasForms(ctx, u) {
+		for _, form := range s.reachableForms(ctx, u) {
 			add(form)
 		}
 	}

@@ -378,3 +378,31 @@ func TestMailTriageOperatorThroughAnAlias(t *testing.T) {
 		t.Fatal("a peer was named @chrispian")
 	}
 }
+
+// @archie's ruling on #554: an agent row aliased into the operator's mailbox is
+// never him. Mail from it triages as an agent's (not human/from_operator) and is
+// not named @chrispian.
+func TestMailTriageAgentAliasOfTheOperatorIsNotHim(t *testing.T) {
+	const canonical, agentRow = "msg://user/local/chrispian", "msg://agent/agent-mux/agt_rbcnlevo4w"
+	r := newTriageRig(t)
+	ctx := context.Background()
+	for _, alias := range []string{triageOperator, agentRow} {
+		if _, _, err := r.st.AddAddressAlias(ctx, alias, canonical, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := r.send(agentRow, messaging.MsgKindNotice, "", map[string]string{"body": "x"}, map[string]string{"urgency": "very-low"})
+	row, err := r.tri.record(ctx, env, r.tri.policy(r.to), r.now)
+	if err != nil || row.Class == "human" || row.Reason == "from_operator" {
+		t.Fatalf("mail from the agent row triaged %+v (%v): it must not be the operator's", row, err)
+	}
+	if got := operatorForm(ctx, r.st, agentRow); got != agentRow {
+		t.Fatalf("operatorForm(agent row) = %s", got)
+	}
+	if got := operatorForm(ctx, r.st, canonical); got != triageOperator {
+		t.Fatalf("operatorForm(canonical) = %s, want the operator", got)
+	}
+	if h := (&Service{Store: r.st}).senderHandle(ctx, agentRow); h == "@chrispian" {
+		t.Fatal("the agent row was named @chrispian")
+	}
+}

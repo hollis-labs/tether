@@ -25,10 +25,12 @@ import (
 const aliasCanonicalURN = "msg://user/local/chrispian"
 
 type aliasHarness struct {
-	srv      *httptest.Server
-	db       *store.Store
-	reg      *registry.Service
-	agentURN string // the registry agent row with display_name chrispian
+	srv *httptest.Server
+	// principals are this harness's own test principals, consulted before senderPrincipals.
+	principals map[string]identity.Principal
+	db         *store.Store
+	reg        *registry.Service
+	agentURN   string // the registry agent row with display_name chrispian
 }
 
 func newAliasHarness(t *testing.T, mode identity.Mode) *aliasHarness {
@@ -48,9 +50,11 @@ func newAliasHarness(t *testing.T, mode identity.Mode) *aliasHarness {
 	cat := &config.Catalog{Agents: map[string]config.Agent{"archie": {ID: "archie", URN: archieURN}}}
 	api := NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: db.MessagingStore(), Seats: db, Aliases: db,
 		Registry: reg, Groups: reg, Catalog: fixedCatalog{cat}, IdentityMode: mode})
-	h := &aliasHarness{db: db, reg: reg, agentURN: row.URN}
+	h := &aliasHarness{db: db, reg: reg, agentURN: row.URN, principals: map[string]identity.Principal{}}
 	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p, ok := senderPrincipals[r.Header.Get("X-Test-Principal")]; ok {
+		if p, ok := h.principals[r.Header.Get("X-Test-Principal")]; ok {
+			r = r.WithContext(identity.WithPrincipal(r.Context(), p))
+		} else if p, ok := senderPrincipals[r.Header.Get("X-Test-Principal")]; ok {
 			r = r.WithContext(identity.WithPrincipal(r.Context(), p))
 		}
 		api.ServeHTTP(w, r)
@@ -525,5 +529,62 @@ func TestAddressAliasSeatLogicalNames(t *testing.T) {
 	// Removing by the logical name removes the row.
 	if code, raw := h.do(t, http.MethodDelete, "/messages/aliases?alias="+url.QueryEscape(archieLogical), "operator", ""); code != http.StatusOK {
 		t.Fatalf("remove by logical name: %d %s", code, raw)
+	}
+}
+
+// @archie's ruling on #554: no agent row ever counts as Chrispian. With the
+// team:chrispian tmux agent row aliased into his mailbox, a session that holds
+// that agent address cannot send as his operator or user forms, cannot read or
+// settle his mailbox through any form (its own included), does not render as
+// @chrispian and cannot set his status. He still reads mail stored under the
+// agent form.
+func TestAddressAliasAgentRowNeverActsAsChrispian(t *testing.T) {
+	const agentRow = "msg://agent/agent-mux/agt_rbcnlevo4w"
+	h := newAliasHarness(t, identity.Enforce)
+	h.alias(t, identity.OperatorID)
+	h.alias(t, agentRow)
+	h.principals["tmux"] = identity.Principal{ID: "msg://session/local/tmux", Kind: "session", Verified: true, Addresses: []string{agentRow}}
+
+	before := h.send(t, "session", "", agentRow) // stored under the canonical address
+	for _, from := range []string{identity.OperatorID, aliasCanonicalURN} {
+		body, _ := json.Marshal(map[string]any{"kind": "notice", "from": from, "to": archieURN, "payload": map[string]string{"body": "x"}})
+		if code, raw := h.do(t, http.MethodPost, "/messages", "tmux", string(body)); code != http.StatusForbidden {
+			t.Fatalf("agent row sent as %s: %d %s", from, code, raw)
+		}
+	}
+	for _, as := range []string{agentRow, identity.OperatorID, aliasCanonicalURN} {
+		q := url.Values{"to": {as}, "as": {as}}
+		if code, raw := h.do(t, http.MethodGet, "/messages/list?"+q.Encode(), "tmux", ""); code != http.StatusForbidden {
+			t.Fatalf("agent row listed the mailbox as %s: %d %s", as, code, raw)
+		}
+		if code, raw := h.do(t, http.MethodGet, "/messages/"+before.ID+"?as="+url.QueryEscape(as), "tmux", ""); code != http.StatusForbidden {
+			t.Fatalf("agent row read a message as %s: %d %s", as, code, raw)
+		}
+		if code, raw := h.do(t, http.MethodPost, "/messages/"+before.ID+"/read?as="+url.QueryEscape(as), "tmux", ""); code != http.StatusForbidden {
+			t.Fatalf("agent row settled a message as %s: %d %s", as, code, raw)
+		}
+	}
+	// Mail it sends under its own address is the agent's, not the operator's.
+	own := h.send(t, "tmux", agentRow, archieURN)
+	if own.From.URN() != agentRow || own.Metadata[MetaFromVerification] != "verified" {
+		t.Fatalf("own send: from %s metadata %v", own.From.URN(), own.Metadata)
+	}
+	srv := &Server{Aliases: h.db}
+	if handle := srv.handleFor(context.Background(), agentRow); handle == "@chrispian" {
+		t.Fatal("the agent row renders as @chrispian")
+	}
+	if !srv.actsFor(context.Background(), identity.OperatorID, agentRow) || srv.actsFor(context.Background(), agentRow, aliasCanonicalURN) {
+		t.Fatal("actsFor must be one way: his forms act for the agent alias, never the reverse")
+	}
+	status, _ := json.Marshal(StatusSetRequest{Target: "@chrispian", State: "blocked", Reason: "x"})
+	if code, raw := h.do(t, http.MethodPost, "/status?as="+url.QueryEscape(agentRow), "tmux", string(status)); code != http.StatusForbidden {
+		t.Fatalf("agent row set @chrispian's status: %d %s", code, raw)
+	}
+	// The operator still reads the mailbox through every form, and the mail stored under the agent form.
+	if got := h.listIDs(t, "operator", aliasCanonicalURN); len(got) != 1 || got[0] != before.ID {
+		t.Fatalf("operator list = %v", got)
+	}
+	if code, raw := h.do(t, http.MethodGet, "/messages/"+before.ID+"?as="+url.QueryEscape(identity.OperatorID), "operator", ""); code != http.StatusOK {
+		t.Fatalf("operator read: %d %s", code, raw)
 	}
 }

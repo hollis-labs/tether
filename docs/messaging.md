@@ -52,7 +52,16 @@ An address can be declared an **alias** of another, its **canonical** address
 - **Identity follows the alias.** A principal that owns one form may send and
   read as the others (it may put the canonical address in `from`), and
   `from_principal` on its mail resolves to the canonical address through the
-  alias. That is why only the operator may declare one.
+  alias. That is why only the operator may declare one. Aliasing one seat to
+  another therefore lets each seat's principals act as the other.
+- **No agent ever counts as Chrispian.** His forms, the operator address and
+  every `user` address, are protected. An agent (or session, device or issued
+  token) that owns an agent form of his mailbox may still send under that agent
+  address, but may not send as a protected form, may not read, settle or watch
+  the mailbox through any form (403), is not named `@chrispian`, may not set his
+  seat status, and its mail triages as an agent's, never `from_operator`. Only
+  the operator credential or a `user` principal holds his forms. The rule is one
+  way: he acts on mail stored under the agent forms aliased to him.
 - `GET /whoami` and a registry lookup of any form name the canonical address
   (`canonical_urn`, `aliases`); the lookup returns the profile registered under
   the canonical address, else under the first alias that has one. A `@handle`

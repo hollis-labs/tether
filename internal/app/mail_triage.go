@@ -321,13 +321,14 @@ func (s *Service) senderHandle(ctx context.Context, urn string) string {
 	return ""
 }
 
-// operatorForm returns triage.OperatorURN for any form of the operator's
-// mailbox (the operator address, its canonical address or another alias of it,
-// CW-20261114-0067) and urn otherwise, so mail the operator sends under his
-// canonical address is still the operator's. A failed alias read leaves urn as
-// it is.
+// operatorForm returns triage.OperatorURN for a user form of the operator's
+// mailbox (his canonical address or another user alias of it, CW-20261114-0067)
+// and urn otherwise, so mail the operator sends under his canonical address is
+// still the operator's. An agent address aliased into his mailbox is never him
+// (@archie's ruling): mail from it triages as the agent's. A failed alias read
+// leaves urn as it is.
 func operatorForm(ctx context.Context, st *store.Store, urn string) string {
-	if urn == triage.OperatorURN || st == nil {
+	if urn == triage.OperatorURN || st == nil || !strings.HasPrefix(urn, "msg://user/") {
 		return urn
 	}
 	forms, err := st.AddressForms(ctx, urn)

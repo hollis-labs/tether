@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -19,6 +20,12 @@ import (
 // address's mailbox. Sends resolve to the canonical address, mailbox reads of
 // any form return the mail stored under every form, and a principal that owns
 // one form may act as the others. Stored envelopes are never rewritten.
+//
+// The one exception is Chrispian (@archie's ruling): his forms, the operator
+// address and every user address, are protected. No agent row ever counts as
+// him: an address that is not protected never extends to a protected form
+// through an alias, and only the operator credential or a user principal may
+// hold a protected form or act on a mailbox that has one.
 //
 //	GET    /messages/aliases[?canonical=<urn>]   list
 //	POST   /messages/aliases {alias, canonical}  add (operator)
@@ -64,6 +71,37 @@ func (s *Server) canonicalAlias(ctx context.Context, urn string) string {
 	return s.canonicalSeat(ctx, c)
 }
 
+// protectedForm reports whether urn is one of Chrispian's forms: the operator
+// address or any user address.
+func protectedForm(urn string) bool {
+	return urn == identity.OperatorID || strings.HasPrefix(urn, "msg://user/")
+}
+
+// mayHoldProtected reports whether p may hold Chrispian's forms: the operator
+// credential or a user principal. Never an agent, session, device or token.
+func mayHoldProtected(p identity.Principal) bool {
+	return identity.IsOperatorCredential(p) || (p.Verified && p.TokenID == "" && strings.HasPrefix(p.ID, "msg://user/"))
+}
+
+// reachableForms is aliasForms seen from urn: an address that is not protected
+// does not reach a protected form through an alias (protectedForm).
+func (s *Server) reachableForms(ctx context.Context, urn string) []string {
+	forms := s.aliasForms(ctx, urn)
+	if protectedForm(urn) {
+		return forms
+	}
+	out := forms[:0:0]
+	for _, f := range forms {
+		if !protectedForm(f) {
+			out = append(out, f)
+		}
+	}
+	if len(out) == 0 {
+		return []string{urn}
+	}
+	return out
+}
+
 // aliasForms is every address of urn's mailbox, the canonical one first.
 func (s *Server) aliasForms(ctx context.Context, urn string) []string {
 	if s.Aliases == nil || urn == "" {
@@ -88,12 +126,49 @@ func (s *Server) sameAddress(ctx context.Context, a, b string) bool {
 	return s.canonicalAlias(ctx, s.canonicalSeat(ctx, a)) == s.canonicalAlias(ctx, s.canonicalSeat(ctx, b))
 }
 
+// actsFor reports whether actor, acting under its own address, acts for
+// target's mailbox: sameAddress, except that an address that is not protected
+// never acts for Chrispian's (protectedForm), whatever alias joins them. One
+// way: his forms act for the agent addresses aliased into his mailbox.
+func (s *Server) actsFor(ctx context.Context, actor, target string) bool {
+	if !s.sameAddress(ctx, actor, target) {
+		return false
+	}
+	if protectedForm(s.canonicalSeat(ctx, actor)) {
+		return true
+	}
+	return !protectedForm(s.canonicalSeat(ctx, target)) && !protectedForm(s.canonicalAlias(ctx, target))
+}
+
 // ownsAliasOf reports whether p may act as another form of addr's mailbox. An
 // alias is an identity statement made by the operator: whoever owns one form
-// owns the mailbox.
+// owns the mailbox, except that only a principal that may hold Chrispian's
+// forms (mayHoldProtected) acts as one of them.
 func (s *Server) ownsAliasOf(ctx context.Context, p identity.Principal, addr string) bool {
+	if protectedForm(addr) && !mayHoldProtected(p) {
+		return false
+	}
 	for _, form := range s.aliasForms(ctx, addr) {
-		if form != addr && p.MayActAs(form) {
+		if form == addr || (protectedForm(form) && !mayHoldProtected(p)) {
+			continue
+		}
+		if p.MayActAs(form) {
+			return true
+		}
+	}
+	return false
+}
+
+// protectedMailbox reports whether a verified principal that may not hold
+// Chrispian's forms is acting on a mailbox that has one: acting on any form of
+// it would read or settle his mail.
+func (s *Server) protectedMailbox(r *http.Request, as string) bool {
+	p, ok := verifiedPrincipal(r)
+	if !ok || as == "" || mayHoldProtected(p) {
+		return false
+	}
+	for _, form := range s.aliasForms(r.Context(), as) {
+		if protectedForm(form) {
 			return true
 		}
 	}
@@ -106,6 +181,10 @@ func (s *Server) ownsAliasOf(ctx context.Context, p identity.Principal, addr str
 func (s *Server) guardMailbox(next http.HandlerFunc) http.HandlerFunc {
 	return s.guardAs(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
+		if s.protectedMailbox(r, q.Get("as")) {
+			writeError(w, http.StatusForbidden, CodeForbidden, "this mailbox is the operator's; only the operator or a user principal may act on it")
+			return
+		}
 		changed := false
 		for _, key := range []string{"as", "to"} {
 			if v := q.Get(key); v != "" {
