@@ -429,6 +429,11 @@ type Defaults struct {
 	// stop_gate overrides it either way.
 	StopGate bool `yaml:"stop_gate,omitempty"`
 
+	// MailTriage is the fleet default for hub mail triage before wake
+	// (CW-20261114-0017): off until enabled; an agent's mail_triage
+	// overrides it field by field.
+	MailTriage MailTriageDefaults `yaml:"mail_triage,omitempty"`
+
 	// LaunchHost selects direct execution (default) or opt-in shim hosting.
 	// TETHER_LAUNCH_HOST overrides this value for each launch.
 	LaunchHost string `yaml:"launch_host"`
@@ -659,4 +664,37 @@ func EffectiveStopGate(g Global, a Agent) bool {
 		return *a.StopGate
 	}
 	return g.Catalog.Defaults.StopGate
+}
+
+// MailTriageDefaults is catalog.defaults.mail_triage.
+type MailTriageDefaults struct {
+	Enabled        bool   `yaml:"enabled,omitempty"`
+	ActionInterval string `yaml:"action_interval,omitempty"`
+}
+
+// DefaultMailTriageActionInterval caps action wakes when no interval is set.
+const DefaultMailTriageActionInterval = 3 * time.Minute
+
+// EffectiveMailTriage is whether a seat's mail is triaged before wake and the
+// minimum interval between its action wakes: the agent's mail_triage fields
+// over catalog.defaults.mail_triage. An unparseable interval (validation
+// refuses it) falls back to the default.
+func EffectiveMailTriage(g Global, a Agent) (bool, time.Duration) {
+	d := g.Catalog.Defaults.MailTriage
+	enabled, raw := d.Enabled, d.ActionInterval
+	if a.MailTriage != nil {
+		if a.MailTriage.Enabled != nil {
+			enabled = *a.MailTriage.Enabled
+		}
+		if a.MailTriage.ActionInterval != "" {
+			raw = a.MailTriage.ActionInterval
+		}
+	}
+	interval := DefaultMailTriageActionInterval
+	if raw != "" {
+		if v, err := time.ParseDuration(raw); err == nil && v >= 0 {
+			interval = v
+		}
+	}
+	return enabled, interval
 }

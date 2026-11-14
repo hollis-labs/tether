@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/hollis-labs/libs/harness/core/agentlaunch"
@@ -65,6 +66,11 @@ func (c *Catalog) Validate() error {
 			return fmt.Errorf("provider %q has unsupported type %q", id, typ)
 		}
 	}
+	if raw := c.Global.Catalog.Defaults.MailTriage.ActionInterval; raw != "" {
+		if v, err := time.ParseDuration(raw); err != nil || v < 0 {
+			return fmt.Errorf("catalog.defaults.mail_triage.action_interval %q is invalid (want a duration such as 3m)", raw)
+		}
+	}
 	if m := c.Global.Catalog.Defaults.PermissionMode; !ValidPermissionMode(m) {
 		return fmt.Errorf("global defaults.permission_mode %q is invalid (want %q or %q)", m, PermissionModeDefault, PermissionModeBypass)
 	}
@@ -106,6 +112,11 @@ func (c *Catalog) Validate() error {
 		}
 		if !launchprofile.ValidCell(a.Cell) {
 			return fmt.Errorf("agent %q has invalid cell %q (want a lowercase slug: letters, digits, '-' or '_', starting with a letter)", id, a.Cell)
+		}
+		if a.MailTriage != nil && a.MailTriage.ActionInterval != "" {
+			if v, err := time.ParseDuration(a.MailTriage.ActionInterval); err != nil || v < 0 {
+				return fmt.Errorf("agent %q has invalid mail_triage.action_interval %q (want a duration such as 3m)", id, a.MailTriage.ActionInterval)
+			}
 		}
 		if a.Handle != "" && !validHandleName(a.Handle) {
 			return fmt.Errorf("agent %q has invalid handle %q (want a lowercase name: letters, digits, '-' or '_', starting with a letter; no @; not the reserved @chrispian)", id, a.Handle)

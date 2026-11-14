@@ -50,4 +50,9 @@ var messageWakeReasons = map[string]bool{
 	"untracked-delivery":    true,
 	"wake-admission-failed": true,
 	"wake-outcome-unknown":  true,
+	// Hub mail triage (CW-20261114-0017): mail that is not woken now.
+	"triaged-fyi":     true,
+	"triaged-read":    true,
+	"triaged-covered": true,
+	"deferred-cap":    true,
 }

@@ -310,6 +310,22 @@ func (p *wakeParkSet) park(id delivery.DeliveryID, now time.Time) (misses int, o
 	return e.misses, true
 }
 
+// parkUntil parks id as ineligible until a set time (a triage-deferred wake),
+// instead of on the miss backoff.
+func (p *wakeParkSet) parkUntil(id delivery.DeliveryID, until, now time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.entries == nil {
+		p.entries = map[delivery.DeliveryID]wakeParkEntry{}
+	}
+	e, exists := p.entries[id]
+	if !exists && len(p.entries) >= wakeParkMaxEntries {
+		return
+	}
+	e.until, e.seen, e.ineligible = until, now, true
+	p.entries[id] = e
+}
+
 func (p *wakeParkSet) release(id delivery.DeliveryID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -350,6 +366,9 @@ type wakeRuntime struct {
 	sendMail       func(context.Context, string, string, string) error
 	health         func(sessionID string) (api.RuntimeHealthResult, bool)
 	sendTurn       func(ctx context.Context, sessionID, text string) error
+	// triage gates wakes for seats with mail_triage on (CW-20261114-0017);
+	// nil wakes as before.
+	triage *mailTriage
 }
 
 func (s *Service) runtimeSeam() wakeRuntime {
@@ -363,6 +382,7 @@ func (s *Service) runtimeSeam() wakeRuntime {
 		sendTurn:       s.SendTurn,
 		resolveOutpost: s.outpostResolve,
 		sendMail:       s.outpostSend,
+		triage:         s.mailTriager,
 	}
 }
 
@@ -392,7 +412,22 @@ func (s *Service) SessionBoundToActor(sessionID, actorID string) bool {
 // against the already-resolved sessionID. See the file doc comment.
 func (s *Service) AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
 	ctx = s.mailWakeInputContext(ctx, messageID)
-	if env, err := s.Store.MessagingStore().Get(ctx, messageID); err == nil && env.Metadata[wakeintent.MetadataKey] != "" {
+	env, getErr := s.Store.MessagingStore().Get(ctx, messageID)
+	if getErr == nil {
+		// Hub mail triage (CW-20261114-0017): the notify path is gated like the others.
+		if d := s.mailTriager.gate(ctx, env); !d.wake {
+			return api.WakeOutcome{Reason: d.reason}
+		}
+	}
+	out := s.attemptWakeUngated(ctx, env, getErr, messageID, to, sessionID, wakeText)
+	if out.Delivered && getErr == nil {
+		s.mailTriager.woke(ctx, env)
+	}
+	return out
+}
+
+func (s *Service) attemptWakeUngated(ctx context.Context, env messaging.Envelope, getErr error, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
+	if err := getErr; err == nil && env.Metadata[wakeintent.MetadataKey] != "" {
 		intent, intentErr := wakeintent.Read(env)
 		if intentErr != nil {
 			return api.WakeOutcome{Reason: "invalid-wake-intent", Detail: intentErr.Error()}
@@ -1023,6 +1058,16 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 					continue
 				}
 			}
+			// Hub mail triage (CW-20261114-0017): fyi/read mail is not the
+			// sweep's to wake, and a capped action waits for its interval.
+			if d := rt.triage.gate(ctx, msg); !d.wake {
+				if d.until.IsZero() {
+					park.parkIneligible(lr.rd.ID, now)
+				} else {
+					park.parkUntil(lr.rd.ID, d.until, now)
+				}
+				continue
+			}
 			if busySessions[lr.sessionID] {
 				continue
 			}
@@ -1045,6 +1090,9 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			if found {
 				raw, _ := json.Marshal(outcome)
 				_ = st.CompleteRecipientWake(ctx, msg.ID, string(raw))
+			}
+			if outcome.Delivered {
+				rt.triage.woke(ctx, msg)
 			}
 			if outcome.Attempted {
 				attempted++

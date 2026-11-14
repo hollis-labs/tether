@@ -62,8 +62,20 @@ func (s *Service) subprocessTurn(id string, send func() error) error {
 func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 	// Record who asked before the text reaches the runtime (CW-20261021-0010).
 	settle := s.beginTurnInput(ctx, id)
+	// Pending fyi mail rides along on a human-originated turn as one line
+	// (CW-20261114-0017); it is marked surfaced only once the turn was taken.
+	commit := func() {}
+	if s.mailTriager != nil && humanOriginated(ctx) {
+		var line string
+		if line, commit = s.mailTriager.fyiLine(ctx, s.seatPolicyForSession(id)); line != "" {
+			text += "\n\n" + line
+		}
+	}
 	err := s.sendTurn(ctx, id, text)
 	settle(err)
+	if err == nil {
+		commit()
+	}
 	if err == nil && strings.TrimSpace(text) == "/clear" {
 		s.publishSessionCleared(ctx, id)
 	}

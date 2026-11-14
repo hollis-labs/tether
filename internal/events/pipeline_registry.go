@@ -62,6 +62,7 @@ func pipelinePolicies() map[string]admissionPolicy {
 		add(Metadata, kind, "/waiting_for", "/request_id", "/resolution")
 	}
 	// Declared seat status (CW-20261114-0013).
+	add(Metadata, "mail.triaged", "/message_id", "/recipient", "/seat", "/handle", "/class", "/reason", "/typed", "/from")
 	add(Metadata, "seat.gate_blocked", "/agent_urn", "/handle", "/message_ids/*", "/count")
 	add(Metadata, "seat.status", "/agent_urn", "/handle", "/state", "/reason", "/ref", "/owner", "/expires_at", "/set_by")
 	// Conservative compatibility entries retain every local-consumer byte. Their

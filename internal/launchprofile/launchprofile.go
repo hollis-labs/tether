@@ -118,6 +118,10 @@ type LaunchProfile struct {
 	// (CW-20261114-0013). Unset follows the default. Closest definition wins.
 	StopGate *bool `yaml:"stop_gate,omitempty" json:"stop_gate,omitempty"`
 
+	// MailTriage overrides catalog.defaults.mail_triage for this agent's seat
+	// (CW-20261114-0017). Closest definition wins, field by field.
+	MailTriage *MailTriage `yaml:"mail_triage,omitempty" json:"mail_triage,omitempty"`
+
 	// MCPScopes are the scopes of the session-bound credential the hub mints for
 	// this agent's worker sessions (for example message.write, registry.write,
 	// groups.write). Empty means the default set. Closest definition wins.
@@ -249,4 +253,12 @@ func (m MCPConfig) MarshalYAML() (any, error) {
 		out["extract_refs"] = m.ExtractRefs
 	}
 	return out, nil
+}
+
+// MailTriage is a seat's hub mail triage policy (CW-20261114-0017): whether
+// mail is classified before it may wake the seat, and the minimum interval
+// between two action wakes (a Go duration; human mail is never capped).
+type MailTriage struct {
+	Enabled        *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ActionInterval string `yaml:"action_interval,omitempty" json:"action_interval,omitempty"`
 }
