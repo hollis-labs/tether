@@ -90,7 +90,7 @@ An older layout (`~/.tether/state/tether.db`, 387 MB) exists; the inventory says
     enforced by the compiler, not by review;
   - the old root CI keeps passing on the branch, and `next/` has its own gate (Substrate section 12 evidence).
 - **Merge cadence.** The lead opens a PR merging `origin/main` into `substrate-port` at least daily while photon (or anyone)
-  lands PRs on `main`, and always before a slice that touches the same area starts. That merge is its own PR, merged like any other,
+  lands PRs on `main`, and always before a slice that touches the same area starts. That merge is its own PR, merged with a **merge commit, never squashed** (a squash would drop `main` from the branch's ancestry and every later sync would re-conflict),
   (`chore: merge main @<sha>`), reviewed for conflicts only.
 - **The carry ledger.** Each `main` commit that arrives by a merge is recorded in `next/docs/carry-ledger.md`:
   sha, PR, task, area, and one of `ported` (the slice that carries it, with the commit), `n/a` (touches only code
