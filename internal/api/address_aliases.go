@@ -164,10 +164,18 @@ func (s *Server) ownsAliasOf(ctx context.Context, p identity.Principal, addr str
 // it would read or settle his mail.
 func (s *Server) protectedMailbox(r *http.Request, as string) bool {
 	p, ok := verifiedPrincipal(r)
-	if !ok || as == "" || mayHoldProtected(p) {
+	if !ok || mayHoldProtected(p) {
 		return false
 	}
-	for _, form := range s.aliasForms(r.Context(), as) {
+	return s.hasProtectedForm(r.Context(), as)
+}
+
+// hasProtectedForm reports whether as's mailbox has one of Chrispian's forms.
+func (s *Server) hasProtectedForm(ctx context.Context, as string) bool {
+	if as == "" {
+		return false
+	}
+	for _, form := range s.aliasForms(ctx, as) {
 		if protectedForm(form) {
 			return true
 		}
@@ -179,12 +187,8 @@ func (s *Server) protectedMailbox(r *http.Request, as string) bool {
 // as and to are also resolved from an alias to the canonical address, so a
 // caller using an old address reads and acts on the one mailbox.
 func (s *Server) guardMailbox(next http.HandlerFunc) http.HandlerFunc {
-	return s.guardAs(func(w http.ResponseWriter, r *http.Request) {
+	canonical := func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if s.protectedMailbox(r, q.Get("as")) {
-			writeError(w, http.StatusForbidden, CodeForbidden, "this mailbox is the operator's; only the operator or a user principal may act on it")
-			return
-		}
 		changed := false
 		for _, key := range []string{"as", "to"} {
 			if v := q.Get(key); v != "" {
@@ -198,7 +202,35 @@ func (s *Server) guardMailbox(next http.HandlerFunc) http.HandlerFunc {
 			r.URL.RawQuery = q.Encode()
 		}
 		next(w, r)
+	}
+	guarded := s.guardAs(func(w http.ResponseWriter, r *http.Request) {
+		if s.protectedMailbox(r, r.URL.Query().Get("as")) {
+			writeError(w, http.StatusForbidden, CodeForbidden, "this mailbox is the operator's; only the operator or a user principal may act on it")
+			return
+		}
+		canonical(w, r)
 	})
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Chrispian's own console reads his mailbox (@archie's ruling on #554): a device he paired, holding
+		// read, may GET it (list, inbox, watch, thread, item). Never a send, read mark, archive, ack or
+		// consume (all POST), and never an agent principal or an issued token.
+		if r.Method == http.MethodGet && operatorReadDevice(r) && s.hasProtectedForm(r.Context(), r.URL.Query().Get("as")) {
+			s.canonicalizeSeatParams(r)
+			canonical(w, r)
+			return
+		}
+		guarded(w, r)
+	}
+}
+
+// operatorReadDevice reports whether the request's verified principal is a device the operator paired that
+// holds the read scope: Chrispian's own console (Tachyon). A worker-only device has no read scope.
+func operatorReadDevice(r *http.Request) bool {
+	p, ok := verifiedPrincipal(r)
+	if !ok || p.Kind != "device" || p.TokenID != "" || p.CreatedBy != identity.OperatorID {
+		return false
+	}
+	return slices.Contains(p.Scopes, identity.ScopeRead) || slices.Contains(p.Scopes, "*")
 }
 
 // canonicalizeMail resolves a mailbox envelope's alias addresses before the

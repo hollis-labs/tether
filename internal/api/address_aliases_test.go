@@ -588,3 +588,82 @@ func TestAddressAliasAgentRowNeverActsAsChrispian(t *testing.T) {
 		t.Fatalf("operator read: %d %s", code, raw)
 	}
 }
+
+// @archie's ruling on #554: Chrispian's own console (Tachyon's device, which he
+// paired, holding read) reads his mailbox (list, inbox, item, thread), but never
+// sends, marks read or archives as him. Agent principals, the agt_rbcnlevo4w row,
+// a worker-only device, a device he did not pair and an issued token stay refused.
+func TestAddressAliasOperatorPairedDeviceReadsOnly(t *testing.T) {
+	const agentRow = "msg://agent/agent-mux/agt_rbcnlevo4w"
+	h := newAliasHarness(t, identity.Enforce)
+	h.alias(t, identity.OperatorID)
+	h.alias(t, agentRow)
+	device := func(id, by string, scopes ...string) identity.Principal {
+		return identity.Principal{Verified: true, ID: "msg://device/" + id, Kind: "device", CreatedBy: by, Scopes: scopes}
+	}
+	h.principals["tachyon"] = device("tachyon", identity.OperatorID, "maintain", "operate", "read")
+	h.principals["worker"] = device("worker", identity.OperatorID, "worker")
+	h.principals["foreign"] = device("foreign", "msg://user/local/someone", "read")
+	issued := device("tachyon", identity.OperatorID, "read")
+	issued.TokenID = "jti-1"
+	h.principals["issued"] = issued
+	h.principals["tmux"] = identity.Principal{ID: "msg://session/local/tmux", Kind: "session", Verified: true, Addresses: []string{agentRow}}
+
+	env := h.send(t, "session", "", identity.OperatorID)
+	thread := env.ThreadID
+	if thread == "" {
+		thread = env.ID
+	}
+	reads := func(as string) []string {
+		q := url.Values{"to": {as}, "as": {as}}.Encode()
+		return []string{"/messages/list?" + q, "/messages/inbox?" + q, "/messages/" + env.ID + "?as=" + url.QueryEscape(as), "/messages/thread/" + thread + "?as=" + url.QueryEscape(as)}
+	}
+	for _, as := range []string{identity.OperatorID, aliasCanonicalURN} {
+		for _, path := range reads(as) {
+			if code, raw := h.do(t, http.MethodGet, path, "tachyon", ""); code != http.StatusOK {
+				t.Fatalf("operator-paired device GET %s: %d %s", path, code, raw)
+			}
+			for _, who := range []string{"tmux", "agentsession", "worker", "foreign", "issued"} {
+				if code, raw := h.do(t, http.MethodGet, path, who, ""); code != http.StatusForbidden {
+					t.Fatalf("%s GET %s: %d %s", who, path, code, raw)
+				}
+			}
+		}
+		// Reads only: no read mark or archive as him.
+		for _, op := range []string{"read", "archive"} {
+			if code, raw := h.do(t, http.MethodPost, "/messages/"+env.ID+"/"+op+"?as="+url.QueryEscape(as), "tachyon", ""); code != http.StatusForbidden {
+				t.Fatalf("operator-paired device %s as %s: %d %s", op, as, code, raw)
+			}
+		}
+		// And no send as him.
+		body, _ := json.Marshal(map[string]any{"kind": "notice", "from": as, "to": archieURN, "payload": map[string]string{"body": "x"}})
+		if code, raw := h.do(t, http.MethodPost, "/messages", "tachyon", string(body)); code != http.StatusForbidden {
+			t.Fatalf("operator-paired device sent as %s: %d %s", as, code, raw)
+		}
+	}
+}
+
+// The same boundary in observe mode (production's identity mode), where a claim
+// that does not verify is recorded instead of refused: the mailbox refusal does
+// not depend on the mode.
+func TestAddressAliasOperatorPairedDeviceReadsOnlyObserve(t *testing.T) {
+	const agentRow = "msg://agent/agent-mux/agt_rbcnlevo4w"
+	h := newAliasHarness(t, identity.Observe)
+	h.alias(t, identity.OperatorID)
+	h.alias(t, agentRow)
+	h.principals["tachyon"] = identity.Principal{Verified: true, ID: "msg://device/tachyon", Kind: "device", CreatedBy: identity.OperatorID, Scopes: []string{"read"}}
+	h.principals["tmux"] = identity.Principal{ID: "msg://session/local/tmux", Kind: "session", Verified: true, Addresses: []string{agentRow}}
+	env := h.send(t, "session", "", identity.OperatorID)
+	list := "/messages/list?" + url.Values{"to": {identity.OperatorID}, "as": {identity.OperatorID}}.Encode()
+	if code, raw := h.do(t, http.MethodGet, list, "tachyon", ""); code != http.StatusOK {
+		t.Fatalf("device list: %d %s", code, raw)
+	}
+	for _, who := range []string{"tmux", "agentsession"} {
+		if code, raw := h.do(t, http.MethodGet, list, who, ""); code != http.StatusForbidden {
+			t.Fatalf("%s list: %d %s", who, code, raw)
+		}
+	}
+	if code, raw := h.do(t, http.MethodPost, "/messages/"+env.ID+"/read?as="+url.QueryEscape(identity.OperatorID), "tachyon", ""); code != http.StatusForbidden {
+		t.Fatalf("device read mark: %d %s", code, raw)
+	}
+}

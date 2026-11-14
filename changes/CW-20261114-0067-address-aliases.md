@@ -14,3 +14,5 @@
 - No agent ever counts as Chrispian through an alias (CW-20261114-0067 review): the operator address and user addresses
   are held only by the operator credential or a user principal. An agent address aliased into his mailbox cannot send
   as his forms, read or settle his mailbox, render as `@chrispian`, set his status, or triage as `from_operator`.
+- A device the operator paired that holds `read` (Tachyon) may still read his mailbox (GET list, inbox, watch, thread,
+  item), never send, mark read, archive, ack or consume as him (CW-20261114-0067).
