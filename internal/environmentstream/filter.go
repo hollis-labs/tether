@@ -24,7 +24,7 @@ import (
 //	app=<app>              producer app
 //	severity_min=<level>   class.severity at or above debug|info|notice|warning|error|critical
 //	scope.<dim>=<value>    task_id, project_id, workstream_id, session_id,
-//	                       agent_urn, run_id, launch_id
+//	                       agent_urn, run_id, launch_id, cell
 type Filter struct {
 	Kinds       []string
 	Categories  []string
@@ -35,7 +35,7 @@ type Filter struct {
 }
 
 // ScopeDims are the scope.<dim> parameters a filter accepts.
-var ScopeDims = []string{"task_id", "project_id", "workstream_id", "session_id", "agent_urn", "run_id", "launch_id"}
+var ScopeDims = []string{"task_id", "project_id", "workstream_id", "session_id", "agent_urn", "run_id", "launch_id", "cell"}
 
 var severityRank = map[string]int{"debug": 0, "info": 1, "notice": 2, "warning": 3, "error": 4, "critical": 5}
 
@@ -159,6 +159,9 @@ func (f Filter) Match(e Event) bool {
 func scopeValue(e Event, dim string) string {
 	if dim == "session_id" && e.SessionID != "" {
 		return e.SessionID
+	}
+	if dim == "cell" {
+		return e.Cell
 	}
 	s := e.Scope
 	if s == nil {

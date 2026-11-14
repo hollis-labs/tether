@@ -32,6 +32,9 @@ type ScopeDims struct {
 	AgentURN       string
 	LogicalAgentID string
 	TeamRunID      string
+	// Cell is the team the acting seat belongs to (the catalog agent's cell:),
+	// stamped from the catalog, never from a payload (CW-20261114-0019).
+	Cell string
 }
 
 // Class is the class block: what kind of event this is and how it may be handled.
@@ -93,11 +96,15 @@ type Envelope struct {
 	SchemaVersion string
 	App           string
 	Subject       string
-	TurnID        string
-	ParentID      string
-	RawOffset     *int64
-	Process       Process
-	Source        Source
+	// Summary is one redacted line saying what happened, at most SummaryMax
+	// runes (CW-20261114-0019). A producer may set it; the summary stage fills
+	// it from the kind and low-risk payload fields when it is empty.
+	Summary   string
+	TurnID    string
+	ParentID  string
+	RawOffset *int64
+	Process   Process
+	Source    Source
 	// Sequence and Generation belong to the producer, never the durable cursor.
 	Sequence   uint64
 	Generation uint64
@@ -119,6 +126,9 @@ type Envelope struct {
 	RetentionClass    string
 	RetentionPolicyID string
 }
+
+// SummaryMax is the longest summary, in runes.
+const SummaryMax = 200
 
 // Retention classes (D7).
 const (

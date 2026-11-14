@@ -35,6 +35,7 @@ const eventReadColumns = `COALESCE(id,0),
  COALESCE(scope_agent_urn,''),
  COALESCE(scope_logical_agent_id,''),
  COALESCE(scope_team_run_id,''),
+ COALESCE(scope_cell,''),
  COALESCE(category,''),
  COALESCE(severity,''),
  COALESCE(sensitivity,''),
@@ -80,7 +81,8 @@ const eventReadColumns = `COALESCE(id,0),
  COALESCE(actor_role,''),
  COALESCE(on_behalf_of_json,''),
  COALESCE(origin_at,''),
- COALESCE(payload_digest,'')`
+ COALESCE(payload_digest,''),
+ COALESCE(summary,'')`
 
 type eventScanner interface{ Scan(...any) error }
 
@@ -114,6 +116,7 @@ func scanEvent(row eventScanner) (events.Event, error) {
 		&env.Dims.AgentURN,
 		&env.Dims.LogicalAgentID,
 		&env.Dims.TeamRunID,
+		&env.Dims.Cell,
 		&env.Class.Category,
 		&env.Class.Severity,
 		&env.Class.Sensitivity,
@@ -160,6 +163,7 @@ func scanEvent(row eventScanner) (events.Event, error) {
 		&delegation,
 		&origin,
 		&env.PayloadDigest,
+		&env.Summary,
 	); err != nil {
 		return events.Event{}, err
 	}

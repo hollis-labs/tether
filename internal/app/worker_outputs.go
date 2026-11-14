@@ -29,13 +29,38 @@ func (s *Service) workerTurnOutput(row *store.SessionRow, f workerwire.Frame) er
 		carry = carry[at+1:]
 		var result struct {
 			Type     string          `json:"type"`
+			Subtype  string          `json:"subtype"`
 			Raw      json.RawMessage `json:"result"`
 			Event    string          `json:"event"`
 			Provider string          `json:"provider"`
 			UUID     string          `json:"uuid"`
 			IsError  bool            `json:"is_error"`
+			Compact  *struct {
+				Trigger   string `json:"trigger"`
+				PreTokens int64  `json:"pre_tokens"`
+			} `json:"compact_metadata"`
 		}
-		if json.Unmarshal(line, &result) != nil || (result.Type != "result" && result.Event != "result") {
+		if json.Unmarshal(line, &result) != nil {
+			continue
+		}
+		// Claude marks a compaction in its stream (CW-20261114-0019).
+		if result.Type == "system" && result.Subtype == "compact_boundary" {
+			payload := map[string]any{"source": "compact"}
+			if result.Compact != nil {
+				if result.Compact.Trigger != "" {
+					payload["trigger"] = result.Compact.Trigger
+				}
+				if result.Compact.PreTokens > 0 {
+					payload["pre_tokens"] = result.Compact.PreTokens
+				}
+			}
+			raw, _ := json.Marshal(payload)
+			if err := s.publishWorkerEvent(row.ID, KindSessionCompacted, raw); err != nil {
+				return err
+			}
+			continue
+		}
+		if result.Type != "result" && result.Event != "result" {
 			continue
 		}
 		var text string

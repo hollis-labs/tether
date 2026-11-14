@@ -55,11 +55,18 @@ func pipelinePolicies() map[string]admissionPolicy {
 	for _, kind := range []string{"wake.attempted", "wake.outcome"} {
 		add(Metadata, kind, "/message_id", "/target", "/attempted", "/delivered", "/reason", "/attempt_id", "/attempt", "/binding_generation")
 	}
+	// Seat and context lifecycle (CW-20261114-0019).
+	add(Metadata, "session.cleared", "/source", "/via")
+	add(Metadata, "session.compacted", "/source", "/trigger", "/pre_tokens")
+	for _, kind := range []string{"seat.waiting", "seat.unblocked"} {
+		add(Metadata, kind, "/waiting_for", "/request_id", "/resolution")
+	}
 	// Conservative compatibility entries retain every local-consumer byte. Their
 	// denylist sanitizer runs only on a diagnostic copy, even in enforce mode.
 	for _, kind := range []string{
 		KindRoutingReplyDelivered, KindRoutingReplyUndeliverable, KindSessionTurnInterruptRequested, KindSessionTurnInterruptCompleted,
 		catalog.KindMessageSent, catalog.KindMessageQueued, catalog.KindMessageRedriven, catalog.KindMessageFailed, KindMessageWakeDeferred, catalog.KindMessageDeadLettered, catalog.KindMessageConsumed,
+		"message.read",
 		"session.request_status", "session.force_closed", "sandbox_rule_unenforced",
 		KindStreamGap, KindSessionShimRetired, KindSessionTurnOutput, KindSessionStateChanged,
 		KindDaemonShutdownSessionsEnded, KindDaemonSessionsSwept, KindDaemonExecutionPolicyChanged, KindAIBudgetRejected,

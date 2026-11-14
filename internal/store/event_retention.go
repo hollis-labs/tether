@@ -39,6 +39,11 @@ func (s *Store) DeleteEventHistoryBefore(ctx context.Context, table string, cuto
 		query = `DELETE FROM identity_audit WHERE id IN (SELECT id FROM identity_audit WHERE at < ? ORDER BY at, id LIMIT ?)`
 	case "events":
 		query = `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE at < ? ORDER BY at, id LIMIT ?)`
+	case "events:debug":
+		// R-debug rows only (raw session.output, CW-20261114-0019), on their own
+		// shorter window. The partial retention_class index keeps this off the
+		// full table; ids grow with time, so oldest-first is id order.
+		query = `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE retention_class = 'R-debug' AND at < ? ORDER BY id LIMIT ?)`
 	case "event_ingest_digests":
 		query = `DELETE FROM event_ingest_digests WHERE event_id IN (SELECT event_id FROM event_ingest_digests WHERE at < ? ORDER BY at, event_id LIMIT ?)`
 	case "turn_inputs":

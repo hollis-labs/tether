@@ -373,6 +373,9 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 		if p.Recovery != "" {
 			resolved.Recovery = p.Recovery
 		}
+		if p.Cell != "" {
+			resolved.Cell = p.Cell
+		}
 		// Identity is per agent: the leaf's URN, never an ancestor's.
 		resolved.URN = p.URN
 		// Enabled is per agent as well: an ancestor being off does not turn the child off.

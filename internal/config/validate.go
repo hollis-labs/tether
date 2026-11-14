@@ -103,6 +103,9 @@ func (c *Catalog) Validate() error {
 		if !launchprofile.ValidRecovery(a.Recovery) {
 			return fmt.Errorf("agent %q has invalid recovery %q (want %q or %q)", id, a.Recovery, launchprofile.RecoveryNever, launchprofile.RecoveryAuto)
 		}
+		if !launchprofile.ValidCell(a.Cell) {
+			return fmt.Errorf("agent %q has invalid cell %q (want a lowercase slug: letters, digits, '-' or '_', starting with a letter)", id, a.Cell)
+		}
 		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
 			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
 		}

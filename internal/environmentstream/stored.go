@@ -151,7 +151,7 @@ func (p StoredIDProjection) MapStored(environmentID string, e events.Event) (Eve
 		return Event{}, err
 	}
 	mapped.PayloadDigest = v.PayloadDigest
-	out := Event{EnvironmentID: environmentID, Seq: e.Seq, Event: mapped}
+	out := Event{EnvironmentID: environmentID, Seq: e.Seq, Event: mapped, Summary: v.Summary, Cell: v.Dims.Cell}
 	return out, out.Validate()
 }
 

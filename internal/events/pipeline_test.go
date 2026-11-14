@@ -45,6 +45,10 @@ func TestPipelineMetadataGoldensAndCompatibilityBytes(t *testing.T) {
 		KindSessionStalled:                `{"reason":"repeated_tool_denials","denied":3}`,
 		KindSessionWorkStateChanged:       `{"from":"processing","to":"idle","at":"2026-10-21T00:00:00Z"}`,
 		EventTypeMachineAuthorityDecision: `{"server":"fixture","tool":"write","class":"write","mode":"dev","allowed":true,"session_id":"s1","timestamp":"2026-10-19T00:00:00Z"}`,
+		"session.cleared":                 `{"source":"clear","via":"turn_input"}`,
+		"session.compacted":               `{"source":"compact","trigger":"auto","pre_tokens":150000}`,
+		"seat.waiting":                    `{"waiting_for":"approval","request_id":"r1"}`,
+		"seat.unblocked":                  `{"waiting_for":"approval","request_id":"r1","resolution":"resolved"}`,
 	}
 	for kind, policy := range pipelinePolicies() {
 		t.Run(kind, func(t *testing.T) {

@@ -20,6 +20,8 @@ object. Published mesh clients can ignore these two additive fields. Payload
 members with those names remain nested payload members and cannot shadow the
 envelope coordinates. Original kinds and JSON payloads are retained, including
 unknown kinds. Invalid persisted JSON ends the stream with a resnapshot signal.
+Each envelope also carries a one-line `summary` and the seat's `scope.cell`
+when known; see [event-vocabulary.md](event-vocabulary.md).
 
 ## Server-side filters
 
@@ -35,7 +37,7 @@ match-everything.
 | `subject` | prefix of the event `subject` URN |
 | `app` | producer `app` |
 | `severity_min` | `class.severity` at or above `debug`, `info`, `notice`, `warning`, `error` or `critical` (a missing severity counts as `info`) |
-| `scope.<dim>` | `task_id`, `project_id`, `workstream_id`, `session_id`, `agent_urn`, `run_id`, `launch_id` |
+| `scope.<dim>` | `task_id`, `project_id`, `workstream_id`, `session_id`, `agent_urn`, `run_id`, `launch_id`, `cell` |
 
 Filters decide what is written, never what is consumed. An event that does not
 match is still read, so the cursor, the `synchronized` marker and gap handling
@@ -54,7 +56,7 @@ not receive them. No producer sets `operator` yet, so today this changes nothing
 snapshot's `high_water_seq` or a previous `next_cursor`) and the filters as
 arguments: `kind` (comma-separated, `*` prefixes), `category`, `subject`, `app`,
 `severity_min`, `task_id`, `project_id`, `workstream_id`, `session_id`,
-`agent_urn`, `run_id` and `launch_id`. It returns the full mesh envelopes, a
+`agent_urn`, `run_id`, `launch_id` and `cell`. It returns the full mesh envelopes, a
 `next_cursor` that also advances past filtered-out events, and a `gap` object
 when the server reports one. Without `after_seq` and the filters the tool is the
 legacy `/events/stream` wait, unchanged, as are `GET /events` and

@@ -3,10 +3,14 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
+	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/libs/harness/core/adapters/turn"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // SendInput writes data to the named session's input channel. Thin wrapper
@@ -60,7 +64,28 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 	settle := s.beginTurnInput(ctx, id)
 	err := s.sendTurn(ctx, id, text)
 	settle(err)
+	if err == nil && strings.TrimSpace(text) == "/clear" {
+		s.publishSessionCleared(ctx, id)
+	}
 	return err
+}
+
+// Session context lifecycle kinds (CW-20261114-0019). A clear is seen where the
+// hub submits the /clear command; a compaction where the provider's stream
+// marks it (Claude's compact_boundary on worker output).
+const (
+	KindSessionCleared   = "session.cleared"
+	KindSessionCompacted = "session.compacted"
+)
+
+func (s *Service) publishSessionCleared(ctx context.Context, id string) {
+	if s.Bus == nil {
+		return
+	}
+	e := events.Event{Scope: events.ScopeSession, SessionID: id, Kind: KindSessionCleared, At: time.Now().UTC(), PayloadJSON: `{"source":"clear","via":"turn_input"}`}
+	if err := s.Bus.Publish(context.WithoutCancel(ctx), e); err != nil {
+		log.Printf("app: publish %s for session %s: %v", KindSessionCleared, id, err)
+	}
 }
 
 func (s *Service) sendTurn(ctx context.Context, id, text string) error {

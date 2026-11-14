@@ -22,7 +22,7 @@ var envelopeColumns = []string{
 	"scope_environment_id", "scope_authority", "scope_worker_id", "scope_host", "scope_project_id",
 	"scope_workstream_id", "scope_epic_id", "scope_sprint_id", "scope_plan_id", "scope_phase_id",
 	"scope_task_id", "scope_run_id", "scope_attempt", "scope_launch_id", "scope_agent_urn",
-	"scope_logical_agent_id", "scope_team_run_id",
+	"scope_logical_agent_id", "scope_team_run_id", "scope_cell",
 	"category", "severity", "sensitivity", "pii", "visibility", "payload_schema", "sanitized", "redactions", "labels_json",
 	"content_type", "truncated",
 	"trace_id", "span_id", "causation_id", "correlation_id", "thread_id", "idempotency_key", "depth",
@@ -48,6 +48,7 @@ var envelopeColumns = []string{
 	"actor_role",
 	"on_behalf_of_json",
 	"origin_at",
+	"summary",
 }
 
 func nullIfZero(n int) any {
@@ -111,7 +112,7 @@ func envelopeValues(e events.Event, recordedAt string) ([]any, error) {
 		nullIfEmpty(d.EnvironmentID), nullIfEmpty(d.Authority), nullIfEmpty(d.WorkerID), nullIfEmpty(d.Host), nullIfEmpty(d.ProjectID),
 		nullIfEmpty(d.WorkstreamID), nullIfEmpty(d.EpicID), nullIfEmpty(d.SprintID), nullIfEmpty(d.PlanID), nullIfEmpty(d.PhaseID),
 		nullIfEmpty(d.TaskID), nullIfEmpty(d.RunID), nullIfZero(d.Attempt), nullIfEmpty(d.LaunchID), nullIfEmpty(d.AgentURN),
-		nullIfEmpty(logical), nullIfEmpty(d.TeamRunID),
+		nullIfEmpty(logical), nullIfEmpty(d.TeamRunID), nullIfEmpty(d.Cell),
 		nullIfEmpty(env.Class.Category), nullIfEmpty(env.Class.Severity), nullIfEmpty(env.Class.Sensitivity), flag(env.Class.PII),
 		nullIfEmpty(env.Class.Visibility), nullIfEmpty(env.Class.PayloadSchema), flag(env.Class.Sanitized), nullIfZero(env.Class.Redactions), labels,
 		nullIfEmpty(env.ContentType), flag(env.Truncated),
@@ -139,6 +140,7 @@ func envelopeValues(e events.Event, recordedAt string) ([]any, error) {
 		nullIfEmpty(env.Actor.Role),
 		delegation,
 		nullTime(env.OriginAt),
+		nullIfEmpty(env.Summary),
 	}, nil
 }
 
