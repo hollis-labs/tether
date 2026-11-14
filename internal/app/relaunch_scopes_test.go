@@ -122,7 +122,16 @@ func TestRelaunchOfTheSameSeatKeepsItsGrant(t *testing.T) {
 // does (the parent is the newest earlier session of the agent) and launches it.
 func (r *identityRig) relaunchAs(ctx context.Context, id string) *store.SessionRow {
 	r.t.Helper()
-	plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderBrand: "claude", Continuity: "relaunch"}
+	return r.relaunchWith(ctx, id, CreateSessionInput{Continuity: "relaunch"})
+}
+
+// relaunchWith is relaunchAs with the caller's create payload: the plan is
+// stamped as BuildLaunchPlan stamps it, stored, and read back for the launch as
+// LaunchSession reads it.
+func (r *identityRig) relaunchWith(ctx context.Context, id string, in CreateSessionInput) *store.SessionRow {
+	r.t.Helper()
+	plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderBrand: "claude", Continuity: in.Continuity}
+	stampSeatRelaunch(plan, in)
 	row := store.SessionRow{ID: id, WorkerID: r.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderKind: "cli", Workspace: r.t.TempDir(), State: "created"}
 	if err := r.svc.createContinued(row, plan, nil); err != nil {
 		r.t.Fatal(err)
@@ -131,7 +140,11 @@ func (r *identityRig) relaunchAs(ctx context.Context, id string) *store.SessionR
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	if _, err := r.svc.launchWorkerSession(ctx, stored, plan); err != nil {
+	storedPlan, err := r.db.GetLaunchPlan(id)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if _, err := r.svc.launchWorkerSession(ctx, stored, storedPlan); err != nil {
 		r.t.Fatal(err)
 	}
 	select {
@@ -199,5 +212,95 @@ func TestRelaunchCreateOfTheSameSeatKeepsItsGrant(t *testing.T) {
 	}
 	if a := r.attribution("sess-after-stop"); a != string(AttributionOrigin) {
 		t.Fatalf("stop-requested parent: attribution %q, want %q", a, AttributionOrigin)
+	}
+}
+
+// @photon-review on #553: a relaunch create also accepts caller payloads, so an
+// operate-only device could otherwise run the seat's previous grant under its
+// own boot prompt, agent, overrides, injected files or worker. Each of those
+// means the launcher basis; PromptAppend (a turn's worth of notes) does not.
+func TestRelaunchCreateWithCallerPayloadIsBoundedByTheLauncher(t *testing.T) {
+	defaults := launchprofile.DefaultMCPScopes
+	one := defaults[0]
+	cases := []struct {
+		name       string
+		in         CreateSessionInput
+		otherWkr   bool // the parent ran on another worker
+		wantParent bool
+	}{
+		{"plain relaunch", CreateSessionInput{}, false, true},
+		{"prompt_append", CreateSessionInput{BootPromptAppend: "relaunch note"}, false, true},
+		{"boot_prompt", CreateSessionInput{BootPromptOverride: "you are someone else"}, false, false},
+		{"agent_inline", CreateSessionInput{AgentInline: `{"id":"x"}`}, false, false},
+		{"agent_file", CreateSessionInput{AgentFile: "/tmp/agent.yaml"}, false, false},
+		{"boot_profile", CreateSessionInput{BootProfileFile: "/tmp/profile.yaml"}, false, false},
+		{"override", CreateSessionInput{Override: `{"system_prompt":"x"}`}, false, false},
+		{"injection", CreateSessionInput{Injection: `{"native_files":[]}`}, false, false},
+		{"named worker is the parent's", CreateSessionInput{Worker: "fake-worker"}, false, true},
+		{"named worker is not the parent's", CreateSessionInput{Worker: "fake-worker"}, true, false},
+		{"unnamed worker, catalog placed elsewhere", CreateSessionInput{}, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+			r.withBus()
+			if _, err := r.launchAs(launcherWith("*"), "sess-parent", ""); err != nil {
+				t.Fatal(err)
+			}
+			parentWorker := r.worker
+			if c.otherWkr {
+				parentWorker = "worker_other"
+			}
+			if _, err := r.db.DB().Exec(`UPDATE sessions SET state='completed', worker_id=? WHERE id='sess-parent'`, parentWorker); err != nil {
+				t.Fatal(err)
+			}
+			in := c.in
+			in.Continuity = "relaunch"
+			r.relaunchWith(launcherWith(one), "sess-relaunched", in)
+			got := r.storedScopes("sess-relaunched")
+			if c.wantParent {
+				if !slices.Equal(got, defaults) || r.attribution("sess-relaunched") != string(AttributionOrigin) {
+					t.Fatalf("want the parent grant %v (origin), got %v (%s)", defaults, got, r.attribution("sess-relaunched"))
+				}
+				return
+			}
+			if !slices.Equal(got, []string{one}) {
+				t.Fatalf("a reshaped relaunch kept the parent grant: %v", got)
+			}
+			if ev := r.narrowedEvents("sess-relaunched"); len(ev) != 1 || ev[0]["basis"] != ScopeBasisLauncher {
+				t.Fatalf("narrowed events = %v", ev)
+			}
+		})
+	}
+}
+
+// A stop that fails leaves no stop-requested marker behind, so a relaunch beside
+// the still-running session cannot treat it as ended.
+func TestFailedWorkerStopClearsTheStopRequest(t *testing.T) {
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	r.svc.stops = &stopRequests{}
+	if _, err := r.launchAs(launcherWith("*"), "sess-live", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.db.DB().Exec(`UPDATE sessions SET state='running' WHERE id='sess-live'`); err != nil {
+		t.Fatal(err)
+	}
+	r.failStops.Store(true)
+	if err := r.svc.StopSession("sess-live"); err == nil {
+		t.Fatal("stop should have failed")
+	}
+	if r.svc.stops.requested("sess-live") {
+		t.Fatal("a failed stop left the stop-requested marker")
+	}
+	r.relaunchAs(launcherWith(launchprofile.DefaultMCPScopes[0]), "sess-beside")
+	if got := r.storedScopes("sess-beside"); len(got) != 1 {
+		t.Fatalf("relaunch beside a session whose stop failed took its grant: %v", got)
+	}
+	r.failStops.Store(false)
+	if err := r.svc.StopSession("sess-beside"); err != nil {
+		t.Fatal(err)
+	}
+	if !r.svc.stops.requested("sess-beside") {
+		t.Fatal("an accepted stop must stay requested until the worker reports the exit")
 	}
 }

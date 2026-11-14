@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 )
 
@@ -222,16 +223,16 @@ const KindSessionScopesNarrowed = "session.scopes_narrowed"
 // was itself bounded by whoever first launched the seat. Every other launch is
 // launchCeilingFor (bounded by the launcher). Either way a dropped scope
 // publishes session.scopes_narrowed.
-func (s *Service) launchCeilingForSeat(ctx context.Context, row *store.SessionRow, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
-	scopes, attribution, basis, err := s.seatCeiling(ctx, row, granted, narrow)
+func (s *Service) launchCeilingForSeat(ctx context.Context, row *store.SessionRow, plan *launch.Plan, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
+	scopes, attribution, basis, err := s.seatCeiling(ctx, row, plan, granted, narrow)
 	if err == nil && row != nil {
 		s.publishScopesNarrowed(ctx, row.ID, granted, scopes, basis)
 	}
 	return scopes, attribution, basis, err
 }
 
-func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
-	if parentID := s.seatParent(ctx, row); parentID != "" {
+func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, plan *launch.Plan, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
+	if parentID := s.seatParent(ctx, row, plan); parentID != "" {
 		held, ok, err := identity.NewStore(s.Store.DB()).SessionGrantedScopes(ctx, parentID)
 		if err != nil {
 			return nil, "", "", fmt.Errorf("%w: the grant of origin session %q cannot be read: %w", ErrLaunchRefused, parentID, err)
@@ -253,13 +254,16 @@ func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, grante
 // launches qualify, both requiring the parent to have this row's logical agent
 // and launch id:
 //   - an internal resume (resume.go), whose origin names the source session;
-//   - a create with continuity "relaunch" (CW-20261114-0038 follow-up), whose
-//     row records the newest earlier session of the agent as its parent. That
+//   - a create with continuity "relaunch" (CW-20261114-0038 follow-up) that
+//     left the seat as the catalog defines it (plan.SeatRelaunch: no caller
+//     boot prompt, agent, boot profile, override or injection) and, when the
+//     caller named a worker, runs on the parent's worker. Its row records the
+//     newest earlier session of the agent as its parent. That
 //     parent is a newest-row heuristic, so it must also have ended or have a
 //     stop requested (a worker session turns terminal only when the worker
 //     reports the exit, after Tachyon's stop has returned): a relaunch never
 //     copies the grant of a seat that is still running.
-func (s *Service) seatParent(ctx context.Context, row *store.SessionRow) string {
+func (s *Service) seatParent(ctx context.Context, row *store.SessionRow, plan *launch.Plan) string {
 	if row == nil || row.LogicalAgentID == "" || s.Store == nil {
 		return ""
 	}
@@ -276,12 +280,17 @@ func (s *Service) seatParent(ctx context.Context, row *store.SessionRow) string 
 		}
 		return ""
 	}
-	if row.Intent == "resume" && row.ParentSessionID.Valid && row.ParentSessionID.String != row.ID {
-		if parent := sameSeat(row.ParentSessionID.String); parent != nil && (session.State(parent.State).Terminal() || s.stops.requested(parent.ID)) {
-			return parent.ID
-		}
+	if plan == nil || !plan.SeatRelaunch || row.Intent != "resume" || !row.ParentSessionID.Valid || row.ParentSessionID.String == row.ID {
+		return ""
 	}
-	return ""
+	parent := sameSeat(row.ParentSessionID.String)
+	if parent == nil || (!session.State(parent.State).Terminal() && !s.stops.requested(parent.ID)) {
+		return ""
+	}
+	if plan.SeatRelaunchWorker && row.WorkerID != parent.WorkerID {
+		return ""
+	}
+	return parent.ID
 }
 
 // publishScopesNarrowed reports the scopes a launch asked for but did not get.
