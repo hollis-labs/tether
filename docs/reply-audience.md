@@ -97,7 +97,9 @@ a proven binding; empty whenever the audience is `unknown`, so a consumer that f
 on it never shows a guess). Since CW-20261114-0061 they also carry `input_sources`: the
 route each bound input arrived by (`turn_inputs.source`), present whenever the binding
 is proven, including when the audience is `unknown` only because the sender class is
-(a mail wake through the shared operator credential).
+(a mail wake through the shared operator credential). Since CW-20261114-0080 they also
+carry `input_triage`: the mail-triage class (`human`, `action`, `fyi`, `read`; see
+`docs/mail-triage.md`) of the mail that woke the seat, under the same rule.
 
 ## Privacy and retention
 
@@ -114,7 +116,7 @@ is proven, including when the audience is `unknown` only because the sender clas
 ## Consumer contract (PROPOSED: to be agreed with the Tachyon session before slice 1 merges)
 
 Where it is read: the routed output message (its `metadata`) in Tether's message store,
-and the `session.turn_output` event payload. Both carry the same five fields. None of
+and the `session.turn_output` event payload. Both carry the same six fields. None of
 them is on the environment projection view.
 
 | Field | Type | Meaning |
@@ -124,6 +126,7 @@ them is on the environment projection view.
 | `input_ids` | opaque ids (comma-joined in message metadata, an array in the event) | the input bound to the turn; empty when none |
 | `input_classes` | classes (comma-joined / array) | the class of a PROVEN binding; **empty whenever `audience` is `unknown`** |
 | `input_sources` | sources (comma-joined / array) | the route each bound input arrived by: `chat_send`, `session_turn`, `mcp_send_turn`, `mail_wake`, `routing_reply`, `system`; present only for a PROVEN binding, **including an `unknown` audience whose sender class is unknown** |
+| `input_triage` | triage classes (comma-joined / array) | for each bound input that is a `mail_wake`, the triage class of the waking mail: `human`, `action`, `fyi` or `read`; `""` in a position whose input is not a mail wake or whose mail was not triaged; present only for a PROVEN binding and omitted when every position is `""` |
 
 Invariants (enforced by the fixture generator on every case):
 
@@ -143,6 +146,13 @@ Invariants (enforced by the fixture generator on every case):
    that folds by route (Tachyon folds `mail_wake` turns, CW-20261114-0023b) must not
    fold such an output. Agreement between event and metadata (5) covers this field.
    Fixture: `unknown_mail_wake.json`.
+8. `input_triage`, when present, has the same order and length as `input_ids`; a
+   non-empty value appears only where `input_sources` says `mail_wake`. It follows the
+   same proven-binding rule as `input_sources`. Absent, or `""` in a position, means
+   the class is unknown (triage was off for that seat, or the input is not a mail
+   wake): a consumer must treat it as neither human nor not-human. Tachyon never folds
+   a reply whose triage is `human`. Fixtures: `unknown_mail_wake_action.json`,
+   `unknown_mail_wake_human.json`; `unknown_mail_wake.json` is an untriaged wake.
 
 Toggle semantics: "Replies to me" shows an output iff `operator` is in `input_classes`
 (equivalently `audience` = `operator`); "All replies" shows every output; an output with
