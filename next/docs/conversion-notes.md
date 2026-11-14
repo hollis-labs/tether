@@ -85,6 +85,8 @@ Today `identity.mode` is `observe`:
 | `<data root>/run/tetherd.sock` | unchanged, same path (S4 configures it explicitly) |
 | `<data root>/auth/` (issuer) | carried byte for byte into the new data directory (S3/S12) |
 
+**`TETHER_DATA_DIR` at the old data root is refused.** The check runs in `AfterConfig`, read-only, before the directory is prepared. Markers: `state/tether.db`, `catalog/global.yaml`, `run/tetherd.sock`, `run/tetherd.pid`.
+
 **The old database is never opened in place.** `legacyguard` refuses a `tether.db` that has the old migrator's `schema_migrations` table unless migrate-from has marked it complete.
 
 ### Migration mark (written by S12, read by the S0 guard)
@@ -108,9 +110,14 @@ New code reads no `os.Getenv` for settings, except `TETHER_DATA_DIR`. Each slice
 |---|---|---|
 | (none) | `TETHER_DATA_DIR` (required) | S0 |
 | catalog `defaults.state_db` | `database.sqlite.path` (default `tether.db` in the data directory) | S0 |
+| catalog `daemon.events_retention.{enabled,days,debug_days}` (defaults true, 90, 7; 0 or negative disables) | `tether.*` retention keys with the same defaults and semantics, pinned by a test | S8 (not in S0 on purpose: a wrong default deletes live history) |
 | `TETHER_CATALOG_PLAN_TTL` (hub descriptor env) | to map | catalog slice |
 | `TETHER_LAUNCH_HOST` (unit drop-in) | to map | S9/S10 |
 | `HOLLIS_OTEL_DISABLED` (sysop unit) | dropped with sysop (D4) | S0 note |
+
+## CLI start-up (for S14)
+
+At S0, `run()` boots the modules before cobra parses the arguments, so every subcommand (even `--help` and `version`) needs `TETHER_DATA_DIR` and creates the data directory. That matches the guide's pattern and is fine while `serve` is the only command. S14 CLI parity must change it for the commands agents run by name: `tether mcp --forward-daemon` and `tether mailbox watch` must not open or create a data home, as today.
 
 ## Dropped
 

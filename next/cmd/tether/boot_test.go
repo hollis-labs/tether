@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/next/internal/datadir"
 	"github.com/hollis-labs/tether/next/internal/legacyguard"
 )
 
@@ -119,5 +120,56 @@ func TestBootRequiresDataDir(t *testing.T) {
 	err := run(context.Background(), env(""), []string{"serve"})
 	if err == nil || !strings.Contains(err.Error(), "TETHER_DATA_DIR is not set") {
 		t.Fatalf("run without TETHER_DATA_DIR = %v", err)
+	}
+}
+
+// oldRoot builds the old tree's data root layout: state/tether.db with the old migrator table.
+func oldRoot(t *testing.T) (root, db string) {
+	t.Helper()
+	root = t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db = filepath.Join(root, "state", "tether.db")
+	conn, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	return root, db
+}
+
+func TestBootRefusesTheOldDataRootUntouched(t *testing.T) {
+	configure(t, freeAddr(t))
+	root, _ := oldRoot(t)
+	err := run(context.Background(), env(root), []string{"serve"})
+	if !errors.Is(err, datadir.ErrOldDataRoot) {
+		t.Fatalf("run with TETHER_DATA_DIR at the old root = %v, want ErrOldDataRoot", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, databaseFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a new database was created in the old root: %v", err)
+	}
+	if fi, _ := os.Stat(root); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("the old root's mode changed to %v", fi.Mode().Perm())
+	}
+}
+
+func TestBootRefusesAnAbsolutePathToTheOldDatabase(t *testing.T) {
+	addr := freeAddr(t)
+	_, oldDB := oldRoot(t)
+	p := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(p, []byte(fmt.Sprintf("httphost:\n  addr: %q\ndatabase:\n  sqlite:\n    path: %q\n", addr, oldDB)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUBSTRATE_CONFIG", p)
+	err := run(context.Background(), env(filepath.Join(t.TempDir(), "data")), []string{"serve"})
+	if !errors.Is(err, legacyguard.ErrLegacyLayout) {
+		t.Fatalf("run with database.sqlite.path at the old database = %v, want ErrLegacyLayout", err)
 	}
 }

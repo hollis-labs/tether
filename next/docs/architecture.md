@@ -38,8 +38,9 @@ next/
 
 `TETHER_DATA_DIR` is required and is the only setting read from the environment. The service descriptor names a new directory beside the old data root. There is no XDG fallback, because the old tree resolves its state through the same XDG application name.
 
-The `AfterConfig` hook does four things:
+The `AfterConfig` hook does five things:
 - refuses a bad `tether:` block;
+- refuses a directory that is the old data root, before anything is created or chmod'ed. It runs `Lstat` only, on `state/tether.db`, `catalog/global.yaml`, `run/tetherd.sock` and `run/tetherd.pid`, which exist only under the old root because the catalog and the socket stay there by path. One wrong descriptor value would otherwise start a hub on an empty database beside the old one;
 - resolves the directory and creates it `0700` (or tightens it);
 - writes the absolute database path into `app.Config` (`database.sqlite.path`, default `tether.db` inside the directory). An absolute override is kept. A relative path that climbs out of the directory is refused.
 - refuses a non-SQLite `database.driver`.
@@ -77,7 +78,8 @@ Defaults live in `cmd/tether/substrate.yaml`. Operators override any key in the 
 | Key | Default | Rule |
 |---|---|---|
 | `tether.catalog_dir` | `""` (unset until the catalog slice) | absolute path when set |
-| `tether.retention_days` | `30` | 1 to 3650 |
+
+Event retention is not a key yet. S8 adds it with the old `daemon.events_retention` semantics and defaults: `enabled` true, `days` 90, `debug_days` 7, and 0 or negative disables. A test pins those defaults to the old ones, so a default can never narrow the live 90-day window that the migrated `events` rows sit in.
 
 ## Database
 

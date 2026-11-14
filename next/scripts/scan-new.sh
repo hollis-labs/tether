@@ -5,10 +5,12 @@
 set -uo pipefail
 base=${1:?base ref}; head=${2:-HEAD}
 scan() { go run github.com/hollis-labs/substrate/cmd/substrate scan-public --repo .. --ref "$1" 2>&1 | grep -E '^  \[' | sort -u; }
-scan "$base" > /tmp/scan-base.txt
-scan "$head" > /tmp/scan-head.txt
-new=$(comm -13 /tmp/scan-base.txt /tmp/scan-head.txt)
-echo "base $base: $(wc -l < /tmp/scan-base.txt) finding(s); head $head: $(wc -l < /tmp/scan-head.txt) finding(s)"
+# Each finding line carries rule, match and path:line, so identical text in a new file is a new line.
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+scan "$base" > "$tmp/base.txt"
+scan "$head" > "$tmp/head.txt"
+new=$(comm -13 "$tmp/base.txt" "$tmp/head.txt")
+echo "base $base: $(wc -l < "$tmp/base.txt") finding line(s); head $head: $(wc -l < "$tmp/head.txt") finding line(s)"
 if [ -n "$new" ]; then
   echo "NEW findings:"; echo "$new"; exit 1
 fi

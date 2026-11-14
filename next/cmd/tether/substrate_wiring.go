@@ -13,7 +13,7 @@ import (
 
 const (
 	substrateApp        = "tether"
-	substrateConfigJSON = "{\"database\":{\"sqlite\":{\"path\":\"tether.db\"}},\"httphost\":{\"addr\":\"127.0.0.1:8949\"},\"logging\":{\"format\":\"text\",\"level\":\"info\"},\"tether\":{\"catalog_dir\":\"\",\"retention_days\":30}}"
+	substrateConfigJSON = "{\"database\":{\"sqlite\":{\"path\":\"tether.db\"}},\"httphost\":{\"addr\":\"127.0.0.1:8949\"},\"logging\":{\"format\":\"text\",\"level\":\"info\"},\"tether\":{\"catalog_dir\":\"\"}}"
 )
 
 // substrateModules is the start order.

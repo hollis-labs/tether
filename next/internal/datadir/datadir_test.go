@@ -69,3 +69,38 @@ func TestAnchor(t *testing.T) {
 		t.Fatal("a relative path leaving the data directory must be refused")
 	}
 }
+
+func TestRefuseOldRoot(t *testing.T) {
+	for _, marker := range oldRootMarkers {
+		root := t.TempDir()
+		if err := os.Chmod(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(root, marker)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := Dir(root).RefuseOldRoot(); !errors.Is(err, ErrOldDataRoot) {
+			t.Errorf("old root with %s: RefuseOldRoot = %v, want ErrOldDataRoot", marker, err)
+		}
+		if fi, _ := os.Stat(root); fi.Mode().Perm() != 0o755 {
+			t.Errorf("RefuseOldRoot changed the old root's mode to %v", fi.Mode().Perm())
+		}
+	}
+	for name, d := range map[string]Dir{
+		"missing": Dir(filepath.Join(t.TempDir(), "absent")),
+		"empty":   Dir(t.TempDir()),
+		"new data dir": func() Dir {
+			d := t.TempDir()
+			_ = os.WriteFile(filepath.Join(d, "tether.db"), nil, 0o600)
+			return Dir(d)
+		}(),
+	} {
+		if err := d.RefuseOldRoot(); err != nil {
+			t.Errorf("%s: RefuseOldRoot = %v, want nil", name, err)
+		}
+	}
+}

@@ -19,8 +19,9 @@ const databaseFile = "tether.db"
 // bootOptions are the app's two boot hooks.
 //
 // AfterConfig runs once the config module has applied the SUBSTRATE_CONFIG override: it refuses a bad
-// tether: block, resolves and secures the data directory (TETHER_DATA_DIR) and writes the absolute
-// database path into app.Config, which every later module reads.
+// tether: block, resolves the data directory (TETHER_DATA_DIR), refuses one that is the old data root
+// (read-only, before anything is created or chmod'ed), secures it, and writes the absolute database
+// path into app.Config, which every later module reads.
 //
 // Before["database"] runs immediately before the database module opens (and migrates) the file. It
 // reads the path from the same config the module will read, so it needs no copy of the merge rule, and
@@ -33,6 +34,11 @@ func bootOptions(getenv func(string) string) boot.Options {
 			}
 			dir, err := datadir.Resolve(getenv)
 			if err != nil {
+				return err
+			}
+			// Read-only, and before Prepare: Prepare creates and chmods, which must never touch the
+			// old data root.
+			if err := dir.RefuseOldRoot(); err != nil {
 				return err
 			}
 			if err := dir.Prepare(); err != nil {

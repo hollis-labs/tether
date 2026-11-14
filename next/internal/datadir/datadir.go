@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // Env names the data directory. It is the only setting read from the environment.
@@ -84,4 +85,38 @@ func (d Dir) PrivateFile(p string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// ErrOldDataRoot is returned when the data directory is (or holds) the old tree's data root.
+var ErrOldDataRoot = errors.New("the data directory holds the old Tether layout")
+
+// oldRootMarkers are paths that exist only under the old tree's data root: its database, its
+// catalog's global file, and its runtime socket and pid. The new data directory never holds them:
+// the catalog and the socket stay at the old root by path (port plan section 3).
+var oldRootMarkers = []string{
+	filepath.Join("state", "tether.db"),
+	filepath.Join("catalog", "global.yaml"),
+	filepath.Join("run", "tetherd.sock"),
+	filepath.Join("run", "tetherd.pid"),
+}
+
+// RefuseOldRoot reports ErrOldDataRoot when d shows the old layout. It only stats paths (Lstat, so a
+// socket or a dangling link counts as present) and never creates, opens or changes anything, so it is
+// safe to run before Prepare on a live path. A missing d is not the old root.
+func (d Dir) RefuseOldRoot() error {
+	var found []string
+	for _, m := range oldRootMarkers {
+		_, err := os.Lstat(filepath.Join(string(d), m))
+		switch {
+		case err == nil:
+			found = append(found, m)
+		case !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR):
+			return fmt.Errorf("inspect %s: %w", d, err)
+		}
+	}
+	if len(found) > 0 {
+		return fmt.Errorf("%w (%s has %s): %s must name a new directory beside the old data root, never the old root itself",
+			ErrOldDataRoot, d, strings.Join(found, ", "), Env)
+	}
+	return nil
 }
