@@ -1,6 +1,6 @@
 # Substrate port plan: Tether
 
-Status: **plan, not approved.** No port code is merged before @archie approves this plan. Nothing in this
+Status: **plan, not approved.** No port code is merged before @archie and @substrate-manager approve this plan. Nothing in this
 document is run against the live hub, its database or its service unit by this cell; the cutover is run by
 @archie with Chrispian (section 9).
 
@@ -76,8 +76,11 @@ An older layout (`~/.tether/state/tether.db`, 387 MB) exists; the inventory says
 
 ## 2. Repository, branch and how old `main` is carried across
 
-- **Branch.** Every port PR targets `substrate-port` in `hollis-labs/tether`. Only the lead merges into it
-  (standing approval: reviewer approve on the head SHA, CI green, `gh pr merge --squash --match-head-commit`).
+- **Branch.** Every port PR targets `substrate-port` in `hollis-labs/tether`. Merges go through
+  @substrate-manager, the Substrate program driver (routing set by Chrispian, 2026-11-14): when the cell's
+  reviewer approves at the head SHA and CI is green, the lead sends @substrate-manager the PR URL and the
+  reviewed SHA and follows its merge process (squash, matched to the reviewed head). Deploys go the same way;
+  anything touching the live app and the cutover stays with @archie.
   This plan (docs only) goes to `main`. The port reaches `main` only at cutover, run by @archie with Chrispian.
 - **The new tree lives beside the old one on the branch**, as Station did with `cmd/station-next`: a nested Go
   module `next/` (`module github.com/hollis-labs/tether/next`, its own `go.mod` on the Substrate BOM pins, its own
@@ -86,8 +89,8 @@ An older layout (`~/.tether/state/tether.db`, 387 MB) exists; the inventory says
   - the new module cannot import the old `internal/` packages (Go forbids it across modules): the clean break is
     enforced by the compiler, not by review;
   - the old root CI keeps passing on the branch, and `next/` has its own gate (Substrate section 12 evidence).
-- **Merge cadence.** The lead merges `origin/main` into `substrate-port` at least daily while photon (or anyone)
-  lands PRs on `main`, and always before a slice that touches the same area starts. The merge is its own PR
+- **Merge cadence.** The lead opens a PR merging `origin/main` into `substrate-port` at least daily while photon (or anyone)
+  lands PRs on `main`, and always before a slice that touches the same area starts. That merge is its own PR, merged like any other,
   (`chore: merge main @<sha>`), reviewed for conflicts only.
 - **The carry ledger.** Each `main` commit that arrives by a merge is recorded in `next/docs/carry-ledger.md`:
   sha, PR, task, area, and one of `ported` (the slice that carries it, with the commit), `n/a` (touches only code
