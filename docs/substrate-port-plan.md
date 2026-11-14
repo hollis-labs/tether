@@ -635,16 +635,20 @@ loss-posture decisions in 13.3; the C plan carries the worker-protocol behaviour
 
 ### 13.6 Framework support and open items
 
-- **Named stores and the degraded start** come from the Substrate `database` module, not app code: one shared ask
-  for the three wave-3 ports, CW-20261114-0151 (hollis-labs/substrate PR #44, under review). The default store is
-  class A (`required`); `database.Named(app, ...)` gives the data store(s) for B and C with `required: false`,
-  background reconnect with backoff, a soft `database.<name>` health check (`degraded` in the body with HTTP 200,
-  so a supervisor never restart-loops during an outage), `database.IsUnavailable(err)` and `Handle.Report(err)`
-  on use, and `Handle.OnChange` for state changes. `database.GateWith` gives the 503 answer in Tether's own
-  envelope on the protocol-fixed mounts (D2). Each named store keeps its own goose version table. Data-store
-  migrations run from a deploy step (`database.MigrateNamed`) with the migrator role, never from the running app. If the module does not land in time for the
-  Postgres step, Tether implements exactly that contract behind one small interface and moves it into the module
-  later.
+- **What the second store is for, and when.** Until adoption is complete Tether runs on **one SQLite store**
+  (13.1(4)): the class handles share it, and nothing in the port depends on a second store. A second, named data
+  store exists only for the post-adoption switch of class B and then C to Postgres (13.5).
+- **Named stores and the degraded start** are framework behaviour from the Substrate `database` module, not app
+  code: one shared ask for the three wave-3 ports, CW-20261114-0151 (hollis-labs/substrate PR #44, under review;
+  the port does not build on its branch, and its identifiers are not settled). The behaviour Tether relies on:
+  class A is the required default store; a data store for B and C may be unavailable at start and while running;
+  it reconnects in the background with backoff; its outage reports `degraded` in health without failing liveness
+  (a supervisor never restart-loops during an outage); a use of the store during an outage fails fast with a
+  recognisable error, and the caller can report a failure so the state flips at once; the 503 answer can be given
+  in Tether's own envelope on the protocol-fixed mounts (D2); each named store keeps its own migration version
+  table; and data-store migrations run from a deploy step with the migrator role, never from the running app. If
+  the module does not provide this in time for the Postgres step, Tether implements exactly that contract behind
+  one small interface and moves it into the module later.
 - **In-memory event batching** (bounded, drop-oldest, counter exposed in health) is Tether code for now, behind the
   event store interface.
 - **`libs ui/streamlog-postgres`** must be tagged and in the BOM before the shadow period (CW-20261015-0017,
