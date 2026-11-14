@@ -277,15 +277,20 @@ func TestAddressAliasSendAndListThroughEveryAddress(t *testing.T) {
 	}
 }
 
-// Acceptance item 5: the operator token's mail is from the canonical address,
-// and a reply to it arrives in the canonical mailbox.
+// Acceptance item 5: the operator token's mail keeps the sender it was sent
+// with (from_principal resolves to the canonical address through the alias),
+// the operator may send as the canonical address, and a reply to either
+// arrives in the canonical mailbox.
 func TestAddressAliasOperatorSenderAndReply(t *testing.T) {
 	h := newAliasHarness(t, identity.Enforce)
 	h.migrate(t)
 
 	stamped := h.send(t, "operator", "", archieURN)
-	if stamped.From.URN() != aliasCanonicalURN || stamped.Metadata[MetaFromPrincipal] != identity.OperatorID || stamped.Metadata[store.MetaAliasFrom] != identity.OperatorID {
+	if stamped.From.URN() != identity.OperatorID || stamped.Metadata[MetaFromPrincipal] != identity.OperatorID {
 		t.Fatalf("stamped send: from %s metadata %v", stamped.From.URN(), stamped.Metadata)
+	}
+	if c, err := h.db.CanonicalAddress(context.Background(), stamped.Metadata[MetaFromPrincipal]); err != nil || c != aliasCanonicalURN {
+		t.Fatalf("from_principal resolves to %q (%v)", c, err)
 	}
 	explicit := h.send(t, "operator", aliasCanonicalURN, archieURN)
 	if explicit.From.URN() != aliasCanonicalURN || explicit.Metadata[MetaFromVerification] != "verified" {
@@ -293,7 +298,7 @@ func TestAddressAliasOperatorSenderAndReply(t *testing.T) {
 	}
 	// A reply addressed to whatever the recipient saw as the sender, or to the
 	// old address it still has on file.
-	for _, to := range []string{stamped.From.URN(), identity.OperatorID} {
+	for _, to := range []string{stamped.From.URN(), explicit.From.URN()} {
 		body, _ := json.Marshal(map[string]any{"kind": "response", "to": to, "in_reply_to": stamped.ID, "payload": map[string]string{"body": "re"}})
 		code, raw := h.do(t, http.MethodPost, "/messages", "session", string(body))
 		var reply gomsg.Envelope
@@ -349,12 +354,13 @@ func TestAddressAliasMentionsReachCanonicalMailbox(t *testing.T) {
 	if err != nil || typed.To.URN() != aliasCanonicalURN {
 		t.Fatalf("typed message stored under %s (%v)", typed.To.URN(), err)
 	}
-	// The canonical address answers to @chrispian when it sends.
+	// The operator still answers to @chrispian when it sends, and so does the
+	// canonical address.
 	code, raw = h.do(t, http.MethodPost, "/messages/post", "operator", `{"kind":"message","to":["@archie"],"body":"from me"}`)
 	if code != http.StatusCreated || json.Unmarshal(raw, &post) != nil || post.Envelope.From != "@chrispian" {
 		t.Fatalf("typed post from the operator: %d %s", code, raw)
 	}
-	if sent, err := h.db.MessagingStore().Get(ctx, post.IDs[0]); err != nil || sent.From.URN() != aliasCanonicalURN {
+	if sent, err := h.db.MessagingStore().Get(ctx, post.IDs[0]); err != nil || sent.From.URN() != identity.OperatorID {
 		t.Fatalf("typed message from %s (%v)", sent.From.URN(), err)
 	}
 
@@ -444,5 +450,80 @@ func TestAddressAliasThread(t *testing.T) {
 	}
 	if code != http.StatusOK || json.Unmarshal(raw, &out) != nil || len(out.Messages) != 0 {
 		t.Fatalf("thread as a stranger: %d %s", code, raw)
+	}
+}
+
+// A seat's logical name (msg://agent/agent-mux/<catalog id>) on either side of
+// an alias means its catalog urn, the address its mail is stored under. Without
+// that, mail to the alias was stored under the logical name, where nobody reads.
+func TestAddressAliasSeatLogicalNames(t *testing.T) {
+	h := newAliasHarness(t, identity.Observe)
+	const (
+		archieLogical = "msg://agent/agent-mux/archie"
+		oldUser       = "msg://user/local/olduser"
+		newHome       = "msg://agent/agent-mux/agt_newhome"
+	)
+	add := func(alias, canonical string) AddressAliasResponse {
+		t.Helper()
+		body, _ := json.Marshal(AddressAliasRequest{Alias: alias, Canonical: canonical})
+		code, raw := h.do(t, http.MethodPost, "/messages/aliases", "operator", string(body))
+		var out AddressAliasResponse
+		if code != http.StatusOK || json.Unmarshal(raw, &out) != nil {
+			t.Fatalf("alias %s -> %s: %d %s", alias, canonical, code, raw)
+		}
+		return out
+	}
+
+	// The canonical address given as a logical name is stored as the catalog urn.
+	if row := add(oldUser, archieLogical); row.Canonical != archieURN {
+		t.Fatalf("canonical stored as %s, want %s", row.Canonical, archieURN)
+	}
+	sent := h.send(t, "session", "", oldUser)
+	if sent.To.URN() != archieURN {
+		t.Fatalf("mail to the alias stored under %s, want %s", sent.To.URN(), archieURN)
+	}
+	for _, as := range []string{archieURN, archieLogical, oldUser} {
+		if got := h.listIDs(t, "operator", as); !equalIDs(got, []string{sent.ID}) {
+			t.Fatalf("list as %s = %v, want [%s]", as, got, sent.ID)
+		}
+	}
+	// An alias row that still names the logical form (made before the seat had
+	// a catalog urn, or written to the table directly) resolves to the seat too.
+	if _, _, err := h.db.AddAddressAlias(context.Background(), "msg://user/local/legacy", archieLogical, ""); err != nil {
+		t.Fatal(err)
+	}
+	legacy := h.send(t, "session", "", "msg://user/local/legacy")
+	if legacy.To.URN() != archieURN {
+		t.Fatalf("mail through a logical-name alias row stored under %s, want %s", legacy.To.URN(), archieURN)
+	}
+	if err := h.db.RemoveAddressAlias(context.Background(), "msg://user/local/legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if code, raw := h.do(t, http.MethodDelete, "/messages/aliases?alias="+url.QueryEscape(oldUser), "operator", ""); code != http.StatusOK {
+		t.Fatalf("remove: %d %s", code, raw)
+	}
+
+	// The alias given as a logical name is stored as the catalog urn, so a send
+	// to either form of the seat goes to the canonical address.
+	if row := add(archieLogical, newHome); row.Alias != archieURN {
+		t.Fatalf("alias stored as %s, want %s", row.Alias, archieURN)
+	}
+	viaLogical := h.send(t, "session", "", archieLogical)
+	viaURN := h.send(t, "session", "", archieURN)
+	for _, env := range []gomsg.Envelope{viaLogical, viaURN} {
+		if env.To.URN() != newHome {
+			t.Fatalf("mail to the aliased seat stored under %s, want %s", env.To.URN(), newHome)
+		}
+	}
+	// Newest first, then the seat's earlier mail, merged.
+	want := []string{viaURN.ID, viaLogical.ID, legacy.ID, sent.ID}
+	for _, as := range []string{newHome, archieURN, archieLogical} {
+		if got := h.listIDs(t, "operator", as); !equalIDs(got, want) {
+			t.Fatalf("list as %s = %v, want %v", as, got, want)
+		}
+	}
+	// Removing by the logical name removes the row.
+	if code, raw := h.do(t, http.MethodDelete, "/messages/aliases?alias="+url.QueryEscape(archieLogical), "operator", ""); code != http.StatusOK {
+		t.Fatalf("remove by logical name: %d %s", code, raw)
 	}
 }

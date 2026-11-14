@@ -1297,18 +1297,24 @@ func (s *Server) refuseDeprecatedRecipient(ctx context.Context, to messaging.Add
 func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
 	// Mail to a seat's logical form goes to its catalog urn, where it binds and
 	// reads (CW-20261114-0013); before, it landed where nobody reads it.
-	if env.To.Kind == messaging.KindAgent {
-		if c := s.canonicalSeat(ctx, env.To.URN()); c != env.To.URN() {
-			if addr, err := messaging.ParseURN(c); err == nil {
-				env.To = addr
+	seat := func() {
+		if env.To.Kind == messaging.KindAgent {
+			if c := s.canonicalSeat(ctx, env.To.URN()); c != env.To.URN() {
+				if addr, err := messaging.ParseURN(c); err == nil {
+					env.To = addr
+				}
 			}
 		}
 	}
-	// Mail to or from an alias goes to the canonical address (address_aliases.go),
-	// resolved here so the deprecation check and federation routing see it.
+	seat()
+	// Mail to an alias goes to the canonical address (address_aliases.go),
+	// resolved here so the deprecation check and federation routing see it. The
+	// canonical address is mapped to its seat again: an alias row made before
+	// its target became a catalog seat may still name the logical form.
 	if err := s.canonicalizeMail(ctx, &env); err != nil {
 		return messaging.Envelope{}, err
 	}
+	seat()
 	if err := s.refuseDeprecatedRecipient(ctx, env.To); err != nil {
 		return messaging.Envelope{}, err
 	}

@@ -116,7 +116,7 @@ func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) 
 	if env.DeliveredAt != nil || env.ConsumedAt != nil {
 		return messaging.Envelope{}, messaging.ErrPresetLifecycle
 	}
-	// Mail to or from an alias is stored, and owed, under the canonical address
+	// Mail to an alias is stored, and owed, under the canonical address
 	// (address_aliases.go), so the delivery obligation and the content row agree.
 	if d.owner != nil {
 		if err := d.owner.addrAliases.canonicalizeMail(ctx, d.db, &env); err != nil {

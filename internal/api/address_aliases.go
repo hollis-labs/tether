@@ -44,16 +44,24 @@ func (s *Server) registerAddressAliasRoutes(router *http.ServeMux) {
 // canonicalAlias is the canonical address of urn, or urn itself when it is not
 // an alias. A failed alias read leaves urn unchanged: access checks then see no
 // extra form (they fail closed), and the store resolves again on a send.
+//
+// Alias rows hold seat addresses in their catalog urn form (handleAddressAliases
+// stores them so), so urn is mapped to its seat before the lookup and the answer
+// after it: a caller using a seat's logical name resolves like any other.
 func (s *Server) canonicalAlias(ctx context.Context, urn string) string {
 	if s.Aliases == nil || urn == "" {
 		return urn
 	}
-	c, err := s.Aliases.CanonicalAddress(ctx, urn)
+	seat := s.canonicalSeat(ctx, urn)
+	c, err := s.Aliases.CanonicalAddress(ctx, seat)
 	if err != nil {
 		slog.Warn("address aliases: resolve failed", "err", err)
 		return urn
 	}
-	return c
+	if c == seat {
+		return urn // not an alias: leave the caller's form to the seat helpers
+	}
+	return s.canonicalSeat(ctx, c)
 }
 
 // aliasForms is every address of urn's mailbox, the canonical one first.
@@ -61,12 +69,12 @@ func (s *Server) aliasForms(ctx context.Context, urn string) []string {
 	if s.Aliases == nil || urn == "" {
 		return []string{urn}
 	}
-	forms, err := s.Aliases.AddressForms(ctx, urn)
-	if err != nil || len(forms) == 0 {
-		if err != nil {
-			slog.Warn("address aliases: resolve failed", "err", err)
-		}
-		return []string{urn}
+	forms, err := s.Aliases.AddressForms(ctx, s.canonicalSeat(ctx, urn))
+	if err != nil {
+		slog.Warn("address aliases: resolve failed", "err", err)
+	}
+	if len(forms) < 2 {
+		return []string{urn} // not aliased: exactly the address asked about
 	}
 	return forms
 }
@@ -159,7 +167,7 @@ func (s *Server) handleAddressAliases(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		canonical := r.URL.Query().Get("canonical")
 		if canonical != "" {
-			canonical = s.canonicalAlias(ctx, canonical)
+			canonical = s.canonicalSeat(ctx, s.canonicalAlias(ctx, canonical))
 		}
 		rows, err := s.Aliases.ListAddressAliases(ctx, canonical)
 		if err != nil {
@@ -187,7 +195,10 @@ func (s *Server) handleAddressAliases(w http.ResponseWriter, r *http.Request) {
 		if p, ok := verifiedPrincipal(r); ok {
 			by = p.ID
 		}
-		row, merged, err := s.Aliases.AddAddressAlias(ctx, req.Alias, req.Canonical, by)
+		// A seat is stored by its catalog urn, the address its mail is under
+		// (seat_identity.go): a logical name on either side would point the alias
+		// at, or from, a mailbox nobody reads.
+		row, merged, err := s.Aliases.AddAddressAlias(ctx, s.canonicalSeat(ctx, req.Alias), s.canonicalSeat(ctx, req.Canonical), by)
 		if err != nil {
 			if errors.Is(err, store.ErrAddressAliasInvalid) {
 				writeError(w, http.StatusConflict, CodeConflict, err.Error())
@@ -207,7 +218,7 @@ func (s *Server) handleAddressAliases(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "alias query param required")
 			return
 		}
-		if err := s.Aliases.RemoveAddressAlias(ctx, alias); err != nil {
+		if err := s.Aliases.RemoveAddressAlias(ctx, s.canonicalSeat(ctx, alias)); err != nil {
 			switch {
 			case errors.Is(err, store.ErrAddressAliasNotFound):
 				writeError(w, http.StatusNotFound, CodeNotFound, "no such alias "+alias)

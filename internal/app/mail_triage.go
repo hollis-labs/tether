@@ -133,7 +133,7 @@ func (m *mailTriage) record(ctx context.Context, env messaging.Envelope, pol sea
 	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
 		urgency = intent.Urgency
 	}
-	res := triage.Classify(triage.Input{From: env.From.URN(), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle})
+	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, env.From.URN()), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle})
 	row, created, err := m.st.TriageRecord(ctx, store.TriageRow{MessageID: env.ID, Recipient: env.To.URN(), Seat: pol.seat, Class: string(res.Class), Reason: res.Reason, Typed: res.Typed, CreatedAt: now})
 	if err != nil || !created {
 		return row, err
@@ -291,7 +291,7 @@ func (s *Service) seatPolicyForSession(sessionID string) seatPolicy {
 // catalog agent (by urn: or agent-mux form) its handle: or id; otherwise the
 // registry's handle, then its tether id. "" when none applies.
 func (s *Service) senderHandle(ctx context.Context, urn string) string {
-	if urn == triage.OperatorURN {
+	if operatorForm(ctx, s.Store, urn) == triage.OperatorURN {
 		return "@chrispian"
 	}
 	if cat := s.CurrentCatalog(); cat != nil {
@@ -319,4 +319,29 @@ func (s *Service) senderHandle(ctx context.Context, urn string) string {
 		}
 	}
 	return ""
+}
+
+// operatorForm returns triage.OperatorURN for any form of the operator's
+// mailbox (the operator address, its canonical address or another alias of it,
+// CW-20261114-0067) and urn otherwise, so mail the operator sends under his
+// canonical address is still the operator's. A failed alias read leaves urn as
+// it is.
+func operatorForm(ctx context.Context, st *store.Store, urn string) string {
+	if urn == triage.OperatorURN || st == nil {
+		return urn
+	}
+	forms, err := st.AddressForms(ctx, urn)
+	if err != nil {
+		return urn
+	}
+	for _, f := range forms {
+		if f == triage.OperatorURN {
+			return triage.OperatorURN
+		}
+	}
+	return urn
+}
+
+func (m *mailTriage) operatorForm(ctx context.Context, urn string) string {
+	return operatorForm(ctx, m.st, urn)
 }

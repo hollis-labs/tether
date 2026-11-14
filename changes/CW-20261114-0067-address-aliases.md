@@ -1,6 +1,6 @@
 - Address aliases (CW-20261114-0067): an `agent` or `user` address can be declared an alias of a canonical address,
   making the two one mailbox. Mail sent, notified, typed-posted or group-mentioned to an alias is stored under the
-  canonical address (metadata `tether.alias_to` / `tether.alias_from` keep the address used); `inbox`, `list`, `watch`
+  canonical address (metadata `tether.alias_to` keeps the address used; `from` is never rewritten); `inbox`, `list`, `watch`
   and `subscribe` on any form return the mail of every form; `get`, `thread`, `read`, `consume`, `archive`, `unarchive`
   and `claim` accept any form. Stored messages are never rewritten: mail under an address from before it became an alias
   keeps its `to`, read and archived state. A principal that owns one form may send and read as the others, so add and

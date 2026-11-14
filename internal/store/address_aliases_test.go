@@ -13,7 +13,7 @@ import (
 const (
 	aliasCanonical = "msg://user/local/chrispian"
 	aliasOperator  = "msg://user/local/operator"
-	aliasAgent     = "msg://agent/agent-mux/agt_rbcnlevo4w"
+	aliasAgent     = "msg://agent/agent-mux/agt_oldrow0001"
 	aliasSender    = "msg://agent/agent-mux/agt_sender"
 	aliasStranger  = "msg://agent/agent-mux/agt_stranger"
 )
@@ -221,9 +221,9 @@ func TestAddressAliasSendListAndActions(t *testing.T) {
 		}
 	}
 
-	// A sender using an alias is stored as the canonical address.
+	// The sender is stored as sent: an alias never changes who mail is from.
 	fromAlias := aliasSend(t, s, aliasOperator, aliasSender, "from the old address")
-	if fromAlias.From.URN() != aliasCanonical || fromAlias.Metadata[MetaAliasFrom] != aliasOperator {
+	if fromAlias.From.URN() != aliasOperator || len(fromAlias.Metadata) != 0 {
 		t.Fatalf("from = %s, metadata %v", fromAlias.From.URN(), fromAlias.Metadata)
 	}
 

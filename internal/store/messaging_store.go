@@ -103,7 +103,7 @@ func (ms *messagingStore) insertMessageRow(ctx context.Context, env messaging.En
 	exec := ms.db.ExecContext
 	var tx *sql.Tx
 	if !publication && ms.owner != nil {
-		// Mail to or from an alias is stored under the canonical address.
+		// Mail to an alias is stored under the canonical address.
 		if err := ms.owner.addrAliases.canonicalizeMail(ctx, ms.db, &env); err != nil {
 			return messaging.Envelope{}, err
 		}

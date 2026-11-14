@@ -36,9 +36,13 @@ An address can be declared an **alias** of another, its **canonical** address
 
 - **Send, notify, typed posts and group mentions** to an alias are stored under
   the canonical address. The envelope's `to` is the canonical address, and
-  metadata `tether.alias_to` records the address the sender used
-  (`tether.alias_from` likewise when the sender is an alias), so a client still
-  using an old address can be found.
+  metadata `tether.alias_to` records the address the sender used, so a client
+  still using an old address can be found.
+- **`from` is never rewritten.** A message is from the address it was sent
+  with, because receivers decide what a message is by its sender (mail triage
+  and agent instructions single out the operator address). A reply goes to that
+  `from` and so arrives in the canonical mailbox. Mail triage treats every form
+  of the operator's mailbox as the operator.
 - **`inbox`, `list`, `watch`, `subscribe`** on any form return the mail stored
   under every form. **`get`, `thread`, `read`, `consume`, `archive`, `unarchive`
   and `claim`** accept any form as `as`.
@@ -46,8 +50,9 @@ An address can be declared an **alias** of another, its **canonical** address
   before it became one keeps its `to` and its read and archived state; it is
   only listed in one more mailbox.
 - **Identity follows the alias.** A principal that owns one form may send and
-  read as the others, and `from_principal` on its mail resolves to the canonical
-  address through the alias. That is why only the operator may declare one.
+  read as the others (it may put the canonical address in `from`), and
+  `from_principal` on its mail resolves to the canonical address through the
+  alias. That is why only the operator may declare one.
 - `GET /whoami` and a registry lookup of any form name the canonical address
   (`canonical_urn`, `aliases`); the lookup returns the profile registered under
   the canonical address, else under the first alias that has one. A `@handle`
@@ -56,7 +61,9 @@ An address can be declared an **alias** of another, its **canonical** address
 Rules: aliases and canonical addresses are `agent` or `user` addresses (not
 sessions, groups, channels or service addresses); an alias points at exactly one
 canonical address; aliases are one hop (a canonical address is never itself an
-alias, and an address with aliases cannot become one).
+alias, and an address with aliases cannot become one). A catalog seat named by
+its logical form (`msg://agent/agent-mux/<catalog id>`) on either side is stored
+as its catalog `urn:`, the address its mail is under.
 
 **An alias that is already a live address with its own mail merges; it is not
 refused.** Nothing is copied: the alias's stored messages become visible in the

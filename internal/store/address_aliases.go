@@ -257,9 +257,14 @@ func (c *addressAliases) forms(ctx context.Context, db *sql.DB, urn string) ([]s
 	return append([]string{urn}, c.aliases[urn]...), nil
 }
 
-// canonicalizeMail rewrites a mailbox envelope's From and To from an alias to
-// its canonical address before it is stored, and records the address the
-// caller used in metadata so a sender still using an old address can be found.
+// canonicalizeMail rewrites a mailbox envelope's To from an alias to its
+// canonical address before it is stored, and records the address the caller
+// used in metadata so a sender still using an old address can be found.
+//
+// From is deliberately left as sent. Receivers decide what a message is by its
+// sender (mail triage and agent boot texts single out the operator address),
+// so an alias must not change who a message appears to be from. A reply goes
+// to that From, which resolves to the canonical mailbox like any other send.
 func (c *addressAliases) canonicalizeMail(ctx context.Context, db *sql.DB, env *messaging.Envelope) error {
 	rewrite := func(addr *messaging.Address, key string) error {
 		if addr.IsZero() {
@@ -283,18 +288,12 @@ func (c *addressAliases) canonicalizeMail(ctx context.Context, db *sql.DB, env *
 		env.Metadata = meta
 		return nil
 	}
-	if err := rewrite(&env.To, MetaAliasTo); err != nil {
-		return err
-	}
-	return rewrite(&env.From, MetaAliasFrom)
+	return rewrite(&env.To, MetaAliasTo)
 }
 
-// Envelope metadata written when a send was addressed through an alias: the
-// address the caller used, before it was resolved to the canonical one.
-const (
-	MetaAliasTo   = "tether.alias_to"
-	MetaAliasFrom = "tether.alias_from"
-)
+// MetaAliasTo is the envelope metadata written when a send was addressed to an
+// alias: the address the caller used, before it was resolved to the canonical one.
+const MetaAliasTo = "tether.alias_to"
 
 // mailboxForms is AddressForms for a mailbox read.
 func (ms *messagingStore) mailboxForms(ctx context.Context, to messaging.Address) ([]string, error) {
@@ -327,7 +326,7 @@ func toURNIn(forms []string) (string, []any) {
 	return "to_urn IN (?" + repeatCommaQ(len(forms)-1) + ")", args
 }
 
-// CanonicalizeMail resolves env's alias addresses to their canonical ones, as
+// CanonicalizeMail resolves env's alias recipient to its canonical address, as
 // Send does, for a caller that must check or route the recipient first.
 func (s *Store) CanonicalizeMail(ctx context.Context, env *messaging.Envelope) error {
 	return s.addrAliases.canonicalizeMail(ctx, s.db, env)
