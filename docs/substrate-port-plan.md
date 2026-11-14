@@ -37,7 +37,7 @@ depend on, or risk data, so they are asked, each with a recommendation.
 | D4 | **sysop** (`apps/sysop`, the `hub-tether-sysop` unit, a Vite UI on a loopback port). | (a) Not ported; the unit is stopped at cutover and left installed for rollback; a GUI port is a separate later task. (b) Ported in this wave by a GUI agent. | **(a)** unless the client list shows daily use. |
 | D5 | **Repository.** Same repo `hollis-labs/tether`, long-lived branch `substrate-port` (created 2026-11-14 from `main` at `f6c37bfa`), or a new repo. | same repo / new repo | **Same repo** (archie's ruling allows either): history, issues, CI secrets and `tether-release` stay; the new tree lives beside the old one on the branch (section 2). |
 | D6 | **Socket admission.** Live `identity.mode` is `observe`: callers on the unix socket (the planted `tether mcp --forward-daemon`, `mailbox watch`, the CLI, `go-tether-client` over UDS) are admitted even with no token or a stale one; the remote TCP listener always requires a device credential. Substrate `auth.mode: enforce` on the socket would refuse the first group. | (a) Keep today's posture per listener: the socket at Substrate `permissive` (log what enforce would refuse, refuse nothing: the same contract as `observe`), the remote listener enforcing; enforcing the socket is a later change made once the client list proves every socket caller presents a verifiable credential. (b) Enforce on both at cutover. | **(a).** No admission change in the window. If the auth module cannot hold a different mode per listener, a `substrate-gap` task is filed and the remote listener's enforcement is a tested check inside its mounts, as it is today. |
-| D7 | **The old pre-fabric database** (`~/.tether/state/tether.db`, 387 MB, schema 86): pre-fabric history (30 k messages, 377 k events), not read by the live hub, still opened every few minutes by something through the legacy default catalog. | (a) Archive as is (moved aside with the old data root, never deleted) and merge into the new database only the rows the diff shows are missing from the live data and are real history. (b) Archive only. (c) Merge everything. | **(a)**, decided on the diff (CW-20261114-0106). The stray opener is a separate fix outside the port: the legacy default catalog points every `tether` command run without `--catalog` at this file. |
+| D7 | **The old pre-fabric database** (`~/.tether/state/tether.db`, 387 MB, schema 86): pre-fabric history (30 k messages, 377 k events), not read by the live hub, still opened every few minutes by something through the legacy default catalog. | (a) Archive as is (moved aside with the old data root, never deleted) and merge into the new database only the rows the diff shows are missing from the live data and are real history. (b) Archive only. (c) Merge everything. | **(b) archive only.** The diff (CW-20261114-0106, `old-home-diff.md`) shows the live database is a row-for-row copy of this one taken 2026-10-12 at 01:12-01:13Z, and every message, session, principal, registry entry, workstream, routing reply and delivery here is also in live (0 rows only in old). What is only here: 1,722 events live has since pruned at 90 days, one stray 1.5 h run of the old daemon (status noise, retries to dead addresses, 5 stale team bindings, 79 audit rows of Torque calls already recorded in Torque), and incidental writes. The file is kept, moved aside with the old data root, and the owner decides when to delete it. The stray opener is a separate fix outside the port: the legacy default catalog sends every `tether` command run without `--catalog` to this file. |
 
 ## 1. What runs today (read from the hub host, names only)
 
@@ -159,8 +159,16 @@ next/
   in `principals`. They are carried (the token files byte for byte, the `principals` rows by `migrate-from`) and
   must keep verifying with the same scopes and the same listener rules as today: the operator credential on the
   socket with the operator's scopes, refused on remote `/mcp` as today (`internal/daemon/remote_mcp.go`); device
-  credentials on the remote listener with `tether.worker`. They are verified through the same one `auth` path
-  (an app-supplied bearer verifier backed by `principals`), which is added to the scope of CW-20261114-0097.
+  credentials on the remote listener with `tether.worker`. They are verified through the same one `auth` path:
+  Substrate already has `auth.AddVerifier` (the `identity` module registers itself the same way), so Tether
+  registers a verifier over `principals` after `auth` starts and before `httphost` serves. It answers
+  `ErrInvalidToken` at once for JWT-shaped strings, so the libs chain (first success wins, an invalid answer moves
+  on, another verifier's outage never hides a success) costs a JWT nothing extra. Principal kinds map one to one
+  (`operator`, `service`, `device`, `agent`). Per-listener refusals (the operator credential on remote `/mcp`)
+  stay in Tether's handlers, as today. `run/sysadmin-cerberus.token` is the credential of
+  `msg://service/sysadmin-cerberus/dev` (granted the `cerberus` upstream in `global.yaml`); S3 identifies its
+  class from its format without printing it, and either class is covered (a `svc-` JWT by the carried keys, an
+  opaque bearer by `principals`).
   Scopes keep the existing `tether.<verb>` vocabulary (`tether.read`, `.operate`, `.messages`, `.worker`, ...); the full list is mapped in
   `conversion-notes.md`, and every route has one (test that fails on an unscoped route).
 - **Stdio MCP forwarder:** `mcp.ServeStdio` with `LocalTrust` is **not** used for the forwarder: it serves one
@@ -248,7 +256,7 @@ code it replaces. Builders: B1 = @mig-tether-builder-1, B2 = @mig-tether-builder
 | S0 | `next/` skeleton: go.mod on BOM pins, manifest, wiring, `internal/settings`, data-dir resolution and old-layout guard, CI job for `next/`, `docs/architecture.md`, `conversion-notes.md`, `carry-ledger.md` | plan approved | small | B1 |
 | S1 | Squashed schema: one goose migration reproducing the current schema (minus D3 tables), generated from a fresh old-schema dump and reviewed table by table against the inventory. The `messaging_*` tables that the go-messaging library creates stay the library's (its DDL is not duplicated; the library version is pinned and its schema compared) | S0 | ~115 tables | B2 |
 | S2 | Store layer: ported query code on `database.From(app)` (read pool / WriteTx discipline), tests ported | S1 | 15.9k | B2 (+B1 split by table family) |
-| S3 | Issuer (D1): key store reading and writing the carried `auth/` layout unchanged, minting, JWKS, deny-list, service tokens, pairing (`principals`, `principals_device_upgrade`, `pairing_grants`), workload trust; the opaque bearers (operator, device `tth_`, session API) verified from `principals`; all three classes verified through `auth` (needs CW-20261114-0097); identity for operator accounts with `LocalScopes` set; golden tests: old-minted tokens verify on new, a revoked one is refused, new-minted verify on libs auth, an operator token and a device token issued by the old build are accepted on the listener they are accepted on today (and the operator token refused on remote `/mcp`), and the round trip old `auth/` -> new hub -> rotate/mint/revoke -> old issuer reads it | S0, S1, S2, D1 ruling, the auth gap | 7.1k | B1 |
+| S3 | Issuer (D1): key store reading and writing the carried `auth/` layout unchanged, minting, JWKS, deny-list, service tokens, pairing (`principals`, `principals_device_upgrade`, `pairing_grants`), workload trust; the opaque bearers (operator, device `tth_`, session API) verified from `principals` through `auth.AddVerifier`; the issuer's JWTs through the in-process key source and deny-list (CW-20261114-0097); identity for operator accounts with `LocalScopes` set; golden tests: old-minted tokens verify on new, a revoked one is refused, new-minted verify on libs auth, an operator token and a device token issued by the old build are accepted on the listener they are accepted on today (and the operator token refused on remote `/mcp`), and the round trip old `auth/` -> new hub -> rotate/mint/revoke -> old issuer reads it | S0, S1, S2, D1 ruling, the auth gap | 7.1k | B1 |
 | S4 | HTTP host: the closed mount list for the client API (paths and ADR 0010 envelope unchanged, callers verified through the auth module, Tether's scope check per route, `Mount{Raw: true}`), operator routes under `/api/` with flat errors, unix socket (at the configured old path) and remote TCP listeners with the exact Host/Origin checks and the D6 posture per listener; SSE handlers (`mailbox watch`, `/events/stream`) watch `httphost.Stopping(r)`; the coverage test (every route scoped, every mount named); SIGTERM drains with streams open | S0, S3 | part of 32k | B1 |
 | S5 | Registry and fabric (registry, bindings, scoped bindings, fabric*) | S2, S4 | 10.7k | B2 |
 | S6 | Messaging core: messages, inbox/consume/ack, threads, aliases, wake admission, retention candidates, purge audit | S2, S4, S5 | ~5k | B1 |
@@ -294,9 +302,8 @@ orphans as they are and reports them, and never drops a row to satisfy a constra
 
 **The old pre-fabric database** (`~/.tether/state/tether.db`, 387 MB, schema 86, 641 k rows) holds history from
 before the move to the fabric layout (for example 30 k `messages`, 377 k `events`), and something still opens it
-every few minutes through the legacy default catalog. It is **never deleted**. D7 decides whether it is
-archived only or merged: CW-20261114-0106 diffs it against the live data, and the answer is written here before
-S12 completes.
+every few minutes through the legacy default catalog. It is **never deleted**: archived as is (D7); the diff
+shows nothing the live data lacks.
 
 ### 7.1 Classes
 
@@ -323,8 +330,17 @@ S12 completes.
   starts over (batches leave a partial database by design; nothing resumes from one).
 - Verifies per table: row counts; `EXCEPT` both ways on the copied columns (after the transform, against the
   transform applied to the source); max ids and sequences; per-key-range digests (sha256 of ordered canonical
-  rows per range of the primary key) and a whole-table digest; then `PRAGMA integrity_check` and
-  `foreign_key_check` on the result. Exit non-zero on any mismatch.
+  rows per range of the primary key) and a whole-table digest; then `PRAGMA integrity_check` on the result, and
+  `foreign_key_check` compared with the source's: the old store runs with foreign keys off (ADR 0008) and has
+  orphan rows, so the check is that the result has **exactly the source's** violations, no new ones and none
+  dropped. Exit non-zero on any mismatch.
+- **Row identity is carried, not re-assigned** (CW-20261114-0106, `data-keys.md`): every table has an explicit
+  key except the FTS index (rebuilt). `messages.rowid` is the mailbox watch cursor clients hold
+  (`internal/store/messaging_watch.go`), so it is copied explicitly and verified equal; `sqlite_sequence` is
+  carried (the events high-water mark is read from it, and resetting it would reissue event ids clients hold);
+  `sessions` are inserted in rowid order (a tie-break in resume and lineage) and `team_launches` keeps its rowid
+  (a fairness cursor). SQLite 3.46.1's `VACUUM INTO`, which the daily backup uses, was measured to keep implicit
+  rowids, and the per-table rowid comparison runs in every rehearsal anyway.
 - Prints a report (JSON + text) kept with the cutover record.
 
 ### 7.3 Size and the window: bulk, then a range-digest sync
@@ -533,7 +549,8 @@ drain; `hub-tether-sysop` disabled (D4). Old env and flags that no longer mean a
 | Outposts stranded silently by a protocol mismatch (`hello` closed without an error) | protocol frozen, golden fixtures in CI, every outpost's reconnect checked by name in 9.1 |
 | The catalog's git history is written by something outside Tether (`catalog-autocommit` units) | the catalog stays in place and the units are untouched; a tag and a tarball in step zero |
 | Hidden state outside `tether.db` | inventory of every store under the data root and the catalog roots |
+| A mailbox cursor jumps because `messages` has no AUTOINCREMENT and a deleted newest row's rowid is reused (a latent bug in the old tree, `routing_replies.go` deletes) | not changed by the port (rowids carried as they are); reported to @archie for the old tree; the new schema gives `messages` an explicit key with AUTOINCREMENT semantics only if the cursor contract allows it, decided in S6 |
 | Rollback loses post-cutover state | `export-legacy` full sync (section 10), rehearsed after writes of every kind |
-| Two trust roots and the opaque bearers cannot be verified in one auth path | in-process key, deny-list and bearer-verifier hooks: CW-20261114-0097, accepted by @substrate-manager and scheduled; S3 waits for it |
+| Two trust roots and the opaque bearers cannot be verified in one auth path | opaque bearers through the existing `auth.AddVerifier`; the issuer's rotating keys and in-process deny-list through CW-20261114-0097 (accepted by @substrate-manager, scheduled); S3 waits for it |
 | A carried credential stops verifying (operator token, device token, service token) | each class has a golden test in S3 and a live check in 9.1 |
 | Substrate gap found mid-port | Torque task tagged `substrate-gap`, `cell:mig-tether`; work around where possible; never patch Substrate from the cell |
