@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -591,6 +592,10 @@ func main() {
 	addr := flag.String("addr", ":8947", "HTTP listen address")
 	catalogRoot := flag.String("catalog", "~/.tether/catalog", "Tether catalog root")
 	flag.Parse()
+	// A misconfigured Cerberus address fails at start, not on the first resource action.
+	if _, err := resolveCerberusEndpoint(); err != nil {
+		log.Fatalf("tether_sysop: %v", err)
+	}
 
 	server := &appServer{catalogRoot: config.Expand(*catalogRoot), addr: *addr, startedAt: time.Now()}
 	router := http.NewServeMux()
@@ -5404,12 +5409,42 @@ func resolveCerberusEndpoint() (cerberusEndpoint, error) {
 		return cerberusEndpoint{base: "http://cerberus-daemon", socket: path}, nil
 	case strings.HasPrefix(addr, "http://"), strings.HasPrefix(addr, "https://"):
 		u, err := url.Parse(addr)
-		if err != nil || u.Host == "" {
+		if err != nil || u.Hostname() == "" {
 			return cerberusEndpoint{}, fmt.Errorf("%s=%q: not a valid URL", cerberusAddrEnv, addr)
+		}
+		// The bearer token travels in the clear over http: only to this machine or the tailnet.
+		if u.Scheme == "http" && !cerberusPlainHTTPHost(u.Hostname()) {
+			return cerberusEndpoint{}, fmt.Errorf("%s=%q: plain http is allowed only to loopback or the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48, *.ts.net); use https", cerberusAddrEnv, addr)
 		}
 		return cerberusEndpoint{base: strings.TrimRight(addr, "/")}, nil
 	}
 	return cerberusEndpoint{}, fmt.Errorf("%s=%q: want unix:/path or an http(s):// URL", cerberusAddrEnv, addr)
+}
+
+// tailnetPrefixes are Tailscale's address ranges.
+var tailnetPrefixes = []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("fd7a:115c:a1e0::/48")}
+
+// cerberusPlainHTTPHost reports whether host may be reached over plain http: loopback (localhost, 127/8,
+// ::1) or the tailnet (its address ranges or a *.ts.net name).
+func cerberusPlainHTTPHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "localhost" || strings.HasSuffix(host, ".ts.net") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, p := range tailnetPrefixes {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // cerberusToken is the bearer token from CERBERUS_TOKEN_FILE, re-read on each call; "" when unset.
@@ -5491,6 +5526,9 @@ func runCerberusSocketResourceAction(ctx context.Context, resource, action strin
 		var apiErr cerberusErrorResponse
 		if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.text() != "" {
 			return output, errors.New(apiErr.text())
+		}
+		if endpoint.socket != "" {
+			return output, fmt.Errorf("cerberus socket %s %s: http %d", method, path, resp.StatusCode)
 		}
 		return output, fmt.Errorf("cerberus %s %s: http %d", method, path, resp.StatusCode)
 	}

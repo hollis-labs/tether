@@ -151,3 +151,62 @@ func TestCerberusEndpointRejectsBadSettings(t *testing.T) {
 		t.Fatal("a request went out without the configured token")
 	}
 }
+
+// @photon-review on #571: the bearer token must not cross a network in the clear. Plain http is allowed
+// only to loopback or the tailnet; https anywhere; anything else is refused when the address is resolved.
+func TestCerberusEndpointPlainHTTPOnlyToLoopbackOrTailnet(t *testing.T) {
+	for addr, ok := range map[string]bool{
+		"http://127.0.0.1:4786/api/cerberus/legacy": true,
+		"http://127.9.9.9:4786":                     true,
+		"http://localhost:4786":                     true,
+		"http://[::1]:4786":                         true,
+		"http://100.64.0.1:4786":                    true,
+		"http://100.127.255.254:4786":               true,
+		"http://[fd7a:115c:a1e0::1]:4786":           true,
+		"http://agent-os.tail1234.ts.net:4786":      true,
+		"https://cerberus.example.com/api":          true,
+		"https://203.0.113.5:4786":                  true,
+		"http://203.0.113.5:4786":                   false,
+		"http://10.0.0.5:4786":                      false,
+		"http://100.128.0.1:4786":                   false,
+		"http://cerberus.example.com":               false,
+		"http://ts.net.evil.com":                    false,
+		"http://[fd7a:115c:a1e1::1]:4786":           false,
+		"ftp://127.0.0.1":                           false,
+	} {
+		t.Setenv(cerberusAddrEnv, addr)
+		_, err := resolveCerberusEndpoint()
+		if ok && err != nil {
+			t.Errorf("%s refused: %v", addr, err)
+		}
+		if !ok && err == nil {
+			t.Errorf("%s accepted", addr)
+		}
+	}
+}
+
+// The default (unset) path keeps today's error wording.
+func TestCerberusEndpointDefaultKeepsTheSocketErrorWording(t *testing.T) {
+	sock := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
+	home, err := os.MkdirTemp("", "hm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	if err := os.MkdirAll(filepath.Join(home, ".cerberus"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sock, filepath.Join(home, ".cerberus", "cerberus.sock")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv(cerberusAddrEnv, "")
+	t.Setenv(cerberusTokenFileEnv, "")
+	if _, err := runCerberusSocketResourceAction(context.Background(), "x", "restart"); err == nil || !strings.HasPrefix(err.Error(), "cerberus socket POST /resources/x/restart: http 500") {
+		t.Fatalf("default-path error = %v", err)
+	}
+	t.Setenv("HOME", t.TempDir()) // no socket at all
+	if _, err := runCerberusSocketResourceAction(context.Background(), "x", "status"); err == nil || !strings.HasPrefix(err.Error(), "cerberus socket not found at ") {
+		t.Fatalf("missing socket error = %v", err)
+	}
+}

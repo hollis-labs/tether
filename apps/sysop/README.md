@@ -74,6 +74,11 @@ names (re-read on every call). Unset, they go to the old daemon's socket,
 | `CERBERUS_ADDR` | `unix:/abs/path.sock`, or an `http(s)://` base URL. For the new Cerberus: `http://127.0.0.1:4786/api/cerberus/legacy` |
 | `CERBERUS_TOKEN_FILE` | a 0600 file holding an API key with scope `cerberus.operate` |
 
+Plain `http://` is accepted only to loopback (`localhost`, 127/8, `::1`) or
+the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48, `*.ts.net`), because the token
+travels in the clear; `https://` is accepted anywhere. Any other value stops
+`tether_sysop` at start with an error naming the setting.
+
 Requests go to `<base>/resources/{id}/{action}` (`GET` for `status`, `POST`
 otherwise). Both the old `{success, error}` and the new `{code, message}`
 error bodies are reported. To roll back, unset both settings. The `cerberus`
