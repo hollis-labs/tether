@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -301,6 +302,20 @@ func TestSenderHandleUsesCatalogThenRegistry(t *testing.T) {
 	} {
 		if got := s.senderHandle(ctx, urn); got != want {
 			t.Errorf("senderHandle(%s) = %q, want %q", urn, got, want)
+		}
+	}
+	// A caller-registered id never makes a sender render as the operator or as
+	// an invalid handle; the sender then falls back to its address segment.
+	for i, spoofID := range []string{"chrispian", "Bad Handle", "@x"} {
+		sp, err := reg.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: fmt.Sprintf("Spoof %d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := reg.AttachExternalID(ctx, sp.URN, "tether", spoofID); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.senderHandle(ctx, sp.URN); got != "" {
+			t.Errorf("tether id %q named the sender %q", spoofID, got)
 		}
 	}
 	// The triage uses it for the fyi line and the event.

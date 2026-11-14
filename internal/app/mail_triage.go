@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/messaging/triage"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
 	"github.com/hollis-labs/tether/internal/store"
@@ -307,7 +308,10 @@ func (s *Service) senderHandle(ctx context.Context, urn string) string {
 		if ids, err := s.Registry.LookupExternalIDsForURN(ctx, urn); err == nil {
 			for _, substrate := range []string{"handle", "tether"} {
 				for _, id := range ids {
-					if id.Substrate == substrate && id.ExternalID != "" {
+					// Registry ids are caller-registered: only a valid handle,
+					// never the operator's, may name a sender (a non-catalog
+					// sender must not render as @chrispian).
+					if id.Substrate == substrate && envelope.ValidHandle("@"+id.ExternalID) && id.ExternalID != "chrispian" {
 						return "@" + id.ExternalID
 					}
 				}
