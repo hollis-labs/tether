@@ -156,3 +156,53 @@ func TestCanonicalSeatFollowsRegistry(t *testing.T) {
 		}
 	}
 }
+
+// A registry row that carries a catalog seat's id as its tether id (any
+// registry-scope caller can attach one to a row it owns) does not become that
+// seat: the catalog urn: wins, and the row's holder cannot read the seat's mail
+// through the logical form.
+func TestRegistryTetherIDCannotClaimACatalogSeat(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "claim.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reg := registry.NewService(registry.NewStorage(migrateddb.Open(t)))
+	ctx := t.Context()
+	spoof, err := reg.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Spoof"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.AttachExternalID(ctx, spoof.URN, "tether", "photon-tether"); err != nil {
+		t.Fatal(err)
+	}
+	cat := &config.Catalog{Agents: map[string]config.Agent{
+		"photon-tether": {ID: "photon-tether", URN: meURN},
+		"archie":        {ID: "archie", URN: archieURN},
+	}}
+	s := &Server{Registry: reg, Catalog: fixedCatalog{cat}}
+	if got := s.canonicalSeat(ctx, meLogical); got != meURN {
+		t.Fatalf("canonical(%s) = %s, want the catalog urn %s", meLogical, got, meURN)
+	}
+	for _, f := range s.seatForms(ctx, spoof.URN) {
+		if f == meLogical || f == meURN {
+			t.Fatalf("spoof row gained the seat's address %s: %v", f, s.seatForms(ctx, spoof.URN))
+		}
+	}
+
+	h := NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: db.MessagingStore(), Seats: db, Catalog: fixedCatalog{cat}, Registry: reg, IdentityMode: identity.Enforce})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := identity.Principal{Verified: true, Kind: "session", ID: "msg://session/local/sx", Addresses: []string{"msg://session/local/sx", spoof.URN}, Scopes: []string{"message.write", "message.read", "read"}}
+		h.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), p)))
+	}))
+	t.Cleanup(srv.Close)
+	id := seatSend(t, db, archieURN, meURN)
+	for _, as := range []string{meLogical, meURN} {
+		if code, raw := seatCall(t, srv, http.MethodGet, "/messages/"+id+"?as="+as, ""); code != http.StatusForbidden {
+			t.Fatalf("spoof read the seat's mail as %s: %d %s", as, code, raw)
+		}
+	}
+	if code, _ := seatCall(t, srv, http.MethodGet, "/messages/list?to="+meLogical+"&as="+meLogical, ""); code != http.StatusForbidden {
+		t.Fatalf("spoof listed the seat's mailbox: %d", code)
+	}
+}

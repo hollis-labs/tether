@@ -4,11 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/hollis-labs/libs/llm/core/modelsdev"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -220,6 +223,11 @@ type Server struct {
 
 	chatReplays         chatReplays
 	refSourceAssertions metric.Int64Counter
+
+	// seatCat caches the catalog for seat identity (seatCatalog).
+	seatCatMu sync.Mutex
+	seatCat   *config.Catalog
+	seatCatAt time.Time
 }
 
 // NewHandler builds the http.Handler serving every route owned by the

@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/registry"
 )
 
@@ -18,12 +20,24 @@ import (
 
 const logicalAgentPrefix = "msg://agent/agent-mux/"
 
-// canonicalSeat maps a seat's logical form to its catalog urn: (following a
-// deprecated duplicate's merged_into); any other address is returned unchanged.
+// canonicalSeat maps a seat's logical form to its catalog urn:; any other
+// address is returned unchanged. The catalog decides: an id the catalog defines
+// maps to that agent's urn: (or stays itself when it has none) and the registry
+// is never asked, because a registry-scope caller can attach any tether id to a
+// row it owns. Only an id the catalog does not define falls back to the
+// registry's tether id (following a deprecated duplicate's merged_into).
 func (s *Server) canonicalSeat(ctx context.Context, urn string) string {
 	id, ok := strings.CutPrefix(urn, logicalAgentPrefix)
 	if !ok || id == "" || strings.HasPrefix(id, "agt_") || strings.Contains(id, "/") {
 		return urn
+	}
+	if cat := s.seatCatalog(); cat != nil {
+		if a, ok := cat.Agents[id]; ok {
+			if a.URN != "" {
+				return a.URN
+			}
+			return urn
+		}
 	}
 	if s.Registry != nil {
 		if p, err := s.Registry.LookupBy(ctx, registry.KindAgent, id, "tether"); err == nil {
@@ -35,10 +49,30 @@ func (s *Server) canonicalSeat(ctx context.Context, urn string) string {
 			}
 		}
 	}
-	if c := s.catalogURNFor(urn); c != "" {
-		return c
-	}
 	return urn
+}
+
+// seatCatalogTTL bounds how stale the catalog used for seat identity may be; a
+// catalog reload is seen within it. Every mailbox request consults it.
+const seatCatalogTTL = 5 * time.Second
+
+// seatCatalog is the catalog, cached for seatCatalogTTL (the daemon's loader
+// reads every agent file on each Load).
+func (s *Server) seatCatalog() *config.Catalog {
+	if s.Catalog == nil {
+		return nil
+	}
+	s.seatCatMu.Lock()
+	defer s.seatCatMu.Unlock()
+	if s.seatCat != nil && time.Since(s.seatCatAt) < seatCatalogTTL {
+		return s.seatCat
+	}
+	cat, err := s.Catalog.Load()
+	if err != nil || cat == nil {
+		return s.seatCat // keep the last good one
+	}
+	s.seatCat, s.seatCatAt = cat, time.Now()
+	return cat
 }
 
 // seatForms is every address of the seat urn names: itself, its catalog urn and
@@ -59,21 +93,29 @@ func (s *Server) seatForms(ctx context.Context, urn string) []string {
 	canon := s.canonicalSeat(ctx, urn)
 	add(canon)
 	if strings.HasPrefix(canon, logicalAgentPrefix+"agt_") {
-		if s.Registry != nil {
-			if ids, err := s.Registry.LookupExternalIDsForURN(ctx, canon); err == nil {
-				for _, id := range ids {
-					if id.Substrate == "tether" {
-						add(logicalAgentPrefix + id.ExternalID)
-					}
+		cat := s.seatCatalog()
+		if cat != nil {
+			for id, a := range cat.Agents {
+				if a.URN == canon {
+					add(logicalAgentPrefix + id)
 				}
 			}
 		}
-		if s.Catalog != nil {
-			if cat, err := s.Catalog.Load(); err == nil && cat != nil {
-				for id, a := range cat.Agents {
-					if a.URN == canon {
-						add(logicalAgentPrefix + id)
+		if s.Registry != nil {
+			if ids, err := s.Registry.LookupExternalIDsForURN(ctx, canon); err == nil {
+				for _, id := range ids {
+					if id.Substrate != "tether" {
+						continue
 					}
+					// A tether id that names a catalog agent belongs to that
+					// agent's urn: only; a row that merely carries it does not
+					// get the seat's logical form.
+					if cat != nil {
+						if a, ok := cat.Agents[id.ExternalID]; ok && a.URN != canon {
+							continue
+						}
+					}
+					add(logicalAgentPrefix + id.ExternalID)
 				}
 			}
 		}
