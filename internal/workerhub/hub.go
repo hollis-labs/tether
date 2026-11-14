@@ -52,7 +52,10 @@ type connection struct {
 	inventory        map[string]workerwire.Session
 	hosts            []workerwire.Host
 	replaying        map[string]bool
-	done             chan struct{}
+	// restore is the hello's start-up restore counts; nil from a worker that
+	// predates them (CW-20261114-0056), whose inventory is not known complete.
+	restore *workerwire.RestoreCounts
+	done    chan struct{}
 }
 
 func (c *connection) send(f workerwire.Frame) error {
@@ -106,14 +109,14 @@ func (h *Hub) DeviceID(ctx context.Context, workerID string) (string, error) {
 }
 func (h *Hub) Resolve(ctx context.Context, name string) (string, error) {
 	var id string
-	err := h.db.QueryRowContext(ctx, `SELECT id FROM workers WHERE id=? OR label=? ORDER BY id LIMIT 1`, name, name).Scan(&id)
+	err := h.db.QueryRowContext(ctx, `SELECT id FROM workers WHERE id=? OR (label=? AND retired_at IS NULL) ORDER BY (id=?) DESC, last_seen DESC LIMIT 1`, name, name, name).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("worker %q: %w", name, ErrNotEnrolled)
 	}
 	return id, nil
 }
 func (h *Hub) List(ctx context.Context) ([]Record, error) {
-	rows, err := h.db.QueryContext(ctx, `SELECT w.id,w.label,w.device_id,w.platform,w.caps_json,w.last_seen,(SELECT COUNT(*) FROM sessions s WHERE s.worker_id=w.id AND s.state IN ('launching','running','idle')) FROM workers w ORDER BY label`)
+	rows, err := h.db.QueryContext(ctx, `SELECT w.id,w.label,w.device_id,w.platform,w.caps_json,w.last_seen,(SELECT COUNT(*) FROM sessions s WHERE s.worker_id=w.id AND s.state IN ('launching','running','idle')) FROM workers w WHERE w.retired_at IS NULL ORDER BY label`)
 	if err != nil {
 		return nil, err
 	}
@@ -175,13 +178,14 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	if caps == "" {
 		caps = "{}"
 	}
-	_, err = h.db.ExecContext(r.Context(), `INSERT INTO workers(id,label,device_id,platform,caps_json,last_seen,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET label=excluded.label,platform=excluded.platform,caps_json=excluded.caps_json,last_seen=excluded.last_seen`, id, hello.Worker.Label, p.ID, hello.Worker.Platform+"/"+hello.Worker.Arch, caps, now, now)
+	_, err = h.db.ExecContext(r.Context(), `INSERT INTO workers(id,label,device_id,platform,caps_json,last_seen,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET label=excluded.label,platform=excluded.platform,caps_json=excluded.caps_json,last_seen=excluded.last_seen,retired_at=NULL,superseded_by=NULL`, id, hello.Worker.Label, p.ID, hello.Worker.Platform+"/"+hello.Worker.Arch, caps, now, now)
 	if err != nil {
 		return
 	}
 	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), inventory: make(map[string]workerwire.Session), replaying: make(map[string]bool), done: make(chan struct{})}
 	c.features = hello.Features
 	c.hosts = hello.Hosts
+	c.restore = hello.Restore
 	if r := hello.Restore; r != nil {
 		log.Printf("workerhub: worker %s restored live=%d dead_skipped=%d pruned=%d failed=%d", id, r.Live, r.DeadSkipped, r.Pruned, r.Failed)
 	}
@@ -385,6 +389,27 @@ func (h *Hub) ReapHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"reaped": reaped})
 }
+
+// Inventory is a connected worker's current session inventory (id to state) and whether it is known
+// complete: the worker's hello carried its start-up restore counts with no failed restore
+// (CW-20261114-0056), so a session it does not list is not running there. connected is false when
+// the worker is not connected; the map is a copy.
+func (h *Hub) Inventory(id string) (sessions map[string]string, complete, connected bool) {
+	h.mu.RLock()
+	c := h.connections[id]
+	h.mu.RUnlock()
+	if c == nil {
+		return nil, false, false
+	}
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	sessions = make(map[string]string, len(c.inventory))
+	for k, v := range c.inventory {
+		sessions[k] = v.State
+	}
+	return sessions, c.restore != nil && c.restore.Failed == 0, true
+}
+
 func (h *Hub) SessionState(id, session string) (string, bool) {
 	h.mu.RLock()
 	c := h.connections[id]

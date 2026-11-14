@@ -394,6 +394,7 @@ var daemonRunCmd = &cobra.Command{
 			ReplySweeper:   svc,
 			SessionDrainer: svc,
 			EventRetention: svc,
+			GhostReaper:    svc,
 			EventIdentity: func() *environmentstream.IdentityHealth {
 				requestCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 				defer cancel()

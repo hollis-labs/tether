@@ -83,6 +83,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("GET /workers", "/workers", map[string]string{"GET": readScope}),
 	routeScope("GET /workers/activity", "/workers/activity", map[string]string{"GET": readScope}),
 	routeScope("POST /workers/reap", "/workers/reap", map[string]string{"POST": adminScope}),
+	routeScope("POST /ghosts/reap", "/ghosts/reap", map[string]string{"POST": adminScope}),
 	routeScope("POST /workers/grants", "/workers/grants", map[string]string{"POST": adminScope}),
 	routeScope("/health", "/health", map[string]string{"GET": publicScope, "HEAD": publicScope}),
 	routeScope(environment.DescriptorPath, environment.DescriptorPath, map[string]string{"GET": publicScope, "HEAD": publicScope}),
