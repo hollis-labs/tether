@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -23,8 +24,9 @@ import (
 //	(d) dead custody: a session_shims row of an ended session with no live host, shim or provider pid
 //	    and no control socket, not frozen by a replacement.
 //	(e) stale worker: a worker row not seen for WorkerStale with no open session. Retired (hidden,
-//	    superseded_by the newest live row of its label) when anything references it; deleted only when
-//	    nothing does (no session, mail grant or event).
+//	    superseded_by the newest live row of its label), never deleted: ended sessions, mail grants and
+//	    events still name it, and proving nothing does would mean scanning the unindexed events table,
+//	    which holds the hub's single database connection.
 //
 // A dry run changes nothing. An apply needs the path of a backup taken first; each write re-checks the
 // row it was classified from.
@@ -32,14 +34,19 @@ import (
 // GhostReapOptions selects a dry run or an apply.
 type GhostReapOptions struct {
 	Apply bool `json:"apply"`
-	// Backup is the path of the database backup taken before an apply; it must exist and be non-empty.
+	// Backup is the path of the database backup taken before an apply: a SQLite file written within
+	// ghostBackupMaxAge.
 	Backup string `json:"backup,omitempty"`
 }
 
 const (
-	ghostLaunchGrace = 10 * time.Minute
-	ghostWorkerStale = 7 * 24 * time.Hour
+	ghostLaunchGrace  = 10 * time.Minute
+	ghostWorkerStale  = 7 * 24 * time.Hour
+	ghostBackupMaxAge = 2 * time.Hour
 )
+
+// sqliteHeader starts every SQLite database file.
+const sqliteHeader = "SQLite format 3\x00"
 
 // GhostSession is one ghost session row and what was (or would be) done.
 type GhostSession struct {
@@ -71,9 +78,8 @@ type GhostWorker struct {
 	Sessions     int    `json:"sessions"`
 	Open         int    `json:"open_sessions"`
 	Grants       int    `json:"mail_grants"`
-	InEvents     *bool  `json:"in_events,omitempty"`
 	SupersededBy string `json:"superseded_by,omitempty"`
-	// Action is "retire", "delete" or "keep: <why>".
+	// Action is "retire" or "keep: <why>".
 	Action string `json:"action"`
 	Done   bool   `json:"done,omitempty"`
 }
@@ -103,7 +109,7 @@ type GhostReport struct {
 }
 
 // ErrGhostBackupRequired refuses an apply without a usable backup path.
-var ErrGhostBackupRequired = errors.New("an apply needs --backup naming the database backup taken first")
+var ErrGhostBackupRequired = errors.New("an apply needs --backup naming a SQLite backup of the database taken within the last 2 hours")
 
 // ghostRequestError is a caller mistake: the HTTP surface answers 400.
 type ghostRequestError struct{ error }
@@ -124,9 +130,8 @@ func (s *Service) ReapGhostsReport(ctx context.Context, apply bool, backup strin
 // them up.
 func (s *Service) ReapGhosts(ctx context.Context, opts GhostReapOptions) (*GhostReport, error) {
 	if opts.Apply {
-		fi, err := os.Stat(opts.Backup)
-		if opts.Backup == "" || err != nil || !fi.Mode().IsRegular() || fi.Size() == 0 {
-			return nil, ghostRequestError{fmt.Errorf("%w (got %q)", ErrGhostBackupRequired, opts.Backup)}
+		if why := checkGhostBackup(opts.Backup, time.Now()); why != "" {
+			return nil, ghostRequestError{fmt.Errorf("%w: %s (got %q)", ErrGhostBackupRequired, why, opts.Backup)}
 		}
 	}
 	now := time.Now().UTC()
@@ -156,6 +161,11 @@ func (s *Service) ReapGhosts(ctx context.Context, opts GhostReapOptions) (*Ghost
 		if g.Done, err = s.Store.CloseGhostSession(ctx, row, "ghost:"+g.Class); err != nil {
 			return report, fmt.Errorf("close ghost %s: %w", g.ID, err)
 		}
+		if g.Done {
+			// As the normal session end does: deny-list its agent JWTs too, so a misclassified session
+			// cannot keep using a token until it expires.
+			s.releaseWorkerIdentity(g.ID)
+		}
 	}
 	// Custody of sessions closed above is classified again now that they have ended.
 	custody, err := s.deadCustody(ctx)
@@ -172,18 +182,15 @@ func (s *Service) ReapGhosts(ctx context.Context, opts GhostReapOptions) (*Ghost
 			return report, fmt.Errorf("delete custody %s: %w", c.SessionID, err)
 		}
 	}
-	// The workers were classified with this run's closes discounted; RetireWorker and DeleteWorker
-	// re-check open sessions, sessions and grants, so the events scan is not repeated here.
+	// The workers were classified with this run's closes discounted; RetireWorker re-checks that none
+	// has an open session and that it was not seen since.
 	for i := range report.Workers {
 		w := &report.Workers[i]
-		switch w.Action {
-		case "retire":
-			w.Done, err = s.Store.RetireWorker(ctx, w.ID, w.SupersededBy, w.LastSeen)
-		case "delete":
-			w.Done, err = s.Store.DeleteWorker(ctx, w.ID, w.LastSeen)
+		if w.Action != "retire" {
+			continue
 		}
-		if err != nil {
-			return report, fmt.Errorf("%s worker %s: %w", w.Action, w.ID, err)
+		if w.Done, err = s.Store.RetireWorker(ctx, w.ID, w.SupersededBy, w.LastSeen); err != nil {
+			return report, fmt.Errorf("retire worker %s: %w", w.ID, err)
 		}
 	}
 	after, err := s.classifyGhosts(ctx, time.Now().UTC())
@@ -211,7 +218,7 @@ func (r *GhostReport) counts() GhostCounts {
 	}
 	for _, w := range r.Workers {
 		c.WorkersInScope++
-		if w.Action == "retire" || w.Action == "delete" {
+		if w.Action == "retire" {
 			c.StaleWorkers++
 		}
 	}
@@ -394,8 +401,7 @@ func (s *Service) ghostShimDead(ctx context.Context, sessionID string) (dead, ok
 }
 
 // staleWorkers classifies worker rows not seen for ghostWorkerStale. closing names ghost sessions a dry
-// run would close: they are not counted as open. Events are scanned (events.scope_worker_id has no
-// index) only for a worker nothing else references, so only the few delete candidates pay for it.
+// run would close: they are not counted as open.
 func (s *Service) staleWorkers(ctx context.Context, now time.Time, closing map[string]bool) ([]GhostWorker, error) {
 	rows, err := s.Store.StaleWorkers(ctx, now.Add(-ghostWorkerStale))
 	if err != nil {
@@ -411,21 +417,9 @@ func (s *Service) staleWorkers(ctx context.Context, now time.Time, closing map[s
 		if open > 0 && len(closing) > 0 {
 			open -= s.closingOn(ctx, w.ID, closing)
 		}
-		switch {
-		case open > 0:
+		g.Action = "retire"
+		if open > 0 {
 			g.Action = fmt.Sprintf("keep: %d open session(s)", open)
-		case w.Sessions > 0 || w.Grants > 0:
-			g.Action = "retire"
-		default:
-			inEvents, err := s.Store.WorkerInEvents(ctx, w.ID)
-			if err != nil {
-				return nil, err
-			}
-			g.InEvents = &inEvents
-			g.Action = "delete"
-			if inEvents {
-				g.Action = "retire"
-			}
 		}
 		out = append(out, g)
 	}
@@ -444,4 +438,32 @@ func (s *Service) closingOn(ctx context.Context, worker string, closing map[stri
 		}
 	}
 	return n
+}
+
+// checkGhostBackup returns why path is not a usable pre-apply backup, or "": it must be a regular file
+// written within ghostBackupMaxAge that starts with the SQLite header. Only the header is read: an
+// integrity check of a multi-GB copy is the operator's call, not the apply's.
+func checkGhostBackup(path string, now time.Time) string {
+	if path == "" {
+		return "no backup named"
+	}
+	fi, err := os.Stat(path)
+	switch {
+	case err != nil:
+		return "it cannot be read"
+	case !fi.Mode().IsRegular():
+		return "it is not a regular file"
+	case now.Sub(fi.ModTime()) > ghostBackupMaxAge:
+		return fmt.Sprintf("it was written %s ago", now.Sub(fi.ModTime()).Round(time.Minute))
+	}
+	f, err := os.Open(path) //nolint:gosec // G304: the operator names the backup file to check
+	if err != nil {
+		return "it cannot be read"
+	}
+	defer func() { _ = f.Close() }()
+	header := make([]byte, len(sqliteHeader))
+	if _, err := io.ReadFull(f, header); err != nil || string(header) != sqliteHeader {
+		return "it is not a SQLite database"
+	}
+	return ""
 }

@@ -22,9 +22,9 @@ func init() {
   sessions  open rows on a connected worker missing from its live inventory, on a worker gone 7 days,
             or hub-local rows the reaper orphaned with nothing alive behind them;
   custody   hub-local shim custody of ended sessions with no live process or socket;
-  workers   rows not seen for 7 days with no open session (retired when anything references them,
-            deleted only when nothing does).
-Without --apply nothing is changed. --apply needs --backup naming the database backup taken first.`,
+  workers   rows not seen for 7 days with no open session (retired: hidden, never deleted).
+Without --apply nothing is changed. --apply needs --backup naming a SQLite backup of the database
+written within the last 2 hours.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if apply && dryRun {
@@ -71,11 +71,7 @@ func printGhostReport(w io.Writer, r *app.GhostReport) {
 	}
 	fmt.Fprintln(w, "workers:")
 	for _, x := range r.Workers {
-		events := "unchecked"
-		if x.InEvents != nil {
-			events = fmt.Sprint(*x.InEvents)
-		}
-		fmt.Fprintf(w, "  %s\t%s\tlast_seen=%s\tsessions=%d\topen=%d\tgrants=%d\tin_events=%s\tsuperseded_by=%s\t%s%s\n", x.ID, x.Label, x.LastSeen, x.Sessions, x.Open, x.Grants, events, x.SupersededBy, x.Action, done(x.Done))
+		fmt.Fprintf(w, "  %s\t%s\tlast_seen=%s\tsessions=%d\topen=%d\tgrants=%d\tsuperseded_by=%s\t%s%s\n", x.ID, x.Label, x.LastSeen, x.Sessions, x.Open, x.Grants, x.SupersededBy, x.Action, done(x.Done))
 	}
 	counts := func(name string, c app.GhostCounts) {
 		fmt.Fprintf(w, "%s: ghost_sessions=%d (blocked=%d, active_bindings=%d) dead_custody=%d stale_workers=%d\n", name, c.GhostSessions, c.BlockedGhosts, c.GhostBindings, c.DeadCustody, c.StaleWorkers)

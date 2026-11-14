@@ -210,8 +210,8 @@ func TestReapGhosts(t *testing.T) {
 	if w := workers["worker_old_w1"]; w.Action != "retire" || w.SupersededBy != w1 {
 		t.Fatalf("old w1 = %+v (want retire, superseded by %s)", w, w1)
 	}
-	if w := workers["worker_unused"]; w.Action != "delete" || w.InEvents == nil || *w.InEvents {
-		t.Fatalf("unused = %+v", w)
+	if w := workers["worker_unused"]; w.Action != "retire" || w.SupersededBy != "" {
+		t.Fatalf("unused = %+v (stale workers are retired, never deleted)", w)
 	}
 	if _, ok := workers["worker_recent"]; ok {
 		t.Fatal("a worker seen yesterday is in scope")
@@ -227,16 +227,29 @@ func TestReapGhosts(t *testing.T) {
 		t.Fatalf("dry run changed custody: %s", n)
 	}
 
-	// An apply without a backup is refused as a bad request.
-	_, err = r.svc.ReapGhosts(ctx, GhostReapOptions{Apply: true})
-	var bad interface{ BadRequest() bool }
-	if !errors.As(err, &bad) || !errors.Is(err, ErrGhostBackupRequired) {
-		t.Fatalf("apply without backup: %v", err)
-	}
-	backup := filepath.Join(t.TempDir(), "tether.db.bak")
-	if err := os.WriteFile(backup, []byte("backup"), 0o600); err != nil {
+	// An apply needs a recent SQLite backup: none, a non-SQLite file and a stale one are bad requests.
+	dir := t.TempDir()
+	backup := filepath.Join(dir, "tether.db")
+	if err := os.WriteFile(backup, []byte(sqliteHeader+"rest of the database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	notSQLite := filepath.Join(dir, "notes.txt")
+	_ = os.WriteFile(notSQLite, []byte("a backup, honest"), 0o600)
+	stale := filepath.Join(dir, "old.db")
+	_ = os.WriteFile(stale, []byte(sqliteHeader), 0o600)
+	_ = os.Chtimes(stale, time.Now().Add(-3*time.Hour), time.Now().Add(-3*time.Hour))
+	for _, b := range []string{"", notSQLite, stale, filepath.Join(dir, "missing.db"), dir} {
+		_, err = r.svc.ReapGhosts(ctx, GhostReapOptions{Apply: true, Backup: b})
+		var bad interface{ BadRequest() bool }
+		if !errors.As(err, &bad) || !errors.Is(err, ErrGhostBackupRequired) {
+			t.Fatalf("apply with backup %q: %v", b, err)
+		}
+	}
+	if s := r.scalar(`SELECT state FROM sessions WHERE id='ghost-missing'`); s != "running" {
+		t.Fatal("a refused apply changed a session")
+	}
+	tokens := &recordingTokens{}
+	r.svc.AgentTokens = tokens
 	rep, err = r.svc.ReapGhosts(ctx, GhostReapOptions{Apply: true, Backup: backup})
 	if err != nil {
 		t.Fatal(err)
@@ -252,6 +265,9 @@ func TestReapGhosts(t *testing.T) {
 			t.Fatalf("%s keeps a live binding", id)
 		}
 	}
+	if !sameSet(tokens.revoked, []string{"ghost-missing", "ghost-gone", "hub-orphan"}) {
+		t.Fatalf("agent tokens revoked for %v", tokens.revoked)
+	}
 	for _, id := range []string{"live", "fresh", "ghost-old-worker", "offline-recent", "hub-orphan-live-shim"} {
 		if s := r.scalar(`SELECT state FROM sessions WHERE id=?`, id); s == "failed" {
 			t.Fatalf("%s was closed", id)
@@ -263,8 +279,8 @@ func TestReapGhosts(t *testing.T) {
 	if r.scalar(`SELECT COALESCE(retired_at,'')||'|'||COALESCE(superseded_by,'') FROM workers WHERE id='worker_old_w1'`) == "|" {
 		t.Fatal("old w1 not retired")
 	}
-	if n := r.scalar(`SELECT COUNT(*) FROM workers WHERE id='worker_unused'`); n != "0" {
-		t.Fatal("unused worker not deleted")
+	if n := r.scalar(`SELECT COUNT(*) FROM workers WHERE id='worker_unused' AND retired_at IS NOT NULL`); n != "1" {
+		t.Fatal("unused worker not retired (or deleted)")
 	}
 	if id, _ := r.hub.Resolve(ctx, "w1"); id != w1 {
 		t.Fatalf("label w1 resolves to %s", id)
@@ -278,4 +294,30 @@ func TestReapGhosts(t *testing.T) {
 	if rep.After == nil || rep.After.GhostSessions != 1 || rep.After.BlockedGhosts != 1 || rep.After.DeadCustody != 0 || rep.After.StaleWorkers != 0 {
 		t.Fatalf("after = %+v", rep.After)
 	}
+}
+
+type recordingTokens struct{ revoked []string }
+
+func (r *recordingTokens) RegisterSessionGrant(string, string, map[string][]string, time.Time) error {
+	return nil
+}
+func (r *recordingTokens) RevokeSession(sid string) error {
+	r.revoked = append(r.revoked, sid)
+	return nil
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, x := range a {
+		seen[x]++
+	}
+	for _, x := range b {
+		if seen[x]--; seen[x] < 0 {
+			return false
+		}
+	}
+	return true
 }

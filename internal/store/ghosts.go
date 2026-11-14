@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
@@ -157,37 +155,12 @@ func (s *Store) StaleWorkers(ctx context.Context, cutoff time.Time) ([]StaleWork
 	return out, rows.Err()
 }
 
-// WorkerInEvents reports whether any event is scoped to the worker. events.scope_worker_id has no index,
-// so this scans the events table: call it only for a worker nothing else references.
-func (s *Store) WorkerInEvents(ctx context.Context, id string) (bool, error) {
-	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM events WHERE scope_worker_id=? LIMIT 1`, id).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
 // RetireWorker hides a stale worker row from listings and label lookups, recording what superseded it.
 // It changes nothing (false) when the worker was seen again or holds an open session.
 func (s *Store) RetireWorker(ctx context.Context, id, supersededBy, lastSeen string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE workers SET retired_at=?,superseded_by=NULLIF(?,'') WHERE id=? AND retired_at IS NULL AND last_seen=?
 		AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.worker_id=workers.id AND s.state IN `+openStates+`)`,
 		time.Now().UTC().Format(time.RFC3339Nano), supersededBy, id, lastSeen)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n > 0, err
-}
-
-// DeleteWorker removes a stale worker row nothing references: no session, no mail grant. The caller has
-// checked events (WorkerInEvents). It changes nothing (false) when that is no longer true or it was seen
-// again.
-func (s *Store) DeleteWorker(ctx context.Context, id, lastSeen string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM workers WHERE id=? AND last_seen=?
-		AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.worker_id=workers.id)
-		AND NOT EXISTS(SELECT 1 FROM worker_mail_grants g WHERE g.worker_id=workers.id)`, id, lastSeen)
 	if err != nil {
 		return false, err
 	}
