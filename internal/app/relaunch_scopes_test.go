@@ -1,12 +1,17 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
+	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
@@ -110,5 +115,89 @@ func TestRelaunchOfTheSameSeatKeepsItsGrant(t *testing.T) {
 	}
 	if got := r.storedScopes("sess-cross"); !slices.Equal(got, []string{one}) {
 		t.Fatalf("cross-seat resume took the other seat's grant: %v", got)
+	}
+}
+
+// relaunchAs creates a session the way POST /sessions with continuity "relaunch"
+// does (the parent is the newest earlier session of the agent) and launches it.
+func (r *identityRig) relaunchAs(ctx context.Context, id string) *store.SessionRow {
+	r.t.Helper()
+	plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderBrand: "claude", Continuity: "relaunch"}
+	row := store.SessionRow{ID: id, WorkerID: r.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderKind: "cli", Workspace: r.t.TempDir(), State: "created"}
+	if err := r.svc.createContinued(row, plan, nil); err != nil {
+		r.t.Fatal(err)
+	}
+	stored, err := r.db.GetSession(id)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if _, err := r.svc.launchWorkerSession(ctx, stored, plan); err != nil {
+		r.t.Fatal(err)
+	}
+	select {
+	case <-r.specs:
+	case <-time.After(3 * time.Second):
+		r.t.Fatal("worker never received the launch")
+	}
+	return stored
+}
+
+// CW-20261114-0038 follow-up: every catalog seat runs on a worker, where resume
+// is off, so Tachyon's restart is stop + create(continuity=relaunch). That
+// create keeps the grant of the seat's ended previous session; a relaunch whose
+// newest earlier session is still running is bounded by the launcher.
+func TestRelaunchCreateOfTheSameSeatKeepsItsGrant(t *testing.T) {
+	defaults := launchprofile.DefaultMCPScopes
+	one := defaults[0]
+	r := newIdentityRig(t, "bind", "deliver", workerwire.FeatureSessionCred)
+	r.withBus()
+	if _, err := r.launchAs(launcherWith("*"), "sess-parent", ""); err != nil {
+		t.Fatal(err)
+	}
+	// The stop: the session ends and its credential is revoked with it.
+	if _, err := r.db.DB().Exec(`UPDATE sessions SET state='completed' WHERE id='sess-parent'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := identity.NewStore(r.db.DB()).RevokeSession(context.Background(), "sess-parent"); err != nil {
+		t.Fatal(err)
+	}
+
+	row := r.relaunchAs(launcherWith(one), "sess-relaunched")
+	if row.Intent != "resume" || row.ParentSessionID.String != "sess-parent" {
+		t.Fatalf("relaunch lineage: intent %q parent %v", row.Intent, row.ParentSessionID)
+	}
+	if got := r.storedScopes("sess-relaunched"); !slices.Equal(got, defaults) {
+		t.Fatalf("relaunch by a narrow device: %v, want %v", got, defaults)
+	}
+	if a := r.attribution("sess-relaunched"); a != string(AttributionOrigin) {
+		t.Fatalf("attribution %q, want %q", a, AttributionOrigin)
+	}
+	if ev := r.narrowedEvents("sess-relaunched"); len(ev) != 0 {
+		t.Fatalf("unexpected narrowing: %v", ev)
+	}
+
+	// sess-relaunched is now the newest and has not ended: a second relaunch
+	// cannot copy a live seat's grant.
+	r.relaunchAs(launcherWith(one), "sess-clone")
+	if got := r.storedScopes("sess-clone"); !slices.Equal(got, []string{one}) {
+		t.Fatalf("relaunch beside a running seat took its grant: %v", got)
+	}
+	if ev := r.narrowedEvents("sess-clone"); len(ev) != 1 || ev[0]["basis"] != ScopeBasisLauncher {
+		t.Fatalf("narrowed events = %v", ev)
+	}
+
+	// A stop that is requested but not yet reported by the worker counts as
+	// ended: Tachyon relaunches as soon as POST /stop returns. The parent's grant
+	// still caps it, so relaunching the narrow sess-clone stays narrow.
+	if r.svc.stops == nil {
+		r.svc.stops = &stopRequests{}
+	}
+	r.svc.stops.mark("sess-clone")
+	r.relaunchAs(launcherWith("*"), "sess-after-stop")
+	if got := r.storedScopes("sess-after-stop"); !slices.Equal(got, []string{one}) {
+		t.Fatalf("relaunch after stopping a narrow session widened to %v", got)
+	}
+	if a := r.attribution("sess-after-stop"); a != string(AttributionOrigin) {
+		t.Fatalf("stop-requested parent: attribution %q, want %q", a, AttributionOrigin)
 	}
 }
