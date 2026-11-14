@@ -13,7 +13,7 @@ import (
 // call comes back as invalid_request naming the field and the reason, so fix it
 // and call again.
 
-var envelopeFields = []string{"kind", "to", "re", "in_reply_to", "attention", "awaiting", "intent", "subject", "body", "options", "default_option", "answer"}
+var envelopeFields = []string{"kind", "to", "re", "in_reply_to", "attention", "awaiting", "intent", "subject", "body", "options", "default_option", "answer", "on_behalf_of", "drafted_by"}
 
 func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 	a.addTool(s, strictArgs(gomcp.Tool{
@@ -32,6 +32,8 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 			gomcp.StringEnumProp("attention", "Who must look: human, agent or none (default human when @chrispian is a recipient or awaited, else agent)", false, "human", "agent", "none"),
 			gomcp.StringProp("awaiting", "@handle that must act next (optional)", false),
 			gomcp.StringProp("intent", "Short routing tag, [a-z0-9._-]{1,40} (optional)", false),
+			gomcp.StringProp("on_behalf_of", "Who you are sending this for, as a @handle or URN, when you act for someone (e.g. an assistant for @chrispian). It is your claim, shown to recipients; it never makes the mail theirs (optional)", false),
+			gomcp.StringEnumProp("drafted_by", "Who wrote it, with on_behalf_of only (default assistant)", false, "assistant", "human"),
 			gomcp.ArrayProp("options", "question/decision/approval_request choices: [{id, label, recommended?, detail?}]", false, map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

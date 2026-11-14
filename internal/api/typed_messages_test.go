@@ -424,3 +424,32 @@ func TestStopGateBlockedPublishesAnEvent(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261114-0116: a typed post on someone's behalf is stored with the marker and the sender's own from;
+// drafted_by defaults to assistant; an unknown on_behalf_of handle is refused naming the field.
+func TestMessagePostOnBehalfOf(t *testing.T) {
+	h := newTypedHarness(t)
+	code, raw := h.do(t, http.MethodPost, "/messages/post?as="+meURN, `{"kind":"message","to":["@archie"],"body":"Chrispian asks for the notes.","on_behalf_of":"@chrispian"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("post: %d %s", code, raw)
+	}
+	var out MessagePostResponse
+	if err := json.Unmarshal(raw, &out); err != nil || out.Envelope.OnBehalfOf != "@chrispian" || out.Envelope.DraftedBy != envelope.DraftedByAssistant || out.Envelope.From != "@photon-tether" {
+		t.Fatalf("envelope = %+v (%v)", out.Envelope, err)
+	}
+	stored, err := h.db.MessagingStore().Get(t.Context(), out.IDs[0])
+	if err != nil || stored.From.URN() != meURN {
+		t.Fatalf("stored from %s (%v)", stored.From.URN(), err)
+	}
+	if who, by := envelope.Behalf(stored.ContentType, stored.Payload); who != "@chrispian" || by != envelope.DraftedByAssistant {
+		t.Fatalf("stored marker %q %q", who, by)
+	}
+	for body, field := range map[string]string{
+		`{"kind":"message","to":["@archie"],"body":"x","on_behalf_of":"@nobody"}`: "on_behalf_of",
+		`{"kind":"message","to":["@archie"],"body":"x","drafted_by":"human"}`:     "drafted_by",
+	} {
+		if code, raw := h.do(t, http.MethodPost, "/messages/post?as="+meURN, body); code != http.StatusBadRequest || errorField(t, raw) != field {
+			t.Fatalf("%s: %d %s", body, code, raw)
+		}
+	}
+}

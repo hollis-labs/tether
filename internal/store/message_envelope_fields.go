@@ -9,7 +9,8 @@ import (
 
 // messageEnvelopeFields are the routing fields of a typed envelope
 // (CW-20261114-0013) that message.* lifecycle events carry: kind, attention,
-// awaiting, intent and re. Never the subject, body or options: lifecycle events
+// awaiting, intent and re, and on_behalf_of/drafted_by when set
+// (CW-20261114-0116). Never the subject, body or options: lifecycle events
 // stay metadata only. Nil for a message that is not an envelope.
 func (s *Store) messageEnvelopeFields(ctx context.Context, messageID string) map[string]any {
 	if messageID == "" {
@@ -25,7 +26,11 @@ func (s *Store) messageEnvelopeFields(ctx context.Context, messageID string) map
 		return nil
 	}
 	fields := map[string]any{"envelope_kind": string(e.Kind)}
-	for k, v := range map[string]string{"attention": string(e.EffectiveAttention()), "awaiting": e.Awaiting, "intent": e.Intent, "re": e.Re} {
+	if e.OnBehalfOf != "" && e.DraftedBy == "" {
+		e.DraftedBy = envelope.DraftedByAssistant
+	}
+	for k, v := range map[string]string{"attention": string(e.EffectiveAttention()), "awaiting": e.Awaiting, "intent": e.Intent, "re": e.Re,
+		"on_behalf_of": e.OnBehalfOf, "drafted_by": string(e.DraftedBy)} {
 		if v != "" {
 			fields[k] = v
 		}

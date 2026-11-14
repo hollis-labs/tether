@@ -7,6 +7,7 @@ package triage
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
@@ -57,7 +58,11 @@ type Result struct {
 // attention=none never overrides an action rule.
 //
 //	human   the operator wrote                                  (from_operator)
-//	        envelope attention=human (as set by the sender, or   (attention_human)
+//	action  envelope on_behalf_of from a sender that is not a    (on_behalf_of)
+//	        user address: an assistant acting for someone is
+//	        never that someone, whatever its attention or
+//	        recipients (CW-20261114-0116)
+//	human   envelope attention=human (as set by the sender, or   (attention_human)
 //	        the default when the operator is to/awaiting)
 //	action  urgency high                                        (urgency_high)
 //	        envelope awaiting this seat                         (awaiting_recipient)
@@ -75,6 +80,9 @@ func Classify(in Input) Result {
 	// human
 	if in.From == OperatorURN {
 		return Result{Class: Human, Reason: "from_operator", Typed: typed}
+	}
+	if typed && env.OnBehalfOf != "" && !strings.HasPrefix(in.From, "msg://user/") {
+		return Result{Class: Action, Reason: "on_behalf_of", Typed: true}
 	}
 	if typed && env.EffectiveAttention() == envelope.AttentionHuman {
 		return Result{Class: Human, Reason: "attention_human", Typed: true}
