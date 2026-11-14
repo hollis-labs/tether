@@ -196,7 +196,7 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 		return err
 	}
 	applyProviderOverrides(plan, effectiveAgent.ProviderOverrides)
-	applyMCPAllowlist(plan, bootProfile)
+	applyMCPAllowlist(plan, bootProfile, s.cat())
 	if err := s.validatePlanMCPGrants(plan, bootProfile, in.BootProfileFile); err != nil {
 		return err
 	}
@@ -497,7 +497,7 @@ func markCallerEnv(plan *launch.Plan, key string) {
 // applyMCPAllowlist threads the boot profile's MCP allowlist into TETHER_MCP_SERVERS.
 // Precedence: boot profile (this call) > catalog (launch/project). No-op when
 // the boot profile omits its list; an explicit [] grants none.
-func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
+func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile, cat *config.Catalog) {
 	if bootProfile.MCPServers == nil && bootProfile.MCPTools == nil {
 		return
 	}
@@ -505,7 +505,15 @@ func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
 		plan.Env = map[string]string{}
 	}
 	if bootProfile.MCPServers != nil {
-		plan.Env["TETHER_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
+		servers := bootProfile.MCPServers
+		if cat != nil {
+			// "*" is every enabled upstream this agent may hold (CW-20261114-0038).
+			machine := cat.Agents[plan.CatalogAgent()].MachineAuthority
+			servers = cat.ExpandMCPGrant(servers, func(id string) bool {
+				return !machine && len(launch.MachineGrantViolations([]string{id})) > 0
+			})
+		}
+		plan.Env["TETHER_MCP_SERVERS"] = strings.Join(servers, ",")
 	}
 	if bootProfile.MCPTools != nil {
 		raw, _ := json.Marshal(bootProfile.MCPTools)

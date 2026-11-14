@@ -21,7 +21,7 @@ func TestBootToolsCapturedAndPlanted(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan := basePlan()
-			applyMCPAllowlist(plan, profile)
+			applyMCPAllowlist(plan, profile, nil)
 			captured, err := sessionMCPPolicy("s", "a", plan, mcpgateway.Config{})
 			if err != nil {
 				t.Fatal(err)

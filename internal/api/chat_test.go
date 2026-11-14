@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -292,4 +294,36 @@ func TestSessionCreateDisabledLaunchIs409(t *testing.T) {
 	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), CodeAgentDisabled) {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body)
 	}
+}
+
+// The chat launch passes the request's identity (CW-20261114-0038): chat
+// launches were made with no caller and counted as anonymous.
+func TestChatLaunchUsesTheCallersContext(t *testing.T) {
+	rec := &ctxRecordingLauncher{}
+	s := &Server{Service: rec}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://device/tachyon", Kind: "device"})
+	if _, err := s.launchWithCaller(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.principal != "msg://device/tachyon" || rec.plain {
+		t.Fatalf("launch saw principal %q (plain %v)", rec.principal, rec.plain)
+	}
+}
+
+type ctxRecordingLauncher struct {
+	fakeLaunchService
+	principal string
+	plain     bool
+}
+
+func (r *ctxRecordingLauncher) LaunchSession(string) (LaunchResult, error) {
+	r.plain = true
+	return LaunchResult{}, nil
+}
+
+func (r *ctxRecordingLauncher) LaunchSessionWithContext(ctx context.Context, id string) (LaunchResult, error) {
+	if p, ok := identity.FromContext(ctx); ok {
+		r.principal = p.ID
+	}
+	return LaunchResult{SessionID: id}, nil
 }
