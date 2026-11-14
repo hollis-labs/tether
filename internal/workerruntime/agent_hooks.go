@@ -76,6 +76,7 @@ func agentHooksSettings(binary, session, spool string) ([]byte, error) {
 type stopGateHook struct {
 	url       string
 	tokenFile string
+	state     string // the ids it already blocked on, in the session workspace
 }
 
 // stopGateTimeoutSeconds bounds the gate's hub round trip on Claude's side; the gate itself gives up sooner and lets
@@ -99,10 +100,10 @@ func hooksSettings(binary, session, spool string, events bool, gate *stopGateHoo
 		}
 	}
 	if gate != nil {
-		if !safeShellWord(gate.url) || !filepath.IsAbs(gate.tokenFile) || !safeShellWord(gate.tokenFile) {
-			return nil, errors.New("stop gate url or token file is not shell-safe")
+		if !safeShellWord(gate.url) || !filepath.IsAbs(gate.tokenFile) || !safeShellWord(gate.tokenFile) || !filepath.IsAbs(gate.state) || !safeShellWord(gate.state) {
+			return nil, errors.New("stop gate url, token file or state file is not shell-safe")
 		}
-		command := fmt.Sprintf("'%s' hook stop-gate --url '%s' --token-file '%s'", binary, gate.url, gate.tokenFile)
+		command := fmt.Sprintf("'%s' hook stop-gate --url '%s' --token-file '%s' --state '%s'", binary, gate.url, gate.tokenFile, gate.state)
 		entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": stopGateTimeoutSeconds}}}
 		stop, _ := hooks["Stop"].([]any)
 		hooks["Stop"] = append(stop, entry)
@@ -202,7 +203,7 @@ func (e *Executor) agentHookArgs(wsRoot string, spec workerwire.LaunchSpec) []st
 		if why := e.hubHTTPUnavailable(spec); why != "" {
 			disabled("stop-gate.disabled", "stop_gate", why)
 		} else {
-			gate = &stopGateHook{url: e.HubMCPURL, tokenFile: sessionAgentTokenFile(filepath.Join(wsRoot, "mcp-cred"))}
+			gate = &stopGateHook{url: e.HubMCPURL, tokenFile: sessionAgentTokenFile(filepath.Join(wsRoot, "mcp-cred")), state: filepath.Join(wsRoot, "stop-gate.state")}
 			_ = os.Remove(filepath.Join(wsRoot, "stop-gate.disabled"))
 		}
 	}

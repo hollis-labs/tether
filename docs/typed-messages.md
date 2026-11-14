@@ -83,10 +83,10 @@ takes `urgency` (`very-low`, `low`, `normal`, `high`; default `normal`) and
 ## Waiting on a reply
 
 A typed message waits on its recipient when the recipient has not replied to it
-(`in_reply_to`), it is not canceled or archived, it is younger than 7 days, and
-either `awaiting` is the recipient or (with no `awaiting`) it is a `question`,
+(`in_reply_to`), it is not canceled or archived, and either `awaiting` is the recipient or (with no `awaiting`) it is a `question`,
 `decision` or `approval_request`. Reading it does not settle it: only a reply
-does (settle rule agreed 2026-11-14). Plain updates and messages never wait.
+does (settle rule agreed 2026-11-14). Age does not settle it either; each
+listed item carries `created_at`. Plain updates and messages never wait.
 The caller's address is matched in its canonical form; a seat known by two URNs
 (an alias and its `agt_` id) is matched only by the one the mail was addressed
 to. `GET /messages/pending-replies?as=` and `tether_pending_replies` list them.
@@ -96,11 +96,16 @@ to. `GET /messages/pending-replies?as=` and `tether_pending_replies` list them.
 On worker-hosted Claude sessions with the gate on, the worker plants a Claude
 `Stop` hook (`tether-worker hook stop-gate`). When a turn is about to end it asks
 the hub `tether_pending_replies` over `/mcp` with the session's agent token. If
-anything waits, it blocks the stop once with a reason naming the messages and
-`tether_message_post`; Claude continues the turn. A stop that follows the gate's
-own block (`stop_hook_active`) is never gated, so it cannot loop. It fails open:
-an unreachable hub, a timeout (8 s) or any error lets the turn end, with one
-line on the hook's stderr.
+a message waits that is younger than 24 hours and has not blocked a stop
+before, it blocks this stop with a reason naming those messages and
+`tether_message_post`; Claude continues the turn. Each message blocks at most
+one stop: the ids it blocked on are kept in `stop-gate.state` in the session
+workspace (newest 500), and a state it cannot write means no block. Older
+messages still show in `tether_pending_replies`; the watchdog
+(CW-20261114-0015) owns them, not the gate. A stop that follows the gate's own
+block (`stop_hook_active`) is never gated. It fails open: an unreachable hub, a
+timeout (8 s), any error or a panic lets the turn end, with one line on the
+hook's stderr and exit 0.
 
 Turning it on: `catalog.defaults.stop_gate` (fleet default, `false`) and an
 agent's `stop_gate: true|false` (overrides the default either way). The hub
