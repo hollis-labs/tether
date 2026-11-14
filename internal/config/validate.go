@@ -108,7 +108,7 @@ func (c *Catalog) Validate() error {
 			return fmt.Errorf("agent %q has invalid cell %q (want a lowercase slug: letters, digits, '-' or '_', starting with a letter)", id, a.Cell)
 		}
 		if a.Handle != "" && !validHandleName(a.Handle) {
-			return fmt.Errorf("agent %q has invalid handle %q (want a lowercase name: letters, digits, '-' or '_', starting with a letter; no @)", id, a.Handle)
+			return fmt.Errorf("agent %q has invalid handle %q (want a lowercase name: letters, digits, '-' or '_', starting with a letter; no @; not the reserved @chrispian)", id, a.Handle)
 		}
 		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
 			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
@@ -122,13 +122,19 @@ func (c *Catalog) Validate() error {
 
 var handleNameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
-func validHandleName(h string) bool { return handleNameRE.MatchString(h) }
+// reservedHandle is the operator's handle (@chrispian); no agent may claim it.
+const reservedHandle = "chrispian"
+
+func validHandleName(h string) bool { return handleNameRE.MatchString(h) && h != reservedHandle }
 
 // validateHandles: an agent's handle: must not name another agent, by that
 // agent's handle or its id (CW-20261114-0013), so @name resolves to one seat.
 func (c *Catalog) validateHandles() error {
 	owner := map[string]string{}
 	for id, a := range c.Agents {
+		if a.Handle == "" && id == reservedHandle {
+			return fmt.Errorf("agent %q would answer to @%s, which is reserved for the operator; set handle on it", id, reservedHandle)
+		}
 		if a.Handle != "" {
 			if other, ok := owner[a.Handle]; ok {
 				return fmt.Errorf("agents %q and %q both have handle %q", other, id, a.Handle)

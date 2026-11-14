@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
@@ -69,6 +70,9 @@ func (s *Server) resolveHandle(ctx context.Context, h string) (string, bool) {
 		return identity.OperatorID, true
 	}
 	name := strings.TrimPrefix(h, "@")
+	if name == registry.ReservedHandle {
+		return "", false // only the operator answers to it (handled above)
+	}
 	if s.Registry != nil {
 		for _, substrate := range []string{registry.HandleSubstrate, "tether"} {
 			if p, err := s.Registry.LookupBy(ctx, registry.KindAgent, name, substrate); err == nil && p.URN != "" {
@@ -79,7 +83,7 @@ func (s *Server) resolveHandle(ctx context.Context, h string) (string, bool) {
 	if s.Catalog != nil {
 		if cat, err := s.Catalog.Load(); err == nil && cat != nil {
 			for id, a := range cat.Agents {
-				if a.Handle == name {
+				if a.Handle == name && a.Handle != registry.ReservedHandle {
 					if a.URN != "" {
 						return a.URN, true
 					}
@@ -106,7 +110,7 @@ func (s *Server) handleFor(ctx context.Context, urn string) string {
 		if ids, err := s.Registry.LookupExternalIDsForURN(ctx, urn); err == nil {
 			for _, substrate := range []string{registry.HandleSubstrate, "tether"} {
 				for _, id := range ids {
-					if id.Substrate == substrate && envelope.ValidHandle("@"+id.ExternalID) {
+					if id.Substrate == substrate && envelope.ValidHandle("@"+id.ExternalID) && id.ExternalID != registry.ReservedHandle {
 						return "@" + id.ExternalID
 					}
 				}
@@ -117,8 +121,11 @@ func (s *Server) handleFor(ctx context.Context, urn string) string {
 		if cat, err := s.Catalog.Load(); err == nil && cat != nil {
 			for id, a := range cat.Agents {
 				if a.URN == urn || "msg://agent/agent-mux/"+id == urn {
-					if a.Handle != "" {
+					if a.Handle != "" && a.Handle != registry.ReservedHandle {
 						return "@" + a.Handle
+					}
+					if id == registry.ReservedHandle {
+						return ""
 					}
 					return "@" + id
 				}
@@ -296,6 +303,10 @@ func (s *Server) handlePendingReplies(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
 		return
 	}
+	// The same canonical form handleMessagePost stores as the sender.
+	if addr, err := messaging.ParseURN(as); err == nil {
+		as = canonicalAddress(addr)
+	}
 	handle := s.handleFor(r.Context(), as)
 	pending, err := s.Seats.PendingReplies(r.Context(), as, handle, 20)
 	if err != nil {
@@ -409,16 +420,38 @@ func (s *Server) maySetStatusFor(ctx context.Context, r *http.Request, caller st
 	if _, ok := verifiedPrincipal(r); !ok && caller == identity.OperatorID {
 		return true // the local operator on an unauthenticated socket
 	}
-	h := strings.TrimPrefix(s.handleFor(ctx, caller), "@")
-	if h == "" || s.Catalog == nil {
-		return false
+	a, ok := s.catalogAgentFor(ctx, caller)
+	return ok && a.IsManager()
+}
+
+// catalogAgentFor is the catalog agent whose identity is urn: by its tether
+// catalog id in the registry, else by its urn: in the catalog. Never by
+// handle: a handle can be given to anyone, an identity cannot.
+func (s *Server) catalogAgentFor(ctx context.Context, urn string) (config.Agent, bool) {
+	if s.Catalog == nil {
+		return config.Agent{}, false
 	}
 	cat, err := s.Catalog.Load()
 	if err != nil || cat == nil {
-		return false
+		return config.Agent{}, false
 	}
-	a, ok := cat.Agents[h]
-	return ok && a.IsManager()
+	if s.Registry != nil {
+		if ids, err := s.Registry.LookupExternalIDsForURN(ctx, urn); err == nil {
+			for _, id := range ids {
+				if id.Substrate == "tether" {
+					if a, ok := cat.Agents[id.ExternalID]; ok {
+						return a, true
+					}
+				}
+			}
+		}
+	}
+	for _, a := range cat.Agents {
+		if a.URN != "" && a.URN == urn {
+			return a, true
+		}
+	}
+	return config.Agent{}, false
 }
 
 // StatusCard is the GET /status/{@handle} body: what the seat declares beside

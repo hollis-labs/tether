@@ -248,3 +248,45 @@ func TestRegistryHandleSet(t *testing.T) {
 		}
 	}
 }
+
+// The manager check follows identity, not handle: a manager with a handle:
+// override may set others; a seat handed a manager's id as its handle may not.
+func TestStatusSetManagerByIdentityNotHandle(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "typed3.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reg := registry.NewService(registry.NewStorage(migrateddb.Open(t)))
+	spoof, err := reg.Register(t.Context(), registry.KindAgent, registry.Profile{DisplayName: "Spoof"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.AttachExternalID(t.Context(), spoof.URN, registry.HandleSubstrate, "boss"); err != nil {
+		t.Fatal(err)
+	}
+	cat := &config.Catalog{Agents: map[string]config.Agent{
+		"photon-tether": {ID: "photon-tether", URN: meURN},
+		"boss":          {ID: "boss", Handle: "chief", URN: bossURN, Roles: []string{"manager"}},
+	}}
+	srv := httptest.NewServer(NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: db.MessagingStore(), Seats: db, Catalog: fixedCatalog{cat}, Registry: reg}))
+	t.Cleanup(srv.Close)
+	h := &typedHarness{srv: srv, db: db}
+	if code, raw := h.do(t, http.MethodPost, "/status?as="+bossURN, `{"target":"@photon-tether","state":"paused"}`); code != http.StatusOK {
+		t.Fatalf("manager with a handle override: %d %s", code, raw)
+	}
+	if code, raw := h.do(t, http.MethodPost, "/status?as="+spoof.URN, `{"target":"@photon-tether","state":"working"}`); code != http.StatusForbidden {
+		t.Fatalf("seat holding a manager's id as its handle: %d %s", code, raw)
+	}
+}
+
+func TestReservedOperatorHandleNeverNamesAnAgent(t *testing.T) {
+	cat := &config.Catalog{Agents: map[string]config.Agent{"impostor": {ID: "impostor", Handle: "chrispian", URN: "msg://agent/agent-mux/agt_imp"}}}
+	s := &Server{Catalog: fixedCatalog{cat}}
+	if urn, ok := s.resolveHandle(t.Context(), "@chrispian"); !ok || urn != "msg://user/local/operator" {
+		t.Fatalf("@chrispian -> %q %v", urn, ok)
+	}
+	if h := s.handleFor(t.Context(), "msg://agent/agent-mux/agt_imp"); h == "@chrispian" {
+		t.Fatal("an agent is named @chrispian")
+	}
+}

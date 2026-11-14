@@ -13,6 +13,9 @@ const HandleSubstrate = "handle"
 
 var handleNameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
+// ReservedHandle is the operator's handle (@chrispian): no agent may hold it.
+const ReservedHandle = "chrispian"
+
 // BackfillHandles gives every agent with a tether catalog id and no handle the
 // handle <catalog id>, or overrides[<catalog id>] when the catalog sets
 // handle:, when that is a valid handle and not taken. It never replaces a
@@ -38,7 +41,7 @@ func BackfillHandles(ctx context.Context, svc *Service, overrides map[string]str
 		if h := overrides[ext.ExternalID]; h != "" {
 			name = h
 		}
-		if !handleNameRE.MatchString(name) {
+		if !handleNameRE.MatchString(name) || name == ReservedHandle {
 			continue
 		}
 		if err := svc.AttachExternalID(ctx, row.URN, HandleSubstrate, name); err != nil {

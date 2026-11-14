@@ -15,11 +15,9 @@ func (s *Store) messageEnvelopeFields(ctx context.Context, messageID string) map
 	if messageID == "" {
 		return nil
 	}
-	var contentType, payload string
-	if err := s.db.QueryRowContext(ctx, `SELECT coalesce(content_type,''), coalesce(payload,'') FROM messages WHERE id=?`, messageID).Scan(&contentType, &payload); err != nil {
-		return nil
-	}
-	if contentType != envelope.ContentType {
+	// Ordinary mail never loads its body here.
+	var payload string
+	if err := s.db.QueryRowContext(ctx, `SELECT coalesce(payload,'') FROM messages WHERE id=? AND content_type=?`, messageID, envelope.ContentType).Scan(&payload); err != nil {
 		return nil
 	}
 	var e envelope.Envelope

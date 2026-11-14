@@ -24,10 +24,15 @@ func (s *Store) PendingReplies(ctx context.Context, agentURN, handle string, lim
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
+	// NeedsReply in SQL, so a backlog of unread updates cannot crowd real
+	// questions out of the limit; the Go check below is the same rule.
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.from_urn, coalesce(m.payload,'') FROM messages m
  WHERE m.to_urn=? AND m.content_type=? AND m.read_at IS NULL AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
+   AND json_valid(m.payload)
+   AND (json_extract(m.payload,'$.awaiting') = ?
+        OR (coalesce(json_extract(m.payload,'$.awaiting'),'') = '' AND json_extract(m.payload,'$.kind') IN ('question','decision','approval_request')))
    AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.in_reply_to=m.id AND r.from_urn=?)
- ORDER BY m.created_at LIMIT ?`, agentURN, envelope.ContentType, agentURN, limit*4)
+ ORDER BY m.created_at LIMIT ?`, agentURN, envelope.ContentType, handle, agentURN, limit)
 	if err != nil {
 		return nil, err
 	}
