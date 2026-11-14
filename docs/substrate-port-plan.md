@@ -57,7 +57,7 @@ Data root `<data root>` (sizes on 2026-11-14):
 | `state/shims/`, `state/tether.db.turn-output-retries/` | legacy shim state (no writes since 2026-10-12), turn-output retry spool (empty) | 164 MB; 0 |
 | `state/environment-id`, `.recovery` | this hub's environment identity | 37 B each |
 | `auth/` | signing keys (`*.key`, `svc-*.key`), `keys.json`, `jwks.json`, `state.json` | 116 KB, **secret** |
-| `receipts/`, `receipts-agent-os/`, `state/catalog-approver.json`, `state/environment-id*` | device enrollment, approver hash, environment identity | < 4 KB, **secret** |
+| `receipts*/`, `state/catalog-approver.json`, `state/environment-id*` | device enrollment, approver hash, environment identity | < 4 KB, **secret** |
 | `catalog/` (git) | agents, projects, providers, launches, boot, mcp-servers, credentials, team definitions, `global.yaml` | 6.1 MB, **carries secrets** (ADR 0041) |
 | `launch-specs/`, `lenses/`, `skills/`, `receipts*/` | file state | < 1 MB |
 | `run/` | socket, pid, `operator.token` (+ `.hub-init`), `sysadmin-cerberus.token`, `identity-flips.jsonl` | **secret, runtime** |
