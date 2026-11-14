@@ -438,17 +438,23 @@ var registryMergeCmd = &cobra.Command{
 			return classifyErr(err)
 		}
 		if mergeDryRun {
-			src, err := rc.Lookup(cmdCtx(cmd), urnSrc)
+			// The plain lookup omits external ids; ask for them, or the plan reads 0.
+			src, err := rc.LookupWithInclude(cmdCtx(cmd), urnSrc, "external_ids")
 			if err != nil {
 				return classifyErr(err)
 			}
-			dst, err := rc.Lookup(cmdCtx(cmd), urnDst)
+			dst, err := rc.LookupWithInclude(cmdCtx(cmd), urnDst, "external_ids")
 			if err != nil {
 				return classifyErr(err)
 			}
+			move, keep := mergeExternalIDPlan(src, dst)
 			fmt.Printf("dry-run merge:\n  src: %s (%s)\n  dst: %s (%s)\n", src.URN, src.DisplayName, dst.URN, dst.DisplayName)
-			fmt.Printf("  move external_ids: %d\n  append capabilities: %d\n  append skills: %d\n  append links: %d\n",
-				len(src.ExternalIDs), len(src.Capabilities), len(src.Skills), len(src.Links))
+			fmt.Printf("  move external_ids: %d %v\n", len(move), move)
+			if len(keep) > 0 {
+				fmt.Printf("  NOT moved (dst already has that substrate; stays on src): %v\n", keep)
+			}
+			fmt.Printf("  append capabilities: %d\n  append skills: %d\n  append links: %d\n",
+				len(src.Capabilities), len(src.Skills), len(src.Links))
 			return nil
 		}
 		if !mergeYes {
@@ -1189,4 +1195,18 @@ func init() {
 		registryReonboardCmd,
 	)
 	rootCmd.AddCommand(registryCmd)
+}
+
+// mergeExternalIDPlan is what Service.Merge does with src's external ids: each
+// substrate dst lacks moves; one dst already has stays on src.
+func mergeExternalIDPlan(src, dst registry.Profile) (move, keep []string) {
+	for _, ext := range src.ExternalIDs {
+		label := ext.Substrate + "=" + ext.ExternalID
+		if _, ok := dst.ExternalIDFor(ext.Substrate); ok {
+			keep = append(keep, label)
+			continue
+		}
+		move = append(move, label)
+	}
+	return move, keep
 }
