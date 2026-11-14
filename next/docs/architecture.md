@@ -28,7 +28,8 @@ next/
   internal/settings    the tether: config block, validated at start
   internal/datadir     TETHER_DATA_DIR resolution, 0700/0600 discipline
   internal/legacyguard refuses the old database before the database module opens it
-  migrations/          one goose migration set (empty until S1)
+  internal/migrate     schema-equality test (S1); migrate-from lands in S12
+  migrations/sqlite/   one goose migration set (00001: the squashed schema)
   docs/                this file, conversion-notes.md, carry-ledger.md
 ```
 
@@ -85,7 +86,156 @@ Event retention is not a key yet. S8 adds it with the old `daemon.events_retenti
 
 SQLite only, through the `database` module (`database.From(app)`: one writer, a read pool), because Tether's SQL uses `?` placeholders and SQLite syntax.
 
-There is one embedded goose migration set (`migrations/`). It is registered only once it holds a `.sql` file: the module refuses an empty source, and S0 adds no placeholder version for S1 to reconcile. S1 adds the squashed schema.
+There is one embedded goose migration set, `migrations/sqlite/`, registered with `database.UseMigrationFS`. It has no `postgres/` directory because the app is SQLite only.
+
+### The squashed schema (`00001_schema.sql`)
+
+`00001_schema.sql` is the old store's schema at its migration 0101 (`main` at `f6c37bfa`), in one goose migration. It is generated, never hand-edited. `internal/migrate/schema_test.go` rebuilds it from the old migrations, which are vendored under `internal/migrate/testdata/oldmigrations`:
+
+```sh
+go test ./internal/migrate -run TestSchemaEqualsOld -update   # regenerate, then review the diff
+```
+
+The same test proves the two equal on every run:
+- It applies the vendored migrations the way the old migrator did (each file as one Exec in its own transaction, in version order).
+- It applies `00001` through the go-store/goose path the database module uses.
+- It compares the two databases object by object: the normalized `CREATE` text, every column (type, NOT NULL, default, key position), every index (columns, uniqueness, origin, partial flag), every foreign key, every trigger, and the rows a fresh database holds (`message_event_checkpoints` is seeded with `delivery` -1, `attention` 0 and `retry` 0).
+
+Every difference must be on the test's allowlist:
+
+| Object | Where it goes | Why |
+|---|---|---|
+| `ai_events` and its four indexes | archived to `llm-archive.db` by `migrate-from` (S12) | plan D3: the LLM gateway is out of scope |
+| `schema_migrations` | replaced by `goose_db_version`; the old rows are kept in the archive as provenance | the old migrator's ledger |
+| `goose_db_version` (new only) | | the database module's version table |
+
+Three things are outside this test by design:
+- **The seven `messaging_*` tables** (`messaging_messages`, `_deliveries`, `_attempts`, `_receipts`, `_transitions`, `_idempotency`, `_delivery_schema`) belong to go-messaging (`libs/mesh/core`). The old store has `delivery.ApplySQLiteSchema` create them at open; the port does the same, so their DDL is not duplicated here. `TestNoLibraryTables` keeps them out of `00001`. The library version is pinned when the messaging slice imports it (see the Gap in `conversion-notes.md`).
+- **Three triggers created in Go at open**, by the old `internal/store/session_replacement.go`: `replaced_delivery_claim`, `replaced_delivery_receipt` and `replaced_shim_delete`. The ported store code recreates them (S2); `migrate-from` does not copy them.
+- **Transitional `*_new` / `*_v2` / `*_verified` / `*_upgrade` tables.** None survives the old migrations: each is renamed or dropped by a later one (`TestNoLeftovers`). So the squashed schema drops no table that holds rows.
+
+Rules for row identity follow from the schema and `migrate-from` keeps them:
+- Every INTEGER PRIMARY KEY and AUTOINCREMENT is exactly as before, so ids and `sqlite_sequence` carry over.
+- `messages.rowid` is the mailbox watch cursor clients hold, so `migrate-from` copies it explicitly.
+- Foreign keys are declared as before and stay unenforced (ADR 0008).
+
+A schema change made on old `main` after `f6c37bfa` (for example `0102_worker_retirement.sql`) reaches the port through the carry ledger as a new migration, `00002` onwards, plus its `migrate-from` transform. It is never an edit to `00001`.
+
+### Tables
+
+108 tables: the 117 in the old store minus `ai_events`, `schema_migrations` and the seven library tables. FTS5 shadow tables and `sqlite_sequence` are created by SQLite and not listed.
+
+| table | primary key | key is the rowid | AUTOINCREMENT | triggers |
+|---|---|---|---|---|
+| a2a_tasks | binding_id, task_id | no (implicit rowid) |  |  |
+| agent_recovery_cursors | agent_id, channel | no (implicit rowid) |  |  |
+| broker_envelopes | id | no (implicit rowid) |  |  |
+| channel_publications | seq | yes | yes |  |
+| checkpoints | id | no (implicit rowid) |  |  |
+| client_attachments | id | no (implicit rowid) |  |  |
+| codex_shim_protocol | session_id | no (implicit rowid) |  | 3 |
+| environment_request_resolutions | session_id, turn_id, request_id | no (implicit rowid) |  |  |
+| environment_request_status | session_id, turn_id, request_id | no (implicit rowid) |  |  |
+| environment_request_turn_ends | session_id, turn_id | no (implicit rowid) |  |  |
+| environment_work_state | session_id | no (implicit rowid) |  |  |
+| event_identity | singleton | yes |  |  |
+| event_ingest_digests | event_id | no (implicit rowid) |  |  |
+| event_retention_admission | kind | no (implicit rowid) |  |  |
+| event_retention_policies | id | no (implicit rowid) |  | 2 |
+| events | id | yes | yes | 1 |
+| execution_policy | id | yes |  |  |
+| fabric_actors | record_key | no (implicit rowid) |  |  |
+| fabric_admissions | record_key | no (implicit rowid) |  |  |
+| fabric_agents | record_key | no (implicit rowid) |  |  |
+| fabric_binding_heads | record_key | no (implicit rowid) |  |  |
+| fabric_binding_history | record_key | no (implicit rowid) |  |  |
+| fabric_definition_artifacts | record_key | no (implicit rowid) |  |  |
+| fabric_definition_revisions | record_key | no (implicit rowid) |  |  |
+| fabric_import_receipts | record_key | no (implicit rowid) |  |  |
+| fabric_instances | record_key | no (implicit rowid) |  |  |
+| fabric_legacy_refs | record_key | no (implicit rowid) |  |  |
+| fabric_migration_candidates | record_key | no (implicit rowid) |  |  |
+| fabric_outbox | cursor | yes | yes |  |
+| fabric_sessions | record_key | no (implicit rowid) |  |  |
+| forum_categories | id | no (implicit rowid) |  |  |
+| forum_participants | forum_id, principal_kind, principal_id | no (implicit rowid) |  |  |
+| forum_post_fts | none (FTS5) | - | - | 0 |
+| forum_posts | id | no (implicit rowid) |  |  |
+| forum_topics | id | no (implicit rowid) |  |  |
+| forums | id | no (implicit rowid) |  |  |
+| group_members | grp_urn, member_urn | no (implicit rowid) |  | 1 |
+| identity_audit | id | yes | yes |  |
+| launch_plans | session_id | no (implicit rowid) |  | 2 |
+| logical_agents | id | no (implicit rowid) |  |  |
+| message_aliases | urn | no (implicit rowid) |  |  |
+| message_event_checkpoints | source | no (implicit rowid) |  |  |
+| message_event_deferred | transition_id | yes |  |  |
+| message_event_journal | id | yes | yes |  |
+| message_purge_audit | id | yes | yes |  |
+| messages | id | no (implicit rowid) |  | 8 |
+| pairing_grants | id | no (implicit rowid) |  |  |
+| principals | id | yes | yes | 2 |
+| proxy_events | id | yes | yes |  |
+| recipient_wake_admissions | message_id | no (implicit rowid) |  |  |
+| registry_capabilities | urn, capability | no (implicit rowid) |  |  |
+| registry_entries | urn | no (implicit rowid) |  | 3 |
+| registry_external_ids | urn, substrate | no (implicit rowid) |  |  |
+| registry_links | urn, kind, target | no (implicit rowid) |  |  |
+| registry_skills | urn, name | no (implicit rowid) |  |  |
+| retention_audit | id | yes | yes |  |
+| routing_replies | reply_id | no (implicit rowid) |  |  |
+| runtime_bindings | id | no (implicit rowid) |  |  |
+| scoped_role_bindings | id | no (implicit rowid) |  |  |
+| seat_status | agent_urn | no (implicit rowid) |  |  |
+| seat_wake_clock | seat | no (implicit rowid) |  |  |
+| session_groups | id | no (implicit rowid) |  |  |
+| session_idempotency | principal_id, key | no (implicit rowid) |  |  |
+| session_mcp_policy | session_id | no (implicit rowid) |  |  |
+| session_provider_mappings | session_id, owner, provider | no (implicit rowid) |  | 3 |
+| session_refs | id | yes |  |  |
+| session_replacements | source_session_id | no (implicit rowid) |  | 2 |
+| session_shim_retention_cursors | cursor_id | no (implicit rowid) |  |  |
+| session_shim_retirements | operation_id | no (implicit rowid) |  |  |
+| session_shims | session_id | no (implicit rowid) |  | 2 |
+| session_usage | session_id | no (implicit rowid) |  |  |
+| session_worker_seq | session_id | no (implicit rowid) |  |  |
+| sessions | id | no (implicit rowid) |  | 6 |
+| settings | scope, scope_id, key | no (implicit rowid) |  |  |
+| team_activation_evidence | kind, evidence_key | no (implicit rowid) |  |  |
+| team_definitions | team_id, version | no (implicit rowid) |  |  |
+| team_gone_shim_recoveries | shim_key | no (implicit rowid) |  |  |
+| team_host_adoptions | intent_key | no (implicit rowid) |  |  |
+| team_host_approvals | request_key | no (implicit rowid) |  |  |
+| team_host_bindings | actor | no (implicit rowid) |  |  |
+| team_host_calls | principal, verb, call_key | no (implicit rowid) |  |  |
+| team_host_delegations | delivery_key | no (implicit rowid) |  |  |
+| team_host_deliveries | sequence | yes |  |  |
+| team_host_intents | sequence | yes |  |  |
+| team_host_launch_intents | intent_key | no (implicit rowid) |  |  |
+| team_host_messages | message_key | no (implicit rowid) |  |  |
+| team_host_recovery_cursors | kind | no (implicit rowid) |  |  |
+| team_host_routing | run_id | no (implicit rowid) |  |  |
+| team_host_workflows | launch_key | no (implicit rowid) |  |  |
+| team_launch_grants | intent_key | no (implicit rowid) |  |  |
+| team_launch_journal | launch_key, revision | no (implicit rowid) |  |  |
+| team_launch_leases | launch_key | no (implicit rowid) |  |  |
+| team_launches | launch_key | no (implicit rowid) |  |  |
+| team_phase_signals | sequence | yes | yes |  |
+| team_port_intents | sequence | yes | yes |  |
+| team_recovery_attempts | kind, intent_key | no (implicit rowid) |  |  |
+| team_roster_snapshots | run_id, version | no (implicit rowid) |  |  |
+| team_rosters | run_id | no (implicit rowid) |  |  |
+| team_runs | run_id | no (implicit rowid) |  |  |
+| team_signal_resolutions | run_id, phase_id | no (implicit rowid) |  |  |
+| turn_inputs | input_id | no (implicit rowid) |  |  |
+| wake_triage | message_id | no (implicit rowid) |  |  |
+| worker_mail_grants | worker_id, urn | no (implicit rowid) |  |  |
+| worker_permission_parser | session_id | no (implicit rowid) |  |  |
+| workers | id | no (implicit rowid) |  |  |
+| workspace_scratch_allocations | session_id | no (implicit rowid) |  |  |
+| workstream_projects | workstream_id, project_urn | no (implicit rowid) |  |  |
+| workstreams | id | no (implicit rowid) |  |  |
+
 
 ## HTTP
 
