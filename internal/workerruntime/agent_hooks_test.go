@@ -278,7 +278,7 @@ func TestStopGatePlanting(t *testing.T) {
 			t.Fatalf("settings = %s (%v)", raw, err)
 		}
 		cmd := s.Hooks["Stop"][0].Hooks[0].Command
-		want := "hook stop-gate --url 'https://hub.example/mcp' --token-file '" + filepath.Join(ws, "auth", "tether.token") + "'"
+		want := "hook stop-gate --url 'https://hub.example/mcp' --token-file '" + filepath.Join(ws, "auth", "tether.token") + "' --state '" + filepath.Join(ws, "stop-gate.state") + "'"
 		if !strings.Contains(cmd, want) {
 			t.Fatalf("gate command = %q, want it to contain %q", cmd, want)
 		}

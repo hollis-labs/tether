@@ -36,10 +36,10 @@ func TestPendingRepliesNeedTheAgentsAnswer(t *testing.T) {
 	if _, err := db.db.Exec(`UPDATE messages SET read_at=? WHERE id='q4'`, at.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	// A question older than the window no longer waits.
+	// Age does not settle a question: an old one still waits (the gate filters by age, not the listing).
 	raw, _ := json.Marshal(q)
 	if _, err := db.db.Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,payload,content_type,created_at) VALUES (?,?,?,?,?,?,?)`,
-		"old", "request", archie, me, string(raw), envelope.ContentType, time.Now().UTC().Add(-PendingReplyWindow-time.Hour).Format(time.RFC3339Nano)); err != nil {
+		"old", "request", archie, me, string(raw), envelope.ContentType, time.Now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := db.PendingReplies(ctx, me, "@me", 10)
@@ -50,7 +50,7 @@ func TestPendingRepliesNeedTheAgentsAnswer(t *testing.T) {
 	for _, p := range got {
 		ids = append(ids, p.MessageID)
 	}
-	if len(ids) != 3 || ids[0] != "q1" || ids[1] != "u2" || ids[2] != "q4" || got[0].Subject != "Ship?" || got[0].From != archie {
+	if len(ids) != 4 || ids[0] != "old" || ids[1] != "q1" || ids[2] != "u2" || ids[3] != "q4" || got[0].CreatedAt.IsZero() || got[1].Subject != "Ship?" || got[1].From != archie {
 		t.Fatalf("pending = %+v", got)
 	}
 }

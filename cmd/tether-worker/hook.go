@@ -28,16 +28,24 @@ func newHookCommand() *cobra.Command {
 			return nil
 		},
 	})
-	var hubURL, tokenFile string
+	var hubURL, tokenFile, state string
 	gate := &cobra.Command{
 		Use: "stop-gate", Short: "Claude Stop hook: block the turn once while a typed message waits on this seat's reply (fails open)", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true,
-		RunE: func(c *cobra.Command, _ []string) error {
-			workerruntime.RunStopGate(c.Context(), c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), hubURL, tokenFile, os.Getenv("TETHER_AGENT_URN"))
+		RunE: func(c *cobra.Command, _ []string) (err error) {
+			// Fail open whatever happens: a hook that panics or errors must never block or fail the agent's turn.
+			defer func() {
+				if p := recover(); p != nil {
+					fmt.Fprintf(c.ErrOrStderr(), "tether-worker stop-gate: internal error (%v); not gating\n", p)
+				}
+				err = nil
+			}()
+			workerruntime.RunStopGate(c.Context(), c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), hubURL, tokenFile, os.Getenv("TETHER_AGENT_URN"), state)
 			return nil
 		},
 	}
 	gate.Flags().StringVar(&hubURL, "url", "", "the hub's /mcp endpoint")
 	gate.Flags().StringVar(&tokenFile, "token-file", "", "the session's agent token file (a path; the token is never an argument)")
+	gate.Flags().StringVar(&state, "state", "", "file of message ids that already blocked a stop (each blocks at most once)")
 	cmd.AddCommand(gate)
 	return cmd
 }

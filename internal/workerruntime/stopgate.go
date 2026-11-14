@@ -8,33 +8,53 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 // The Stop-hook reply gate (CW-20261114-0013, design v2 section 8). Claude runs `tether-worker hook stop-gate` when a
 // turn is about to end. The gate asks the hub (tether_pending_replies over /mcp, with the session's agent token) whether
-// a typed message is waiting on this seat's reply. If one is, it blocks the stop once with a reason that names the
-// messages and the tool to answer them; Claude continues the turn with that reason. It never blocks a stop that a
-// previous block caused (stop_hook_active), and it fails open: any error, timeout or unreachable hub lets the turn end.
+// a typed message is waiting on this seat's reply. It blocks a stop at most once per message: the ids it already blocked
+// on are kept in the session's state file, and a message older than StopGateWindow never blocks (the watchdog owns it,
+// CW-20261114-0015). A block names the messages and the tool to answer them; Claude continues the turn with that reason.
+// It never blocks a stop that a previous block caused (stop_hook_active), and it fails open: any error, panic, timeout
+// or unreachable hub lets the turn end.
 
 // StopGateTimeout bounds the whole hub round trip.
 const StopGateTimeout = 8 * time.Second
+
+// StopGateWindow is how recent a pending message must be to block a stop.
+const StopGateWindow = 24 * time.Hour
+
+// maxStopGateState bounds the remembered ids (newest kept).
+const maxStopGateState = 500
+
+// askPending is the hub round trip; a test replaces it.
+var askPending = askPendingReplies
 
 // maxStopGateListed is how many pending messages the reason names.
 const maxStopGateListed = 5
 
 type pendingReply struct {
-	MessageID string `json:"message_id"`
-	From      string `json:"from"`
-	Kind      string `json:"kind"`
-	Subject   string `json:"subject,omitempty"`
+	MessageID string    `json:"message_id"`
+	From      string    `json:"from"`
+	Kind      string    `json:"kind"`
+	Subject   string    `json:"subject,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // RunStopGate reads the Claude Stop hook payload from stdin and writes a block decision to stdout when a typed message
-// waits on this seat. as is the seat's address (TETHER_AGENT_URN); empty lets the hub use the token's identity. It
-// never returns an error to Claude: a failure is one line on stderr (never the token) and the turn ends normally.
-func RunStopGate(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, hubURL, tokenFile, as string) {
+// waits on this seat that has not blocked a stop before. as is the seat's address (TETHER_AGENT_URN); empty lets the
+// hub use the token's identity. statePath remembers the ids already blocked on. It never fails Claude: an error or a
+// panic is one line on stderr (never the token), nothing on stdout, and the turn ends normally.
+func RunStopGate(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, hubURL, tokenFile, as, statePath string) {
+	defer func() {
+		if p := recover(); p != nil {
+			fmt.Fprintf(stderr, "tether-worker stop-gate: internal error (%v); not gating\n", p)
+		}
+	}()
 	var hook struct {
 		StopHookActive bool `json:"stop_hook_active"`
 	}
@@ -48,19 +68,84 @@ func RunStopGate(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	}
 	ctx, cancel := context.WithTimeout(ctx, StopGateTimeout)
 	defer cancel()
-	pending, err := askPendingReplies(ctx, &HTTPRelay{URL: hubURL, TokenFile: tokenFile}, as)
+	pending, err := askPending(ctx, &HTTPRelay{URL: hubURL, TokenFile: tokenFile}, as)
 	if err != nil {
 		fmt.Fprintf(stderr, "tether-worker stop-gate: %v; not gating\n", err)
 		return
 	}
-	if len(pending) == 0 {
+	seen := readStopGateState(statePath)
+	cutoff := time.Now().Add(-StopGateWindow)
+	var fresh []pendingReply
+	for _, p := range pending {
+		if seen[p.MessageID] || (!p.CreatedAt.IsZero() && p.CreatedAt.Before(cutoff)) {
+			continue
+		}
+		fresh = append(fresh, p)
+	}
+	if len(fresh) == 0 {
 		return
 	}
-	out, err := json.Marshal(map[string]string{"decision": "block", "reason": stopGateReason(pending)})
+	// Remember them before blocking, so a message blocks at most one stop even if the write below is the last thing
+	// that happens. A state that cannot be written means no block: never nag without a memory.
+	if err := writeStopGateState(statePath, seen, fresh); err != nil {
+		fmt.Fprintf(stderr, "tether-worker stop-gate: state: %v; not gating\n", err)
+		return
+	}
+	out, err := json.Marshal(map[string]string{"decision": "block", "reason": stopGateReason(fresh)})
 	if err != nil {
 		return
 	}
 	_, _ = stdout.Write(append(out, '\n'))
+}
+
+// readStopGateState is the set of ids already blocked on (empty when the file is missing or unreadable).
+func readStopGateState(path string) map[string]bool {
+	seen := map[string]bool{}
+	if path == "" {
+		return seen
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: the path the worker planted in this session's hook settings
+	if err != nil {
+		return seen
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if id := strings.TrimSpace(line); id != "" {
+			seen[id] = true
+		}
+	}
+	return seen
+}
+
+// writeStopGateState appends the newly blocked ids, keeping the newest maxStopGateState, through a temp file and a
+// rename (the agent can write its workspace; a link left at path is replaced, not followed).
+func writeStopGateState(path string, seen map[string]bool, blocked []pendingReply) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return errors.New("no state file")
+	}
+	ids := readStateLines(path)
+	for _, p := range blocked {
+		if !seen[p.MessageID] {
+			ids = append(ids, p.MessageID)
+		}
+	}
+	if len(ids) > maxStopGateState {
+		ids = ids[len(ids)-maxStopGateState:]
+	}
+	return writeFresh(path, []byte(strings.Join(ids, "\n")+"\n"))
+}
+
+func readStateLines(path string) []string {
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: see readStopGateState
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if id := strings.TrimSpace(line); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func stopGateReason(pending []pendingReply) string {

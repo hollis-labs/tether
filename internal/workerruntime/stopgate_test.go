@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/libs/security/secrets/tokenfile"
 )
@@ -78,6 +80,11 @@ func (h *gateHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func runGate(t *testing.T, hub *gateHub, payload string) (string, string) {
 	t.Helper()
+	return runGateState(t, hub, payload, filepath.Join(t.TempDir(), "stop-gate.state"))
+}
+
+func runGateState(t *testing.T, hub *gateHub, payload, state string) (string, string) {
+	t.Helper()
 	srv := httptest.NewServer(hub)
 	t.Cleanup(srv.Close)
 	file := filepath.Join(t.TempDir(), "token")
@@ -85,7 +92,7 @@ func runGate(t *testing.T, hub *gateHub, payload string) (string, string) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	RunStopGate(context.Background(), strings.NewReader(payload), &out, &errb, srv.URL, file, "msg://agent/agent-mux/agt_me")
+	RunStopGate(context.Background(), strings.NewReader(payload), &out, &errb, srv.URL, file, "msg://agent/agent-mux/agt_me", state)
 	return out.String(), errb.String()
 }
 
@@ -118,7 +125,7 @@ func TestStopGateLetsTheTurnEndWhenNothingWaitsOrOnFailure(t *testing.T) {
 		t.Fatalf("bad payload: out=%q err=%q", out, errOut)
 	}
 	var b bytes.Buffer
-	RunStopGate(context.Background(), strings.NewReader(`{}`), &b, io.Discard, "http://example.com/mcp", "/nonexistent", "")
+	RunStopGate(context.Background(), strings.NewReader(`{}`), &b, io.Discard, "http://example.com/mcp", "/nonexistent", "", "")
 	if b.Len() != 0 {
 		t.Fatalf("non-loopback http url gated: %q", b.String())
 	}
@@ -132,5 +139,56 @@ func TestStopGateReasonCapsTheList(t *testing.T) {
 	r := stopGateReason(pending)
 	if !strings.Contains(r, "8 typed message(s)") || !strings.Contains(r, "and 3 more") || strings.Contains(r, "m6 ") {
 		t.Fatalf("reason = %q", r)
+	}
+}
+
+func pendingJSON(items ...pendingReply) string {
+	raw, _ := json.Marshal(map[string]any{"handle": "@me", "pending": items})
+	return string(raw)
+}
+
+// Each pending message blocks at most one stop; a new one blocks again; one older than the window never blocks.
+func TestStopGateBlocksOncePerItemWithinTheWindow(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "stop-gate.state")
+	now := time.Now().UTC()
+	m1 := pendingReply{MessageID: "m1", Kind: "question", From: "x", CreatedAt: now.Add(-time.Hour)}
+	m2 := pendingReply{MessageID: "m2", Kind: "decision", From: "x", CreatedAt: now.Add(-time.Minute)}
+	old := pendingReply{MessageID: "old", Kind: "question", From: "x", CreatedAt: now.Add(-StopGateWindow - time.Hour)}
+	stop := `{"stop_hook_active":false}`
+
+	out, _ := runGateState(t, &gateHub{result: pendingJSON(old, m1)}, stop, state)
+	if !strings.Contains(out, `"block"`) || !strings.Contains(out, "m1 question") || strings.Contains(out, "old question") {
+		t.Fatalf("first stop: %q", out)
+	}
+	if out, _ := runGateState(t, &gateHub{result: pendingJSON(old, m1)}, stop, state); out != "" {
+		t.Fatalf("m1 blocked a second stop: %q", out)
+	}
+	out, _ = runGateState(t, &gateHub{result: pendingJSON(old, m1, m2)}, stop, state)
+	if !strings.Contains(out, "m2 decision") || strings.Contains(out, "m1 question") {
+		t.Fatalf("new item: %q", out)
+	}
+	if raw, _ := os.ReadFile(state); string(raw) != "m1\nm2\n" {
+		t.Fatalf("state = %q", raw)
+	}
+}
+
+// A state file that cannot be written means no block: never nag without a memory.
+func TestStopGateWithoutStateDoesNotBlock(t *testing.T) {
+	m1 := pendingReply{MessageID: "m1", Kind: "question", From: "x", CreatedAt: time.Now()}
+	out, errOut := runGateState(t, &gateHub{result: pendingJSON(m1)}, `{"stop_hook_active":false}`, "")
+	if out != "" || !strings.Contains(errOut, "not gating") {
+		t.Fatalf("out=%q err=%q", out, errOut)
+	}
+}
+
+// Any panic in the gate is recovered: nothing on stdout, the call returns (the hook exits 0).
+func TestStopGatePanicFailsOpen(t *testing.T) {
+	prev := askPending
+	askPending = func(context.Context, *HTTPRelay, string) ([]pendingReply, error) { panic("boom") }
+	t.Cleanup(func() { askPending = prev })
+	var out, errb bytes.Buffer
+	RunStopGate(context.Background(), strings.NewReader(`{"stop_hook_active":false}`), &out, &errb, "https://hub.example/mcp", "/x", "", filepath.Join(t.TempDir(), "s"))
+	if out.Len() != 0 || !strings.Contains(errb.String(), "internal error (boom); not gating") {
+		t.Fatalf("out=%q err=%q", out.String(), errb.String())
 	}
 }
