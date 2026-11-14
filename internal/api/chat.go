@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -324,7 +325,7 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 		return resp, http.StatusInternalServerError, CodeInternalError, "session creation failed"
 	}
 	if !res.Replayed {
-		if _, err := s.Service.LaunchSession(res.SessionID); err != nil {
+		if _, err := s.launchWithCaller(r.Context(), res.SessionID); err != nil {
 			// The worker's error text can carry paths and stderr; the full cause
 			// stays in the daemon log and the session.launch_failed event.
 			return resp, http.StatusInternalServerError, CodeInternalError, "session launch failed on the worker (see the session.launch_failed event for session " + res.SessionID + ")"
@@ -391,4 +392,18 @@ func chatPromptInput(r *http.Request) *identity.InputOrigin {
 	p, ok := identity.FromContext(r.Context())
 	urn, class, basis := identity.ClassifyInputSender(p, ok)
 	return &identity.InputOrigin{Source: "chat_send", SenderURN: urn, Class: class, Basis: basis}
+}
+
+// contextLauncher launches with the request's context, so the caller's verified
+// identity bounds and attributes the launch (CW-20261114-0038: chat launches
+// were anonymous).
+type contextLauncher interface {
+	LaunchSessionWithContext(ctx context.Context, sessionID string) (LaunchResult, error)
+}
+
+func (s *Server) launchWithCaller(ctx context.Context, sessionID string) (LaunchResult, error) {
+	if l, ok := s.Service.(contextLauncher); ok {
+		return l.LaunchSessionWithContext(ctx, sessionID)
+	}
+	return s.Service.LaunchSession(sessionID)
 }

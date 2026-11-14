@@ -615,3 +615,27 @@ func TestResolve_RepoURLCarriedIntoPlan(t *testing.T) {
 		t.Fatalf("RepoURL = %q, want empty when the project declares none", noURL.RepoURL)
 	}
 }
+
+// servers ["*"] is every enabled upstream the agent may hold (CW-20261114-0038):
+// machine-changing upstreams only with machine_authority.
+func TestResolve_MCPServersAll(t *testing.T) {
+	cat := &config.Catalog{
+		MCPServerEnabled: map[string]bool{"hadron": true, "vanta": true, "cerberus": true, "retired": false},
+		Projects:         map[string]config.Project{"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}}},
+		Agents:           map[string]config.Agent{"a": {ID: "a"}, "ops": {ID: "ops", MachineAuthority: true}},
+		Providers:        map[string]config.Provider{"p": {ID: "p", Command: "echo"}},
+		Launches: map[string]config.Launch{
+			"l":   {ID: "l", Project: "proj", Agent: "a", Provider: "p", MCP: config.MCPConfig{Servers: []string{"*"}}},
+			"ops": {ID: "ops", Project: "proj", Agent: "ops", Provider: "p", MCP: config.MCPConfig{Servers: []string{"*"}}},
+		},
+	}
+	for launchID, want := range map[string]string{"l": "hadron,vanta", "ops": "cerberus,hadron,vanta"} {
+		plan, err := Resolve(cat, Input{LaunchID: launchID})
+		if err != nil {
+			t.Fatalf("%s: %v", launchID, err)
+		}
+		if got := plan.Env["TETHER_MCP_SERVERS"]; got != want {
+			t.Fatalf("%s: TETHER_MCP_SERVERS=%q, want %q", launchID, got, want)
+		}
+	}
+}

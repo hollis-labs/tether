@@ -37,6 +37,9 @@ func (c *Catalog) PrincipalGrantAgent(principalID string) string {
 func (c *Catalog) ValidateMCPGrant(owner string, ids []string) error {
 	var issues []error
 	for _, id := range ids {
+		if id == MCPGrantAll {
+			continue // every enabled upstream, expanded at launch (ExpandMCPGrant)
+		}
 		enabled, exists := c.MCPServerEnabled[id]
 		reason := "unknown upstream (names are case-sensitive)"
 		if exists && enabled {
@@ -59,8 +62,55 @@ func (c *Catalog) ValidateMCPGrantEnv(owner, value string) error {
 	ids := strings.Split(value, ",")
 	for i := range ids {
 		ids[i] = strings.TrimSpace(ids[i])
+		// An effective grant is always expanded; a literal "*" here would grant
+		// nothing downstream (every matcher is exact-name), so refuse it loudly.
+		if ids[i] == MCPGrantAll {
+			return fmt.Errorf("%w: %s names %q: \"*\" must be expanded to the enabled upstreams before launch", ErrInvalidMCPGrant, owner, MCPGrantAll)
+		}
 	}
 	return c.ValidateMCPGrant(owner, ids)
+}
+
+// MCPGrantAll in an mcp.servers list means every enabled upstream
+// (CW-20261114-0038), so a seat's grant follows the catalog as upstreams are added.
+const MCPGrantAll = "*"
+
+// ExpandMCPGrant replaces "*" with every enabled upstream, sorted, keeping any
+// other listed ids and dropping duplicates. exclude, when set, drops upstreams
+// the launching agent may not hold (machine-changing ones without
+// machine_authority), so "all" never makes a launch fail on its own. A list
+// without "*" is returned unchanged.
+func (c *Catalog) ExpandMCPGrant(ids []string, exclude func(string) bool) []string {
+	all := false
+	for _, id := range ids {
+		all = all || id == MCPGrantAll
+	}
+	if !all {
+		return ids
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(id string) {
+		if id == MCPGrantAll || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	for _, id := range ids {
+		add(id)
+	}
+	enabled := make([]string, 0, len(c.MCPServerEnabled))
+	for id, on := range c.MCPServerEnabled {
+		if on && (exclude == nil || !exclude(id)) {
+			enabled = append(enabled, id)
+		}
+	}
+	sort.Strings(enabled)
+	for _, id := range enabled {
+		add(id)
+	}
+	return out
 }
 
 // ValidateMCPGrants checks every declared grant, including ones currently

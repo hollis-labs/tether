@@ -87,7 +87,7 @@ func TestCodexOwnsSandbox_CallerEnvIsNeverTrusted(t *testing.T) {
 	// env, and the MCP allow-list a boot profile sets, which Tether consumes.
 	plan := codexPlan()
 	plan.Env = map[string]string{"GH_TOKEN": "operator-set-in-the-catalog"}
-	applyMCPAllowlist(plan, bootgen.Profile{MCPServers: []string{"torque"}})
+	applyMCPAllowlist(plan, bootgen.Profile{MCPServers: []string{"torque"}}, nil)
 	if len(plan.CallerEnv) != 0 {
 		t.Fatalf("operator env or the MCP allow-list was recorded as caller env: %v", plan.CallerEnv)
 	}
@@ -226,7 +226,7 @@ func TestCodexOwnsSandbox_OnlyKnownSafeUpstreamsKeepTheExemption(t *testing.T) {
 	}
 	// The boot profile's list reaches the plan through the real function.
 	plan := codexPlan()
-	applyMCPAllowlist(plan, bootgen.Profile{MCPServers: []string{"torque", "loom"}})
+	applyMCPAllowlist(plan, bootgen.Profile{MCPServers: []string{"torque", "loom"}}, nil)
 	if got := unsafeMCPUpstream(plan); got != "loom" {
 		t.Fatalf("unsafeMCPUpstream after a boot profile naming loom = %q", got)
 	}

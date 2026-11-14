@@ -189,6 +189,10 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("resolve launch plan: %w", err)
 	}
 
+	// A resume is the same seat: it takes the catalog agent's identity, MCP
+	// scopes and editable agents like a fresh worker launch does (a worker
+	// resume used to fall back to the default scopes, CW-20261114-0038).
+	s.applyCatalogIdentity(plan)
 	plan.NativeResumeOnly = opts.NativeOnly
 	if !opts.NativeOnly {
 		plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
