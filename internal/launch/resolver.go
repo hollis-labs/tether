@@ -96,6 +96,10 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		mcpServers = agent.MCP.Servers
 	}
 	if mcpServers != nil {
+		// "*" is every enabled upstream this agent may hold (CW-20261114-0038).
+		mcpServers = cat.ExpandMCPGrant(mcpServers, func(id string) bool {
+			return !agent.MachineAuthority && len(MachineGrantViolations([]string{id})) > 0
+		})
 		overrides["TETHER_MCP_SERVERS"] = strings.Join(mcpServers, ",")
 	}
 

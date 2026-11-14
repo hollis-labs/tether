@@ -170,6 +170,16 @@ func Summarize(kind string, p map[string]any, handle func(string) string) string
 		return out
 	case kind == "session.cleared":
 		return "context cleared"
+	case kind == "session.scopes_narrowed":
+		var dropped []string
+		if v, ok := p["dropped"].([]any); ok {
+			for _, d := range v {
+				if s, ok := d.(string); ok {
+					dropped = append(dropped, s)
+				}
+			}
+		}
+		return join("scopes narrowed: dropped", strings.Join(dropped, ","), paren(join("basis", str(p, "basis"))))
 	case kind == "mail.triaged":
 		return join(str(p, "handle"), "mail from", handleOf(str(p, "from")), "triaged", str(p, "class"), paren(str(p, "reason")))
 	case kind == "seat.gate_blocked":
