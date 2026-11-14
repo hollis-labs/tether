@@ -105,7 +105,8 @@ A directory with no `meta.json`, no launch descriptor, or a control socket that
 is missing or refuses is dead: it is skipped without reading its output.
 Dead directories idle for 24 hours are moved, never deleted, to
 `<worker root>/hosts-dead/<YYYYMMDD>/` (one whose recorded host pid is still
-alive stays). Move one back into `hosts/` to restore it on the next start, or
+alive stays; so does one with an unreadable `meta.json` whose launch descriptor
+a running shim-host still serves, which is counted failed). Move one back into `hosts/` to restore it on the next start, or
 remove `hosts-dead/` when it is no longer wanted. The worker logs
 `restore: live=… dead_skipped=… pruned=… failed=…` and sends the same counts
 in its hello, which the hub logs (CW-20261114-0056).

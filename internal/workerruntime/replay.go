@@ -9,7 +9,9 @@ import (
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -75,7 +77,11 @@ const deadHostsDir = "hosts-dead"
 
 // errDeadHost marks a host dir with nothing to re-adopt: no session record, no launch descriptor, or no
 // shim answering on its control socket. Detecting it costs a few file reads and one refused dial.
-type errDeadHost struct{ reason error }
+type errDeadHost struct {
+	reason error
+	// noRecord: meta.json is missing or unreadable, so the host pid could not be checked.
+	noRecord bool
+}
 
 func (e errDeadHost) Error() string { return "dead host: " + e.reason.Error() }
 
@@ -98,6 +104,7 @@ func (e *Executor) Restore() error {
 		return err
 	}
 	now := time.Now()
+	served := &servedLaunches{}
 	for _, dir := range dirs {
 		if !dir.IsDir() {
 			continue
@@ -108,6 +115,11 @@ func (e *Executor) Restore() error {
 		switch {
 		case err == nil:
 			counts.Live++
+		case errors.As(err, &dead) && dead.noRecord && served.has(filepath.Join(path, "launch.json")):
+			// No readable record, but a shim-host still serves this dir (a meta.json corrupted or cut short by
+			// a crash): not dead, never moved; counted failed, so the hub does not trust the inventory as complete.
+			counts.Failed++
+			fmt.Fprintf(os.Stderr, "tether-worker: session host %s has a live shim-host but no readable meta.json: %v\n", dir.Name(), dead.reason)
 		case errors.As(err, &dead):
 			counts.DeadSkipped++
 			if moved, mvErr := e.pruneDeadHost(path, now); mvErr != nil {
@@ -169,11 +181,11 @@ func hostDirAge(path string, now time.Time) (time.Duration, bool) {
 func (e *Executor) restoreOne(path string) error {
 	var s execution
 	if err := shimhost.ReadPrivateJSON(filepath.Join(path, "meta.json"), 1<<20, &s); err != nil {
-		return errDeadHost{err}
+		return errDeadHost{reason: err, noRecord: true}
 	}
 	spec, err := shim.ReadLaunch(s.Descriptor)
 	if err != nil {
-		return errDeadHost{err}
+		return errDeadHost{reason: err}
 	}
 	// Connect first: a gone shim refuses at once (or its socket is missing), before any output is read. A
 	// failure after the dial (a refused takeover, a stalled handshake) means a host answered: not dead.
@@ -181,7 +193,7 @@ func (e *Executor) restoreOne(path string) error {
 	if err != nil {
 		err = fmt.Errorf("restore %s: %w", s.ID, err)
 		if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {
-			return errDeadHost{err}
+			return errDeadHost{reason: err}
 		}
 		return err
 	}
@@ -225,4 +237,31 @@ func readOutputs(path string, s *execution) error {
 		}
 	}
 	return scanner.Err()
+}
+
+// servedLaunches is the set of launch descriptors a running shim-host serves, read once (one ps) the first
+// time Restore needs it: only for a dir whose meta.json cannot say whether its host is alive.
+type servedLaunches struct {
+	paths map[string]bool
+}
+
+func (l *servedLaunches) has(launch string) bool {
+	if l.paths == nil {
+		l.paths = map[string]bool{}
+		for _, args := range processArgs() {
+			if _, rest, ok := strings.Cut(args, "shim-host --launch "); ok {
+				l.paths[strings.Fields(rest + " ")[0]] = true
+			}
+		}
+	}
+	return l.paths[launch]
+}
+
+// processArgs lists every process's command line. A seam for tests.
+var processArgs = func() []string {
+	out, err := exec.Command("ps", "-axo", "args=").Output()
+	if err != nil {
+		return nil
+	}
+	return strings.Split(string(out), "\n")
 }
