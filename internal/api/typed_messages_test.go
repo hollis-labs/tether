@@ -352,4 +352,39 @@ func TestMessagePostStampsTheSeatForASessionPrincipal(t *testing.T) {
 	if err != nil || stored.Metadata["from_verification"] != "verified" {
 		t.Fatalf("stored = %+v err=%v", stored, err)
 	}
+	// The stored sender is the seat's catalog urn (where it receives), not the
+	// agent-mux binding target it was listed under first.
+	if stored.From.URN() != meURN {
+		t.Fatalf("from = %s, want the catalog urn %s", stored.From.URN(), meURN)
+	}
+}
+
+// A seat without a catalog urn: falls back to its agent-mux address.
+func TestMessagePostStampsTheLogicalFormWithoutACatalogURN(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "typed5.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	cat := &config.Catalog{Agents: map[string]config.Agent{
+		"loner":  {ID: "loner"},
+		"archie": {ID: "archie", URN: archieURN},
+	}}
+	api := NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: db.MessagingStore(), Seats: db, Catalog: fixedCatalog{cat}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := identity.Principal{Verified: true, Kind: "session", ID: "msg://session/local/s2",
+			Addresses: []string{"msg://session/local/s2", "msg://agent/agent-mux/loner"}, Scopes: []string{"*"}}
+		api.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), p)))
+	}))
+	t.Cleanup(srv.Close)
+	h := &typedHarness{srv: srv, db: db}
+	code, raw := h.do(t, http.MethodPost, "/messages/post", `{"kind":"update","to":["@archie"],"body":"hi"}`)
+	var out MessagePostResponse
+	if code != http.StatusCreated || json.Unmarshal(raw, &out) != nil || out.Envelope.From != "@loner" {
+		t.Fatalf("post: %d %s", code, raw)
+	}
+	stored, err := db.MessagingStore().Get(t.Context(), out.IDs[0])
+	if err != nil || stored.From.URN() != "msg://agent/agent-mux/loner" {
+		t.Fatalf("from = %v err=%v", stored.From, err)
+	}
 }

@@ -659,20 +659,45 @@ func (s *Server) seatAddresses(ctx context.Context, urn, handle string) []string
 	return out
 }
 
-// seatAddressOfPrincipal is the first of the verified principal's addresses that
-// names a seat with a @handle (stampSender then verifies it like any claim).
+// seatAddressOfPrincipal is the address a typed post from this principal is
+// from: the first of its verified addresses that names a seat with a @handle,
+// mapped to that seat's catalog urn: when it has one (seats bind and receive on
+// it; mail to the msg://agent/agent-mux/<id> form is accepted and dropped), else
+// the address itself. stampSender then verifies it like any claim.
 func (s *Server) seatAddressOfPrincipal(r *http.Request) (messaging.Address, bool) {
 	p, ok := verifiedPrincipal(r)
 	if !ok {
 		return messaging.Address{}, false
 	}
-	for _, a := range append([]string{p.DefaultAddress()}, p.Addresses...) {
+	candidates := append([]string{p.DefaultAddress()}, p.Addresses...)
+	for _, a := range candidates {
 		if s.handleFor(r.Context(), a) == "" {
 			continue
+		}
+		if urn := s.catalogURNFor(a); urn != "" && slices.Contains(candidates, urn) {
+			a = urn
 		}
 		if addr, err := messaging.ParseURN(a); err == nil {
 			return addr, true
 		}
 	}
 	return messaging.Address{}, false
+}
+
+// catalogURNFor is the catalog urn: of the agent addr names (by that urn or by
+// its msg://agent/agent-mux/<id> form), or "".
+func (s *Server) catalogURNFor(addr string) string {
+	if s.Catalog == nil {
+		return ""
+	}
+	cat, err := s.Catalog.Load()
+	if err != nil || cat == nil {
+		return ""
+	}
+	for id, a := range cat.Agents {
+		if a.URN != "" && (a.URN == addr || "msg://agent/agent-mux/"+id == addr) {
+			return a.URN
+		}
+	}
+	return ""
 }
