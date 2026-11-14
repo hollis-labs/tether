@@ -153,8 +153,13 @@ func (m *mailTriage) emit(ctx context.Context, env messaging.Envelope, pol seatP
 	if m.publish == nil {
 		return
 	}
-	raw, _ := json.Marshal(map[string]any{"message_id": env.ID, "recipient": env.To.URN(), "seat": pol.seat, "handle": pol.handle,
-		"class": string(res.Class), "reason": res.Reason, "typed": res.Typed, "from": env.From.URN(), "from_handle": m.nameOf(ctx, env.From.URN())})
+	payload := map[string]any{"message_id": env.ID, "recipient": env.To.URN(), "seat": pol.seat, "handle": pol.handle,
+		"class": string(res.Class), "reason": res.Reason, "typed": res.Typed, "from": env.From.URN(), "from_handle": m.nameOf(ctx, env.From.URN())}
+	// Mail an assistant sent for someone says so wherever it is triaged (CW-20261114-0116).
+	if behalf, drafted := envelope.Behalf(env.ContentType, env.Payload); behalf != "" {
+		payload["on_behalf_of"], payload["drafted_by"] = behalf, string(drafted)
+	}
+	raw, _ := json.Marshal(payload)
 	e := events.Event{Scope: events.ScopeDaemon, Kind: KindMailTriaged, At: m.clock(), PayloadJSON: string(raw)}
 	e.Envelope.Dims.AgentURN = pol.seat
 	e.Envelope.Class.Category = "message"

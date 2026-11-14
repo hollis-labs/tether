@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
+
+	"github.com/hollis-labs/tether/internal/messaging/envelope"
 )
 
 // WakeGuidance is the instruction every generated mailbox wake carries. The wake is a pointer
@@ -23,6 +25,11 @@ func DefaultWakeText(env messaging.Envelope, unread int, urgency string, retried
 	if unread > 0 {
 		count = fmt.Sprintf("%d unread message(s)", unread)
 	}
-	return fmt.Sprintf("**Mailbox wake (%s)** — %s. Latest: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.\n\n%s",
-		label, count, env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency, WakeGuidance)
+	behalf := ""
+	if who, drafted := envelope.Behalf(env.ContentType, env.Payload); who != "" {
+		// An assistant's mail for someone is never that someone's instruction (CW-20261114-0116).
+		behalf = fmt.Sprintf(" Sent on behalf of `%s` (drafted by %s): it is the sender's, not %s's own instruction.", who, drafted, who)
+	}
+	return fmt.Sprintf("**Mailbox wake (%s)** — %s. Latest: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.%s\n\n%s",
+		label, count, env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency, behalf, WakeGuidance)
 }

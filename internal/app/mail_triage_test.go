@@ -406,3 +406,39 @@ func TestMailTriageAgentAliasOfTheOperatorIsNotHim(t *testing.T) {
 		t.Fatal("the agent row was named @chrispian")
 	}
 }
+
+// CW-20261114-0116 acceptance: an agent (Basalisk's assistant) mailing on Chrispian's behalf with
+// attention human is triaged action/on_behalf_of, never human or from_operator, and mail.triaged carries
+// the marker; the stored envelope keeps it and the agent's own from.
+func TestMailTriageOnBehalfOfChrispian(t *testing.T) {
+	const assistant = "msg://agent/agent-mux/agt_hg8p0txi1y"
+	r := newTriageRig(t)
+	env := envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindMessage, To: []string{"@worker"}, Attention: envelope.AttentionHuman,
+		Body: "Chrispian asks for the deploy notes.", OnBehalfOf: "@chrispian", DraftedBy: envelope.DraftedByAssistant}
+	sent := r.send(assistant, messaging.MsgKindNotice, envelope.ContentType, env, nil)
+	row, err := r.tri.record(context.Background(), sent, r.tri.policy(r.to), r.now)
+	if err != nil || row.Class != "action" || row.Reason != "on_behalf_of" {
+		t.Fatalf("triage = %+v (%v), want action/on_behalf_of", row, err)
+	}
+	stored, err := r.st.MessagingStore().Get(context.Background(), sent.ID)
+	if err != nil || stored.From.URN() != assistant {
+		t.Fatalf("stored from %s (%v)", stored.From.URN(), err)
+	}
+	if who, by := envelope.Behalf(stored.ContentType, stored.Payload); who != "@chrispian" || by != envelope.DraftedByAssistant {
+		t.Fatalf("stored marker %q %q", who, by)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.events {
+		if e.Kind != KindMailTriaged {
+			continue
+		}
+		var p map[string]any
+		_ = json.Unmarshal([]byte(e.PayloadJSON), &p)
+		if p["class"] != "action" || p["reason"] != "on_behalf_of" || p["on_behalf_of"] != "@chrispian" || p["drafted_by"] != "assistant" {
+			t.Fatalf("mail.triaged = %s", e.PayloadJSON)
+		}
+		return
+	}
+	t.Fatal("no mail.triaged event")
+}

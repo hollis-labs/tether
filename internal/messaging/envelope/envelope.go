@@ -50,6 +50,14 @@ const (
 // Operator is the reserved handle of the human operator.
 const Operator = "@chrispian"
 
+// DraftedBy says who wrote mail sent on someone's behalf (CW-20261114-0116).
+type DraftedBy string
+
+const (
+	DraftedByAssistant DraftedBy = "assistant"
+	DraftedByHuman     DraftedBy = "human"
+)
+
 // Implicit option ids of an approval_request sent without options.
 const (
 	OptionApprove = "approve"
@@ -98,6 +106,13 @@ type Envelope struct {
 	Options       []Option  `json:"options,omitempty"`
 	DefaultOption string    `json:"default_option,omitempty"`
 	Answer        *Answer   `json:"answer,omitempty"`
+	// OnBehalfOf names who the sender acts for (an @handle or a principal URN),
+	// and DraftedBy who wrote it (CW-20261114-0116): an assistant sending for
+	// Chrispian from its own address. It is the sender's claim, not an identity:
+	// it never changes who the mail is from, and mail from an agent that says it
+	// acts for someone is never triaged as that person (triage.Classify).
+	OnBehalfOf string    `json:"on_behalf_of,omitempty"`
+	DraftedBy  DraftedBy `json:"drafted_by,omitempty"`
 }
 
 // Error is a validation failure: which field, and why.
@@ -146,6 +161,29 @@ func (e *Envelope) Normalize() {
 	e.Awaiting = strings.TrimSpace(e.Awaiting)
 	e.Subject = strings.TrimSpace(e.Subject)
 	e.Body = strings.TrimSpace(e.Body)
+	e.OnBehalfOf = strings.TrimSpace(e.OnBehalfOf)
+	if e.OnBehalfOf != "" && e.DraftedBy == "" {
+		e.DraftedBy = DraftedByAssistant
+	}
+}
+
+// Behalf reads the on-behalf marker of a stored message: its on_behalf_of and
+// drafted_by when the payload is a typed envelope that carries one, else "".
+func Behalf(contentType string, payload []byte) (onBehalfOf string, draftedBy DraftedBy) {
+	if contentType != ContentType {
+		return "", ""
+	}
+	var e struct {
+		OnBehalfOf string    `json:"on_behalf_of"`
+		DraftedBy  DraftedBy `json:"drafted_by"`
+	}
+	if json.Unmarshal(payload, &e) != nil || e.OnBehalfOf == "" {
+		return "", ""
+	}
+	if e.DraftedBy == "" {
+		e.DraftedBy = DraftedByAssistant
+	}
+	return e.OnBehalfOf, e.DraftedBy
 }
 
 // EffectiveAttention is the attention the sender set, else the default: human
@@ -229,6 +267,9 @@ func (e Envelope) Validate() error {
 	if err := e.validOptions(); err != nil {
 		return err
 	}
+	if err := e.validBehalf(); err != nil {
+		return err
+	}
 	if e.Answer != nil {
 		if e.InReplyTo == "" {
 			return fail("answer", "only a reply (in_reply_to) carries an answer")
@@ -239,6 +280,27 @@ func (e Envelope) Validate() error {
 		if utf8.RuneCountInString(e.Answer.Note) > MaxNote {
 			return fail("answer.note", "at most %d characters", MaxNote)
 		}
+	}
+	return nil
+}
+
+func (e Envelope) validBehalf() error {
+	switch e.DraftedBy {
+	case "", DraftedByAssistant, DraftedByHuman:
+	default:
+		return fail("drafted_by", "must be assistant or human")
+	}
+	if e.OnBehalfOf == "" {
+		if e.DraftedBy != "" {
+			return fail("drafted_by", "only mail sent on_behalf_of someone says who drafted it")
+		}
+		return nil
+	}
+	if ValidHandle(e.OnBehalfOf) {
+		return nil
+	}
+	if _, err := messaging.ParseURN(e.OnBehalfOf); err != nil {
+		return fail("on_behalf_of", "%q is neither a @handle nor a principal URN", e.OnBehalfOf)
 	}
 	return nil
 }
@@ -375,6 +437,11 @@ func Check(e Envelope, r Resolver, parent *Parent) ([]string, error) {
 	if e.Awaiting != "" {
 		if _, ok := r.Resolve(e.Awaiting); !ok {
 			return nil, fail("awaiting", "unknown handle %s", e.Awaiting)
+		}
+	}
+	if ValidHandle(e.OnBehalfOf) {
+		if _, ok := r.Resolve(e.OnBehalfOf); !ok {
+			return nil, fail("on_behalf_of", "unknown handle %s", e.OnBehalfOf)
 		}
 	}
 	if e.Answer != nil {

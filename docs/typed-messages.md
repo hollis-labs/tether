@@ -44,6 +44,8 @@ still see an ordinary message of the mapped transport kind.
 | `options` | `question` and `decision`: 2 to 6. `approval_request`: optional; without options the answers are `approve` and `deny`. Other kinds: none. Ids `[a-z0-9_-]{1,20}`, unique; at most one `recommended`. |
 | `default_option` | Optional option id: what happens if nobody answers. |
 | `answer` | Only on a reply to a `question`, `decision` or `approval_request`: `{option, note?}`, `option` one of the parent's ids. |
+| `on_behalf_of` | Optional: who the sender acts for, as a `@handle` (must resolve) or a principal URN. See "On behalf of" below. |
+| `drafted_by` | Optional: `assistant` or `human`, only with `on_behalf_of`; stored as `assistant` when omitted. |
 
 Unknown fields are refused. Transport kind mapping: `question`,
 `approval_request`, `decision` are `request`; `update` is `status_update`;
@@ -56,6 +58,32 @@ with the same idempotency key resends only the rest.
 
 Errors come back as HTTP 400 `invalid_request` with
 `details: {field, reason}`, for example `envelope.to[1]: unknown handle @unknown`.
+
+## On behalf of
+
+An assistant that sends mail for someone (Basalisk's assistant for Chrispian)
+sends it from its own address and says so (CW-20261114-0116):
+
+```json
+{"kind": "message", "to": ["@archie"], "body": "Chrispian asks for the deploy notes.",
+ "on_behalf_of": "@chrispian", "drafted_by": "assistant"}
+```
+
+`on_behalf_of` is the **sender's claim, not an identity**. It never changes
+`from` (the server still stamps the sender) or `from_principal`, and it grants
+the sender none of the other person's permissions. Sending as someone else is
+still refused (see address aliases in `docs/messaging.md`).
+
+- **Triage:** mail with `on_behalf_of` from a sender that is not a `user`
+  address is class **`action`**, reason `on_behalf_of`, never `human` and never
+  `from_operator`, whatever its `attention` or recipients. It is not Chrispian's
+  own instruction. Mail the operator sends himself is unaffected (`from_operator`),
+  as is mail from a `user` sender.
+- **Events:** `mail.triaged` and the `message.*` lifecycle events carry
+  `on_behalf_of` and `drafted_by`.
+- **Wakes:** the mailbox-wake text says "Sent on behalf of `@chrispian`
+  (drafted by assistant): it is the sender's, not @chrispian's own instruction."
+- **MCP:** `tether_message_post` takes `on_behalf_of` and `drafted_by`.
 
 ## @handles
 

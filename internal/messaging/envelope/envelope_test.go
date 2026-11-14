@@ -159,3 +159,43 @@ func TestTransportKind(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261114-0116: on_behalf_of names who the sender acts for (a handle that must resolve, or a URN);
+// drafted_by says who wrote it, only beside on_behalf_of, and defaults to assistant.
+func TestOnBehalfOf(t *testing.T) {
+	e := Envelope{Kind: KindMessage, To: []string{"@archie"}, Body: "Chrispian asks for the deploy notes.", OnBehalfOf: " @chrispian "}
+	e.Normalize()
+	if e.OnBehalfOf != "@chrispian" || e.DraftedBy != DraftedByAssistant {
+		t.Fatalf("normalized: %q %q", e.OnBehalfOf, e.DraftedBy)
+	}
+	if _, err := Check(e, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	urn := e
+	urn.OnBehalfOf, urn.DraftedBy = "msg://user/local/operator", DraftedByHuman
+	if _, err := Check(urn, dir, nil); err != nil {
+		t.Fatalf("a principal URN: %v", err)
+	}
+	for name, c := range map[string]struct {
+		edit  func(*Envelope)
+		field string
+	}{
+		"drafted_by alone":       {func(e *Envelope) { e.OnBehalfOf, e.DraftedBy = "", DraftedByHuman }, "drafted_by"},
+		"bad drafted_by":         {func(e *Envelope) { e.DraftedBy = "robot" }, "drafted_by"},
+		"neither handle nor urn": {func(e *Envelope) { e.OnBehalfOf = "chrispian" }, "on_behalf_of"},
+		"unknown handle":         {func(e *Envelope) { e.OnBehalfOf = "@nobody" }, "on_behalf_of"},
+	} {
+		bad := e
+		c.edit(&bad)
+		if _, err := Check(bad, dir, nil); err == nil || fieldOf(t, err) != c.field {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	raw := []byte(`{"kind":"message","to":["@archie"],"body":"x","on_behalf_of":"@chrispian"}`)
+	if who, by := Behalf(ContentType, raw); who != "@chrispian" || by != DraftedByAssistant {
+		t.Fatalf("Behalf = %q %q", who, by)
+	}
+	if who, _ := Behalf("application/json", raw); who != "" {
+		t.Fatal("an untyped payload has no marker")
+	}
+}

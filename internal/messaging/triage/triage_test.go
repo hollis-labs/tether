@@ -50,3 +50,30 @@ func TestClassify(t *testing.T) {
 		t.Fatal("Wakes")
 	}
 }
+
+// CW-20261114-0116: an assistant's mail on someone's behalf is action, never human, whatever attention it
+// sets or whoever it is addressed to; the operator himself, and a user sender, are unaffected.
+func TestOnBehalfOfIsNeverHuman(t *testing.T) {
+	typed := func(env string) Input {
+		return Input{From: "msg://agent/agent-mux/agt_hg8p0txi1y", Kind: messaging.MsgKindNotice, ContentType: envelope.ContentType, Payload: []byte(env), RecipientHandle: "@worker"}
+	}
+	for name, env := range map[string]string{
+		"attention human":       `{"kind":"message","to":["@worker"],"body":"x","attention":"human","on_behalf_of":"@chrispian","drafted_by":"assistant"}`,
+		"chrispian a recipient": `{"kind":"message","to":["@worker","@chrispian"],"body":"x","on_behalf_of":"@chrispian"}`,
+		"attention none":        `{"kind":"update","to":["@worker"],"body":"x","attention":"none","on_behalf_of":"@chrispian"}`,
+	} {
+		if r := Classify(typed(env)); r.Class != Action || r.Reason != "on_behalf_of" {
+			t.Fatalf("%s: %+v", name, r)
+		}
+	}
+	op := typed(`{"kind":"message","to":["@worker"],"body":"x","on_behalf_of":"@someone"}`)
+	op.From = OperatorURN
+	if r := Classify(op); r.Class != Human || r.Reason != "from_operator" {
+		t.Fatalf("the operator: %+v", r)
+	}
+	user := typed(`{"kind":"message","to":["@worker"],"body":"x","attention":"human","on_behalf_of":"@chrispian"}`)
+	user.From = "msg://user/local/someone"
+	if r := Classify(user); r.Class != Human || r.Reason != "attention_human" {
+		t.Fatalf("a user sender: %+v", r)
+	}
+}
