@@ -1,0 +1,1 @@
+- Address aliases follow-ups (CW-20261114-0068): a wake finds a session bound to any form of an aliased mailbox, and the routed-reply and delivery identity policy treats every form of a participant's address as that participant.

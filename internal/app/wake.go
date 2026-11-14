@@ -808,6 +808,33 @@ func nackRetryable(ctx context.Context, ds delivery.Store, lease delivery.LeaseR
 // no per-call explicit session_id override the way notify does -- it only
 // ever works from the delivery's own recorded recipient address.
 func resolveWakeTarget(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, to messaging.Address) (string, error) {
+	id, err := resolveWakeTargetExact(ctx, st, reg, rt, to)
+	if id != "" || err != nil || st == nil || to.Kind != messaging.KindAgent {
+		return id, err
+	}
+	// Mail stored under a canonical address is also owed to a session bound to
+	// one of its aliases, and a delivery queued for an address before it became
+	// an alias is owed to the canonical address's session (CW-20261114-0068).
+	forms, ferr := st.AddressForms(ctx, to.URN())
+	if ferr != nil || len(forms) < 2 {
+		return "", nil
+	}
+	for _, f := range forms {
+		if f == to.URN() {
+			continue
+		}
+		a, perr := messaging.ParseURN(f)
+		if perr != nil || a.Kind != messaging.KindAgent {
+			continue
+		}
+		if id, err := resolveWakeTargetExact(ctx, st, reg, rt, a); id != "" && err == nil {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func resolveWakeTargetExact(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, to messaging.Address) (string, error) {
 	if rt.resolveOutpost != nil {
 		if id, matched := rt.resolveOutpost(ctx, to); matched {
 			return id, nil

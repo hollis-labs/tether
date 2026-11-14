@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,6 +41,28 @@ type IdentityPolicy struct {
 	// publish to a channel on behalf of a session without holding any scope.
 	// The rule is explicit: an empty list authorizes no internal publisher.
 	InternalPublishers []string
+	// AddressForms returns every form of an address's mailbox (canonical plus
+	// aliases). Nil, or an error, leaves the address as its only form.
+	AddressForms func(ctx context.Context, urn string) ([]string, error)
+}
+
+// withForms adds every alias form of each address, so a principal that owns one
+// form of an aliased address is a participant under the others.
+func (p *IdentityPolicy) withForms(ctx context.Context, addrs []string) []string {
+	if p.AddressForms == nil {
+		return addrs
+	}
+	out := slices.Clone(addrs)
+	for _, a := range addrs {
+		if forms, err := p.AddressForms(ctx, a); err == nil {
+			for _, f := range forms {
+				if !slices.Contains(out, f) {
+					out = append(out, f)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // NewIdentityPolicy returns the policy with the turn router explicitly
@@ -113,7 +136,7 @@ func mayActAsAny(caller identity.Principal, addrs []string) bool {
 // or holding message.send_as.
 func (p *IdentityPolicy) Reply() ReplyAuthorization {
 	return func(ctx context.Context, caller identity.Principal, parent gomsg.Envelope, _ string) error {
-		if mayActAsAny(caller, routedParticipants(parent)) {
+		if mayActAsAny(caller, p.withForms(ctx, routedParticipants(parent))) {
 			return nil
 		}
 		return p.finding(ctx, caller, eventReplyUnauthorized, eventReplyRefused, ErrNotParticipant)
@@ -133,7 +156,7 @@ func (p *IdentityPolicy) Delivery() DeliveryAuthorization {
 				addrs = append(addrs, "msg://session/local/"+sid)
 			}
 		}
-		if mayActAsAny(caller, addrs) {
+		if mayActAsAny(caller, p.withForms(ctx, addrs)) {
 			return nil
 		}
 		return p.finding(ctx, caller, eventDeliveryUnauthorized, eventDeliveryRefused, ErrNotParticipant)
@@ -180,6 +203,9 @@ func (p *IdentityPolicy) internalPublisher(urn string) bool {
 func (s *Service) InstallIdentityPolicy(policy *IdentityPolicy) {
 	if policy == nil || policy.Mode == identity.Off || policy.Mode == "" {
 		return
+	}
+	if policy.AddressForms == nil && s.Store != nil {
+		policy.AddressForms = s.Store.AddressForms
 	}
 	s.ReplyAuthorization = policy.Reply()
 	s.DeliveryAuthorization = policy.Delivery()
