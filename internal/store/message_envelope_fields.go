@@ -25,7 +25,7 @@ func (s *Store) messageEnvelopeFields(ctx context.Context, messageID string) map
 		return nil
 	}
 	fields := map[string]any{"envelope_kind": string(e.Kind)}
-	for k, v := range map[string]string{"attention": string(e.Attention), "awaiting": e.Awaiting, "intent": e.Intent, "re": e.Re} {
+	for k, v := range map[string]string{"attention": string(e.EffectiveAttention()), "awaiting": e.Awaiting, "intent": e.Intent, "re": e.Re} {
 		if v != "" {
 			fields[k] = v
 		}
