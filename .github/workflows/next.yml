@@ -23,6 +23,22 @@ jobs:
     defaults:
       run:
         working-directory: next
+    # The Postgres leg (port plan 13.1(3)): a throwaway Postgres 17 for the dialect tests. Trust auth on a
+    # container that exists only for this job, so no credential is involved.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SUBSTRATE_TEST_POSTGRES_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v5
         with:
@@ -39,6 +55,8 @@ jobs:
           go run github.com/hollis-labs/substrate/cmd/substrate generate -f cmd/tether/substrate.yaml
           git diff --exit-code -- cmd/tether/substrate_wiring.go
       - run: go test -race ./...
+      - name: the Postgres leg ran (a skip here is a failure)
+        run: go test -count=1 -v -run 'TestPostgresSchemaMatchesSQLite|TestTriggerParity|TestMessagesSeqAcceptance' ./internal/migrate | tee /tmp/pg-leg.txt && ! grep -q -- '--- SKIP' /tmp/pg-leg.txt
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4

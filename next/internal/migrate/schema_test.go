@@ -40,7 +40,51 @@ var excluded = map[string]string{
 
 // newOnly names objects only the new database has, with the reason.
 var newOnly = map[string]string{
-	"goose_db_version": "the database module's goose version table",
+	"goose_db_version":    "the database module's goose version table",
+	"idx_messages_seq":    "00002: messages.seq is unique (plan 13.1)",
+	"messages_assign_seq": "00002: SQLite assigns messages.seq to a new row (Postgres uses an identity column)",
+}
+
+// transform is a table whose new shape differs from the old one by design: exactly the listed columns
+// are added (by a later migration, so they are last), together with their indexes. migrate-from fills
+// them; everything else about the table must still equal the old schema.
+type transform struct {
+	why     string
+	columns map[string]string // added column -> the text ALTER TABLE ADD COLUMN appends to the table's SQL
+	indexes []string
+}
+
+var transforms = map[string]transform{
+	"messages": {
+		why: "plan 13.1: an explicit seq holding exactly the old rowid replaces the implicit rowid as the " +
+			"mailbox watch cursor (seq = old rowid, verified by VerifyMessagesSeq)",
+		columns: map[string]string{"seq": ", seq INTEGER NOT NULL DEFAULT 0"},
+		indexes: []string{"idx_messages_seq"},
+	},
+}
+
+// withoutTransform removes a transform table's added columns and indexes from its new description, so
+// what remains must equal the old one.
+func withoutTransform(desc []string, tr transform) []string {
+	var out []string
+outer:
+	for _, l := range desc {
+		for col, sqlText := range tr.columns {
+			if strings.HasPrefix(l, "sql=") {
+				l = strings.Replace(l, normSQL(sql.NullString{String: sqlText, Valid: true}), "", 1)
+			}
+			if strings.HasPrefix(l, "column ") && strings.Contains(l, " name="+col+" ") {
+				continue outer
+			}
+		}
+		for _, idx := range tr.indexes {
+			if strings.HasPrefix(l, "index ") && (strings.Contains(l, " name="+idx+" ") || strings.HasPrefix(l, "index "+idx+" key ")) {
+				continue outer
+			}
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // Not covered by this test, by design (each is recorded in docs/architecture.md):
@@ -300,6 +344,16 @@ func TestSchemaEqualsOld(t *testing.T) {
 			t.Errorf("%s is excluded (%s) but the new schema creates it", name, why)
 		}
 	}
+	for name, tr := range transforms {
+		if _, ok := om[name]; !ok {
+			t.Errorf("transform names %s (%s), but the old migrations do not create it", name, tr.why)
+		}
+		for _, idx := range tr.indexes {
+			if _, ok := newOnly[idx]; !ok {
+				t.Errorf("transform %s adds index %s, which must also be on the new-only allowlist", name, idx)
+			}
+		}
+	}
 	for name, why := range newOnly {
 		if _, ok := nm[name]; !ok {
 			t.Errorf("new-only %s (%s) is missing from the new database", name, why)
@@ -315,6 +369,9 @@ func TestSchemaEqualsOld(t *testing.T) {
 			continue
 		}
 		a, b := describe(t, old, o), describe(t, nw, n)
+		if tr, ok := transforms[o.name]; ok {
+			b = withoutTransform(b, tr)
+		}
 		if strings.Join(a, "\n") != strings.Join(b, "\n") {
 			t.Errorf("%s %s differs:\nold:\n  %s\nnew:\n  %s", o.typ, o.name, strings.Join(a, "\n  "), strings.Join(b, "\n  "))
 		}
