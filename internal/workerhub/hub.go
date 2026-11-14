@@ -76,6 +76,11 @@ type connection struct {
 	// connection's mail bindings are dropped only after any bind it was
 	// answering has completed, as when binds ran on the reader.
 	controlDone chan struct{}
+	// ingestDone is closed when the ingest goroutine has finished (or was never
+	// started). A replacement connection's ingest waits for it, so an Event
+	// still running for the old connection never races the new one's frames of
+	// the same session.
+	ingestDone chan struct{}
 	// droppedFrames counts frames dropped on a full queue; timeouts is the run of
 	// Sends that ran out of time with no answer; lastFrame (unix nanos) is when
 	// the reader last received anything.
@@ -83,6 +88,11 @@ type connection struct {
 	timeouts      atomic.Int32
 	lastFrame     atomic.Int64
 }
+
+// ingestHandoverWait bounds how long a replacement connection's ingest waits for the old one's to finish.
+// The app's ingest lock still serializes Events past it; the wait keeps the old connection's last frames
+// ahead of the new connection's.
+var ingestHandoverWait = 30 * time.Second
 
 // Queue sizes for one worker connection. ingestQueue absorbs a burst of output
 // from every session on the worker; past it, frames are dropped and replayed.
@@ -124,6 +134,9 @@ type Hub struct {
 	db          *sql.DB
 	mu          sync.RWMutex
 	connections map[string]*connection
+	// lastIngest is each worker's most recent connection's ingestDone (under mu): a new connection's
+	// ingest waits for it whether the old connection was replaced or had already gone.
+	lastIngest map[string]<-chan struct{}
 	// Event is installed by the app for worker-bound output/state ingestion. It
 	// runs on the connection's ingest goroutine, never on its reader.
 	Event func(string, workerwire.Frame) error
@@ -133,7 +146,7 @@ type Hub struct {
 }
 
 func New(db *sql.DB) *Hub {
-	return &Hub{db: db, connections: make(map[string]*connection), mail: map[string]*mailBinding{}}
+	return &Hub{db: db, connections: make(map[string]*connection), lastIngest: map[string]<-chan struct{}{}, mail: map[string]*mailBinding{}}
 }
 func (h *Hub) Close() {
 	h.mu.RLock()
@@ -243,7 +256,7 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := &connection{ws: ws, pending: make(map[string]chan workerwire.Frame), inventory: make(map[string]workerwire.Session), replaying: make(map[string]bool), done: make(chan struct{}),
-		ingest: make(chan workerwire.Frame, ingestQueue), control: make(chan workerwire.Frame, controlQueue), dropped: map[string]bool{}, controlDone: make(chan struct{})}
+		ingest: make(chan workerwire.Frame, ingestQueue), control: make(chan workerwire.Frame, controlQueue), dropped: map[string]bool{}, controlDone: make(chan struct{}), ingestDone: make(chan struct{})}
 	c.features = hello.Features
 	c.hosts = hello.Hosts
 	c.restore = hello.Restore
@@ -256,6 +269,8 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	old := h.connections[id]
 	h.connections[id] = c
+	previous := h.lastIngest[id]
+	h.lastIngest[id] = c.ingestDone
 	h.mu.Unlock()
 	if old != nil {
 		_ = old.ws.Close()
@@ -268,6 +283,8 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 		close(c.done)
 		if controlStarted {
 			<-c.controlDone
+		} else {
+			close(c.ingestDone)
 		}
 		h.mu.Lock()
 		if h.connections[id] == c {
@@ -327,7 +344,7 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 	}()
 	controlStarted = true
 	go h.runControl(r.Context(), id, c)
-	go h.runIngest(id, c)
+	go h.runIngest(id, c, previous)
 	for {
 		var f workerwire.Frame
 		if ws.ReadJSON(&f) != nil {
@@ -395,7 +412,17 @@ func (c *connection) enqueue(f workerwire.Frame) {
 
 // runIngest applies a connection's session frames in order (Event), asks for a replay when one fails, and,
 // whenever the queue is drained, asks for a replay of every session whose frames were dropped.
-func (h *Hub) runIngest(id string, c *connection) {
+func (h *Hub) runIngest(id string, c *connection, previous <-chan struct{}) {
+	defer close(c.ingestDone)
+	if previous != nil {
+		select {
+		case <-previous:
+		case <-c.done:
+			return
+		case <-time.After(ingestHandoverWait):
+			log.Printf("workerhub: worker %s: the replaced connection's ingest is still running after %s; starting anyway", id, ingestHandoverWait)
+		}
+	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {

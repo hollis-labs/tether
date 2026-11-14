@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -226,5 +227,103 @@ func TestOneStuckCommandDoesNotBlockOthers(t *testing.T) {
 	}
 	if list, _ := hub.List(context.Background()); len(list) != 1 || list[0].DeliveryTimeouts != 0 {
 		t.Fatalf("an answer must end the run of timeouts: %+v", list)
+	}
+}
+
+// dialer connects the same enrolled worker device more than once (a reconnect).
+func dialer(t *testing.T, hub *workerhub.Hub, db *store.Store) func() *websocket.Conn {
+	t.Helper()
+	ids := identity.NewStore(db.DB())
+	expires := time.Now().Add(time.Hour)
+	token, err := ids.Mint(context.Background(), identity.Principal{ID: "msg://device/reconnect-worker", Kind: "device", Scopes: []string{identity.ScopeWorker}, ExpiresAt: &expires})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&daemon.Server{Identity: ids, Workers: hub, Config: daemon.Config{RemoteListener: daemon.RemoteListenerConfig{AllowedHosts: []string{"worker.test"}}}}).RemoteHandler("worker.test"))
+	t.Cleanup(server.Close)
+	return func() *websocket.Conn {
+		header := http.Header{}
+		header.Set("Host", "worker.test")
+		header.Set("Authorization", "Bearer "+token)
+		header.Set("Tether-Protocol", "1")
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+workerwire.ConnectPath, header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ws.Close() })
+		if err := ws.WriteJSON(workerwire.Frame{T: "hello", Proto: 1, Worker: &workerwire.Worker{Label: "reconnect-worker", Platform: "linux", Arch: "amd64"}}); err != nil {
+			t.Fatal(err)
+		}
+		var welcome workerwire.Frame
+		if err := ws.ReadJSON(&welcome); err != nil || welcome.T != "welcome" {
+			t.Fatalf("welcome: %+v %v", welcome, err)
+		}
+		go func() {
+			for {
+				var f workerwire.Frame
+				if ws.ReadJSON(&f) != nil {
+					return
+				}
+			}
+		}()
+		return ws
+	}
+}
+
+// @photon-review on #562: when a worker reconnects while the old connection's ingest is still inside an
+// Event, the new connection's ingest waits for it, so frames of one session are never applied by two
+// connections at once and the old connection's last frame stays ahead of the new one's.
+func TestReconnectIngestWaitsForTheOldConnection(t *testing.T) {
+	hub, db := openHub(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	var order []string
+	hub.Event = func(_ string, f workerwire.Frame) error {
+		if string(f.Data) == "old" {
+			close(started)
+			<-release
+		}
+		mu.Lock()
+		order = append(order, string(f.Data))
+		mu.Unlock()
+		return nil
+	}
+	dial := dialer(t, hub, db)
+	a := dial()
+	if err := a.WriteJSON(workerwire.Frame{T: "output", Session: "s", Seq: 1, Data: []byte("old")}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the old connection never ingested")
+	}
+	b := dial() // replaces a while its Event is still running
+	if err := b.WriteJSON(workerwire.Frame{T: "output", Session: "s", Seq: 2, Data: []byte("new")}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	early := len(order)
+	mu.Unlock()
+	if early != 0 {
+		t.Fatalf("the new connection ingested while the old one's Event was running: %v", order)
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		got := append([]string(nil), order...)
+		mu.Unlock()
+		if len(got) == 2 {
+			if got[0] != "old" || got[1] != "new" {
+				t.Fatalf("order = %v", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("order = %v", got)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
