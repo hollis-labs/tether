@@ -97,6 +97,19 @@ when its selected runtime executable and installed unit provenance verify;
 an unverified managed-launch hint reports `none`. Ordinary foreground startup
 keeps `foreground`. No host inventory or private paths enter the descriptor.
 
+## Session hosts across a worker restart
+
+Each session leaves a host directory under `<worker root>/hosts/`. On start the
+worker re-adopts the hosts whose shim still answers, before it reports ready.
+A directory with no `meta.json`, no launch descriptor, or a control socket that
+is missing or refuses is dead: it is skipped without reading its output.
+Dead directories idle for 24 hours are moved, never deleted, to
+`<worker root>/hosts-dead/<YYYYMMDD>/` (one whose recorded host pid is still
+alive stays). Move one back into `hosts/` to restore it on the next start, or
+remove `hosts-dead/` when it is no longer wanted. The worker logs
+`restore: live=… dead_skipped=… pruned=… failed=…` and sends the same counts
+in its hello, which the hub logs (CW-20261114-0056).
+
 ## Update and switch back
 
 Updates are manual. Transfer the second exact archive and checksums, then:

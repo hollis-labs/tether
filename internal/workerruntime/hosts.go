@@ -61,14 +61,8 @@ func (e *Executor) ScanHosts() []workerwire.Host {
 			h.State = live.State
 			live.mu.Unlock()
 		}
-		newest := time.Time{}
-		for _, name := range []string{"meta.json", "output.jsonl", "host.log", "."} {
-			if fi, err := os.Stat(filepath.Join(path, name)); err == nil && fi.ModTime().After(newest) {
-				newest = fi.ModTime()
-			}
-		}
-		if !newest.IsZero() {
-			h.AgeSec = int64(time.Since(newest).Seconds())
+		if age, ok := hostDirAge(path, time.Now()); ok {
+			h.AgeSec = int64(age.Seconds())
 		}
 		if pids := pgrep("-f", "shim-host --launch "+filepath.Join(path, "launch.json")); len(pids) > 0 {
 			h.HostPID, h.HostAlive = pids[0], true
