@@ -192,3 +192,30 @@ func TestStopGatePanicFailsOpen(t *testing.T) {
 		t.Fatalf("out=%q err=%q", out.String(), errb.String())
 	}
 }
+
+// 25 pending items, 24 of them already blocked on (or stale): the newest still blocks.
+func TestStopGateNewestBlocksBehindABacklog(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "stop-gate.state")
+	now := time.Now().UTC()
+	var items []pendingReply
+	var seen []string
+	items = append(items, pendingReply{MessageID: "new", Kind: "question", From: "x", CreatedAt: now})
+	for i := 0; i < 24; i++ {
+		id := fmt.Sprintf("b%02d", i)
+		created := now.Add(-time.Duration(i+1) * time.Minute)
+		if i >= 12 {
+			created = now.Add(-StopGateWindow - time.Duration(i)*time.Hour) // stale
+		} else {
+			seen = append(seen, id) // already blocked on
+		}
+		items = append(items, pendingReply{MessageID: id, Kind: "question", From: "x", CreatedAt: created})
+	}
+	if err := os.WriteFile(state, []byte(strings.Join(seen, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := runGateState(t, &gateHub{result: pendingJSON(items...)}, `{"stop_hook_active":false}`, state)
+	if !strings.Contains(out, `"block"`) || !strings.Contains(out, "new question") || strings.Contains(out, "b00") || !strings.Contains(out, "1 typed message") {
+		t.Fatalf("decision = %q", out)
+	}
+}

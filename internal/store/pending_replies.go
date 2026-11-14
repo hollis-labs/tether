@@ -38,7 +38,9 @@ func (s *Store) PendingReplies(ctx context.Context, agentURNs []string, handle s
 		limit = 50
 	}
 	// NeedsReply in SQL, so a backlog of unread updates cannot crowd real
-	// questions out of the limit; the Go check below is the same rule.
+	// questions out of the limit; the Go check below is the same rule. Newest
+	// first, so a backlog of stale or already-gated items never pushes a new one
+	// past the limit (the Stop gate blocks on the newest).
 	//nolint:gosec // G202: `in` is only "?" placeholders built from a count; every value is a bound argument
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.from_urn, coalesce(m.payload,''), m.created_at FROM messages m
  WHERE m.to_urn IN (`+in+`) AND m.content_type=? AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
@@ -46,7 +48,7 @@ func (s *Store) PendingReplies(ctx context.Context, agentURNs []string, handle s
    AND (json_extract(m.payload,'$.awaiting') = ?
         OR (coalesce(json_extract(m.payload,'$.awaiting'),'') = '' AND json_extract(m.payload,'$.kind') IN ('question','decision','approval_request')))
    AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.in_reply_to=m.id AND r.from_urn IN (`+in+`))
- ORDER BY m.created_at LIMIT ?`, pendingArgs(agentURNs, handle, limit)...)
+ ORDER BY m.created_at DESC, m.id DESC LIMIT ?`, pendingArgs(agentURNs, handle, limit)...)
 	if err != nil {
 		return nil, err
 	}

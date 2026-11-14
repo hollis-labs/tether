@@ -50,7 +50,8 @@ func TestPendingRepliesNeedTheAgentsAnswer(t *testing.T) {
 	for _, p := range got {
 		ids = append(ids, p.MessageID)
 	}
-	if len(ids) != 4 || ids[0] != "old" || ids[1] != "q1" || ids[2] != "u2" || ids[3] != "q4" || got[0].CreatedAt.IsZero() || got[1].Subject != "Ship?" || got[1].From != archie {
+	// Newest first.
+	if len(ids) != 4 || ids[0] != "q4" || ids[1] != "u2" || ids[2] != "q1" || ids[3] != "old" || got[0].CreatedAt.IsZero() || got[2].Subject != "Ship?" || got[2].From != archie {
 		t.Fatalf("pending = %+v", got)
 	}
 }
@@ -75,5 +76,25 @@ func TestPendingRepliesAreNotCrowdedOutByUnreadUpdates(t *testing.T) {
 	got, err := db.PendingReplies(ctx, []string{me}, "@me", 20)
 	if err != nil || len(got) != 1 || got[0].MessageID != "late-q" {
 		t.Fatalf("pending = %+v err=%v", got, err)
+	}
+}
+
+// 25 pending questions and a limit of 20: the newest is always in the page.
+func TestPendingRepliesNewestFirstUnderTheLimit(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	me := "msg://agent/agent-mux/agt_me"
+	q, _ := json.Marshal(envelope.Envelope{Kind: envelope.KindQuestion, Body: "?", Options: []envelope.Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}})
+	start := time.Now().UTC().Add(-48 * time.Hour)
+	for i := 0; i < 25; i++ {
+		at := start.Add(time.Duration(i) * time.Hour)
+		if _, err := db.db.Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,payload,content_type,created_at) VALUES (?,?,?,?,?,?,?)`,
+			fmt.Sprintf("q%02d", i), "request", "msg://agent/agent-mux/agt_x", me, string(q), envelope.ContentType, at.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.PendingReplies(ctx, []string{me}, "@me", 20)
+	if err != nil || len(got) != 20 || got[0].MessageID != "q24" || got[19].MessageID != "q05" {
+		t.Fatalf("page = %d items, first %v, err %v", len(got), got, err)
 	}
 }
