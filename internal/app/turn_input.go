@@ -198,3 +198,10 @@ func humanOriginated(ctx context.Context) bool {
 	}
 	return class == store.ClassOperator
 }
+
+// fyiRidesAlong reports whether a turn may carry the fyi line: a real human
+// prompt, never a slash command (/clear, /compact, ...), which the provider
+// would read as part of the command.
+func fyiRidesAlong(ctx context.Context, text string) bool {
+	return humanOriginated(ctx) && !strings.HasPrefix(strings.TrimSpace(text), "/")
+}

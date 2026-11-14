@@ -65,7 +65,7 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 	// Pending fyi mail rides along on a human-originated turn as one line
 	// (CW-20261114-0017); it is marked surfaced only once the turn was taken.
 	commit := func() {}
-	if s.mailTriager != nil && humanOriginated(ctx) {
+	if s.mailTriager != nil && fyiRidesAlong(ctx, text) {
 		var line string
 		if line, commit = s.mailTriager.fyiLine(ctx, s.seatPolicyForSession(id)); line != "" {
 			text += "\n\n" + line

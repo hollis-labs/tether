@@ -52,36 +52,34 @@ type Result struct {
 	AutoSettle bool
 }
 
-// Classify applies the rules, first match wins:
+// Classify applies the shared order human > action > read > fyi (the same as
+// the local tether-mail triage): the first class with a matching rule wins, so
+// attention=none never overrides an action rule.
 //
-//	the operator wrote                                  human  (from_operator)
-//	envelope attention=human                            human  (attention_human)
-//	envelope attention=none                             read   (attention_none), auto-settled
-//	urgency high                                        action (urgency_high)
-//	envelope awaiting this seat                         action (awaiting_recipient)
-//	envelope question|decision|approval_request|
-//	         escalation|handoff                         action (envelope_kind)
-//	envelope update|message                             fyi    (envelope_fyi)
-//	untyped request|escalation|handoff                  action (transport_kind)
-//	untyped urgency very-low                            read   (urgency_very_low), not settled
-//	untyped notice|status_update|response               fyi    (transport_fyi)
-//	anything else                                       action (default)
+//	human   the operator wrote                                  (from_operator)
+//	        envelope attention=human (as set by the sender, or   (attention_human)
+//	        the default when the operator is to/awaiting)
+//	action  urgency high                                        (urgency_high)
+//	        envelope awaiting this seat                         (awaiting_recipient)
+//	        envelope question|decision|approval_request|
+//	                 escalation|handoff                         (envelope_kind)
+//	        untyped request|escalation|handoff                  (transport_kind)
+//	read    envelope attention=none (explicit), auto-settled    (attention_none)
+//	        untyped urgency very-low, left unread               (urgency_very_low)
+//	fyi     envelope update|message                             (envelope_fyi)
+//	        untyped notice|status_update|response               (transport_fyi)
+//	action  anything else                                       (default)
 func Classify(in Input) Result {
-	if in.From == OperatorURN {
-		return Result{Class: Human, Reason: "from_operator"}
-	}
 	var env envelope.Envelope
 	typed := in.ContentType == envelope.ContentType && json.Unmarshal(in.Payload, &env) == nil && env.Kind != ""
-	if typed {
-		switch env.Attention {
-		case envelope.AttentionHuman:
-			return Result{Class: Human, Reason: "attention_human", Typed: true}
-		case envelope.AttentionNone:
-			return Result{Class: Read, Reason: "attention_none", Typed: true, AutoSettle: true}
-		case envelope.AttentionAgent:
-			// classified by kind below
-		}
+	// human
+	if in.From == OperatorURN {
+		return Result{Class: Human, Reason: "from_operator", Typed: typed}
 	}
+	if typed && env.EffectiveAttention() == envelope.AttentionHuman {
+		return Result{Class: Human, Reason: "attention_human", Typed: true}
+	}
+	// action
 	if in.Urgency == "high" {
 		return Result{Class: Action, Reason: "urgency_high", Typed: typed}
 	}
@@ -93,23 +91,35 @@ func Classify(in Input) Result {
 		case envelope.KindQuestion, envelope.KindDecision, envelope.KindApprovalRequest, envelope.KindEscalation, envelope.KindHandoff:
 			return Result{Class: Action, Reason: "envelope_kind", Typed: true}
 		case envelope.KindUpdate, envelope.KindMessage:
-			return Result{Class: FYI, Reason: "envelope_fyi", Typed: true}
+			// read or fyi below
 		}
-		return Result{Class: Action, Reason: "default", Typed: true}
-	}
-	switch in.Kind {
-	case messaging.MsgKindRequest, messaging.MsgKindEscalation, messaging.MsgKindHandoff:
-		return Result{Class: Action, Reason: "transport_kind"}
-	case messaging.MsgKindNotice, messaging.MsgKindStatusUpdate, messaging.MsgKindResponse:
-		if in.Urgency == "very-low" {
-			return Result{Class: Read, Reason: "urgency_very_low"}
+	} else {
+		switch in.Kind {
+		case messaging.MsgKindRequest, messaging.MsgKindEscalation, messaging.MsgKindHandoff:
+			return Result{Class: Action, Reason: "transport_kind"}
+		case messaging.MsgKindNotice, messaging.MsgKindStatusUpdate, messaging.MsgKindResponse:
+			// read or fyi below
 		}
-		return Result{Class: FYI, Reason: "transport_fyi"}
 	}
-	if in.Urgency == "very-low" {
+	// read
+	if typed && env.Attention == envelope.AttentionNone {
+		return Result{Class: Read, Reason: "attention_none", Typed: true, AutoSettle: true}
+	}
+	if !typed && in.Urgency == "very-low" {
 		return Result{Class: Read, Reason: "urgency_very_low"}
 	}
-	return Result{Class: Action, Reason: "default"}
+	// fyi
+	if typed && (env.Kind == envelope.KindUpdate || env.Kind == envelope.KindMessage) {
+		return Result{Class: FYI, Reason: "envelope_fyi", Typed: true}
+	}
+	if !typed {
+		switch in.Kind {
+		case messaging.MsgKindNotice, messaging.MsgKindStatusUpdate, messaging.MsgKindResponse:
+			return Result{Class: FYI, Reason: "transport_fyi"}
+		case messaging.MsgKindRequest, messaging.MsgKindEscalation, messaging.MsgKindHandoff:
+		}
+	}
+	return Result{Class: Action, Reason: "default", Typed: typed}
 }
 
 // Wakes reports whether the class may wake the seat at all.

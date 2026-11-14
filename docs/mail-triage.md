@@ -25,14 +25,21 @@ on.
 
 ## Classes
 
-| Class | When (first match) | What happens |
-| --- | --- | --- |
-| `human` | from the operator; envelope `attention: human` | wakes now, never capped |
-| `read` | envelope `attention: none` (marked read by the hub, `message.read`); untyped `urgency: very-low` (left unread) | no wake |
-| `action` | `urgency: high`; envelope `awaiting` this seat; envelope `question`, `decision`, `approval_request`, `escalation`, `handoff`; untyped `request`, `escalation`, `handoff` | wakes, at most once per `action_interval` per seat |
-| `fyi` | envelope `update`, `message`; untyped `notice`, `status_update`, `response` | no wake; rides along on the next human turn |
+Shared order **human > action > read > fyi** (the same as the local tether-mail
+triage): the first class with a matching rule wins, so `attention: none` never
+overrides an action rule.
 
-Rules live in `internal/messaging/triage` (`Classify`).
+| Order | Class | Rules | What happens |
+| --- | --- | --- | --- |
+| 1 | `human` | from the operator; envelope attention human (set by the sender, or the default when `@chrispian` is a recipient or awaited) | wakes now, never capped |
+| 2 | `action` | `urgency: high`; envelope `awaiting` this seat; envelope `question`, `decision`, `approval_request`, `escalation`, `handoff`; untyped `request`, `escalation`, `handoff` | wakes, at most once per `action_interval` per seat |
+| 3 | `read` | envelope `attention: none` set by the sender (marked read by the hub, `message.read`); untyped `urgency: very-low` (left unread) | no wake |
+| 4 | `fyi` | envelope `update`, `message`; untyped `notice`, `status_update`, `response` | no wake; rides along on the next human prompt |
+| - | `action` | anything else | as action |
+
+Rules live in `internal/messaging/triage` (`Classify`). A typed envelope stores
+`attention` only when the sender set it; readers derive the default
+(`EffectiveAttention`), so triage can tell an explicit `none` from no choice.
 
 ## Interrupt cap and batching
 
@@ -44,9 +51,9 @@ not wake again. Human mail is never capped or deferred.
 
 ## FYI ride-along
 
-On the seat's next human-originated turn (Tachyon chat, or an operator turn;
-never a mail wake, routed reply or another agent's turn), the hub appends one
-line:
+On the seat's next human-originated prompt (Tachyon chat, or an operator turn;
+never a mail wake, routed reply, another agent's turn, or a slash command such
+as `/clear` or `/compact`), the hub appends one line:
 
 ```
 FYI: 3 unread mail(s): @archie: Deploy done; @photon-review: Review posted; @x (tether_message_list to read them).

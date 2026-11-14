@@ -84,7 +84,7 @@ func TestMessagePostRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil || len(out.IDs) != 1 || out.ThreadID == "" {
 		t.Fatalf("post response: %v %s", err, raw)
 	}
-	if out.Envelope.From != "@photon-tether" || out.Envelope.Attention != envelope.AttentionAgent || out.Envelope.Schema != envelope.Schema {
+	if out.Envelope.From != "@photon-tether" || out.Envelope.Attention != "" || out.Envelope.EffectiveAttention() != envelope.AttentionAgent || out.Envelope.Schema != envelope.Schema {
 		t.Fatalf("stamped envelope = %+v", out.Envelope)
 	}
 	stored, err := h.db.MessagingStore().Get(t.Context(), out.IDs[0])

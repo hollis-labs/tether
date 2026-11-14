@@ -237,6 +237,18 @@ func TestMailTriageOffWakesAsBefore(t *testing.T) {
 	}
 }
 
+func TestFYINeverRidesOnASlashCommand(t *testing.T) {
+	ctx := withTurnInput(context.Background(), turnInputNote{Source: store.InputChatSend})
+	if !fyiRidesAlong(ctx, "what's next?") {
+		t.Fatal("a human prompt should carry the fyi line")
+	}
+	for _, cmd := range []string{"/clear", "/compact", "  /model opus", "/"} {
+		if fyiRidesAlong(ctx, cmd) {
+			t.Fatalf("fyi appended to %q", cmd)
+		}
+	}
+}
+
 func TestHumanOriginated(t *testing.T) {
 	ctx := context.Background()
 	if !humanOriginated(withTurnInput(ctx, turnInputNote{Source: store.InputChatSend})) {

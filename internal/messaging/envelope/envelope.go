@@ -135,8 +135,9 @@ func Decode(raw []byte) (Envelope, error) {
 	return e, nil
 }
 
-// Normalize fills the defaults: schema, and attention (human when the operator
-// is a recipient or awaited, else agent). It trims handles and text edges.
+// Normalize sets the schema and trims handles and text edges. It does not fill
+// attention: a stored envelope carries attention only when the sender set it,
+// so triage can tell an explicit choice from the default (EffectiveAttention).
 func (e *Envelope) Normalize() {
 	e.Schema = Schema
 	for i, h := range e.To {
@@ -145,12 +146,18 @@ func (e *Envelope) Normalize() {
 	e.Awaiting = strings.TrimSpace(e.Awaiting)
 	e.Subject = strings.TrimSpace(e.Subject)
 	e.Body = strings.TrimSpace(e.Body)
-	if e.Attention == "" {
-		e.Attention = AttentionAgent
-		if e.Awaiting == Operator || containsHandle(e.To, Operator) {
-			e.Attention = AttentionHuman
-		}
+}
+
+// EffectiveAttention is the attention the sender set, else the default: human
+// when the operator is a recipient or awaited, otherwise agent.
+func (e Envelope) EffectiveAttention() Attention {
+	if e.Attention != "" {
+		return e.Attention
 	}
+	if e.Awaiting == Operator || containsHandle(e.To, Operator) {
+		return AttentionHuman
+	}
+	return AttentionAgent
 }
 
 func containsHandle(hs []string, h string) bool {
