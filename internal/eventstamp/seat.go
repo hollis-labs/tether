@@ -171,7 +171,11 @@ func Summarize(kind string, p map[string]any, handle func(string) string) string
 	case kind == "session.cleared":
 		return "context cleared"
 	case kind == "mail.triaged":
-		return join(str(p, "handle"), "mail from", handleOf(str(p, "from")), "triaged", str(p, "class"), paren(str(p, "reason")))
+		from := str(p, "from_handle")
+		if from == "" {
+			from = handleOf(str(p, "from"))
+		}
+		return join(str(p, "handle"), "mail from", from, "triaged", str(p, "class"), paren(str(p, "reason")))
 	case kind == "seat.gate_blocked":
 		return join(str(p, "handle"), fmt.Sprintf("stop gate blocked the turn on %d pending message(s)", num(p, "count")))
 	case kind == "seat.status":

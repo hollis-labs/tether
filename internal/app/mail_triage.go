@@ -48,6 +48,18 @@ type mailTriage struct {
 	policy  func(to messaging.Address) seatPolicy
 	publish func(context.Context, events.Event) error
 	now     func() time.Time
+	// handle names an address (@handle) for summaries and the fyi line; nil
+	// uses its last path segment.
+	handle func(ctx context.Context, urn string) string
+}
+
+func (m *mailTriage) nameOf(ctx context.Context, urn string) string {
+	if m.handle != nil {
+		if h := m.handle(ctx, urn); h != "" {
+			return h
+		}
+	}
+	return handleOf(urn)
 }
 
 type triageDecision struct {
@@ -141,7 +153,7 @@ func (m *mailTriage) emit(ctx context.Context, env messaging.Envelope, pol seatP
 		return
 	}
 	raw, _ := json.Marshal(map[string]any{"message_id": env.ID, "recipient": env.To.URN(), "seat": pol.seat, "handle": pol.handle,
-		"class": string(res.Class), "reason": res.Reason, "typed": res.Typed, "from": env.From.URN()})
+		"class": string(res.Class), "reason": res.Reason, "typed": res.Typed, "from": env.From.URN(), "from_handle": m.nameOf(ctx, env.From.URN())})
 	e := events.Event{Scope: events.ScopeDaemon, Kind: KindMailTriaged, At: m.clock(), PayloadJSON: string(raw)}
 	e.Envelope.Dims.AgentURN = pol.seat
 	e.Envelope.Class.Category = "message"
@@ -191,7 +203,7 @@ func (m *mailTriage) fyiLine(ctx context.Context, pol seatPolicy) (string, func(
 		if i == 5 {
 			break
 		}
-		label := handleOf(it.From)
+		label := m.nameOf(ctx, it.From)
 		if it.Subject != "" {
 			label += ": " + it.Subject
 		}
@@ -229,7 +241,7 @@ func (s *Service) newMailTriage() *mailTriage {
 	if s.Store == nil {
 		return nil
 	}
-	m := &mailTriage{st: s.Store, policy: s.seatPolicyFor}
+	m := &mailTriage{st: s.Store, policy: s.seatPolicyFor, handle: s.senderHandle}
 	if s.Bus != nil {
 		m.publish = s.Bus.Publish
 	}
@@ -272,4 +284,35 @@ func (s *Service) seatPolicyForSession(sessionID string) seatPolicy {
 		return seatPolicy{}
 	}
 	return s.seatPolicyFor(messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: row.LogicalAgentID})
+}
+
+// senderHandle names an address as @handle: the operator is @chrispian; a
+// catalog agent (by urn: or agent-mux form) its handle: or id; otherwise the
+// registry's handle, then its tether id. "" when none applies.
+func (s *Service) senderHandle(ctx context.Context, urn string) string {
+	if urn == triage.OperatorURN {
+		return "@chrispian"
+	}
+	if cat := s.CurrentCatalog(); cat != nil {
+		for id, a := range cat.Agents {
+			if urn == a.URN || urn == "msg://agent/agent-mux/"+id {
+				if a.Handle != "" {
+					return "@" + a.Handle
+				}
+				return "@" + id
+			}
+		}
+	}
+	if s.Registry != nil {
+		if ids, err := s.Registry.LookupExternalIDsForURN(ctx, urn); err == nil {
+			for _, substrate := range []string{"handle", "tether"} {
+				for _, id := range ids {
+					if id.Substrate == substrate && id.ExternalID != "" {
+						return "@" + id.ExternalID
+					}
+				}
+			}
+		}
+	}
+	return ""
 }

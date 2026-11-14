@@ -75,6 +75,7 @@ func TestSeatSummaries(t *testing.T) {
 		{"seat.status", `{"handle":"@photon-tether","state":"blocked","reason":"waiting on the harness tag","owner":"@archie"}`, "@photon-tether blocked: waiting on the harness tag (owner @archie)"},
 		{"seat.status", `{"handle":"@photon-tether","state":"working"}`, "@photon-tether working"},
 		{"mail.triaged", `{"handle":"@builder-2","from":"msg://agent/agent-mux/agt_x","class":"fyi","reason":"envelope_fyi"}`, "@builder-2 mail from @agt_x triaged fyi (envelope_fyi)"},
+		{"mail.triaged", `{"handle":"@builder-2","from":"msg://agent/agent-mux/agt_lc7m97f5fp","from_handle":"@archie","class":"action","reason":"transport_kind"}`, "@builder-2 mail from @archie triaged action (transport_kind)"},
 		{"seat.gate_blocked", `{"handle":"@builder-2","message_ids":["m1","m2"],"count":2}`, "@builder-2 stop gate blocked the turn on 2 pending message(s)"},
 		{"message.sent", `{"from":"msg://agent/agent-mux/agt_lpy0gym4eh","to":["msg://agent/agent-mux/agt_lc7m97f5fp"],"msg_kind":"request","envelope_kind":"decision"}`, "@photon-tether sent decision to @archie"},
 	}

@@ -49,7 +49,7 @@ func TestPipelineMetadataGoldensAndCompatibilityBytes(t *testing.T) {
 		"session.compacted":               `{"source":"compact","trigger":"auto","pre_tokens":150000}`,
 		"seat.waiting":                    `{"waiting_for":"approval","request_id":"r1"}`,
 		"seat.unblocked":                  `{"waiting_for":"approval","request_id":"r1","resolution":"resolved"}`,
-		"mail.triaged":                    `{"message_id":"m1","recipient":"msg://agent/fixture/one","seat":"msg://agent/fixture/one","handle":"@one","class":"fyi","reason":"envelope_fyi","typed":true,"from":"msg://agent/fixture/two"}`,
+		"mail.triaged":                    `{"message_id":"m1","recipient":"msg://agent/fixture/one","seat":"msg://agent/fixture/one","handle":"@one","class":"fyi","reason":"envelope_fyi","typed":true,"from":"msg://agent/fixture/two","from_handle":"@two"}`,
 		"seat.gate_blocked":               `{"agent_urn":"msg://agent/fixture/one","handle":"@one","message_ids":["m1","m2"],"count":2}`,
 		"seat.status":                     `{"agent_urn":"msg://agent/fixture/one","handle":"@one","state":"blocked","reason":"waiting","ref":"task:CW-20261114-0013","owner":"@two","expires_at":"2026-11-14T05:00:00Z","set_by":"msg://agent/fixture/one"}`,
 	}
