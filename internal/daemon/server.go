@@ -242,6 +242,11 @@ type Server struct {
 	// app.Service at daemon startup.
 	EventRetention EventRetention
 
+	// GhostReaper, when set, serves POST /ghosts/reap: the ghost session, dead
+	// shim custody and stale worker cleanup (CW-20261114-0007). *app.Service
+	// satisfies it.
+	GhostReaper GhostReaper
+
 	// Hardening is optional; when set, /health reports what it returns. The
 	// composition root points it at the Service's launch-hardening status.
 	Hardening func() *HealthHardening
@@ -254,6 +259,12 @@ type Server struct {
 // is done, as Manager.Shutdown does.
 type SessionDrainer interface {
 	DrainSessions(ctx context.Context) error
+}
+
+// GhostReaper classifies (and, with apply, cleans up) ghost sessions, dead
+// shim custody and stale workers. The report is JSON-encoded as returned.
+type GhostReaper interface {
+	ReapGhostsReport(ctx context.Context, apply bool, backup string) (any, error)
 }
 
 // EventRetention is the narrow seam Run uses to drive the events retention
@@ -566,6 +577,9 @@ func (s *Server) handler(remote bool) http.Handler {
 		router.HandleFunc("GET /workers/activity", s.Workers.ActivityHTTP)
 		router.HandleFunc("POST /workers/grants", s.Workers.GrantsHTTP)
 		router.HandleFunc("POST /workers/reap", s.Workers.ReapHTTP)
+	}
+	if s.GhostReaper != nil {
+		router.HandleFunc("POST /ghosts/reap", s.handleGhostReap)
 	}
 	if remote {
 		router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -1153,4 +1167,30 @@ func serviceRequestModeLabel(mode string) string {
 		return api.ServiceRequestAuto
 	}
 	return api.ServiceRequestApproval
+}
+
+// handleGhostReap is POST /ghosts/reap {"apply": bool, "backup": "<path>"}: a dry run by default.
+func (s *Server) handleGhostReap(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Apply  bool   `json:"apply"`
+		Backup string `json:"backup"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+	}
+	report, err := s.GhostReaper.ReapGhostsReport(r.Context(), in.Apply, in.Backup)
+	if err != nil {
+		code := http.StatusInternalServerError
+		var bad interface{ BadRequest() bool }
+		if errors.As(err, &bad) && bad.BadRequest() {
+			code = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
 }
