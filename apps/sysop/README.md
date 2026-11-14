@@ -62,6 +62,23 @@ placeholder in place of the app.
 | `make install` | Build the embedded UI + install `tether_sysop` to `$GOBIN` |
 | `make test` / `make vet` | Go test / vet |
 
+## Reaching Cerberus
+
+Resource actions (start, stop, restart, status) go to Cerberus at the address
+in `CERBERUS_ADDR`, with the bearer token in the file `CERBERUS_TOKEN_FILE`
+names (re-read on every call). Unset, they go to the old daemon's socket,
+`~/.cerberus/cerberus.sock`, with no token, as before (CW-20261114-0145).
+
+| Setting | Value |
+|---|---|
+| `CERBERUS_ADDR` | `unix:/abs/path.sock`, or an `http(s)://` base URL. For the new Cerberus: `http://127.0.0.1:4786/api/cerberus/legacy` |
+| `CERBERUS_TOKEN_FILE` | a 0600 file holding an API key with scope `cerberus.operate` |
+
+Requests go to `<base>/resources/{id}/{action}` (`GET` for `status`, `POST`
+otherwise). Both the old `{success, error}` and the new `{code, message}`
+error bodies are reported. To roll back, unset both settings. The `cerberus`
+CLI fallback and `~/.cerberus/registry.yaml` are unchanged.
+
 ## Adding a page
 
 A page is generic kit chrome plus app-specific content. Add a component
