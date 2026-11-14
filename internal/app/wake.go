@@ -1082,11 +1082,8 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 // sweepWakeText reconstructs a mailbox-wake notification for a retried
 // delivery. The sweep has no access to the original notify call's
 // req.WakeText override (that is a per-call parameter, never persisted),
-// so every retried wake uses this generated form -- consistent with
-// mailboxWakeText's shape in internal/api/messages.go, duplicated rather
-// than shared to avoid an internal/app -> internal/api dependency for one
-// formatting helper (internal/app is already depended on BY internal/api's
-// production wiring, not the reverse).
+// so every retried wake uses the generated form, shared with
+// internal/api's mailboxWakeText through wakeintent.DefaultWakeText.
 func sweepWakeText(env messaging.Envelope) string {
 	urgency := env.Metadata["urgency"]
 	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
@@ -1095,8 +1092,7 @@ func sweepWakeText(env messaging.Envelope) string {
 	if urgency == "" {
 		urgency = "normal"
 	}
-	return fmt.Sprintf("**Mailbox wake (daemon-injected, retried)** — you have unread message(s) waiting. Latest message: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.\n\nPlease run your inbox-check procedure, process messages normally, and mark handled messages read or consumed according to your checklist. This is a delivery notification, not an instruction to abandon the current task unless your own procedure says the message is urgent. This reminder is the only push you get for these messages: marking a message read or consumed settles it, and a settled message is never woken again.",
-		env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency)
+	return wakeintent.DefaultWakeText(env, 0, urgency, true)
 }
 
 // mailWakeInputNote is the provenance of the mail being injected: the sender the hub stamped on

@@ -104,9 +104,11 @@ Notify response fields:
 | `wake_reason` | Observational, non-error disposition when the wake did not land: `busy`, `offline-race`, `stale-generation`, `claim-unavailable`, `marker-write-failed`. The delivery was released for retry, not lost. |
 | `wake_error` | In-band wake failure; the durable message still exists. |
 
-The default wake text tells the agent it has unread mail and asks it to run its
-normal inbox-check procedure. It does not require the agent to abandon current
-work unless the agent's own checklist treats the message as urgent.
+The default wake text is a pointer: it names the latest message (id, sender, kind,
+urgency) and tells the agent to read it from its inbox, and, if nothing needs Chrispian,
+to mark it read and end the turn silently. A mail check is not a turn to report on. The
+mail does not interrupt current work unless it is urgent. The hub's notify path and the
+sweep's retried wakes share one formatter (`wakeintent.DefaultWakeText`).
 
 ### One delivery path per hosted session
 
@@ -134,7 +136,7 @@ Settlement, so a handled message is never delivered again:
 Known risk: in a hosted session the hub wake is the only push. If the hub cannot wake it
 (no live session resolves for the address, the session stays busy, the hub is down) the
 message waits in the inbox until the agent pulls it; the wake retries on its own and the
-agent's inbox-check procedure is the backstop. Sessions started before this change do not
+agent's own inbox pull is the backstop. Sessions started before this change do not
 have the variable until they are relaunched.
 
 Deployment note: the stand-down lives in the tether-mail plugin, and a hosted Claude session
