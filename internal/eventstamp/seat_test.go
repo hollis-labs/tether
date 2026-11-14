@@ -74,6 +74,7 @@ func TestSeatSummaries(t *testing.T) {
 		{"daemon.started", ``, "daemon.started"},
 		{"seat.status", `{"handle":"@photon-tether","state":"blocked","reason":"waiting on the harness tag","owner":"@archie"}`, "@photon-tether blocked: waiting on the harness tag (owner @archie)"},
 		{"seat.status", `{"handle":"@photon-tether","state":"working"}`, "@photon-tether working"},
+		{"seat.gate_blocked", `{"handle":"@builder-2","message_ids":["m1","m2"],"count":2}`, "@builder-2 stop gate blocked the turn on 2 pending message(s)"},
 		{"message.sent", `{"from":"msg://agent/agent-mux/agt_lpy0gym4eh","to":["msg://agent/agent-mux/agt_lc7m97f5fp"],"msg_kind":"request","envelope_kind":"decision"}`, "@photon-tether sent decision to @archie"},
 	}
 	for _, tc := range cases {

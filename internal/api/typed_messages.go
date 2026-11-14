@@ -41,12 +41,17 @@ type SeatStore interface {
 // KindSeatStatus is published when a seat's declared status changes.
 const KindSeatStatus = "seat.status"
 
+// KindSeatGateBlocked is published when a seat's Stop gate blocked a turn's end
+// on pending typed messages (CW-20261114-0013).
+const KindSeatGateBlocked = "seat.gate_blocked"
+
 func (s *Server) registerTypedMessageRoutes(router *http.ServeMux) {
 	if s.MessageStore != nil {
 		router.HandleFunc("/messages/post", s.guardAs(s.handleMessagePost))
 	}
 	if s.Seats != nil {
 		router.HandleFunc("/messages/pending-replies", s.guardAs(s.handlePendingReplies))
+		router.HandleFunc("/messages/pending-replies/blocked", s.guardAs(s.handleStopGateBlocked))
 		router.HandleFunc("/status", s.guardAs(s.handleStatusSet))
 		router.HandleFunc("/status/", s.handleStatusGet)
 	}
@@ -700,4 +705,58 @@ func (s *Server) catalogURNFor(addr string) string {
 		}
 	}
 	return ""
+}
+
+// StopGateBlockedRequest is the POST /messages/pending-replies/blocked body.
+type StopGateBlockedRequest struct {
+	MessageIDs []string `json:"message_ids"`
+}
+
+// POST /messages/pending-replies/blocked?as=<seat>: the Stop gate reports that
+// it blocked a turn on these messages; the hub publishes seat.gate_blocked. An
+// observation only: it changes no message or delivery state.
+func (s *Server) handleStopGateBlocked(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req StopGateBlockedRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
+		return
+	}
+	if len(req.MessageIDs) == 0 || len(req.MessageIDs) > 20 {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "message_ids: 1 to 20 ids")
+		return
+	}
+	for _, id := range req.MessageIDs {
+		if id == "" || len(id) > 128 || strings.ContainsAny(id, " \r\n") {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "message_ids: each a message id")
+			return
+		}
+	}
+	as := stampedActor(r, r.URL.Query().Get("as"))
+	if as == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
+		return
+	}
+	ctx := r.Context()
+	seat := s.canonicalSeat(ctx, as)
+	handle := s.handleFor(ctx, seat)
+	if s.Bus != nil {
+		raw, _ := json.Marshal(map[string]any{"agent_urn": seat, "handle": handle, "message_ids": req.MessageIDs, "count": len(req.MessageIDs)})
+		e := events.Event{Scope: events.ScopeDaemon, Kind: KindSeatGateBlocked, At: time.Now().UTC(), PayloadJSON: string(raw)}
+		if p, ok := verifiedPrincipal(r); ok && p.SessionID != "" {
+			e.Scope, e.SessionID = events.ScopeSession, p.SessionID
+		}
+		e.Envelope.Dims.AgentURN = seat
+		e.Envelope.Class.Category = "state"
+		if err := s.Bus.Publish(context.WithoutCancel(ctx), e); err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"recorded": len(req.MessageIDs), "handle": handle})
 }

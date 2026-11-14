@@ -174,6 +174,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/messages/", "/messages/{id}/purge", map[string]string{"POST": maintainScope}),
 	routeScope("/messages/post", "/messages/post", map[string]string{"POST": messagesScope}),
 	routeScope("/messages/pending-replies", "/messages/pending-replies", map[string]string{"GET": readScope}),
+	routeScope("/messages/pending-replies/blocked", "/messages/pending-replies/blocked", map[string]string{"POST": messagesScope}),
 	routeScope("/status", "/status", map[string]string{"POST": messagesScope}),
 	routeScope("/status/", "/status/{handle}", map[string]string{"GET": readScope}),
 	routeScope("/messages/retention/candidates", "/messages/retention/candidates", map[string]string{"GET": maintainScope}),

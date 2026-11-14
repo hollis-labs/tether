@@ -388,3 +388,39 @@ func TestMessagePostStampsTheLogicalFormWithoutACatalogURN(t *testing.T) {
 		t.Fatalf("from = %v err=%v", stored.From, err)
 	}
 }
+
+// The Stop gate's report publishes seat.gate_blocked for the seat (canonical
+// address) with the blocked ids; it changes no message.
+func TestStopGateBlockedPublishesAnEvent(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "gate.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	cat := &config.Catalog{Agents: map[string]config.Agent{"photon-tether": {ID: "photon-tether", URN: meURN}}}
+	bus := &recordingBus{}
+	srv := httptest.NewServer(NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: db.MessagingStore(), Seats: db, Catalog: fixedCatalog{cat}, Bus: bus}))
+	t.Cleanup(srv.Close)
+	h := &typedHarness{srv: srv, db: db}
+	code, raw := h.do(t, http.MethodPost, "/messages/pending-replies/blocked?as=msg://agent/agent-mux/photon-tether", `{"message_ids":["m1","m2"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("report: %d %s", code, raw)
+	}
+	if len(bus.published) != 1 || bus.published[0].Kind != KindSeatGateBlocked {
+		t.Fatalf("published = %+v", bus.published)
+	}
+	var p struct {
+		AgentURN   string   `json:"agent_urn"`
+		Handle     string   `json:"handle"`
+		MessageIDs []string `json:"message_ids"`
+		Count      int      `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(bus.published[0].PayloadJSON), &p); err != nil || p.AgentURN != meURN || p.Handle != "@photon-tether" || p.Count != 2 || len(p.MessageIDs) != 2 {
+		t.Fatalf("payload = %s (%v)", bus.published[0].PayloadJSON, err)
+	}
+	for _, bad := range []string{`{"message_ids":[]}`, `{"message_ids":["a b"]}`, `{"ids":["m1"]}`} {
+		if code, _ := h.do(t, http.MethodPost, "/messages/pending-replies/blocked?as="+meURN, bad); code != http.StatusBadRequest {
+			t.Fatalf("%s accepted: %d", bad, code)
+		}
+	}
+}

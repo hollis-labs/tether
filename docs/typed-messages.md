@@ -109,6 +109,14 @@ block (`stop_hook_active`) is never gated. It fails open: an unreachable hub, a
 timeout (8 s), any error or a panic lets the turn end, with one line on the
 hook's stderr and exit 0.
 
+Each block is reported to the hub (`tether_stop_gate_report` /
+`POST /messages/pending-replies/blocked`), which publishes `seat.gate_blocked`
+`{agent_urn, handle, message_ids, count}` on the seat's session. The report is
+best effort: if it fails, the gate still blocks. To inspect a seat by hand:
+`stop-gate.state` (ids that blocked), `stop-gate.disabled` (why it was not
+planted) and `agent-hooks.json` (the planted hooks) are in the session's
+workspace directory on the worker host.
+
 Turning it on: `catalog.defaults.stop_gate` (fleet default, `false`) and an
 agent's `stop_gate: true|false` (overrides the default either way). The hub
 sends it only to workers that advertise `stop-gate`; an older worker launches

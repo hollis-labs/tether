@@ -53,7 +53,7 @@ var apiTopLevelPaths = []string{
 	"/messages", "/messages/", "/messages/inbox", "/messages/list",
 	"/messages/notify", "/messages/request", "/messages/retention/candidates",
 	"/messages/subscribe", "/messages/thread/", "/messages/watch",
-	"/messages/post", "/messages/pending-replies",
+	"/messages/post", "/messages/pending-replies", "/messages/pending-replies/blocked",
 	"/status", "/status/",
 	"/proxy/events",
 	"/routing/capabilities",
