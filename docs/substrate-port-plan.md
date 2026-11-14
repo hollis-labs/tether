@@ -31,10 +31,11 @@ depend on, or risk data, so they are asked, each with a recommendation.
 
 | # | Question | Options | Recommendation |
 |---|---|---|---|
-| D1 | **Issuer continuity.** Tether mints the fleet's agent/session tokens, non-expiring service tokens (`svc-` keys), device-pairing grants and workload trust (`internal/authissuer`), and serves `/.well-known/jwks.json` and a deny-list that other apps poll. Facts: Ed25519/EdDSA; ordinary tokens 15 min (max 60); the signing key rotates every 30 days with 2 h overlap; service tokens carry a 10-year `exp` on a separate `svc-` key and end only by revocation; device credentials are opaque `tth_` tokens stored hashed in `principals`; `auth/state.json` holds the deny-list, session grants, minted ids and service-token records. Torque, Tesseract and Tachyon refresh the JWKS and poll the deny-list every 30 s. Substrate's `identity` module issues its own key format (different `kid` derivation, 15 min to 1 h tokens, no non-expiring service tokens, retired keys expire). | (a) Explicit exception: the agent-identity issuer stays Tether app code (it is Tether's product, not app-local login); the signing key directory is carried verbatim, so every issued token keeps verifying; `identity` is selected only for Tether's own operator accounts and API keys. (b) Replace with `identity`: every agent, outpost, app and service token is reissued in the window. (c) Add Tether's token classes to Substrate `identity` first, then (b) without the reissue. | **(a).** Zero credential changes in the window; the ADR (security_direction_v1) already names Tether the one issuer. (c) is the long-term shape and becomes a Substrate task filed by this cell, not a precondition. The fleet-wide identity cutover is owned by @substrate-manager; this answer is coordinated with them directly (cc @archie), and S3 does not start until they agree. |
+| D1 | **Issuer continuity.** Tether mints the fleet's agent/session tokens, non-expiring service tokens (`svc-` keys), device-pairing grants and workload trust (`internal/authissuer`), and serves `/.well-known/jwks.json` and a deny-list that other apps poll. Facts: Ed25519/EdDSA; ordinary tokens 15 min (max 60); the signing key rotates every 30 days with 2 h overlap; service tokens carry a 10-year `exp` on a separate `svc-` key and end only by revocation; device credentials are opaque `tth_` tokens stored hashed in `principals`; `auth/state.json` holds the deny-list, session grants, minted ids and service-token records. Torque, Tesseract and Tachyon refresh the JWKS and poll the deny-list every 30 s. Substrate's `identity` module issues its own key format (different `kid` derivation, 15 min to 1 h tokens, no non-expiring service tokens, retired keys expire). | (a) Explicit exception: the agent-identity issuer stays Tether app code (it is Tether's product, not app-local login); the signing key directory is carried verbatim, so every issued token keeps verifying; `identity` is selected only for Tether's own operator accounts and API keys. (b) Replace with `identity`: every agent, outpost, app and service token is reissued in the window. (c) Add Tether's token classes to Substrate `identity` first, then (b) without the reissue. | **(a).** Zero credential changes in the window; the ADR (security_direction_v1) already names Tether the one issuer. (c) is the long-term shape and becomes a Substrate task filed by this cell, not a precondition. @substrate-manager agrees with (a) and with (c) as a later framework task (2026-11-14), with five conditions written into this plan (sections 3, 5, 7, 10): the issuer declared as the one exception under Gaps in `conversion-notes.md` with its open routes named; `auth/` and `state.json` carried byte for byte (checksums before and after, modes kept, old files unwritten), with rotation tested across the cutover boundary; operator accounts and keys through `identity`, with `LocalScopes` excluding any scope an agent must not hold; one verifying path through Substrate `auth`; no change to claims or to the issuer URL. **This is the fleet's trust root, so the decision is Chrispian's through @archie; S3 does not start before it.** No timeline exists for apps to move off Tether-issued tokens; the port assumes they stay. |
 | D2 | **HTTP paths.** Substrate puts every route under `/api/` with flat errors; Tether's routes are at the root (`/messages`, `/sessions/...`, `/registry/...`, `/auth/...`) with Tether's typed error envelope (ADR 0010, `docs/api/README.md`). They are called by outposts (`/worker/v1/connect`, `/auth/token`, `/auth/pair/exchange`, remote `/mcp`), by `go-tether-client` and its consumers (Nanite, Hadron, Tangent, Cerberus service tokens on `POST /events`, `/messages`, `/messages/notify`), and by every app that polls `/.well-known/jwks.json` and `/auth/denylist`. | (a) Move to `/api/tether/...` with flat errors; every client changes in the same window (a `go-tether-client` major plus a bump in each consumer, all shipped together, all rolled back together). (b) The client API is Tether's wire protocol and is protocol-fixed (the exception the clean-break decision already makes for A2A): kept at its paths and envelope as declared `httphost` mounts that verify their own callers through the auth module; only routes new to the port (operator identity, setup) live under `/api/`. Moving the client API to `/api/` is a later, versioned change made client by client. | **(b).** Tether is cut over last and is called by every app; (a) turns one app's cutover into a synchronized release of six or more apps with a joint rollback. (b) keeps the window to one app. The mount list is closed and tested (every mount named, every route on it scoped by Tether's own check). |
 | D3 | **LLM gateway data.** The gateway is out of scope (Station/Relay replaced it), but its tables (`ai_events` and the budget/usage tables) hold history. | (a) Not migrated into new Tether; archived as a standalone SQLite file next to the moved-aside database, kept until the owner deletes it. (b) Migrated and unused. | **(a).** No row is deleted: the archive is a verified copy (counts, EXCEPT both ways). |
 | D4 | **sysop** (`apps/sysop`, the `hub-tether-sysop` unit, a Vite UI on a loopback port). | (a) Not ported; the unit is stopped at cutover and left installed for rollback; a GUI port is a separate later task. (b) Ported in this wave by a GUI agent. | **(a)** unless the client list shows daily use. |
+| D6 | **Socket admission.** Live `identity.mode` is `observe`: callers on the unix socket (the planted `tether mcp --forward-daemon`, `mailbox watch`, the CLI, `go-tether-client` over UDS) are admitted even with no token or a stale one; the remote TCP listener always requires a device credential. Substrate `auth.mode: enforce` on the socket would refuse the first group. | (a) Keep today's posture per listener: the socket at Substrate `permissive` (log what enforce would refuse, refuse nothing: the same contract as `observe`), the remote listener enforcing; enforcing the socket is a later change made once the client list proves every socket caller presents a verifiable credential. (b) Enforce on both at cutover. | **(a).** No admission change in the window. If the auth module cannot hold a different mode per listener, a `substrate-gap` task is filed and the remote listener's enforcement is a tested check inside its mounts, as it is today. |
 | D5 | **Repository.** Same repo `hollis-labs/tether`, long-lived branch `substrate-port` (created 2026-11-14 from `main` at `f6c37bfa`), or a new repo. | same repo / new repo | **Same repo** (archie's ruling allows either): history, issues, CI secrets and `tether-release` stay; the new tree lives beside the old one on the branch (section 2). |
 
 ## 1. What runs today (read from the hub host, names only)
@@ -97,7 +98,7 @@ An older layout (`~/.tether/state/tether.db`, 387 MB) exists; the inventory says
 - **Photon coordination.** The photon cell lands messaging PRs on `main` now. Through @archie: photon tags its
   PRs' Torque tasks `carry:mig-tether`; the messaging slices (S6, S7) start after the last photon messaging PR
   that is in flight on the day the slice starts, and the ledger catches anything later. Schema changes on `main`
-  (new migrations `0099+`) are the high-risk carries: each one gets a ledger row naming the transform in the
+  (new migrations `0102+`; `0099`-`0101` already exist at `f6c37bfa` and are in S1's squash) are the high-risk carries: each one gets a ledger row naming the transform in the
   migration tool (S12) as well as the new schema. Known in flight on 2026-11-14: address aliases #554 and #555
   (CW-20261114-0067/-0068, a new canonical-address model: a schema and a wake-path change), and the open PRs
   #556-#559 (session reaping, dead hosts, hook permissions, input triage). Each gets a ledger row when it lands. The branch `fix/gateway-010-acceptance-findings` named in the task landed as #473 (squash-merged; its head `d74467fb` is
@@ -127,12 +128,22 @@ next/
   (catalog root, state roots, retention days, ingest flags, mcp upstream table location, worker hub limits).
 - **Database:** SQLite through the `database` module (`database.From(app)`, one writer, read pool); one embedded
   goose migration set. Tether stays SQLite-only (its SQL uses SQLite syntax); recorded in `architecture.md`.
-- **Data directory:** resolved in `AfterConfig` from `TETHER_DATA_DIR` (default the XDG data dir); absolute
-  paths written into `app.Config`. Directories 0700, database and keys 0600. A startup guard
-  (`Before["database"]`) refuses a directory that holds the old layout (`tether.db` without the migration mark),
-  so the new build can never open the old file in place.
-- **Auth:** `auth.mode: enforce` on HTTP. Verification of Tether's own tokens through the auth module
-  (`bootstrap_key_file`/self JWKS plus `denylist_url`), per D1. Operator accounts and operator API keys from
+- **Data directory and fixed paths.** The new data home is a **new directory beside the old data root**
+  (`TETHER_DATA_DIR`, set explicitly by the descriptor; resolved in `AfterConfig`; absolute paths written into
+  `app.Config`; directories 0700, database and keys 0600). It holds the new database, the carried `auth/`
+  directory, the carried catalog clone and the file state. The **socket and the remote listener address are
+  client contract and stay where they are**: the socket is configured explicitly at the old path
+  (`<data root>/run/tetherd.sock`) and the remote listener at the same loopback address, so planted MCP configs,
+  `mailbox watch` and the proxy need no change. The old root's `run/` directory is the only old path the new
+  hub writes (a runtime socket and pid, recreated at every start, never data). A startup guard
+  (`Before["database"]`) refuses a data home that holds the old layout (a `tether.db` without a `complete`
+  migration mark, section 7.2), so the new build never opens the old file in place.
+- **Auth.** Remote listener enforcing; socket per D6. **Two trust roots in one process:** the `identity`
+  module (operator accounts and keys, its own key) and Tether's issuer (D1). Both are verified by the one
+  Substrate `auth` path (substrate-manager's condition 4). The issuer's key ring rotates (30 days) and its
+  deny-list lives in-process, so pointing `auth.jwks_url`/`denylist_url` at the hub itself is circular at start
+  and `bootstrap_key_file` holds one static key. The port needs an in-process key and deny-list source for the
+  auth module; this is filed as CW-20261114-0097 (`substrate-gap`) rather than worked around in S3; option (c) of D1 is CW-20261114-0098. Operator accounts and operator API keys from
   `identity` (offline bootstrap). Scopes keep the existing `tether.<verb>` vocabulary (`tether.read`, `.operate`, `.messages`, `.worker`, ...); the full list is mapped in
   `conversion-notes.md`, and every route has one (test that fails on an unscoped route).
 - **Stdio MCP forwarder:** `mcp.ServeStdio` with `LocalTrust` is **not** used for the forwarder: it serves one
@@ -187,7 +198,17 @@ cycles; the table groups them.
      `svc-` key class, JWKS at `/.well-known/jwks.json`, the deny-list document at `GET /auth/denylist`;
    - the client API paths and error envelope (D2), and MCP tool names and argument shapes (agents and planted MCP
      configs call them by name), including `search` discovery (`tether_tool_search/list/call`) and `/p/<profile>`.
-   Golden fixtures generated from the old tree (CW-20261114-0094) are replayed against the new handlers in CI.
+   - the **error envelope** `{"error":{"code","message"}}` (ADR 0010) on every client mount: the mounts are
+     declared `Mount{Raw: true}` so `apierr.Normalize` does not flatten them. Refusals that still answer flat
+     under `Raw` (the host check, and the guard and `route_not_mapped` where they apply) are listed per client
+     in section 8, or shown unused by any client;
+   - the **on-disk `auth/` format** (`keys.json`, `<kid>.key`, `svc-<kid>.key`, `jwks.json`, `state.json`): the new
+     issuer reads and writes the same layout, so the directory round-trips in both directions (rollback);
+   - the **socket path and the remote listener address** (section 3), and the CLI invocations agents run by name:
+     `tether [--catalog <dir>] [--token-file <f>] mcp --forward-daemon --daemon-address unix:<sock>
+     --discovery-mode <m>` and `tether [--catalog <dir>] mailbox watch <urn> --json`, flags accepted as today.
+   Golden fixtures generated from the old tree (CW-20261114-0094) are replayed against the new handlers in CI,
+   including one error response per mount family and an `auth/` directory written by the old issuer.
 
 ## 6. Slicing plan
 
@@ -200,16 +221,16 @@ code it replaces. Builders: B1 = @mig-tether-builder-1, B2 = @mig-tether-builder
 | S0 | `next/` skeleton: go.mod on BOM pins, manifest, wiring, `internal/settings`, data-dir resolution and old-layout guard, CI job for `next/`, `docs/architecture.md`, `conversion-notes.md`, `carry-ledger.md` | plan approved | small | B1 |
 | S1 | Squashed schema: one goose migration reproducing the current schema (minus D3 tables), generated from a fresh old-schema dump and reviewed table by table against the inventory. The `messaging_*` tables that the go-messaging library creates stay the library's (its DDL is not duplicated; the library version is pinned and its schema compared) | S0 | ~115 tables | B2 |
 | S2 | Store layer: ported query code on `database.From(app)` (read pool / WriteTx discipline), tests ported | S1 | 15.9k | B2 (+B1 split by table family) |
-| S3 | Issuer (D1): key store reading the carried key directory unchanged, minting, JWKS, deny-list, service tokens, pairing, workload trust; auth module wired to verify; identity for operator accounts; golden tests: old-minted tokens verify on new, new-minted verify on libs auth | S0 | 7.1k | B1 |
-| S4 | HTTP host: the closed mount list for the client API (paths and ADR 0010 envelope unchanged, callers verified through the auth module, Tether's scope check per route), operator routes under `/api/` with flat errors, unix socket and remote TCP listeners with the exact Host/Origin checks; the coverage test (every route scoped, every mount named) | S0, S3 | part of 32k | B1 |
+| S3 | Issuer (D1): key store reading and writing the carried `auth/` layout unchanged, minting, JWKS, deny-list, service tokens, pairing (`principals`, `principals_device_upgrade`, `pairing_grants`), workload trust; both trust roots verified through `auth` (needs the in-process key source gap); identity for operator accounts with `LocalScopes` set; golden tests: old-minted tokens verify on new, a revoked one is refused, new-minted verify on libs auth, and the round trip old `auth/` -> new hub -> rotate/mint/revoke -> old issuer reads it | S0, S1, S2, D1 ruling, the auth gap | 7.1k | B1 |
+| S4 | HTTP host: the closed mount list for the client API (paths and ADR 0010 envelope unchanged, callers verified through the auth module, Tether's scope check per route, `Mount{Raw: true}`), operator routes under `/api/` with flat errors, unix socket (at the configured old path) and remote TCP listeners with the exact Host/Origin checks and the D6 posture per listener; SSE handlers (`mailbox watch`, `/events/stream`) watch `httphost.Stopping(r)`; the coverage test (every route scoped, every mount named); SIGTERM drains with streams open | S0, S3 | part of 32k | B1 |
 | S5 | Registry and fabric (registry, bindings, scoped bindings, fabric*) | S2, S4 | 10.7k | B2 |
 | S6 | Messaging core: messages, inbox/consume/ack, threads, aliases, wake admission, retention candidates, purge audit | S2, S4, S5 | ~5k | B1 |
 | S7 | Groups, channels, forums, mentions, federation, outpost mail | S6 | ~4k | B2 |
 | S8 | Events: store, SSE via `events`, ingest, retention as a scheduler job, tool metrics, proxy events | S2, S4 | 5.9k | B2 |
 | S9 | Sessions and launch: session lifecycle, launch resolve/specs/artifacts, workspaces, checkpoints, health, peek | S5, S8 | ~7k | B1 |
 | S10 | Shims and runtimes: shim host, Codex, AGY, bridge, retire, ACP, A2A, claudestream | S9 | 9.6k | B1 |
-| S11 | Worker hub and environment: `/worker/v1/connect`, workerwire, workerruntime, environment streams; golden replay of recorded outpost sessions | S9 | 7.3k | B2 |
-| S12 | `migrate-from`: old DB copy -> new DB, every table (section 7), verification report; D3 archive | S1, and each domain slice for its tables | new | B2 |
+| S11 | Worker hub and environment: `/worker/v1/connect`, workerwire, workerruntime, environment streams; golden replay of recorded outpost sessions; the hijacked WebSocket watches `httphost.Stopping(r)` and sends a close frame, SIGTERM drains with outposts connected | S9 | 7.3k | B2 |
+| S12 | `migrate-from` and `export-legacy` (section 7, section 10): range-digest sync in both directions, verification report, D3 archive. Lands incrementally: the engine first (after S1), then one sub-PR per table family as its domain slice lands; complete only after S14 | S1, then each domain slice | new | B2 |
 | S13 | Teams (host, runtime, svc, store, policy, import, loop, activation) | S9, S10 | 7.6k | B1 |
 | S14 | MCP: Tether's own tools on the `mcp` module (names frozen), the upstream gateway and forwarder, per-caller tool filter; catalog apply/plans; CLI parity | S6-S13 | 21.7k + CLI | B1 + B2 (tools split by family) |
 | S15 | Promotion: delete old tree on the branch, move `next/` to root, module path, CI, `tether-release`, Cerberus descriptor draft; final docs | all, ledger clean | mechanical | lead |
@@ -231,54 +252,78 @@ store with its class; this section is the method.
 | copy | rows whose shape is unchanged | `INSERT INTO new.t SELECT ... FROM old.t` column by column (named, never `*`) |
 | transform | rows whose shape changes (renamed columns, merged tables, the `*_new`/`*_v2` leftovers, JSON reshapes) | Go transform per table, unit-tested on fixtures from the copy |
 | archive (D3) | LLM gateway tables | copied verbatim into `llm-archive.db`, verified, not loaded into new Tether |
-| file state | `auth/` keys, `catalog/` (git), `launch-specs/`, `lenses/`, `skills/`, `receipts*/`, `state/environment-id*`, `state/shims/`, turn-output retry spool, workspaces | copied by the operator's script with `cp -a` (or `git clone --mirror` for the catalog), sha256 manifest before and after; secrets never printed |
+| file state | `auth/` (`keys.json`, `*.key`, `jwks.json`, `state.json`: byte for byte, checksums before and after, modes kept), `catalog/` (git), `launch-specs/`, `lenses/`, `skills/`, `receipts*/`, `state/environment-id*`, `state/shims/`, turn-output retry spool, workspaces | copied by the operator's script with `cp -a` (or `git clone --mirror` for the catalog), sha256 manifest before and after; secrets never printed |
 | runtime | `run/` socket, pid, `operator.token` | not copied; recreated at start (operator token reissued by the operator) |
 
 ### 7.2 The tool
 
-`tether migrate-from --old-db <copy> [--since-mark <mark>]` in the new binary (S12):
+`tether migrate-from --old-db <copy> [--phase bulk|final]` in the new binary (S12):
 
 - Opens **a private copy** of the source read-only (`mode=ro`, `immutable=1`); never the live path. Records
   `source_sha256` before and after; `source_unchanged: true` is required.
-- Creates the new database with the squashed schema and writes a migration mark in the same transaction as the
-  last copied table; `serve` refuses a database without the mark (and the guard refuses the old layout).
 - Copies in dependency order, in batches (`WriteTx` per batch, cursor closed before writing), with a progress
   line per table.
+- **Migration mark with two states:** `bulk@<per-table marks>` after a bulk run, `complete@<source sha256>`
+  after a final run that verified. `serve` and the old-layout guard require `complete`; a bulk-only database
+  never serves. A crash or a failed verification mid-run means the target file is discarded and the run
+  starts over (batches leave a partial database by design; nothing resumes from one).
 - Verifies per table: row counts; `EXCEPT` both ways on the copied columns (after the transform, against the
-  transform applied to the source); max ids and sequences; per-table digest (sha256 of ordered canonical rows);
-  then `PRAGMA integrity_check` and `foreign_key_check` on the result. Exit non-zero on any mismatch.
+  transform applied to the source); max ids and sequences; per-key-range digests (sha256 of ordered canonical
+  rows per range of the primary key) and a whole-table digest; then `PRAGMA integrity_check` and
+  `foreign_key_check` on the result. Exit non-zero on any mismatch.
 - Prints a report (JSON + text) kept with the cutover record.
 
-### 7.3 Size and the window: two-phase copy
+### 7.3 Size and the window: bulk, then a range-digest sync
 
-11.4 GB is far larger than Station's 50 MB; a full copy inside the window could take many minutes *(inv: the
-`.backup` timing and the rehearsal timings decide)*. If the rehearsed full migration exceeds 10 minutes:
+11.4 GB is far larger than Station's 50 MB. The online backup itself cannot be taken with the `sqlite3` shell's
+`.backup` while the hub runs: it copies 100 pages a step and restarts on every write, and on 2026-11-14 it did
+not finish in 11 minutes (CW-20261114-0089). Pre-window copies use the backup API in one step (`backup(...,
+pages=-1)`, one read transaction, read-only source); the window copy is taken with the hub stopped. The
+inventory and rehearsal give the times. If the rehearsed full migration plus its verification exceeds 10
+minutes:
 
-1. **Bulk phase, before the window (old hub running):** an online `.backup` copy is migrated in full. The bulk
-   tables are append-only or effectively so (events, message journal, proxy events, retention audit) *(inv:
-   confirmed per table)*. The tool records a high-water mark per table (max rowid / max id / max created_at,
-   whichever the inventory says is monotonic) in the new database.
-2. **Delta phase, in the window (old hub stopped):** a fresh `.backup` copy; `migrate-from --since-mark` copies
-   rows above each mark for append-only tables, and re-copies every mutable table in full (they are small
-   *(inv)*). Tables with updates or deletes below the mark are, by rule, classed mutable and re-copied in full;
-   the rehearsal proves the classification by diffing a delta run against a full run on the same copy.
-3. Verification (7.2) runs over the **whole** result against the window copy, not only the delta.
+1. **Bulk phase, before the window (old hub running):** a one-step online copy is migrated in full
+   (`--phase bulk`).
+2. **Final phase, in the window (old hub stopped):** a fresh copy of the stopped database. No table is assumed
+   append-only: in the old tree `events` is updated in place (outbox `pending`, `event_id` backfill, retention
+   compaction of `payload_json`), and retention deletes from `events`, `proxy_events`, `identity_audit`,
+   `turn_inputs`, `event_ingest_digests` and `a2a_tasks`; `messages` rows are deleted by routing replies and
+   purges. So `--phase final` syncs **every** table by key range: for each range of the primary key it compares
+   the source digest with the target digest; equal ranges are kept, different ranges are deleted and re-copied
+   from the source, keys above the last range are inserted, and keys present in the target but absent from the
+   source are deleted. Small tables are simply re-copied in full. Inserts, in-place updates and deletes below
+   any mark are all caught by construction.
+3. **Verification in the window** is the per-range digests (already computed for the sync, so no second pass
+   over unchanged ranges), counts, a whole-table digest, `EXCEPT` both ways on every table under the size
+   threshold and on every re-copied range of the large ones, and `integrity_check`. Its time is part of the
+   window budget and is measured in rehearsal.
+4. Optional, if rehearsal shows the final sync is still too slow: @archie pauses event retention on the live
+   hub between bulk and window (a catalog setting, his call), which shrinks the changed ranges. The plan does not
+   depend on it.
 
 ### 7.4 Rehearsal (on copies, never the live paths)
 
 In the cell's scratch directory on the hub host, with `HOME`, `XDG_*` and `TETHER_DATA_DIR` pointed into the
 scratch directory:
 
-1. Backup first: `sqlite3 <data root>/state/tether.db ".backup <scratch>/snap-<stamp>/tether.db"`;
-   `integrity_check` ok; sha256 recorded. The live file is never opened any other way.
-2. `migrate-from` full, three runs: counts, EXCEPT 0/0, digests equal, integrity ok, timings recorded.
-3. Two-phase: bulk on snapshot A, delta on a later snapshot B; result compared with a full run on B (identical
-   digests).
-4. The new binary serves the migrated database in the scratch home: every MCP tool family answers with the
-   migrated data (a scripted read per family: inbox, thread, registry lookup, session list, workstream, forum,
-   events history); one write per family.
-5. Rollback rehearsal (section 10) on the same scratch data.
-6. File-state copy script run against a copy of `auth/` and `catalog/` in scratch: manifests equal.
+1. Copy first, read-only, one step (7.3); `integrity_check` ok; sha256 recorded. The live file is never opened
+   any other way.
+2. `migrate-from` full, three runs: counts, EXCEPT 0/0, digests equal, integrity ok, timings of copy and of
+   verification recorded.
+3. Two-phase: bulk on snapshot A, final on a later snapshot B; the result's digests equal a full run on B. To
+   prove deletes and updates are caught, a retention sweep and message purges are run on a scratch copy of A
+   with the **old** binary before taking B.
+4. The new binary serves the migrated database in the scratch home, and the **real clients** are driven against
+   it: the planted `tether mcp --forward-daemon` invocation and `mailbox watch` exactly as agents run them
+   (with and without a token, per D6), `go-tether-client` calls, a `tether-worker` outpost connecting over
+   `/worker/v1/connect`, and every MCP tool family with migrated data (inbox, thread, registry lookup, session
+   list, workstream, forum, events history), one write per family.
+5. Issuer: a token minted by the old binary on the scratch `auth/` verifies on the new hub; a revoked one is
+   refused; a forced rotation on the new side, then the old binary reads the directory back (D1 conditions).
+6. Rollback rehearsal (section 10) on the same scratch data, after writes of every kind on the new side
+   (mail read/consumed/archived, a purge, session transitions, a registry deregister, a binding revoke, a
+   device paired, a service token issued and one revoked).
+7. File-state copy script run against copies of `auth/` and `catalog/` in scratch: manifests equal, modes kept.
 
 Rehearsal results are recorded in `next/docs/cutover-plan.md` (the record section), as Station did.
 
@@ -299,6 +344,10 @@ unchanged or has a named change and an owner.
 | Cerberus descriptors | `hub-tether`, `hub-tether-sysop` units | new command/env (section 11) | Cerberus owner via @archie |
 | sysop UI | loopback port | retired (D4) | owner |
 
+Error bodies: client mounts keep the ADR 0010 envelope (section 5.3). The refusals Substrate still answers
+flat on a raw mount (an unknown `Host`) are listed per client in the client list; a client that parses the
+envelope on that refusal gets a named change here.
+
 Any row whose change is code in another app goes to @archie as one list before the window is scheduled.
 
 ## 9. Cutover sequence
@@ -306,7 +355,7 @@ Any row whose change is code in another app goes to @archie as one list before t
 The shape follows Station's plan; the driver is @archie with Chrispian. The cell prepares every artifact and
 the dry runs; it runs nothing on the live host.
 
-**Step zero (nothing changed):** (1) new data home does not exist; (2) online `.backup` of `tether.db`,
+**Step zero (nothing changed):** (1) the new data home does not exist; (2) a one-step online copy of `tether.db` (7.3),
 integrity ok, sha256; tar of `auth/`, `catalog/` (and its git), file-state dirs into
 the host's pre-change backup root (`<backups>/pre-change/<date>-tether-cutover/`, 0600); (3) the old binary and unit drop-ins copied aside;
 (4) the build to deploy named: `substrate-port` head after S15, CI run id, artifacts; (5) the bulk phase of 7.3
@@ -326,16 +375,23 @@ keep running, mail and tool calls pause).
    is resumed after the checks or was set `recovery: auto` beforehand. Outpost sessions keep running.
 2. Fresh `.backup` of the stopped database; integrity ok; sha256.
 3. `migrate-from --since-mark` (delta) or full, per the rehearsal; report shows every table verified.
-4. File state copied with the manifest check; `auth/` copied byte for byte (D1); catalog cloned with history.
-5. Operator identity: `tether identity setup` by Chrispian at a terminal; operator keys `--out` 0600.
-6. `tether validate` against the new data home (opens everything read-only, checks keys, catalog, upstreams).
+4. File state copied with the manifest check; `auth/` copied byte for byte (D1, checksums before and after);
+   catalog cloned with history.
+5. Operator identity with the **staged** binary (`$NEWBIN/tether`, extracted from the named CI artifact into a
+   scratch directory, not installed): `identity setup --username <owner>` with the password on stdin from the
+   owner's passphrase manager (scripted, never an argument), then `identity key create ... --out <file>` (0600).
+6. `$NEWBIN/tether validate` against the new data home (opens everything read-only; checks keys, catalog,
+   upstreams, the migration mark is `complete`).
 7. Install last: `fleet-install deploy tether --commit <sha>` (previous release kept); `/healthz`.
 8. Checks (9.1). Then outposts reconnect on their own (protocol unchanged); watch every outpost reattach.
 
 ### 9.1 Live verification (in the window)
 
 `/healthz` 200; `GET /api/setup` `setup_required: false`; a token minted by the old hub before the window
-verifies on the new hub; JWKS at the old path lists the same `kid`s; an unknown `Host` is refused; no credential
+verifies on the new hub and a token revoked before the window is refused; JWKS at the old path lists the same
+`kid`s and the deny-list document is unchanged; the 30 s pollers (Torque, Tesseract, Tachyon) log no
+verification failure across the window; a planted forwarder and a `mailbox watch` on the hub reconnect with no
+change to their command line; an unknown `Host` is refused; no credential
 is 401; one message sent and read through the public hostname; an agent's inbox shows pre-cutover mail; a tool
 call through the MCP gateway to Torque succeeds; every outpost reconnects and its sessions show live; event
 counts not lower than at migration; SIGTERM drains within the stop timeout.
@@ -348,20 +404,37 @@ reverse delta.
 ## 10. Rollback
 
 Stated before the window. The old binary, unit, drop-ins, database and file state are never written by the
-cutover.
+cutover; rollback writes a **new** old-format database and sets the pre-cutover file aside, never over it.
 
-1. Stop new `hub-tether`; remove the drop-in the deploy wrote (or relink the previous release); daemon-reload.
-2. **Reverse delta, so nothing written after cutover is lost:** `tether export-legacy --since-cutover` (S12)
-   writes rows created in the new database after the migration mark (messages, events, registry and session
-   changes) into a copy of the old database in the old schema, verified by counts. The rollback starts the old
-   hub on that copy, not on the pre-cutover file. Rehearsed (7.4 step 5). If it fails, the old hub starts on the
-   pre-cutover file and the export is kept for a later replay; the loss is then stated, not silent.
-3. Start the old unit; check old `/health`; outposts reconnect.
-4. Credentials: none changed (D1) and no path changed (D2), so no client is touched. The issuer state the new
-   hub wrote (a key rotation, new service tokens, deny-list entries, session grants, paired devices) is carried
-   back the same way it came: the new hub's key directory is copied over the old one after a copy of the old one
-   is set aside, so a token minted or revoked after cutover means the same thing after rollback. Rehearsed with a
-   forced rotation on the new side.
+**What state exists and how each goes back:**
+
+| State | Where | Back by |
+|---|---|---|
+| Every table (messages and their read/consumed/archived state, purges, sessions and transitions, registry, bindings and leases, worker cursors and kill lists, workstreams, events, retention deletes) | new database | `export-legacy` (below) |
+| Device credentials and pairing | DB rows: `principals`, `principals_device_upgrade`, `pairing_grants`, `identity_audit` | `export-legacy` |
+| Signing keys, JWKS, deny-list, session grants, minted ids, service-token records | files: `auth/keys.json`, `*.key`, `jwks.json`, `state.json` | the new `auth/` copied into the old root after the old one is set aside (same on-disk format, section 5.3), checksums recorded |
+| Catalog | git clone in the new home | the old catalog repository fast-forwarded from the new clone's history |
+| Operator accounts and keys (`identity`) | new database only | not carried back: the old hub uses `operator.token`, untouched |
+
+**Steps:**
+
+1. Stop the new `hub-tether`; remove the drop-in the deploy wrote (or relink the previous release); daemon-reload.
+2. `tether export-legacy --old-db <pre-cutover copy> --out <new old-format file>` (S12): the same range-digest
+   sync as 7.3, in reverse, with the inverse of every `transform`, over **every** table: inserts, updates and
+   deletes made after cutover all go back. Verified like `migrate-from` (counts, EXCEPT both ways, digests,
+   `integrity_check`). The pre-cutover file is set aside; the export takes its place.
+3. `auth/` and the catalog back, as in the table.
+4. Start the old unit; check old `/health`; every outpost reconnects; a token minted by the new hub verifies.
+5. Credentials: none changed (D1) and no path changed (D2), so no client is touched.
+
+If `export-legacy` fails its verification, the old hub does not start on a half-written file: the failure is
+fixed forward on the new hub, or the old hub starts on the pre-cutover file only with the owner's explicit
+decision and a written list of what that loses.
+
+**Rollback horizon.** `export-legacy` is supported from cutover until @archie closes the horizon (proposed: the
+end of a 7-day quiet period). Until then every schema change on the new side ships with its inverse in
+`export-legacy` and a CI test that round-trips it; a change that cannot keep it working closes the horizon
+explicitly first. After the horizon, rollback is fix-forward only.
 
 ## 11. Descriptors, config and supervision
 
@@ -384,4 +457,5 @@ drain; `hub-tether-sysop` disabled (D4). Old env and flags that no longer mean a
 | The catalog's git history is written by something outside Tether (`catalog-autocommit` units) | carried with `git clone --mirror`; the autocommit units are repointed in the descriptor change |
 | Hidden state outside `tether.db` | inventory of every store under the data root and the catalog roots |
 | Rollback loses post-cutover mail | reverse delta (10.2), rehearsed |
+| Two trust roots cannot be verified in one auth path | in-process key/deny-list source filed as CW-20261114-0097 before S3 |
 | Substrate gap found mid-port | Torque task tagged `substrate-gap`, `cell:mig-tether`; work around where possible; never patch Substrate from the cell |
