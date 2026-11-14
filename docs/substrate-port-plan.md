@@ -100,7 +100,8 @@ An older layout (`~/.tether/state/tether.db`, 387 MB) exists; the inventory says
   (new migrations `0099+`) are the high-risk carries: each one gets a ledger row naming the transform in the
   migration tool (S12) as well as the new schema. Known in flight on 2026-11-14: address aliases #554 and #555
   (CW-20261114-0067/-0068, a new canonical-address model: a schema and a wake-path change), and the open PRs
-  #556-#559 (session reaping, dead hosts, hook permissions, input triage). Each gets a ledger row when it lands.
+  #556-#559 (session reaping, dead hosts, hook permissions, input triage). Each gets a ledger row when it lands. The branch `fix/gateway-010-acceptance-findings` named in the task landed as #473 (squash-merged; its head `d74467fb` is
+  not an ancestor of `main` only because of the squash), so it is already in the tree the port starts from.
 - **Promotion at cutover.** The final slice (S15) on the branch deletes the old tree, moves `next/` to the root,
   rewrites the module path to `github.com/hollis-labs/tether`, and points `tether-release` and CI at it. That
   commit is what @archie merges to `main` in the window.
