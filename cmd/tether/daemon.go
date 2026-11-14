@@ -1043,7 +1043,15 @@ func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, erro
 	return a.LaunchSessionWithContext(context.Background(), sessionID)
 }
 func (a *serviceAdapter) LaunchSessionWithContext(ctx context.Context, sessionID string) (api.LaunchResult, error) {
-	l, err := a.svc.LaunchSessionWithContext(ctx, sessionID)
+	return launchResult(a.svc.LaunchSessionWithContext(ctx, sessionID))
+}
+
+// LaunchChatSession is the operator chat's launch: catalog-bounded for a catalog seat (CW-20261114-0063).
+func (a *serviceAdapter) LaunchChatSession(ctx context.Context, sessionID string) (api.LaunchResult, error) {
+	return launchResult(a.svc.LaunchChatSession(ctx, sessionID))
+}
+
+func launchResult(l *app.Launched, err error) (api.LaunchResult, error) {
 	if err != nil {
 		return api.LaunchResult{}, err
 	}
@@ -1069,6 +1077,7 @@ func (a *serviceAdapter) ListSessions(opts store.ListSessionsOptions) ([]store.S
 func (a *serviceAdapter) SessionIdentityURN(id string) string { return a.svc.SessionIdentityURN(id) }
 
 var _ api.CallerIdentityLookup = (*serviceAdapter)(nil)
+var _ api.ChatLauncher = (*serviceAdapter)(nil)
 
 func (a *serviceAdapter) GetSession(id string) (*store.SessionRow, error) {
 	return a.svc.GetSession(id)

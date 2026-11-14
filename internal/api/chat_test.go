@@ -327,3 +327,38 @@ func (r *ctxRecordingLauncher) LaunchSessionWithContext(ctx context.Context, id 
 	}
 	return LaunchResult{SessionID: id}, nil
 }
+
+// A chat send launches through the catalog-bounded chat launch when the
+// service has one (CW-20261114-0063), with the caller's context.
+func TestChatLaunchPrefersTheChatLauncher(t *testing.T) {
+	rec := &chatRecordingLauncher{}
+	s := &Server{Service: rec}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://device/tachyon", Kind: "device"})
+	if _, err := s.launchChat(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.chat != "msg://device/tachyon" || rec.principal != "" || rec.plain {
+		t.Fatalf("chat launch %q, context launch %q, plain %v", rec.chat, rec.principal, rec.plain)
+	}
+
+	// A service without one falls back to the caller-context launch.
+	old := &ctxRecordingLauncher{}
+	if _, err := (&Server{Service: old}).launchChat(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if old.principal != "msg://device/tachyon" || old.plain {
+		t.Fatalf("fallback launch saw principal %q (plain %v)", old.principal, old.plain)
+	}
+}
+
+type chatRecordingLauncher struct {
+	ctxRecordingLauncher
+	chat string
+}
+
+func (r *chatRecordingLauncher) LaunchChatSession(ctx context.Context, id string) (LaunchResult, error) {
+	if p, ok := identity.FromContext(ctx); ok {
+		r.chat = p.ID
+	}
+	return LaunchResult{SessionID: id}, nil
+}
