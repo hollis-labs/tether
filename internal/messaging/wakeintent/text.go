@@ -10,8 +10,13 @@ import (
 
 // WakeGuidance is the instruction every generated mailbox wake carries. The wake is a pointer
 // to the mail, not a turn to report on: a mail check with nothing actionable ends silently
-// (CW-20261114-0009).
-const WakeGuidance = "Read it from your inbox. If nothing needs Chrispian, mark it read and end the turn silently, with no message. Otherwise handle it; it does not interrupt your current task unless it is urgent. Marking a message read or consumed settles it; this is the only push you get for it."
+// (CW-20261114-0009). A decision or approval Chrispian must give goes out as its own typed
+// message, which Tachyon's Needs-you shows, never as prose in a reply (AskGuidance,
+// CW-20261114-0127).
+const WakeGuidance = "Read it from your inbox. If nothing needs Chrispian, mark it read and end the turn silently, with no message. Otherwise handle it; it does not interrupt your current task unless it is urgent. Marking a message read or consumed settles it; this is the only push you get for it. " + AskGuidance
+
+// AskGuidance tells a woken seat how to ask Chrispian for a decision or approval.
+const AskGuidance = "If you need a decision or approval from Chrispian, send it as its own typed message (tether_message_post to @chrispian, kind=question, decision or approval_request, attention=human; the `ask` skill), never inside your reply."
 
 // DefaultWakeText is the generated mailbox-wake turn, used when the sender supplied no wake
 // text. unread < 1 omits the count (the sweep's retried wakes do not recompute it). retried

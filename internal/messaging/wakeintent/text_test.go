@@ -51,3 +51,18 @@ func TestWakeTextShowsOnBehalfOf(t *testing.T) {
 		t.Fatal("untyped mail has no marker")
 	}
 }
+
+// CW-20261114-0127: every generated wake (send-time and retried; triage-gated wakes use the same text)
+// tells the seat to ask Chrispian for a decision with its own typed message, not prose in its reply.
+func TestWakeTextSaysHowToAskChrispian(t *testing.T) {
+	env := messaging.Envelope{ID: "m1", Kind: messaging.MsgKindNotice,
+		From: messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "archie"},
+		To:   messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "photon-tether"}}
+	want := "If you need a decision or approval from Chrispian, send it as its own typed message (tether_message_post to @chrispian, kind=question, decision or approval_request, attention=human; the `ask` skill), never inside your reply."
+	for _, retried := range []bool{false, true} {
+		got := DefaultWakeText(env, 1, "normal", retried)
+		if !strings.HasSuffix(got, want) {
+			t.Fatalf("wake (retried=%v) does not end with the ask guidance:\n%s", retried, got)
+		}
+	}
+}
