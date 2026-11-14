@@ -31,10 +31,8 @@ func main() {
 // run boots the modules, then executes the command line. args are the arguments after the program
 // name; tests pass them directly.
 func run(ctx context.Context, getenv func(string) string, args []string) error {
-	if !migrations.Empty() {
-		fsys, root := migrations.FS()
-		database.UseMigrationFS(fsys, root)
-	}
+	fsys, root := migrations.FS()
+	database.UseMigrationFS(fsys, root)
 
 	started, err := boot.StartWith(ctx, substrateApp, substrateModules, substrateConfigJSON, bootOptions(getenv))
 	if err != nil {

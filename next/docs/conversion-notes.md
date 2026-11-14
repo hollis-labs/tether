@@ -66,6 +66,12 @@ The client API keeps its root paths and the ADR 0010 error envelope `{"error":{"
 
 **Refusals that still answer flat under `Raw`.** The host check, and the guard and `route_not_mapped` where they apply. S4 lists these per client, or shows that no client relies on them.
 
+### go-messaging pin: `libs/mesh/core` v0.10.0 is not in the BOM
+
+**Status:** open. Substrate gap task CW-20261114-0126.
+
+The old store runs go-messaging's `delivery.ApplySQLiteSchema` from `libs/mesh/core` **v0.10.0**. The live `messaging_*` tables were created and evolved by that version. The Substrate BOM pins `libs/mesh/core` at **v0.6.0** under `app_libs`. The port must open those tables with the same library version (or a later one whose schema migration accepts them), so the BOM pin has to move first. Until it does, `next/` does not import the library: S1 keeps the library tables out of the squashed schema and compares nothing against it. The messaging slice adds the import, and a test that applies the pinned library schema on top of `00001` and compares it with the old store's.
+
 ### D6: socket admission stays as today
 
 **Status:** recommended (a).

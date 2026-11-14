@@ -3,7 +3,9 @@ module github.com/hollis-labs/tether/next
 go 1.26.11
 
 require (
+	github.com/hollis-labs/libs/core/store v0.1.0
 	github.com/hollis-labs/substrate v0.1.1-0.20261114095804-d064f53602f8
+	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.60.1
 )
 
@@ -12,7 +14,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hollis-labs/libs/app/app-host v0.1.0 // indirect
 	github.com/hollis-labs/libs/core/panics v0.1.0 // indirect
-	github.com/hollis-labs/libs/core/store v0.1.0 // indirect
 	github.com/hollis-labs/libs/core/util v0.6.0 // indirect
 	github.com/hollis-labs/libs/security/auth v0.3.1 // indirect
 	github.com/hollis-labs/libs/ui/ui-go v0.1.0 // indirect
@@ -27,7 +28,6 @@ require (
 	github.com/pressly/goose/v3 v3.29.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sethvargo/go-retry v0.5.0 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect

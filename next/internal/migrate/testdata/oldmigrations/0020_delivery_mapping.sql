@@ -1,0 +1,28 @@
+-- 0020_delivery_mapping.sql
+--
+-- Messaging vNext T03 (CW-20260904-0100, plan CW-20260906-0023). Adds a
+-- single additive column linking a `messages` row to its corresponding
+-- reliable-delivery-core recipient obligation.
+--
+-- go-messaging's own `delivery` package owns its schema (messaging_messages,
+-- messaging_deliveries, messaging_attempts, messaging_receipts,
+-- messaging_idempotency, messaging_delivery_schema) via
+-- delivery.ApplySQLiteSchema, applied idempotently from Store.Open -- not
+-- baked into this migration file, so the library remains the owner of its
+-- own schema evolution (T01 contract, planning/docs/messaging-vnext/
+-- T01-compatibility-contract.md §3.2/§2.5).
+--
+-- messages.id itself is NOT changed: for a message sent through the new
+-- delivery-backed path, `messages.id` is populated with the SAME UUIDv7
+-- string the delivery core minted for the Message record (both stores
+-- agree on message identity by construction -- no separate message-id
+-- mapping column is needed). What Tether still needs a pointer to is the
+-- separate RecipientDelivery id, since Claim/Ack/Nack/Redrive operate on
+-- that, not the message id. Nullable: existing rows (sent before this
+-- migration, or sent through a path that doesn't create a delivery
+-- obligation, e.g. group posts prior to T04's reconciliation) carry NULL
+-- here and are unaffected -- no data loss, no behavior change to
+-- Get/Inbox/List/Thread/MarkRead/Archive, which never reference this
+-- column.
+
+ALTER TABLE messages ADD COLUMN delivery_id TEXT;
