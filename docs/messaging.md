@@ -29,6 +29,66 @@ msg://user/local/operator
 treated as local. With federation enabled, known peer authorities route to
 their configured daemon; see [Messaging federation](messaging-federation.md).
 
+### Address aliases
+
+An address can be declared an **alias** of another, its **canonical** address
+(CW-20261114-0067). The two are then one mailbox:
+
+- **Send, notify, typed posts and group mentions** to an alias are stored under
+  the canonical address. The envelope's `to` is the canonical address, and
+  metadata `tether.alias_to` records the address the sender used
+  (`tether.alias_from` likewise when the sender is an alias), so a client still
+  using an old address can be found.
+- **`inbox`, `list`, `watch`, `subscribe`** on any form return the mail stored
+  under every form. **`get`, `thread`, `read`, `consume`, `archive`, `unarchive`
+  and `claim`** accept any form as `as`.
+- **Stored messages are never rewritten.** Mail that was addressed to an alias
+  before it became one keeps its `to` and its read and archived state; it is
+  only listed in one more mailbox.
+- **Identity follows the alias.** A principal that owns one form may send and
+  read as the others, and `from_principal` on its mail resolves to the canonical
+  address through the alias. That is why only the operator may declare one.
+- `GET /whoami` and a registry lookup of any form name the canonical address
+  (`canonical_urn`, `aliases`); the lookup returns the profile registered under
+  the canonical address, else under the first alias that has one. A `@handle`
+  held by an alias resolves to the canonical address.
+
+Rules: aliases and canonical addresses are `agent` or `user` addresses (not
+sessions, groups, channels or service addresses); an alias points at exactly one
+canonical address; aliases are one hop (a canonical address is never itself an
+alias, and an address with aliases cannot become one).
+
+**An alias that is already a live address with its own mail merges; it is not
+refused.** Nothing is copied: the alias's stored messages become visible in the
+canonical mailbox, state unchanged, and `add` reports how many. Removing the
+alias undoes exactly that: mail stored under the alias is again listed only
+under the alias, while mail sent to it during the alias stays under the
+canonical address.
+
+One command each, operator only for add and remove (the operator credential; an
+agent, a device or an issued token is refused):
+
+```sh
+tether messages alias add <alias-urn> <canonical-urn>
+tether messages alias list [--canonical <urn>]
+tether messages alias remove <alias-urn>
+```
+
+MCP: `tether_address_alias_add`, `tether_address_alias_list`,
+`tether_address_alias_remove`. HTTP: `POST /messages/aliases {alias, canonical}`,
+`GET /messages/aliases[?canonical=]`, `DELETE /messages/aliases?alias=`.
+
+**Renaming an address** is one command: `tether messages alias add <old> <new>`.
+Start using the new address; mail to the old one keeps arriving, and the old
+mailbox's history is listed under the new one. To give a person one address,
+choose it (`msg://user/<authority>/<name>`; the URN grammar needs the authority
+segment, `local` on a single hub) and alias every address they had to it.
+
+Limits: group membership and `tether_group_mentions` are keyed by the member
+address as stored, so a member re-joins under a new address; a delivery already
+queued for an address before it became an alias keeps retrying against that
+address's own session; the alias table is per hub and is not federated.
+
 ## Message Kinds
 
 Kinds describe what the message is:
@@ -276,9 +336,9 @@ command, and directive conventions.
 
 | Surface | Commands / routes |
 |---|---|
-| CLI | `tether messages send`, `notify`, `get`, `inbox`, `list`, `thread`, `read`, `consume`, `archive`, `unarchive`, `cancel` |
-| MCP | `tether_message_send`, `tether_message_notify`, `tether_message_get`, `tether_message_inbox`, `tether_message_list`, `tether_message_thread`, `tether_message_mark_read`, `tether_message_consume`, `tether_message_archive`, `tether_message_unarchive`, `tether_message_cancel` |
-| HTTP | `/messages`, `/messages/notify`, `/messages/{id}`, `/messages/inbox`, `/messages/list`, `/messages/thread/{thread_id}`, `/messages/subscribe` |
+| CLI | `tether messages send`, `notify`, `get`, `inbox`, `list`, `thread`, `read`, `consume`, `archive`, `unarchive`, `cancel`, `alias add\|list\|remove` |
+| MCP | `tether_message_send`, `tether_message_notify`, `tether_message_get`, `tether_message_inbox`, `tether_message_list`, `tether_message_thread`, `tether_message_mark_read`, `tether_message_consume`, `tether_message_archive`, `tether_message_unarchive`, `tether_message_cancel`, `tether_address_alias_add`, `tether_address_alias_list`, `tether_address_alias_remove` |
+| HTTP | `/messages`, `/messages/notify`, `/messages/{id}`, `/messages/inbox`, `/messages/list`, `/messages/thread/{thread_id}`, `/messages/subscribe`, `/messages/aliases` |
 
 ### Identity and runtime bindings
 

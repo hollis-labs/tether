@@ -239,14 +239,13 @@ var registryLookupCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		var out registry.Profile
+		var includes []string
 		if lookupFull {
-			out, err = rc.LookupFull(cmdCtx(cmd), urn)
+			includes = []string{"all"}
 		} else if lookupInclude != "" {
-			out, err = rc.LookupWithInclude(cmdCtx(cmd), urn, strings.Split(lookupInclude, ",")...)
-		} else {
-			out, err = rc.Lookup(cmdCtx(cmd), urn)
+			includes = strings.Split(lookupInclude, ",")
 		}
+		out, resolution, err := rc.LookupAliased(cmdCtx(cmd), urn, includes...)
 		if err != nil {
 			if errors.Is(err, registry.ErrNotFound) {
 				fmt.Fprintf(os.Stderr, "registry: not found: %s\n", urn)
@@ -258,6 +257,10 @@ var registryLookupCmd = &cobra.Command{
 			return printJSON(out)
 		}
 		printProfile(out)
+		// An aliased address (CW-20261114-0067): name where its mail lives.
+		if resolution.CanonicalURN != "" {
+			fmt.Printf("canonical address: %s\naliases: %s\n", resolution.CanonicalURN, strings.Join(resolution.Aliases, ", "))
+		}
 		return nil
 	},
 }

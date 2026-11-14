@@ -1,0 +1,448 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"testing"
+
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/messaging"
+	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/store"
+)
+
+// Address aliases over HTTP (CW-20261114-0067): the migration the task is
+// for, on a synthetic mailbox. The operator principal's address and a registry
+// agent row become aliases of one chosen user address.
+
+const aliasCanonicalURN = "msg://user/local/chrispian"
+
+type aliasHarness struct {
+	srv      *httptest.Server
+	db       *store.Store
+	reg      *registry.Service
+	agentURN string // the registry agent row with display_name chrispian
+}
+
+func newAliasHarness(t *testing.T, mode identity.Mode) *aliasHarness {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "alias.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reg := registry.NewService(registry.NewStorage(db.DB()))
+	// The daemon's wiring: group mentions are emitted through the local store.
+	reg.SetMentionParser(messaging.NewParser(reg, db.MessagingStore()))
+	row, err := reg.Register(context.Background(), registry.KindAgent, registry.Profile{DisplayName: "chrispian", Role: "team-operator", LastUpdatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := &config.Catalog{Agents: map[string]config.Agent{"archie": {ID: "archie", URN: archieURN}}}
+	api := NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: db.MessagingStore(), Seats: db, Aliases: db,
+		Registry: reg, Groups: reg, Catalog: fixedCatalog{cat}, IdentityMode: mode})
+	h := &aliasHarness{db: db, reg: reg, agentURN: row.URN}
+	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := senderPrincipals[r.Header.Get("X-Test-Principal")]; ok {
+			r = r.WithContext(identity.WithPrincipal(r.Context(), p))
+		}
+		api.ServeHTTP(w, r)
+	}))
+	t.Cleanup(h.srv.Close)
+	return h
+}
+
+func (h *aliasHarness) do(t *testing.T, method, path, principal, body string) (int, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(method, h.srv.URL+path, bytes.NewReader([]byte(body)))
+	if principal != "" {
+		req.Header.Set("X-Test-Principal", principal)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(resp.Body)
+	return resp.StatusCode, buf.Bytes()
+}
+
+func (h *aliasHarness) alias(t *testing.T, alias string) {
+	t.Helper()
+	body, _ := json.Marshal(AddressAliasRequest{Alias: alias, Canonical: aliasCanonicalURN})
+	if code, raw := h.do(t, http.MethodPost, "/messages/aliases", "operator", string(body)); code != http.StatusOK {
+		t.Fatalf("alias %s: %d %s", alias, code, raw)
+	}
+}
+
+func (h *aliasHarness) migrate(t *testing.T) {
+	t.Helper()
+	h.alias(t, identity.OperatorID)
+	h.alias(t, h.agentURN)
+}
+
+func (h *aliasHarness) send(t *testing.T, principal, from, to string) gomsg.Envelope {
+	t.Helper()
+	msg := map[string]any{"kind": "notice", "to": to, "payload": map[string]string{"body": "to " + to}}
+	if from != "" {
+		msg["from"] = from
+	}
+	body, _ := json.Marshal(msg)
+	code, raw := h.do(t, http.MethodPost, "/messages", principal, string(body))
+	if code != http.StatusCreated {
+		t.Fatalf("send to %s: %d %s", to, code, raw)
+	}
+	var env gomsg.Envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
+func (h *aliasHarness) listIDs(t *testing.T, principal, to string) []string {
+	t.Helper()
+	q := url.Values{"to": {to}, "as": {to}, "include_archived": {"true"}}
+	code, raw := h.do(t, http.MethodGet, "/messages/list?"+q.Encode(), principal, "")
+	if code != http.StatusOK {
+		t.Fatalf("list %s: %d %s", to, code, raw)
+	}
+	var page struct {
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &page); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(page.Messages))
+	for _, m := range page.Messages {
+		ids = append(ids, m.ID)
+	}
+	return ids
+}
+
+func equalIDs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAddressAliasManagementIsOperatorOnly(t *testing.T) {
+	h := newAliasHarness(t, identity.Observe)
+	body := `{"alias":"` + identity.OperatorID + `","canonical":"` + aliasCanonicalURN + `"}`
+	// A session, a device and an unauthenticated caller are all refused, even in
+	// observe mode: an alias is not an observation.
+	for _, principal := range []string{"session", "agentsession", "sendas", "device", ""} {
+		if code, raw := h.do(t, http.MethodPost, "/messages/aliases", principal, body); code != http.StatusForbidden {
+			t.Fatalf("add as %q: %d %s", principal, code, raw)
+		}
+		if code, raw := h.do(t, http.MethodDelete, "/messages/aliases?alias="+url.QueryEscape(identity.OperatorID), principal, ""); code != http.StatusForbidden {
+			t.Fatalf("remove as %q: %d %s", principal, code, raw)
+		}
+	}
+	if rows, _ := h.db.ListAddressAliases(context.Background(), ""); len(rows) != 0 {
+		t.Fatalf("a refused caller created rows: %+v", rows)
+	}
+	code, raw := h.do(t, http.MethodPost, "/messages/aliases", "operator", body)
+	var added AddressAliasResponse
+	if code != http.StatusOK || json.Unmarshal(raw, &added) != nil || added.Alias != identity.OperatorID || added.Canonical != aliasCanonicalURN || added.CreatedBy != identity.OperatorID {
+		t.Fatalf("operator add: %d %s", code, raw)
+	}
+	// Anyone may list; a chain and a re-point are refused with a conflict.
+	code, raw = h.do(t, http.MethodGet, "/messages/aliases?canonical="+url.QueryEscape(identity.OperatorID), "session", "")
+	var listed struct {
+		Aliases []store.AddressAlias `json:"aliases"`
+	}
+	if code != http.StatusOK || json.Unmarshal(raw, &listed) != nil || len(listed.Aliases) != 1 {
+		t.Fatalf("list: %d %s", code, raw)
+	}
+	for _, bad := range []string{
+		`{"alias":"` + h.agentURN + `","canonical":"` + identity.OperatorID + `"}`,
+		`{"alias":"` + identity.OperatorID + `","canonical":"` + h.agentURN + `"}`,
+	} {
+		if code, raw := h.do(t, http.MethodPost, "/messages/aliases", "operator", bad); code != http.StatusConflict {
+			t.Fatalf("refused add %s: %d %s", bad, code, raw)
+		}
+	}
+	if code, raw := h.do(t, http.MethodDelete, "/messages/aliases?alias="+url.QueryEscape(identity.OperatorID), "operator", ""); code != http.StatusOK {
+		t.Fatalf("operator remove: %d %s", code, raw)
+	}
+	if code, _ := h.do(t, http.MethodDelete, "/messages/aliases?alias="+url.QueryEscape(identity.OperatorID), "operator", ""); code != http.StatusNotFound {
+		t.Fatalf("second remove: %d", code)
+	}
+}
+
+// With identity checks off there is no credential to tell the operator by, so
+// the local socket is trusted, as for every other route in that mode.
+func TestAddressAliasManagementIdentityOff(t *testing.T) {
+	h := newAliasHarness(t, identity.Off)
+	body := `{"alias":"` + identity.OperatorID + `","canonical":"` + aliasCanonicalURN + `"}`
+	if code, raw := h.do(t, http.MethodPost, "/messages/aliases", "", body); code != http.StatusOK {
+		t.Fatalf("add: %d %s", code, raw)
+	}
+}
+
+// Acceptance items 1-3: three sends, three lists, old mail with its state.
+func TestAddressAliasSendAndListThroughEveryAddress(t *testing.T) {
+	h := newAliasHarness(t, identity.Enforce)
+	ctx := context.Background()
+	// Mail from before the migration, some of it read and archived.
+	old := []gomsg.Envelope{
+		h.send(t, "session", "", identity.OperatorID),
+		h.send(t, "session", "", identity.OperatorID),
+		h.send(t, "session", "", h.agentURN),
+	}
+	opAddr, _ := gomsg.ParseURN(identity.OperatorID)
+	if err := h.db.MessagingStore().MarkRead(ctx, old[0].ID, opAddr); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.MessagingStore().Archive(ctx, old[1].ID, opAddr); err != nil {
+		t.Fatal(err)
+	}
+
+	h.migrate(t)
+
+	sent := []gomsg.Envelope{
+		h.send(t, "session", "", identity.OperatorID),
+		h.send(t, "session", "", h.agentURN),
+		h.send(t, "session", "", aliasCanonicalURN),
+	}
+	for _, env := range sent {
+		if env.To.URN() != aliasCanonicalURN {
+			t.Fatalf("message %s stored under %s", env.ID, env.To.URN())
+		}
+	}
+	want := []string{sent[2].ID, sent[1].ID, sent[0].ID, old[2].ID, old[1].ID, old[0].ID}
+	canonical := h.listIDs(t, "operator", aliasCanonicalURN)
+	if !equalIDs(canonical, want) {
+		t.Fatalf("canonical list = %v, want %v", canonical, want)
+	}
+	for _, addr := range []string{identity.OperatorID, h.agentURN} {
+		if got := h.listIDs(t, "operator", addr); !equalIDs(got, canonical) {
+			t.Fatalf("list via %s = %v, want %v", addr, got, canonical)
+		}
+	}
+	// The old mail kept its address and its state.
+	page, err := h.db.MessagingStore().List(ctx, mustURN(t, aliasCanonicalURN), store.ListFilter{IncludeArchived: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]store.Message{}
+	for _, m := range page.Messages {
+		state[m.ID] = m
+	}
+	if m := state[old[0].ID]; m.ReadAt == nil || m.ArchivedAt != nil || m.To.URN() != identity.OperatorID {
+		t.Fatalf("read message = %+v", m)
+	}
+	if m := state[old[1].ID]; m.ArchivedAt == nil || m.ReadAt != nil || m.To.URN() != identity.OperatorID {
+		t.Fatalf("archived message = %+v", m)
+	}
+	if m := state[old[2].ID]; m.ReadAt != nil || m.ArchivedAt != nil || m.To.URN() != h.agentURN {
+		t.Fatalf("agent-row message = %+v", m)
+	}
+
+	// Get, thread, read and archive work through any address of the mailbox,
+	// and still refuse an address that is not one.
+	asOld := url.QueryEscape(identity.OperatorID)
+	if code, raw := h.do(t, http.MethodGet, "/messages/"+old[2].ID+"?as="+asOld, "operator", ""); code != http.StatusOK {
+		t.Fatalf("get via alias: %d %s", code, raw)
+	}
+	if code, raw := h.do(t, http.MethodPost, "/messages/"+sent[2].ID+"/read?as="+asOld, "operator", ""); code != http.StatusNoContent {
+		t.Fatalf("read via alias: %d %s", code, raw)
+	}
+	if code, raw := h.do(t, http.MethodPost, "/messages/"+old[2].ID+"/archive?as="+url.QueryEscape(aliasCanonicalURN), "operator", ""); code != http.StatusNoContent {
+		t.Fatalf("archive an alias-stored message as the canonical address: %d %s", code, raw)
+	}
+	if code, raw := h.do(t, http.MethodPost, "/messages/"+sent[0].ID+"/read?as="+url.QueryEscape(archieURN), "operator", ""); code != http.StatusConflict {
+		t.Fatalf("read as a stranger: %d %s", code, raw)
+	}
+	// Enforce mode: a session that owns none of the forms cannot read the mailbox.
+	q := url.Values{"to": {aliasCanonicalURN}, "as": {aliasCanonicalURN}}
+	if code, raw := h.do(t, http.MethodGet, "/messages/list?"+q.Encode(), "session", ""); code != http.StatusForbidden {
+		t.Fatalf("stranger list: %d %s", code, raw)
+	}
+}
+
+// Acceptance item 5: the operator token's mail is from the canonical address,
+// and a reply to it arrives in the canonical mailbox.
+func TestAddressAliasOperatorSenderAndReply(t *testing.T) {
+	h := newAliasHarness(t, identity.Enforce)
+	h.migrate(t)
+
+	stamped := h.send(t, "operator", "", archieURN)
+	if stamped.From.URN() != aliasCanonicalURN || stamped.Metadata[MetaFromPrincipal] != identity.OperatorID || stamped.Metadata[store.MetaAliasFrom] != identity.OperatorID {
+		t.Fatalf("stamped send: from %s metadata %v", stamped.From.URN(), stamped.Metadata)
+	}
+	explicit := h.send(t, "operator", aliasCanonicalURN, archieURN)
+	if explicit.From.URN() != aliasCanonicalURN || explicit.Metadata[MetaFromVerification] != "verified" {
+		t.Fatalf("explicit send: from %s metadata %v", explicit.From.URN(), explicit.Metadata)
+	}
+	// A reply addressed to whatever the recipient saw as the sender, or to the
+	// old address it still has on file.
+	for _, to := range []string{stamped.From.URN(), identity.OperatorID} {
+		body, _ := json.Marshal(map[string]any{"kind": "response", "to": to, "in_reply_to": stamped.ID, "payload": map[string]string{"body": "re"}})
+		code, raw := h.do(t, http.MethodPost, "/messages", "session", string(body))
+		var reply gomsg.Envelope
+		if code != http.StatusCreated || json.Unmarshal(raw, &reply) != nil || reply.To.URN() != aliasCanonicalURN {
+			t.Fatalf("reply to %s: %d %s", to, code, raw)
+		}
+	}
+	if got := h.listIDs(t, "operator", aliasCanonicalURN); len(got) != 2 {
+		t.Fatalf("canonical mailbox = %v, want the two replies", got)
+	}
+}
+
+// A principal that owns one form may act as the others; one that owns none may not.
+func TestAddressAliasPrincipalOwnsEveryForm(t *testing.T) {
+	h := newAliasHarness(t, identity.Enforce)
+	const builder, renamed = "msg://agent/agent-mux/builder", "msg://agent/agent-mux/agt_builder2"
+	body, _ := json.Marshal(AddressAliasRequest{Alias: builder, Canonical: renamed})
+	if code, raw := h.do(t, http.MethodPost, "/messages/aliases", "operator", string(body)); code != http.StatusOK {
+		t.Fatalf("alias: %d %s", code, raw)
+	}
+	// agentsession owns the old address only.
+	env := h.send(t, "agentsession", renamed, archieURN)
+	if env.From.URN() != renamed || env.Metadata[MetaFromVerification] != "verified" {
+		t.Fatalf("send as the new address: from %s metadata %v", env.From.URN(), env.Metadata)
+	}
+	h.send(t, "session", "", builder)
+	if got := h.listIDs(t, "agentsession", renamed); len(got) != 1 {
+		t.Fatalf("owner of the alias reading the canonical mailbox = %v", got)
+	}
+	q := url.Values{"to": {renamed}, "as": {renamed}}
+	if code, raw := h.do(t, http.MethodGet, "/messages/list?"+q.Encode(), "session", ""); code != http.StatusForbidden {
+		t.Fatalf("stranger: %d %s", code, raw)
+	}
+	bad, _ := json.Marshal(map[string]any{"kind": "notice", "from": renamed, "to": archieURN})
+	if code, raw := h.do(t, http.MethodPost, "/messages", "session", string(bad)); code != http.StatusForbidden {
+		t.Fatalf("stranger send as: %d %s", code, raw)
+	}
+}
+
+// Acceptance item 4: a typed message to @chrispian and a group post mentioning
+// @chrispian both reach the canonical mailbox.
+func TestAddressAliasMentionsReachCanonicalMailbox(t *testing.T) {
+	h := newAliasHarness(t, identity.Observe)
+	h.migrate(t)
+	ctx := context.Background()
+
+	code, raw := h.do(t, http.MethodPost, "/messages/post?as="+url.QueryEscape(archieURN), "", `{"kind":"message","to":["@chrispian"],"body":"typed hello"}`)
+	var post MessagePostResponse
+	if code != http.StatusCreated || json.Unmarshal(raw, &post) != nil || len(post.IDs) != 1 {
+		t.Fatalf("typed post: %d %s", code, raw)
+	}
+	typed, err := h.db.MessagingStore().Get(ctx, post.IDs[0])
+	if err != nil || typed.To.URN() != aliasCanonicalURN {
+		t.Fatalf("typed message stored under %s (%v)", typed.To.URN(), err)
+	}
+	// The canonical address answers to @chrispian when it sends.
+	code, raw = h.do(t, http.MethodPost, "/messages/post", "operator", `{"kind":"message","to":["@archie"],"body":"from me"}`)
+	if code != http.StatusCreated || json.Unmarshal(raw, &post) != nil || post.Envelope.From != "@chrispian" {
+		t.Fatalf("typed post from the operator: %d %s", code, raw)
+	}
+	if sent, err := h.db.MessagingStore().Get(ctx, post.IDs[0]); err != nil || sent.From.URN() != aliasCanonicalURN {
+		t.Fatalf("typed message from %s (%v)", sent.From.URN(), err)
+	}
+
+	// A group post: @chrispian resolves by display name to the registry agent
+	// row, an alias, and the notice lands in the canonical mailbox.
+	author, err := h.reg.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "author", LastUpdatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := h.reg.Register(ctx, registry.KindGroup, registry.Profile{DisplayName: "room", LastUpdatedBy: author.URN})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.reg.SendToGroup(ctx, group.URN, author.URN, "notice", "", "", json.RawMessage(`{"body":"@chrispian please look"}`)); err != nil {
+		t.Fatal(err)
+	}
+	page, err := h.db.MessagingStore().List(ctx, mustURN(t, aliasCanonicalURN), store.ListFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mention *store.Message
+	for i, m := range page.Messages {
+		if m.ID != typed.ID {
+			mention = &page.Messages[i]
+		}
+	}
+	if len(page.Messages) != 2 || mention == nil || mention.To.URN() != aliasCanonicalURN || mention.Metadata[store.MetaAliasTo] != h.agentURN {
+		t.Fatalf("canonical mailbox after the group post = %+v", page.Messages)
+	}
+}
+
+// Acceptance item 6: the registry answers for every address of the mailbox.
+func TestAddressAliasRegistryLookup(t *testing.T) {
+	h := newAliasHarness(t, identity.Observe)
+	h.migrate(t)
+	for _, urn := range []string{aliasCanonicalURN, identity.OperatorID, h.agentURN} {
+		code, raw := h.do(t, http.MethodGet, "/registry/agents/"+url.PathEscape(urn), "", "")
+		var out struct {
+			URN          string   `json:"urn"`
+			DisplayName  string   `json:"display_name"`
+			CanonicalURN string   `json:"canonical_urn"`
+			Aliases      []string `json:"aliases"`
+		}
+		if code != http.StatusOK || json.Unmarshal(raw, &out) != nil {
+			t.Fatalf("lookup %s: %d %s", urn, code, raw)
+		}
+		if out.DisplayName != "chrispian" || out.URN != h.agentURN || out.CanonicalURN != aliasCanonicalURN || len(out.Aliases) != 2 {
+			t.Fatalf("lookup %s = %+v", urn, out)
+		}
+	}
+	// An address with no alias rows answers exactly as before.
+	code, raw := h.do(t, http.MethodGet, "/registry/agents/"+url.PathEscape("msg://agent/agent-mux/agt_nobody"), "", "")
+	if code != http.StatusNotFound {
+		t.Fatalf("unknown: %d %s", code, raw)
+	}
+	code, raw = h.do(t, http.MethodGet, "/whoami?as="+url.QueryEscape(identity.OperatorID), "", "")
+	var who whoamiResponse
+	if code != http.StatusOK || json.Unmarshal(raw, &who) != nil || who.CanonicalURN != aliasCanonicalURN || len(who.Aliases) != 2 {
+		t.Fatalf("whoami: %d %s", code, raw)
+	}
+}
+
+// A thread read as any form returns the turns stored under every form.
+func TestAddressAliasThread(t *testing.T) {
+	h := newAliasHarness(t, identity.Observe)
+	before := h.send(t, "session", "", identity.OperatorID)
+	h.migrate(t)
+	body, _ := json.Marshal(map[string]any{"kind": "notice", "to": identity.OperatorID, "thread_id": "t1", "payload": map[string]string{"body": "a"}})
+	if code, raw := h.do(t, http.MethodPost, "/messages", "session", string(body)); code != http.StatusCreated {
+		t.Fatalf("threaded send: %d %s", code, raw)
+	}
+	if _, err := h.db.DB().Exec(`UPDATE messages SET thread_id='t1' WHERE id=?`, before.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, as := range []string{aliasCanonicalURN, identity.OperatorID, h.agentURN} {
+		code, raw := h.do(t, http.MethodGet, "/messages/thread/t1?as="+url.QueryEscape(as), "operator", "")
+		var out struct {
+			Messages []gomsg.Envelope `json:"messages"`
+		}
+		if code != http.StatusOK || json.Unmarshal(raw, &out) != nil || len(out.Messages) != 2 {
+			t.Fatalf("thread as %s: %d %s", as, code, raw)
+		}
+	}
+	code, raw := h.do(t, http.MethodGet, "/messages/thread/t1?as="+url.QueryEscape(archieURN), "operator", "")
+	var out struct {
+		Messages []gomsg.Envelope `json:"messages"`
+	}
+	if code != http.StatusOK || json.Unmarshal(raw, &out) != nil || len(out.Messages) != 0 {
+		t.Fatalf("thread as a stranger: %d %s", code, raw)
+	}
+}

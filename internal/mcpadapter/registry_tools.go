@@ -307,22 +307,24 @@ func (a *Adapter) handleRegistryLookup(ctx context.Context, args map[string]any)
 			return nil, err
 		}
 	}
-	var (
-		out registry.Profile
-		err error
-	)
+	var includes []string
 	if include != "" {
-		out, err = a.client.Registry().LookupWithInclude(ctx, urn, include)
-	} else {
-		out, err = a.client.Registry().Lookup(ctx, urn)
+		includes = []string{include}
 	}
+	out, res, err := a.client.Registry().LookupAliased(ctx, urn, includes...)
 	if err != nil {
 		if isDaemonUnreachable(err) {
 			return nil, daemonUnreachableError(err)
 		}
 		return nil, mapRegistryErr(err)
 	}
-	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
+	body := map[string]any{"ok": true, "profile": out}
+	// An aliased address: name the canonical address and its aliases beside the
+	// profile registered under any of them (CW-20261114-0067).
+	if res.CanonicalURN != "" {
+		body["canonical_urn"], body["aliases"] = res.CanonicalURN, res.Aliases
+	}
+	return toolJSON(body), nil
 }
 
 func (a *Adapter) handleRegistryLookupBy(ctx context.Context, args map[string]any) (any, error) {

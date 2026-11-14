@@ -39,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
@@ -114,6 +115,13 @@ func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) 
 	}
 	if env.DeliveredAt != nil || env.ConsumedAt != nil {
 		return messaging.Envelope{}, messaging.ErrPresetLifecycle
+	}
+	// Mail to or from an alias is stored, and owed, under the canonical address
+	// (address_aliases.go), so the delivery obligation and the content row agree.
+	if d.owner != nil {
+		if err := d.owner.addrAliases.canonicalizeMail(ctx, d.db, &env); err != nil {
+			return messaging.Envelope{}, err
+		}
 	}
 	// Wake outcome is response-only observation, never immutable mail content
 	// or sender policy. Retrying a returned envelope must not change its digest.
@@ -262,8 +270,13 @@ func (d *deliveryBackedStore) Inbox(ctx context.Context, to messaging.Address, f
 // settleReadUndelivered is best-effort: a failure leaves the messages for the next pull
 // and never fails the pull itself, and the unread-only filter keeps them out of its result.
 func (d *deliveryBackedStore) settleReadUndelivered(ctx context.Context, to messaging.Address, f messaging.Filter) {
-	where := "routing_staged=0 AND to_urn=? AND delivered_at IS NULL AND canceled_at IS NULL AND read_at IS NOT NULL"
-	args := []any{to.URN()}
+	forms, err := d.mailboxForms(ctx, to)
+	if err != nil {
+		log.Printf("delivery store: inbox: resolve mailbox forms for %s failed (read messages stay for the next pull): %v", to.URN(), err)
+		return
+	}
+	toIn, args := toURNIn(forms)
+	where := "routing_staged=0 AND " + toIn + " AND delivered_at IS NULL AND canceled_at IS NULL AND read_at IS NOT NULL"
 	if len(f.Kind) > 0 {
 		in := make([]any, len(f.Kind))
 		for i, k := range f.Kind {
@@ -276,6 +289,7 @@ func (d *deliveryBackedStore) settleReadUndelivered(ctx context.Context, to mess
 		where += " AND thread_id=?"
 		args = append(args, f.ThreadID)
 	}
+	//nolint:gosec // G202: where is constant fragments plus generated ? placeholders; every value is a bound argument
 	rows, err := d.db.QueryContext(ctx, `SELECT id, delivery_id FROM messages WHERE `+where+` ORDER BY created_at, id LIMIT ?`, append(args, inboxSettleBatch)...)
 	if err != nil {
 		log.Printf("delivery store: inbox: list read-but-undelivered messages for %s failed (they stay for the next pull): %v", to.URN(), err)
@@ -541,7 +555,13 @@ func (s *Store) ClaimMessageDelivery(ctx context.Context, id string, recipient m
 	if err != nil {
 		return messaging.Envelope{}, delivery.LeaseRef{}, err
 	}
-	if env.To.URN() != recipient.URN() {
+	// recipient may be any form of the mailbox the message is stored under
+	// (address_aliases.go).
+	forms, err := s.AddressForms(ctx, recipient.URN())
+	if err != nil {
+		return messaging.Envelope{}, delivery.LeaseRef{}, err
+	}
+	if !slices.Contains(forms, env.To.URN()) {
 		return messaging.Envelope{}, delivery.LeaseRef{}, ErrWrongRecipient
 	}
 	deliveryID, ok, err := s.DeliveryIDForMessage(ctx, id)

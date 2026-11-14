@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -101,6 +102,12 @@ func (ms *messagingStore) insertMessageRow(ctx context.Context, env messaging.En
 	// exactly once, in insertion order, even when producers mint IDs out of order.
 	exec := ms.db.ExecContext
 	var tx *sql.Tx
+	if !publication && ms.owner != nil {
+		// Mail to or from an alias is stored under the canonical address.
+		if err := ms.owner.addrAliases.canonicalizeMail(ctx, ms.db, &env); err != nil {
+			return messaging.Envelope{}, err
+		}
+	}
 	if publication {
 		if ms.owner != nil {
 			if err := ms.owner.authorizeChannelPublication(ctx, env); err != nil {
@@ -190,18 +197,22 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 	if _, ok := channels.AddressName(to); ok {
 		return nil, channels.ErrMailboxOperation
 	}
-	toURN := to.URN()
+	forms, err := ms.mailboxForms(ctx, to)
+	if err != nil {
+		return nil, err
+	}
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 
-	// Build WHERE clause for optional Filter fields.
-	where := "routing_staged=0 AND to_urn=? AND delivered_at IS NULL AND canceled_at IS NULL"
+	// Build WHERE clause for optional Filter fields. The mailbox is the
+	// address and its aliases (address_aliases.go).
+	toIn, args := toURNIn(forms)
+	where := "routing_staged=0 AND " + toIn + " AND delivered_at IS NULL AND canceled_at IS NULL"
 	if unreadOnlyInbox(ctx) {
 		where += " AND read_at IS NULL"
 	}
-	args := []any{toURN}
 	if len(f.Kind) > 0 {
 		in := make([]any, len(f.Kind))
 		for i, k := range f.Kind {
@@ -227,6 +238,7 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	//nolint:gosec // G202: where is constant fragments plus generated ? placeholders; every value is a bound argument
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		        payload, content_type, metadata, created_at,
@@ -334,10 +346,16 @@ func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id str
 	if err := ms.requireMailbox(ctx, id); err != nil {
 		return "", err
 	}
+	forms, err := ms.mailboxForms(ctx, recipient)
+	if err != nil {
+		return "", err
+	}
+	toIn, toArgs := toURNIn(forms)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	//nolint:gosec // G202: toIn is generated ? placeholders; every value is a bound argument
 	res, err := ms.db.ExecContext(ctx,
-		`UPDATE messages SET consumed_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND consumed_at IS NULL`,
-		now, id, recipient.URN())
+		`UPDATE messages SET consumed_at=? WHERE routing_staged=0 AND id=? AND consumed_at IS NULL AND `+toIn,
+		append([]any{now, id}, toArgs...)...)
 	if err != nil {
 		return "", err
 	}
@@ -363,7 +381,7 @@ func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id str
 		}
 		return "", err
 	}
-	if toURN != recipient.URN() {
+	if !slices.Contains(forms, toURN) {
 		return "", ErrWrongRecipient
 	}
 	// Row exists and to_urn matches — already consumed. Idempotent. Still
@@ -442,7 +460,7 @@ func (ms *messagingStore) fanOut(env messaging.Envelope) {
 	ms.subMu.Unlock()
 
 	for _, s := range subs {
-		if !s.to.IsZero() && s.to != env.To {
+		if !s.to.IsZero() && s.to != env.To && !ms.aliasOf(s.to, env.To) {
 			continue
 		}
 		if s.filter.Matches(env) {
@@ -453,6 +471,13 @@ func (ms *messagingStore) fanOut(env messaging.Envelope) {
 			}
 		}
 	}
+}
+
+// aliasOf reports whether a subscriber on address sub receives mail stored
+// under to: they are forms of one mailbox. A failed alias read matches nothing.
+func (ms *messagingStore) aliasOf(sub, to messaging.Address) bool {
+	ok, err := ms.sameMailbox(context.Background(), to.URN(), sub)
+	return err == nil && ok
 }
 
 // notifyCanceled sends a canceled-sentinel envelope so any in-flight

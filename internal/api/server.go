@@ -70,7 +70,10 @@ type Deps struct {
 	MessageStore MessageStore
 	// Seats backs typed-message pending replies and seat status
 	// (CW-20261114-0013); nil disables /status and /messages/pending-replies.
-	Seats    SeatStore
+	Seats SeatStore
+	// Aliases is the address alias directory (CW-20261114-0067); nil means no
+	// address is an alias and disables /messages/aliases.
+	Aliases  AddressAliasStore
 	Channels ChannelService
 	Routing  RoutingService
 	// ProxyEvents, when non-nil, enables the /proxy/events endpoint for
@@ -197,6 +200,7 @@ type Server struct {
 	Digests             DigestStore
 	MessageStore        MessageStore
 	Seats               SeatStore
+	Aliases             AddressAliasStore
 	Channels            ChannelService
 	Routing             RoutingService
 	ProxyEvents         ProxyEventStore
@@ -261,6 +265,7 @@ func NewHandler(deps Deps) http.Handler {
 		Digests:             deps.Digests,
 		MessageStore:        deps.MessageStore,
 		Seats:               deps.Seats,
+		Aliases:             deps.Aliases,
 		Channels:            deps.Channels,
 		Routing:             deps.Routing,
 		ProxyEvents:         deps.ProxyEvents,
@@ -300,6 +305,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerWorkstreamRoutes(router)
 	s.registerMessageRoutes(router)
 	s.registerTypedMessageRoutes(router)
+	s.registerAddressAliasRoutes(router)
 	s.registerChannelRoutes(router)
 	s.registerForumRoutes(router)
 	s.registerRoutingRoutes(router)

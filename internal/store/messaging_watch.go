@@ -47,7 +47,11 @@ func (ms *messagingStore) MailboxAfter(ctx context.Context, to messaging.Address
 	if err := ms.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid), 0) FROM messages`).Scan(&win.HighWater); err != nil {
 		return MailboxWindow{}, fmt.Errorf("messaging store: mailbox high water: %w", err)
 	}
-	where, args := listWhere(to, f)
+	forms, err := ms.mailboxForms(ctx, to)
+	if err != nil {
+		return MailboxWindow{}, err
+	}
+	where, args := listWhere(forms, f)
 	//nolint:gosec // G202: where comes from listWhere (constant fragments plus generated ? placeholders); every value is a bound argument
 	rows, err := ms.db.QueryContext(ctx,
 		`SELECT rowid, id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,

@@ -81,7 +81,8 @@ func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messag
 		mark("stamped")
 		return true
 	}
-	if p.MayActAs(canonicalAddress(env.From)) {
+	// A principal that owns one form of an aliased address may send as the others.
+	if p.MayActAs(canonicalAddress(env.From)) || s.ownsAliasOf(r.Context(), p, canonicalAddress(env.From)) {
 		mark("verified")
 		return true
 	}
@@ -125,6 +126,10 @@ func (s *Server) verifyClaim(w http.ResponseWriter, r *http.Request, claimed, un
 		if p.MayActAs(form) {
 			return true
 		}
+	}
+	// Another form of an aliased address (address_aliases.go).
+	if s.ownsAliasOf(r.Context(), p, canonicalClaim(claimed)) {
+		return true
 	}
 	if s.enforcing() {
 		s.auditIdentity(r, p, refusedEvent)

@@ -69,6 +69,15 @@ func (d handleDirectory) Resolve(h string) (string, bool) { return d.s.resolveHa
 // registry agent whose handle (or, until backfilled, tether catalog id) is name,
 // else the catalog agent's urn.
 func (s *Server) resolveHandle(ctx context.Context, h string) (string, bool) {
+	urn, ok := s.resolveHandleAddress(ctx, h)
+	if !ok {
+		return "", false
+	}
+	// A handle held by an alias names the canonical address (address_aliases.go).
+	return s.canonicalAlias(ctx, urn), true
+}
+
+func (s *Server) resolveHandleAddress(ctx context.Context, h string) (string, bool) {
 	if !envelope.ValidHandle(h) {
 		return "", false
 	}
@@ -107,8 +116,18 @@ func (s *Server) resolveHandle(ctx context.Context, h string) (string, bool) {
 	return "", false
 }
 
-// handleFor is the @handle of an address, or "" when it has none.
+// handleFor is the @handle of an address, or "" when it has none. An aliased
+// address answers to the handle of any of its forms, the canonical one first.
 func (s *Server) handleFor(ctx context.Context, urn string) string {
+	for _, form := range s.aliasForms(ctx, urn) {
+		if h := s.handleForAddress(ctx, form); h != "" {
+			return h
+		}
+	}
+	return ""
+}
+
+func (s *Server) handleForAddress(ctx context.Context, urn string) string {
 	if urn == identity.OperatorID {
 		return envelope.Operator
 	}
@@ -375,7 +394,7 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 			writeEnvelopeError(w, &seatstatus.Error{Field: "target", Reason: "unknown handle " + req.Target})
 			return
 		}
-		if urn != caller && !s.maySetStatusFor(ctx, r, caller) {
+		if !s.sameAddress(ctx, urn, caller) && !s.maySetStatusFor(ctx, r, caller) {
 			writeError(w, http.StatusForbidden, CodeForbidden, "only the operator or a manager may set another seat's status")
 			return
 		}
@@ -430,7 +449,7 @@ func (s *Server) maySetStatusFor(ctx context.Context, r *http.Request, caller st
 	if p, ok := verifiedPrincipal(r); ok && identity.IsOperatorCredential(p) {
 		return true
 	}
-	if _, ok := verifiedPrincipal(r); !ok && caller == identity.OperatorID {
+	if _, ok := verifiedPrincipal(r); !ok && s.canonicalAlias(ctx, caller) == s.canonicalAlias(ctx, identity.OperatorID) {
 		return true // the local operator on an unauthenticated socket
 	}
 	a, ok := s.catalogAgentFor(ctx, caller)
@@ -659,6 +678,12 @@ func (s *Server) seatAddresses(ctx context.Context, urn, handle string) []string
 					}
 				}
 			}
+		}
+	}
+	// Mail stored under any form of an aliased address is the seat's too.
+	for _, u := range slices.Clone(out) {
+		for _, form := range s.aliasForms(ctx, u) {
+			add(form)
 		}
 	}
 	return out
