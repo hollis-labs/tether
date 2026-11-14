@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 
@@ -43,6 +44,13 @@ func mailFixture(t *testing.T, s *Service, from string, meta map[string]string) 
 	return env.ID
 }
 
+func triageFixture(t *testing.T, s *Service, messageID, class string) {
+	t.Helper()
+	if _, _, err := s.Store.TriageRecord(context.Background(), store.TriageRow{MessageID: messageID, Recipient: "msg://agent/agent-mux/agt_target", Seat: "msg://agent/agent-mux/agt_target", Class: class, Reason: "fixture", State: "woken", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReplyAudienceFixtures(t *testing.T) {
 	op := deviceCtx("maintain", "operate", "read")
 	cases := []audienceCase{
@@ -65,6 +73,20 @@ func TestReplyAudienceFixtures(t *testing.T) {
 			// another seat through the shared operator credential. The sender class is
 			// unknown, but the binding is proven, so input_sources says mail_wake.
 			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
+			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
+		}},
+		{"unknown_mail_wake_action", func(t *testing.T, s *Service) {
+			// The same wake on a seat with mail triage on (CW-20261114-0080): the
+			// waking mail was triaged action, so input_triage says so.
+			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
+			triageFixture(t, s, id, "action")
+			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
+		}},
+		{"unknown_mail_wake_human", func(t *testing.T, s *Service) {
+			// A wake by mail triaged human (it answers Chrispian): a consumer must
+			// never fold this reply.
+			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
+			triageFixture(t, s, id, "human")
 			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
 		}},
 		{"unknown_shared_operator_credential_direct", func(t *testing.T, s *Service) {
@@ -103,7 +125,7 @@ func TestReplyAudienceFixtures(t *testing.T) {
 			meta := map[string]string{}
 			for k, v := range staged.Metadata {
 				switch k {
-				case "audience", "audience_basis", "input_ids", "input_classes", "input_sources", "kind", "session_id", "turn_id":
+				case "audience", "audience_basis", "input_ids", "input_classes", "input_sources", "input_triage", "kind", "session_id", "turn_id":
 					meta[k] = idPlaceholder.ReplaceAllString(v, "ti_example")
 				}
 			}
@@ -166,6 +188,27 @@ func checkAudienceInvariants(t *testing.T, e events.TurnOutputEvent, meta map[st
 	}
 	if meta["input_sources"] != strings.Join(e.InputSources, ",") {
 		t.Fatalf("event and routed metadata disagree on input_sources: %+v %v", e, meta)
+	}
+	if len(e.InputTriage) > 0 {
+		if len(e.InputTriage) != len(e.InputIDs) || len(e.InputSources) != len(e.InputIDs) {
+			t.Fatalf("input_triage needs a proven binding and must pair with input_ids: %+v", e)
+		}
+		blank := true
+		for i, class := range e.InputTriage {
+			if !slices.Contains([]string{"human", "action", "fyi", "read", ""}, class) {
+				t.Fatalf("input triage %q is not in the vocabulary", class)
+			}
+			if class != "" && e.InputSources[i] != store.InputMailWake {
+				t.Fatalf("a triage class on an input that is not a mail wake: %+v", e)
+			}
+			blank = blank && class == ""
+		}
+		if blank {
+			t.Fatalf("input_triage must be omitted when every position is empty: %+v", e)
+		}
+	}
+	if meta["input_triage"] != strings.Join(e.InputTriage, ",") {
+		t.Fatalf("event and routed metadata disagree on input_triage: %+v %v", e, meta)
 	}
 }
 

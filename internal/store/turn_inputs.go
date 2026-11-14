@@ -66,6 +66,45 @@ type TurnAudience struct {
 	// binding is proven, but it is a fact about the input rather than the sender,
 	// so it is kept when Audience is unknown because the sender class is.
 	Sources []string `json:"input_sources,omitempty"`
+	// Triage is the wake_triage class (human, action, fyi, read) of the mail
+	// that woke the seat, for each bound input whose source is mail_wake, in
+	// InputIDs order, under the same proven-binding rule as Sources
+	// (CW-20261114-0080). A position is "" for an input that is not a mail wake
+	// or whose mail was never triaged; the field is omitted when every position
+	// is "".
+	Triage []string `json:"input_triage,omitempty"`
+}
+
+// inputTriage returns the triage of one bound input: the wake_triage class of
+// its waking message for a mail wake, "" otherwise or when none was recorded.
+func inputTriage(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, source, refID string) (string, error) {
+	if source != InputMailWake || refID == "" {
+		return "", nil
+	}
+	var class string
+	err := q.QueryRowContext(ctx, `SELECT class FROM wake_triage WHERE message_id=?`, refID).Scan(&class)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return class, err
+}
+
+// withTriage fills a.Triage for a proven binding of one input; it leaves the
+// field empty when the binding is unproven or the input has no triage.
+func withTriage(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, a TurnAudience, source, refID string) (TurnAudience, error) {
+	if len(a.Sources) == 0 {
+		return a, nil
+	}
+	class, err := inputTriage(ctx, q, source, refID)
+	if err != nil || class == "" {
+		return a, err
+	}
+	a.Triage = []string{class}
+	return a, nil
 }
 
 // unprovenBinding reports whether an audience basis says the input was not
@@ -148,9 +187,9 @@ func (s *Store) BindTurnInput(ctx context.Context, sessionID, turnID string) (Tu
 		return TurnAudience{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var id, source, audience, basis string
+	var id, source, refID, audience, basis string
 	var classes sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT input_id, source, COALESCE(audience,''), COALESCE(audience_basis,''), classes FROM turn_inputs WHERE session_id=? AND turn_id=? ORDER BY seq LIMIT 1`, sessionID, turnID).Scan(&id, &source, &audience, &basis, &classes)
+	err = tx.QueryRowContext(ctx, `SELECT input_id, source, COALESCE(ref_id,''), COALESCE(audience,''), COALESCE(audience_basis,''), classes FROM turn_inputs WHERE session_id=? AND turn_id=? ORDER BY seq LIMIT 1`, sessionID, turnID).Scan(&id, &source, &refID, &audience, &basis, &classes)
 	switch {
 	case err == nil:
 		out := TurnAudience{Audience: audience, Basis: basis, InputIDs: []string{id}}
@@ -160,23 +199,23 @@ func (s *Store) BindTurnInput(ctx context.Context, sessionID, turnID string) (Tu
 		if !unprovenBinding(basis) && source != "" {
 			out.Sources = []string{source}
 		}
-		return out, nil
+		return withTriage(ctx, tx, out, source, refID)
 	case !errors.Is(err, sql.ErrNoRows):
 		return TurnAudience{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT input_id, source, state, queued, sender_class, basis FROM turn_inputs WHERE session_id=? AND turn_id IS NULL AND state IN ('submitting','accepted') ORDER BY seq`, sessionID)
+	rows, err := tx.QueryContext(ctx, `SELECT input_id, source, COALESCE(ref_id,''), state, queued, sender_class, basis FROM turn_inputs WHERE session_id=? AND turn_id IS NULL AND state IN ('submitting','accepted') ORDER BY seq`, sessionID)
 	if err != nil {
 		return TurnAudience{}, err
 	}
 	type candidate struct {
-		id, source, state, class, basis string
-		queued                          bool
+		id, source, refID, state, class, basis string
+		queued                                 bool
 	}
 	var waiting []candidate
 	for rows.Next() {
 		var c candidate
 		var q int
-		if err := rows.Scan(&c.id, &c.source, &c.state, &q, &c.class, &c.basis); err != nil {
+		if err := rows.Scan(&c.id, &c.source, &c.refID, &c.state, &q, &c.class, &c.basis); err != nil {
 			_ = rows.Close()
 			return TurnAudience{}, err
 		}
@@ -202,6 +241,9 @@ func (s *Store) BindTurnInput(ctx context.Context, sessionID, turnID string) (Tu
 		out.Basis, out.Sources = first.basis, []string{first.source}
 	default:
 		out.Audience, out.Basis, out.Classes, out.Sources = first.class, first.basis, []string{first.class}, []string{first.source}
+	}
+	if out, err = withTriage(ctx, tx, out, first.source, first.refID); err != nil {
+		return TurnAudience{}, err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE turn_inputs SET turn_id=?, audience=?, audience_basis=?, classes=? WHERE input_id=? AND turn_id IS NULL`, turnID, out.Audience, out.Basis, nullString(strings.Join(out.Classes, ",")), first.id)
 	if err != nil {
