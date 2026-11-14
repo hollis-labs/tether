@@ -1138,6 +1138,13 @@ typed messages waiting on you), `tether_status_set` (message.write: declare your
 `tether_status_get` (read: a seat's status card) and `tether_handle_set` (registry.write, operator only: give a
 non-catalog registry agent a `@handle`).
 
+#### `tether_address_alias_add`, `tether_address_alias_list`, `tether_address_alias_remove`
+Address aliases (CW-20261114-0067): an alias is another name for a canonical address's mailbox. `add {alias, canonical}`
+and `remove {alias}` need registry.write and are refused by the daemon for every caller but the operator credential;
+`list {canonical?}` is a read. Mail sent to an alias is stored under the canonical address and reading either returns
+the mail of both; stored messages are never rewritten. Rules and the rename procedure:
+[messaging.md](messaging.md#address-aliases).
+
 #### `tether_message_send` _(message.write)_
 The message body lives inside `payload_json` (for example `{"subject":"...","body":"..."}`). `tether_message_send` and
 `tether_message_notify` refuse an argument they do not declare, naming it and listing the accepted set, rather than

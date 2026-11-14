@@ -74,6 +74,10 @@ type whoamiResponse struct {
 	ExternalIDs []registry.ExternalID    `json:"external_ids,omitempty"`
 	Groups      []redactedProfile        `json:"groups,omitempty"`
 	Binding     *registry.RuntimeBinding `json:"binding,omitempty"`
+	// CanonicalURN and Aliases are set when the address has alias rows
+	// (address_aliases.go): the address mail is stored under, and its other names.
+	CanonicalURN string   `json:"canonical_urn,omitempty"`
+	Aliases      []string `json:"aliases,omitempty"`
 }
 
 func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +93,9 @@ func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
 
 	out := whoamiResponse{URN: as}
 	ctx := r.Context()
+	if canonical, aliases, ok := s.aliasResolution(ctx, as); ok {
+		out.CanonicalURN, out.Aliases = canonical, aliases
+	}
 
 	if profile, err := s.Registry.Lookup(ctx, as); err == nil {
 		redacted := redactProfile(profile)

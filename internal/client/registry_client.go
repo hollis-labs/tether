@@ -158,28 +158,65 @@ func (rc *RegistryClient) OnboardProject(ctx context.Context, params OnboardProj
 // surface where lookup-by-urn is the natural shape. 404 returns a
 // wrapped registry.ErrNotFound.
 func (rc *RegistryClient) Lookup(ctx context.Context, urn string) (registry.Profile, error) {
-	seg, err := kindSegmentFromURN(urn)
+	out, _, err := rc.LookupAliased(ctx, urn)
+	return out, err
+}
+
+// AddressResolution is set on a lookup of an address that has alias rows
+// (CW-20261114-0067): the canonical address and its aliases. The profile
+// returned beside it is the one registered under any of those addresses.
+type AddressResolution struct {
+	CanonicalURN string   `json:"canonical_urn,omitempty"`
+	Aliases      []string `json:"aliases,omitempty"`
+}
+
+// lookupSegment is the URL segment for an item lookup. The daemon looks an item
+// up by URN alone, so an address the registry did not mint (a user address, an
+// aliased address) goes under "agents" rather than failing kind inference.
+func lookupSegment(urn string) (string, error) {
+	if seg, err := kindSegmentFromURN(urn); err == nil {
+		return seg, nil
+	}
+	if !strings.HasPrefix(urn, "msg://") {
+		return "", fmt.Errorf("registry client: cannot infer kind from URN %q", urn)
+	}
+	return "agents", nil
+}
+
+// LookupAliased is Lookup that also reports the address's alias resolution,
+// when it has one. include is as for LookupWithInclude.
+func (rc *RegistryClient) LookupAliased(ctx context.Context, urn string, include ...string) (registry.Profile, AddressResolution, error) {
+	seg, err := lookupSegment(urn)
 	if err != nil {
-		return registry.Profile{}, err
+		return registry.Profile{}, AddressResolution{}, err
 	}
 	path := "/registry/" + seg + "/" + url.PathEscape(urn)
+	if len(include) > 0 {
+		path += "?include=" + url.QueryEscape(strings.Join(include, ","))
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
 	if err != nil {
-		return registry.Profile{}, err
+		return registry.Profile{}, AddressResolution{}, err
 	}
 	resp, err := rc.c.http.Do(req)
 	if err != nil {
-		return registry.Profile{}, wrapIfUnreachable(err)
+		return registry.Profile{}, AddressResolution{}, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
-		return registry.Profile{}, readRegistryError(resp)
+		return registry.Profile{}, AddressResolution{}, readRegistryError(resp)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return registry.Profile{}, AddressResolution{}, fmt.Errorf("read lookup response: %w", err)
 	}
 	var out registry.Profile
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return registry.Profile{}, fmt.Errorf("decode lookup response: %w", err)
+	if err := json.Unmarshal(body, &out); err != nil {
+		return registry.Profile{}, AddressResolution{}, fmt.Errorf("decode lookup response: %w", err)
 	}
-	return out, nil
+	var res AddressResolution
+	_ = json.Unmarshal(body, &res)
+	return out, res, nil
 }
 
 // LookupFull GETs /registry/{kind}/{urn}?full=true returning the unredacted Profile.
@@ -190,31 +227,8 @@ func (rc *RegistryClient) LookupFull(ctx context.Context, urn string) (registry.
 // LookupWithInclude GETs /registry/{kind}/{urn}?include=... returning a Profile with
 // the requested sensitive fields included.
 func (rc *RegistryClient) LookupWithInclude(ctx context.Context, urn string, include ...string) (registry.Profile, error) {
-	seg, err := kindSegmentFromURN(urn)
-	if err != nil {
-		return registry.Profile{}, err
-	}
-	path := "/registry/" + seg + "/" + url.PathEscape(urn)
-	if len(include) > 0 {
-		path += "?include=" + url.QueryEscape(strings.Join(include, ","))
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
-	if err != nil {
-		return registry.Profile{}, err
-	}
-	resp, err := rc.c.http.Do(req)
-	if err != nil {
-		return registry.Profile{}, wrapIfUnreachable(err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusOK {
-		return registry.Profile{}, readRegistryError(resp)
-	}
-	var out registry.Profile
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return registry.Profile{}, fmt.Errorf("decode lookup response: %w", err)
-	}
-	return out, nil
+	out, _, err := rc.LookupAliased(ctx, urn, include...)
+	return out, err
 }
 
 // LookupBy resolves a substrate-local identifier to one registry profile.

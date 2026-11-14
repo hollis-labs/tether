@@ -402,13 +402,45 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 // Response is redacted by default (see redactProfile). Callers who
 // require sensitive fields can pass ?full=true or ?include=...
 func (s *Server) handleRegistryLookup(w http.ResponseWriter, r *http.Request, urn string) {
-	out, err := s.Registry.Lookup(r.Context(), urn)
+	inc := parseIncludes(r)
+	canonical, aliases, aliased := s.aliasResolution(r.Context(), urn)
+	if !aliased {
+		out, err := s.Registry.Lookup(r.Context(), urn)
+		if err != nil {
+			writeRegistryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, projectProfile(out, inc))
+		return
+	}
+	// An aliased address has one profile whichever form is asked for
+	// (CW-20261114-0067): the canonical address's own row when it has one, else
+	// the first alias that is registered. The answer names the canonical address.
+	var (
+		out registry.Profile
+		err error
+	)
+	for _, form := range append([]string{canonical}, aliases...) {
+		if out, err = s.Registry.Lookup(r.Context(), form); err == nil || !errors.Is(err, registry.ErrNotFound) {
+			break
+		}
+	}
 	if err != nil {
 		writeRegistryError(w, err)
 		return
 	}
-	inc := parseIncludes(r)
-	writeJSON(w, http.StatusOK, projectProfile(out, inc))
+	raw, err := json.Marshal(projectProfile(out, inc))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	body := map[string]any{}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	body["canonical_urn"], body["aliases"] = canonical, aliases
+	writeJSON(w, http.StatusOK, body)
 }
 
 // redactedProfile is the wire shape returned by default across both read routes

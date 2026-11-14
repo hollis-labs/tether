@@ -48,6 +48,8 @@ type Store struct {
 	// go-messaging delivery-core singleton (T03). See delivery_store.go.
 	deliveryOnce     sync.Once
 	deliveryStoreVal delivery.Store
+	// addrAliases is the address alias table in memory (address_aliases.go).
+	addrAliases addressAliases
 }
 
 // Open opens (or creates) the SQLite store at path and runs migrations.

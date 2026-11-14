@@ -118,7 +118,9 @@ type Server struct {
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
 	// Seats backs typed-message pending replies and seat status (CW-20261114-0013).
-	Seats    api.SeatStore
+	Seats api.SeatStore
+	// Aliases is the address alias directory (CW-20261114-0067).
+	Aliases  api.AddressAliasStore
 	Channels api.ChannelService
 	Routing  api.RoutingService
 	// Teams is supplied only by the opt-in daemon composition path.
@@ -649,6 +651,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			Digests:             s.Digests,
 			MessageStore:        s.MessageStore,
 			Seats:               s.Seats,
+			Aliases:             s.Aliases,
 			Channels:            s.Channels,
 			Routing:             s.Routing,
 			Teams:               teams,

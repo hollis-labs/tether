@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -73,8 +74,14 @@ func (s *Store) ListMessagesPage(q MessageQuery) (MessagePage, error) {
 		return MessagePage{}, fmt.Errorf("invalid message scope %q", q.Scope)
 	}
 	if q.Recipient != "" {
-		where += " AND to_urn=?"
-		args = append(args, q.Recipient)
+		// A recipient's mailbox is the address and its aliases (address_aliases.go).
+		forms, err := s.AddressForms(context.Background(), q.Recipient)
+		if err != nil {
+			return MessagePage{}, err
+		}
+		toIn, toArgs := toURNIn(forms)
+		where += " AND " + toIn
+		args = append(args, toArgs...)
 	}
 	switch q.Read {
 	case "", "all":
