@@ -162,7 +162,18 @@ or `offline`, with `reason` (one line, at most 200 characters), `ref`
 seat sets its own; the operator or a catalog `manager` may set another's with
 `target`. Re-setting the same state, reason, ref and owner refreshes the expiry
 and emits nothing; a change emits `seat.status`
-`{agent_urn, handle, state, reason?, ref?, owner?, expires_at?, set_by}`.
+`{agent_urn, handle, state, reason?, ref?, owner?, expires_at?, set_by,
+set_by_verification?, set_by_principal?}`.
+
+Who may set it (CW-20261114-0130): the setter's `?as=` claim must hold, in every
+identity mode. A claim the hub cannot verify (an `?as=` the authenticated
+principal does not own) sets nothing (403), even in observe mode, where other
+routes only record it. The seat itself (verified, or stamped from the caller's
+own address), a verified catalog manager, and the operator credential may set
+it; without a verified principal only identity-off on the local socket may.
+Every declaration records `set_by_verification` (`verified`, `stamped`, or empty
+with no principal) and `set_by_principal`, the way mail records
+`from_verification` and `from_principal`.
 
 `tether_status_get` / `GET /status/{@handle}` returns the card:
 
@@ -170,7 +181,7 @@ and emits nothing; a change emits `seat.status`
 {
   "handle": "@photon-tether",
   "agent_urn": "msg://agent/agent-mux/agt_lpy0gym4eh",
-  "declared": {"state": "blocked", "reason": "waiting on the harness tag", "owner": "@archie", "since": "...", "expires_at": "...", "set_by": "..."},
+  "declared": {"state": "blocked", "reason": "waiting on the harness tag", "owner": "@archie", "since": "...", "expires_at": "...", "set_by": "...", "set_by_verification": "verified", "set_by_principal": "msg://session/local/..."},
   "effective": "blocked",
   "live": {"session_id": "...", "online": true, "health": "idle", "work_state": "idle", "last_activity": "...", "unread_mail": 0, "pending_replies": 1}
 }
