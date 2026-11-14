@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -106,11 +107,38 @@ func (c *Catalog) Validate() error {
 		if !launchprofile.ValidCell(a.Cell) {
 			return fmt.Errorf("agent %q has invalid cell %q (want a lowercase slug: letters, digits, '-' or '_', starting with a letter)", id, a.Cell)
 		}
+		if a.Handle != "" && !validHandleName(a.Handle) {
+			return fmt.Errorf("agent %q has invalid handle %q (want a lowercase name: letters, digits, '-' or '_', starting with a letter; no @)", id, a.Handle)
+		}
 		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
 			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
 		}
 		if a.IsManager() && EffectivePermissionMode(c.Global, a) == PermissionModeBypass {
 			return fmt.Errorf("agent %q has role %q and resolves to permission_mode %q; managers must not run with blanket bypass (set permissions.permission_mode: default and an MCP-only provider_overrides allowlist)", id, launchprofile.RoleManager, PermissionModeBypass)
+		}
+	}
+	return c.validateHandles()
+}
+
+var handleNameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+
+func validHandleName(h string) bool { return handleNameRE.MatchString(h) }
+
+// validateHandles: an agent's handle: must not name another agent, by that
+// agent's handle or its id (CW-20261114-0013), so @name resolves to one seat.
+func (c *Catalog) validateHandles() error {
+	owner := map[string]string{}
+	for id, a := range c.Agents {
+		if a.Handle != "" {
+			if other, ok := owner[a.Handle]; ok {
+				return fmt.Errorf("agents %q and %q both have handle %q", other, id, a.Handle)
+			}
+			owner[a.Handle] = id
+		}
+	}
+	for h, id := range owner {
+		if _, ok := c.Agents[h]; ok && h != id {
+			return fmt.Errorf("agent %q has handle %q, which is another agent's id", id, h)
 		}
 	}
 	return nil

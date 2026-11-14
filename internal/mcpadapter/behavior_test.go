@@ -83,6 +83,11 @@ var clientMethodWrites = map[string]bool{
 	"MessageUnarchive": true,
 
 	"MessageSend":                   true,
+	"MessagePost":                   true,
+	"PendingReplies":                false,
+	"StatusSet":                     true,
+	"StatusGet":                     false,
+	"HandleSet":                     true,
 	"MessageNotify":                 true,
 	"MessageConsume":                true,
 	"MessageCancel":                 true,
