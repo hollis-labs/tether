@@ -318,7 +318,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}
 	cmd.Env = launch.CorrelationFromEnv(spec.Env).SealEnv(cmd.Env)
-	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+spec.Actor)
+	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+sessionAgentURN(spec))
 	// Per-session issued tokens: 0600 files outside the checkout, refreshed in
 	// place; the child gets only their paths.
 	authDir := filepath.Join(ws.Root, "auth")
@@ -677,4 +677,13 @@ func codexCredentialPreflight(specEnv map[string]string, getenv func(string) str
 		return nil // cannot tell reliably
 	}
 	return fmt.Errorf("%w: no OPENAI_API_KEY and no %s; run `codex login` as the worker account or set OPENAI_API_KEY in the worker's environment (set %s=1 if codex keeps its credentials in the keychain)", ErrCodexCredentials, filepath.Join(home, "auth.json"), SkipCodexPreflightEnv)
+}
+
+// sessionAgentURN is the session's TETHER_AGENT_URN: the seat's catalog urn (its
+// mail address) when the hub sent one, else the binding target (CW-20261114-0013).
+func sessionAgentURN(spec workerwire.LaunchSpec) string {
+	if spec.AgentURN != "" {
+		return spec.AgentURN
+	}
+	return spec.Actor
 }

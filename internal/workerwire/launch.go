@@ -106,6 +106,10 @@ type LaunchSpec struct {
 	// message waits on this seat's reply (CW-20261114-0013). It fails open. Only sent to workers advertising
 	// FeatureStopGate.
 	StopGate bool `json:"stop_gate,omitempty"`
+	// AgentURN is the seat's catalog urn: when it has one, exported to the session
+	// as TETHER_AGENT_URN (its mail address); Actor stays the binding target
+	// (CW-20261114-0013). Empty: TETHER_AGENT_URN is Actor, as before.
+	AgentURN string `json:"agent_urn,omitempty"`
 	// ResumeSessionID is the provider's own conversation id to continue (claude --resume). Set only for a
 	// hub-approved resume on the same worker that ran the source session.
 	ResumeSessionID string `json:"resume_session_id,omitempty"`

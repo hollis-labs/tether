@@ -563,7 +563,7 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id str
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	if as != env.From.URN() && as != env.To.URN() {
+	if !s.sameSeat(r.Context(), as, env.From.URN()) && !s.sameSeat(r.Context(), as, env.To.URN()) {
 		writeError(w, http.StatusForbidden, CodeForbidden, "as must be the message's sender or recipient")
 		return
 	}
@@ -1291,6 +1291,15 @@ func (s *Server) refuseDeprecatedRecipient(ctx context.Context, to messaging.Add
 }
 
 func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	// Mail to a seat's logical form goes to its catalog urn, where it binds and
+	// reads (CW-20261114-0013); before, it landed where nobody reads it.
+	if env.To.Kind == messaging.KindAgent {
+		if c := s.canonicalSeat(ctx, env.To.URN()); c != env.To.URN() {
+			if addr, err := messaging.ParseURN(c); err == nil {
+				env.To = addr
+			}
+		}
+	}
 	if err := s.refuseDeprecatedRecipient(ctx, env.To); err != nil {
 		return messaging.Envelope{}, err
 	}

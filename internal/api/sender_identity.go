@@ -120,6 +120,12 @@ func (s *Server) verifyClaim(w http.ResponseWriter, r *http.Request, claimed, un
 	if !ok || claimed == "" || p.MayActAs(canonicalClaim(claimed)) {
 		return true
 	}
+	// The same seat under its other address (catalog urn vs agent-mux form).
+	for _, form := range s.seatForms(r.Context(), canonicalClaim(claimed)) {
+		if p.MayActAs(form) {
+			return true
+		}
+	}
 	if s.enforcing() {
 		s.auditIdentity(r, p, refusedEvent)
 		writeError(w, http.StatusForbidden, CodeForbidden, what+" is not an address of the authenticated principal")
@@ -156,6 +162,7 @@ func (s *Server) guardAs(next http.HandlerFunc) http.HandlerFunc {
 		if !s.claimedActor(w, r, r.URL.Query().Get("as"), "as") {
 			return
 		}
+		s.canonicalizeSeatParams(r)
 		next(w, r)
 	}
 }

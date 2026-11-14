@@ -71,6 +71,12 @@ func (s *Server) registerCallerContextRoutes(router *http.ServeMux) {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(w, http.StatusOK, ResolveCallerContext(r.Context(), s.Service, s.Registry))
+		out := ResolveCallerContext(r.Context(), s.Service, s.Registry)
+		// whoami's address is the seat's catalog urn, where its mail is
+		// (CW-20261114-0013), not the logical binding target.
+		if out.AgentURN != "" {
+			out.AgentURN = s.canonicalSeat(r.Context(), out.AgentURN)
+		}
+		writeJSON(w, http.StatusOK, out)
 	})
 }
