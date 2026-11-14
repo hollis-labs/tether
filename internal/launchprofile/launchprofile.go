@@ -113,6 +113,11 @@ type LaunchProfile struct {
 	// inherited through extends: a handle names one seat. Optional.
 	Handle string `yaml:"handle,omitempty" json:"handle,omitempty"`
 
+	// StopGate turns the Stop-hook reply gate on (true) or off (false) for this
+	// agent's worker Claude sessions, over catalog.defaults.stop_gate
+	// (CW-20261114-0013). Unset follows the default. Closest definition wins.
+	StopGate *bool `yaml:"stop_gate,omitempty" json:"stop_gate,omitempty"`
+
 	// MCPScopes are the scopes of the session-bound credential the hub mints for
 	// this agent's worker sessions (for example message.write, registry.write,
 	// groups.write). Empty means the default set. Closest definition wins.

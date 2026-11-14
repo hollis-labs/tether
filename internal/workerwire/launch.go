@@ -37,6 +37,10 @@ const FeatureEditableAgents = "editable-agents"
 // LaunchSpec.AgentEvents is set (CW-20261014-0143). The hub sets the flag only for workers that advertise it.
 const FeatureAgentEvents = "agent-events"
 
+// FeatureStopGate is advertised by a worker that plants the Claude Stop-hook reply gate (`tether-worker hook stop-gate`)
+// when LaunchSpec.StopGate is set (CW-20261114-0013). The hub sets the flag only for workers that advertise it.
+const FeatureStopGate = "stop-gate"
+
 // FeatureAgentToken is advertised in a worker's hello when it can request
 // short-lived scoped agent tokens from the hub's issuer, keep them in
 // per-session 0600 token files and refresh them in place. The hub sends
@@ -98,6 +102,10 @@ type LaunchSpec struct {
 	// AgentEvents asks the worker to plant Claude lifecycle hooks that record content-free activity events to the
 	// session's local spool (CW-20261014-0143). Default off; only sent to workers that advertise FeatureAgentEvents.
 	AgentEvents bool `json:"agent_events,omitempty"`
+	// StopGate asks the worker to plant a Claude Stop hook that, once per turn, refuses to end the turn while a typed
+	// message waits on this seat's reply (CW-20261114-0013). It fails open. Only sent to workers advertising
+	// FeatureStopGate.
+	StopGate bool `json:"stop_gate,omitempty"`
 	// ResumeSessionID is the provider's own conversation id to continue (claude --resume). Set only for a
 	// hub-approved resume on the same worker that ran the source session.
 	ResumeSessionID string `json:"resume_session_id,omitempty"`

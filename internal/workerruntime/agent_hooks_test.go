@@ -252,3 +252,70 @@ func TestPlantingNeverFollowsOrReusesWhatTheAgentLeft(t *testing.T) {
 		}
 	})
 }
+
+// The Stop-hook reply gate (CW-20261114-0013) is planted only when asked and when the session can reach the hub's
+// /mcp; alone, it plants no activity hooks and no events directory; with AgentEvents, Stop runs both hooks.
+func TestStopGatePlanting(t *testing.T) {
+	gateSpec := func(events bool) workerwire.LaunchSpec {
+		return workerwire.LaunchSpec{Session: "s1", AgentEvents: events, StopGate: true, MCPPolicy: true,
+			AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether"}}}
+	}
+	reachable := &Executor{Binary: hookBinary(t, 0o755), HubMCPURL: "https://hub.example/mcp", Tokens: &TokenMinter{}}
+
+	t.Run("gate alone", func(t *testing.T) {
+		ws := t.TempDir()
+		got := reachable.agentHookArgs(ws, gateSpec(false))
+		if len(got) != 2 || got[0] != "--settings" {
+			t.Fatalf("args = %v", got)
+		}
+		raw, _ := os.ReadFile(filepath.Join(ws, "agent-hooks.json"))
+		var s struct {
+			Hooks map[string][]struct {
+				Hooks []struct{ Command string } `json:"hooks"`
+			} `json:"hooks"`
+		}
+		if err := json.Unmarshal(raw, &s); err != nil || len(s.Hooks) != 1 || len(s.Hooks["Stop"]) != 1 {
+			t.Fatalf("settings = %s (%v)", raw, err)
+		}
+		cmd := s.Hooks["Stop"][0].Hooks[0].Command
+		want := "hook stop-gate --url 'https://hub.example/mcp' --token-file '" + filepath.Join(ws, "auth", "tether.token") + "'"
+		if !strings.Contains(cmd, want) {
+			t.Fatalf("gate command = %q, want it to contain %q", cmd, want)
+		}
+		if _, err := os.Stat(filepath.Join(ws, "events")); !os.IsNotExist(err) {
+			t.Fatal("events directory created for the gate alone")
+		}
+	})
+
+	t.Run("gate and activity events", func(t *testing.T) {
+		ws := t.TempDir()
+		if got := reachable.agentHookArgs(ws, gateSpec(true)); len(got) != 2 {
+			t.Fatalf("args = %v", got)
+		}
+		raw, _ := os.ReadFile(filepath.Join(ws, "agent-hooks.json"))
+		var s struct {
+			Hooks map[string][]any `json:"hooks"`
+		}
+		_ = json.Unmarshal(raw, &s)
+		if len(s.Hooks["Stop"]) != 2 || len(s.Hooks["PreToolUse"]) != 1 {
+			t.Fatalf("Stop hooks = %d, PreToolUse = %d", len(s.Hooks["Stop"]), len(s.Hooks["PreToolUse"]))
+		}
+	})
+
+	t.Run("hub unreachable: fails open with a visible reason", func(t *testing.T) {
+		ws := t.TempDir()
+		e := &Executor{Binary: hookBinary(t, 0o755)} // no hub MCP url
+		if got := e.agentHookArgs(ws, gateSpec(false)); got != nil {
+			t.Fatalf("planted without a hub: %v", got)
+		}
+		marker, err := os.ReadFile(filepath.Join(ws, "stop-gate.disabled"))
+		if err != nil || !strings.HasPrefix(string(marker), "stop_gate=disabled:") {
+			t.Fatalf("no visible reason: %q %v", marker, err)
+		}
+		// Activity events still plant when the gate cannot.
+		spec := gateSpec(true)
+		if got := e.agentHookArgs(ws, spec); len(got) != 2 {
+			t.Fatalf("activity hooks lost with the gate: %v", got)
+		}
+	})
+}
