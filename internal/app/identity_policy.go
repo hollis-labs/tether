@@ -47,15 +47,26 @@ type IdentityPolicy struct {
 }
 
 // withForms adds every alias form of each address, so a principal that owns one
-// form of an aliased address is a participant under the others.
-func (p *IdentityPolicy) withForms(ctx context.Context, addrs []string) []string {
+// form of an aliased address is a participant under the others. The exception
+// is Chrispian (CW-20261114-0067, @archie's ruling; the same rule as
+// internal/api/address_aliases.go): for a caller that may not hold his forms,
+// an alias never joins a protected address (the operator address or a user
+// address) to another form, either way.
+func (p *IdentityPolicy) withForms(ctx context.Context, caller identity.Principal, addrs []string) []string {
 	if p.AddressForms == nil {
 		return addrs
 	}
+	holdsProtected := mayHoldProtected(caller)
 	out := slices.Clone(addrs)
 	for _, a := range addrs {
+		if !holdsProtected && protectedForm(a) {
+			continue
+		}
 		if forms, err := p.AddressForms(ctx, a); err == nil {
 			for _, f := range forms {
+				if !holdsProtected && protectedForm(f) {
+					continue
+				}
 				if !slices.Contains(out, f) {
 					out = append(out, f)
 				}
@@ -63,6 +74,18 @@ func (p *IdentityPolicy) withForms(ctx context.Context, addrs []string) []string
 		}
 	}
 	return out
+}
+
+// protectedForm reports whether urn is one of Chrispian's forms: the operator
+// address or any user address.
+func protectedForm(urn string) bool {
+	return urn == identity.OperatorID || strings.HasPrefix(urn, "msg://user/")
+}
+
+// mayHoldProtected reports whether p may hold Chrispian's forms: the operator
+// credential or a user principal; never an agent, session, device or token.
+func mayHoldProtected(p identity.Principal) bool {
+	return identity.IsOperatorCredential(p) || (p.Verified && p.TokenID == "" && strings.HasPrefix(p.ID, "msg://user/"))
 }
 
 // NewIdentityPolicy returns the policy with the turn router explicitly
@@ -136,7 +159,7 @@ func mayActAsAny(caller identity.Principal, addrs []string) bool {
 // or holding message.send_as.
 func (p *IdentityPolicy) Reply() ReplyAuthorization {
 	return func(ctx context.Context, caller identity.Principal, parent gomsg.Envelope, _ string) error {
-		if mayActAsAny(caller, p.withForms(ctx, routedParticipants(parent))) {
+		if mayActAsAny(caller, p.withForms(ctx, caller, routedParticipants(parent))) {
 			return nil
 		}
 		return p.finding(ctx, caller, eventReplyUnauthorized, eventReplyRefused, ErrNotParticipant)
@@ -156,7 +179,7 @@ func (p *IdentityPolicy) Delivery() DeliveryAuthorization {
 				addrs = append(addrs, "msg://session/local/"+sid)
 			}
 		}
-		if mayActAsAny(caller, p.withForms(ctx, addrs)) {
+		if mayActAsAny(caller, p.withForms(ctx, caller, addrs)) {
 			return nil
 		}
 		return p.finding(ctx, caller, eventDeliveryUnauthorized, eventDeliveryRefused, ErrNotParticipant)

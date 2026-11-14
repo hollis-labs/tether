@@ -816,7 +816,10 @@ func resolveWakeTarget(ctx context.Context, st *store.Store, reg *registry.Servi
 	// one of its aliases, and a delivery queued for an address before it became
 	// an alias is owed to the canonical address's session (CW-20261114-0068).
 	forms, ferr := st.AddressForms(ctx, to.URN())
-	if ferr != nil || len(forms) < 2 {
+	if ferr != nil {
+		return "", ferr // as the exact lookup's errors: retried, not taken for "no session"
+	}
+	if len(forms) < 2 {
 		return "", nil
 	}
 	for _, f := range forms {

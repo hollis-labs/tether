@@ -9,6 +9,7 @@ import (
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // CW-20261114-0068: the routed-reply policy follows address aliases.
@@ -61,5 +62,43 @@ func TestResolveWakeTargetFollowsAddressAliases(t *testing.T) {
 	}
 	if got, err := resolveWakeTarget(ctx, st, reg, rt.seam(), canon); got != "s-old" || err != nil {
 		t.Fatalf("canonical mail, session bound to the alias: %q, %v", got, err)
+	}
+}
+
+// @archie's ruling (CW-20261114-0067/-0068): no agent row ever counts as
+// Chrispian. With the operator address and the team:chrispian tmux agent row
+// aliased to his user address, a principal holding that agent row is not a
+// participant of his mail (reply or delivery read), while the operator is.
+func TestReplyPolicyNeverMakesTheAgentRowChrispian(t *testing.T) {
+	st, _ := newWakeHarness(t)
+	ctx := context.Background()
+	const canon, agentRow = "msg://user/local/chrispian", "msg://agent/agent-mux/agt_rbcnlevo4w"
+	for _, alias := range []string{identity.OperatorID, agentRow} {
+		if _, _, err := st.AddAddressAlias(ctx, alias, canon, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	from, _ := messaging.ParseURN("msg://agent/test/sender")
+	policy := NewIdentityPolicy(identity.Enforce, nil)
+	policy.AddressForms = st.AddressForms
+	agent := identity.Principal{Verified: true, ID: "msg://session/local/tmux", Kind: "session", Addresses: []string{agentRow}}
+	operator := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}
+	for _, to := range []string{canon, identity.OperatorID} {
+		addr, _ := messaging.ParseURN(to)
+		parent := messaging.Envelope{From: from, To: addr}
+		if err := policy.Reply()(ctx, agent, parent, ""); !errors.Is(err, ErrNotParticipant) {
+			t.Fatalf("agent row replying as a participant of mail to %s: %v", to, err)
+		}
+		if err := policy.Delivery()(ctx, agent, store.RoutingReply{}, parent); !errors.Is(err, ErrNotParticipant) {
+			t.Fatalf("agent row reading a delivery of mail to %s: %v", to, err)
+		}
+		if err := policy.Reply()(ctx, operator, parent, ""); err != nil {
+			t.Fatalf("operator replying to mail to %s: %v", to, err)
+		}
+	}
+	// Mail the agent row sent itself is still its own to follow up.
+	self, _ := messaging.ParseURN(agentRow)
+	if err := policy.Reply()(ctx, agent, messaging.Envelope{From: self, To: from}, ""); err != nil {
+		t.Fatalf("agent row replying to its own mail: %v", err)
 	}
 }
