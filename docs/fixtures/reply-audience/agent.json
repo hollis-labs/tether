@@ -19,6 +19,9 @@
     ],
     "input_classes": [
       "agent"
+    ],
+    "input_sources": [
+      "mail_wake"
     ]
   },
   "message_metadata": {
@@ -26,6 +29,7 @@
     "audience_basis": "stamped_message_sender",
     "input_classes": "agent",
     "input_ids": "ti_example",
+    "input_sources": "mail_wake",
     "kind": "final",
     "session_id": "s1",
     "turn_id": "turn-1"

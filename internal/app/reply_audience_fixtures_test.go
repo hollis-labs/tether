@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
@@ -15,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
@@ -57,6 +60,13 @@ func TestReplyAudienceFixtures(t *testing.T) {
 			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
 			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
 		}},
+		{"unknown_mail_wake", func(t *testing.T, s *Service) {
+			// The case Tachyon folds (CW-20261114-0023b): a cell seat's mail wakes
+			// another seat through the shared operator credential. The sender class is
+			// unknown, but the binding is proven, so input_sources says mail_wake.
+			id := mailFixture(t, s, "msg://agent/agent-mux/agt_example", map[string]string{api.MetaFromVerification: "verified", api.MetaFromPrincipal: "msg://user/local/operator"})
+			s.beginTurnInput(s.mailWakeInputContext(context.Background(), id), "s1")(nil)
+		}},
 		{"unknown_shared_operator_credential_direct", func(t *testing.T, s *Service) {
 			// /turn or MCP send-turn with the shared operator token: a human at the CLI
 			// and a local agent both hold it, so the audience is not proven.
@@ -93,7 +103,7 @@ func TestReplyAudienceFixtures(t *testing.T) {
 			meta := map[string]string{}
 			for k, v := range staged.Metadata {
 				switch k {
-				case "audience", "audience_basis", "input_ids", "input_classes", "kind", "session_id", "turn_id":
+				case "audience", "audience_basis", "input_ids", "input_classes", "input_sources", "kind", "session_id", "turn_id":
 					meta[k] = idPlaceholder.ReplaceAllString(v, "ti_example")
 				}
 			}
@@ -140,7 +150,26 @@ func checkAudienceInvariants(t *testing.T, e events.TurnOutputEvent, meta map[st
 	if _, has := meta["input_classes"]; has != (len(e.InputClasses) > 0) {
 		t.Fatalf("input_classes present in metadata iff classes are proven: %v", meta)
 	}
+	if len(e.InputSources) > 0 {
+		if len(e.InputSources) != len(e.InputIDs) {
+			t.Fatalf("input_sources must pair with input_ids: %+v", e)
+		}
+		for _, src := range e.InputSources {
+			if !slices.Contains(inputSourceVocabulary, src) {
+				t.Fatalf("input source %q is not in the turn_inputs.source vocabulary", src)
+			}
+		}
+		switch e.AudienceBasis {
+		case "submission_unsettled", "queued_input", "queued_inputs_present", "binding_unavailable", "no_input":
+			t.Fatalf("an unproven binding must expose no source: %+v", e)
+		}
+	}
+	if meta["input_sources"] != strings.Join(e.InputSources, ",") {
+		t.Fatalf("event and routed metadata disagree on input_sources: %+v %v", e, meta)
+	}
 }
+
+var inputSourceVocabulary = []string{store.InputChatSend, store.InputSessionTurn, store.InputMCPSendTurn, store.InputMailWake, store.InputRoutingReply, store.InputSystem}
 
 func goldenReply(t *testing.T, name string, got []byte) {
 	t.Helper()

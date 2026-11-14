@@ -373,7 +373,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, TaskID: taskID, WorkstreamID: workstream, MessageID: w.messageID,
 		Reason: w.withheldReason, Size: w.withheldSize}
 	if a := w.audience; a != nil {
-		payload.Audience, payload.AudienceBasis, payload.InputIDs, payload.InputClasses = a.Audience, a.Basis, a.InputIDs, a.Classes
+		payload.Audience, payload.AudienceBasis, payload.InputIDs, payload.InputClasses, payload.InputSources = a.Audience, a.Basis, a.InputIDs, a.Classes, a.Sources
 	}
 	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
@@ -391,6 +391,9 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 			}
 			if len(a.Classes) > 0 {
 				meta["input_classes"] = strings.Join(a.Classes, ",")
+			}
+			if len(a.Sources) > 0 {
+				meta["input_sources"] = strings.Join(a.Sources, ",")
 			}
 		}
 		env, stageErr := storage.StageTurnOutput(ctx, messaging.Envelope{
