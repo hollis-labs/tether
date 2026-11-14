@@ -160,14 +160,13 @@ func scopeValue(e Event, dim string) string {
 	if dim == "session_id" && e.SessionID != "" {
 		return e.SessionID
 	}
-	if dim == "cell" {
-		return e.Cell
-	}
 	s := e.Scope
 	if s == nil {
 		return ""
 	}
 	switch dim {
+	case "cell":
+		return s.Cell
 	case "task_id":
 		return s.TaskID
 	case "project_id":

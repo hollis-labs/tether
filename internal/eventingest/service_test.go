@@ -513,3 +513,55 @@ func TestCardKindsAreAdmittedForTachyonOnly(t *testing.T) {
 		t.Fatalf("stored card payload = %s (found=%v), want declared fields only", e.PayloadJSON, found)
 	}
 }
+
+// A producer's summary and scope.cell are stored; the summary is redacted on
+// the way in (CW-20261114-0019).
+func TestSummaryAndCellAreStored(t *testing.T) {
+	f := newFixture(t, eventingest.Config{})
+	ctx := context.Background()
+	secret := "ghp_" + strings.Repeat("a1B2c3D4", 5)
+	id := "evt_00000000000000000000000000001900"
+	ev := raw(id, "torque", "task.state_changed", func(m map[string]any) {
+		m["summary"] = "task T-1 moved to doing by token " + secret
+		m["scope"] = map[string]any{"task_id": "T-1", "cell": "photon"}
+	})
+	res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{ev})
+	if err != nil || res[0].Status != ingest.StatusAccepted {
+		t.Fatalf("%+v %v", res, err)
+	}
+	e, ok, err := f.db.EventByEventID(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("%v %v", ok, err)
+	}
+	if e.Envelope.Dims.Cell != "photon" || e.Envelope.Dims.TaskID != "T-1" {
+		t.Errorf("dims = %+v", e.Envelope.Dims)
+	}
+	got := e.Envelope.Summary
+	if !strings.HasPrefix(got, "task T-1 moved to doing by token ") || strings.Contains(got, secret) {
+		t.Errorf("summary = %q", got)
+	}
+}
+
+// A summary that is not one line of at most 200 runes is refused, not trimmed,
+// and nothing is stored (CW-20261114-0019).
+func TestMultiLineOrOverlongSummaryIsRejected(t *testing.T) {
+	f := newFixture(t, eventingest.Config{})
+	ctx := context.Background()
+	for i, summary := range []string{"first line\nsecond line", "carriage\rreturn", strings.Repeat("é", 201)} {
+		id := fmt.Sprintf("evt_%032x", 0x1910+i)
+		ev := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["summary"] = summary })
+		res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{ev})
+		if err != nil || res[0].Status != ingest.StatusRejected || res[0].Code != ingest.CodeSchemaInvalid {
+			t.Errorf("%q: %+v %v", summary, res, err)
+		}
+		if _, ok, _ := f.db.EventByEventID(ctx, id); ok {
+			t.Errorf("%q: stored", summary)
+		}
+	}
+	// Exactly 200 runes is accepted.
+	id := "evt_00000000000000000000000000001920"
+	ev := raw(id, "torque", "task.state_changed", func(m map[string]any) { m["summary"] = strings.Repeat("é", 200) })
+	if res, err := f.svc.Ingest(ctx, operator, []json.RawMessage{ev}); err != nil || res[0].Status != ingest.StatusAccepted {
+		t.Fatalf("200 runes: %+v %v", res, err)
+	}
+}

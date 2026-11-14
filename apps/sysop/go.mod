@@ -3,9 +3,9 @@ module github.com/hollis-labs/tether/apps/sysop
 go 1.26.11
 
 require (
-	github.com/hollis-labs/libs/harness/core v0.16.0
+	github.com/hollis-labs/libs/harness/core v0.17.0
 	github.com/hollis-labs/libs/llm/core v0.2.0
-	github.com/hollis-labs/libs/mesh/core v0.6.0
+	github.com/hollis-labs/libs/mesh/core v0.10.0
 	github.com/hollis-labs/tether v0.0.0
 	gopkg.in/yaml.v3 v3.0.1
 )

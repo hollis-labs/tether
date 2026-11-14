@@ -352,7 +352,7 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 		s.state = "reconnecting"
 		s.nextRetry = time.Now().UTC().Add(delay)
 		p.mu.Unlock()
-		slog.Warn("mcp-proxy: upstream restart scheduled", "server", entry.ID, "delay", delay)
+		slog.Warn("mcp-proxy: upstream restart scheduled", "server", entry.ID, "delay", delay) //nolint:gosec // G706 false positive: structured slog attrs are quoted/encoded by the handler; entry.ID is a catalog server id
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/libs/security/redact"
 
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/eventstamp"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -258,6 +259,10 @@ func toEvent(ev runtimeevents.Event, actor events.Actor, payload string, hub eve
 		Truncated:   ev.Truncated,
 		Actor:       actor,
 		Class:       hubClass(ev, hub),
+		// CheckItem has already refused a summary that is not one line of at
+		// most 200 runes; the hub still redacts it, as it does the payload
+		// (CW-20261114-0019).
+		Summary: eventstamp.CleanSummary(ev.Summary),
 	}
 	if ev.Scope != nil {
 		// environment, authority, worker and host are the hub's to stamp.
@@ -265,7 +270,7 @@ func toEvent(ev runtimeevents.Event, actor events.Actor, payload string, hub eve
 			ProjectID: ev.Scope.ProjectID, WorkstreamID: ev.Scope.WorkstreamID, EpicID: ev.Scope.EpicID,
 			SprintID: ev.Scope.SprintID, PlanID: ev.Scope.PlanID, PhaseID: ev.Scope.PhaseID, TaskID: ev.Scope.TaskID,
 			RunID: ev.Scope.RunID, Attempt: int(ev.Scope.Attempt), LaunchID: ev.Scope.LaunchID, AgentURN: ev.Scope.AgentURN,
-			LogicalAgentID: ev.Scope.LogicalAgentID, TeamRunID: ev.Scope.TeamRunID,
+			LogicalAgentID: ev.Scope.LogicalAgentID, TeamRunID: ev.Scope.TeamRunID, Cell: ev.Scope.Cell,
 		}
 	}
 	if ev.Corr != nil {

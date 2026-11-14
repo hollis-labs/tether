@@ -77,7 +77,7 @@ func TestStoredProjectionPreservesProducerEnvelope(t *testing.T) {
 }
 
 func TestStoredProjectionLegacyAndActorFallback(t *testing.T) {
-	for _, actor := range []events.Actor{{}, {Kind: "device", URN: "msg://device/example/worker", Verified: "token", OnBehalfOfChain: []string{"msg://user/example/owner"}}, {Kind: "agent", URN: "msg://user/example/mismatch", Verified: "token"}} {
+	for _, actor := range []events.Actor{{}, {Kind: "robot", URN: "msg://robot/example/worker", Verified: "token", OnBehalfOfChain: []string{"msg://user/example/owner"}}, {Kind: "agent", URN: "msg://user/example/mismatch", Verified: "token"}} {
 		e := storedExample()
 		e.EventID = "environment:42"
 		e.LogicalAgentID = "logical"
@@ -211,5 +211,20 @@ func TestStoredStreamInvariantIsNotHiddenByPendingLegacyRow(t *testing.T) {
 	err := s.checkWindowIDs(store.EnvironmentWindow{Events: []events.Event{legacy, invalid}, HighWater: 43}, 41)
 	if !errors.Is(err, store.ErrEventIDsAfterCutover) {
 		t.Fatalf("bad rollback hidden behind unfinished legacy row: %v", err)
+	}
+}
+
+// A device is a mesh actor kind since mesh/core v0.7.0, so a stored device
+// actor projects as itself rather than falling back to the hub (CW-20261114-0019).
+func TestStoredProjectionDeviceActor(t *testing.T) {
+	e := storedExample()
+	e.EventID = "environment:42"
+	e.Envelope.Actor = events.Actor{Kind: "device", URN: "msg://device/example/worker", Verified: "token", OnBehalfOfChain: []string{"msg://user/example/owner"}}
+	out, err := (StoredIDProjection{Cutover: 42}).MapStored("environment", e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Actor.URN != "msg://device/example/worker" || out.Actor.Kind != mesh.ActorDevice || out.ActorVerified != "token" || len(out.OnBehalfOf) != 1 {
+		t.Fatalf("device actor = %+v", out)
 	}
 }
