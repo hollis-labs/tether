@@ -1,6 +1,6 @@
 # Substrate port plan: Tether
 
-Status: **plan, not approved.** No port code is merged before @archie and @substrate-manager approve this plan. Nothing in this
+Status: **plan, not approved.** Section 13 amends it for the Postgres direction (2026-11-14). No port code is merged before @archie and @substrate-manager approve this plan. Nothing in this
 document is run against the live hub, its database or its service unit by this cell; the cutover is run by
 @archie with Chrispian (section 9).
 
@@ -558,3 +558,131 @@ drain; the sysop unit disabled (D4). Old env and flags that no longer mean anyth
 | Two trust roots and the opaque bearers cannot be verified in one auth path | opaque bearers through the existing `auth.AddVerifier`; the issuer's rotating keys and in-process deny-list through CW-20261114-0097 (accepted by @substrate-manager, scheduled); S3 waits for it |
 | A carried credential stops verifying (operator token, device token, service token) | each class has a golden test in S3 and a live check in 9.1 |
 | Substrate gap found mid-port | Torque task tagged `substrate-gap`, `cell:mig-tether`; work around where possible; never patch Substrate from the cell |
+
+## 13. Amendment: dialect-ready storage and the Postgres direction (2026-11-14)
+
+Requirement from Chrispian (through @archie), coordinated across the three wave-3 ports by the Cerberus
+migration seat. It amends sections 3, 6 and 7. It does **not** change the cutover: the Substrate cutover stays
+on SQLite (sections 7 to 10). The switch to Postgres is a separate, reversible step after the port is accepted.
+
+### 13.1 What changes now (in the port)
+
+1. **Dialect-ready store.** Every query goes through `database.From(app)` with `Dialect().Rebind`, and nothing
+   SQLite-only stays in the ported code. The old store's SQLite constructs are listed with their replacements in
+   CW-20261114-0149 (`dialect-audit.md`): implicit `rowid`, `sqlite_sequence`, `INSERT OR IGNORE`/`OR REPLACE`,
+   `json_*`, FTS5, date functions, `PRAGMA`, `AUTOINCREMENT`, 0/1 booleans. Two of them change the schema:
+   - `messages` gets an explicit monotonic `seq` column holding exactly the old `rowid` values. The mailbox
+     watch cursor reads `seq`, so the cursor contract clients hold is unchanged (section 7.2, row identity).
+   - The forum search index becomes dialect-specific: FTS5 on SQLite, a `tsvector` index on Postgres. Both are
+     rebuilt from `forum_posts`, never copied.
+   The events high-water mark is read from the table, not from `sqlite_sequence`; `migrate-from` still carries
+   `sqlite_sequence` on SQLite.
+2. **Migrations per dialect.** One goose set per dialect (`migrations/sqlite`, `migrations/postgres`, the
+   layout `database.UseMigrationFS` expects), kept in step by the S1 schema-equality test run on both.
+3. **CI on both dialects.** The `next/` job runs the store, migration and `migrate-from` tests on SQLite and on
+   Postgres (`SUBSTRATE_TEST_POSTGRES_DSN`, the cell's scratch Postgres database). Until the DSN is provisioned
+   the Postgres leg skips with a visible notice; it becomes a required, non-skippable check before S2 merges,
+   since S2 is the slice that claims dialect-readiness.
+4. **Storage classes in the code.** Each table belongs to one class, and the ported code reaches it through
+   that class's store handle (A, B or C). At cutover all three handles are the **same store instance** (one
+   `*store.Store`, one write connection on the one SQLite database), not three stores opened on one file, so
+   moving B or C to Postgres later is configuration, not code. Three stores on one file would mean three writer
+   connections, and a write on one class from inside another class's `WriteTx` callback would wait on the lock
+   its own caller holds (the adopting-substrate §4 deadlock across handles). The S2 rule: no class's write runs
+   inside another class's `WriteTx` callback, enforced by a test. A handle gets its own store only when its class
+   actually moves. Transactions that span classes are listed in CW-20261114-0149 and redesigned in their slices
+   so that none spans two classes.
+
+### 13.2 Table classes
+
+| Class | Meaning | Tether tables (summary; per-table list in CW-20261114-0149) | Where |
+|---|---|---|---|
+| A | small, local, always boots: boot state, critical config, definitions, settings, and what auth needs to answer a request | settings, execution policy, event identity and retention policies, launch profiles and plans, fabric definitions, team definitions, the issuer's DB rows (`principals`, `principals_device_upgrade`, `pairing_grants`), `schema` bookkeeping | local SQLite, always |
+| B | events, logs and telemetry | `events`, `identity_audit`, `proxy_events`, `event_ingest_digests`, `retention_audit`, tool metrics, purge audit | Postgres first |
+| C | domain data | messages and the go-messaging tables, sessions and their satellites, registry and bindings, workstreams, teams, groups, channels, forums, workers and environment state | Postgres later |
+
+The issuer's key directory (`auth/`) is a file store and stays local (D1). Debatable rows are flagged in the
+per-table list and settled in the amendment review.
+
+### 13.3 When Postgres is down
+
+Tether boots from class A alone, reports the data store as `degraded` in `/healthz` (HTTP 200, see 13.6), answers
+503 `database_unavailable` on every affected route, and refuses writes to B and C with a typed error. Auth still answers, because its rows are in A.
+There is **no durable write spool**. Event producers may batch in memory only: bounded, drop-oldest, with a
+counter of dropped events that is exported and logged. Reads of B and C fail fast. Launches and mail delivery that need C are refused, never queued.
+
+Two behaviours here are new against today's local SQLite and are **decisions for @archie and Chrispian**, taken
+in the class-B switch plan (13.5), not slice details: auth audit rows (`identity_audit`) can be lost under
+backpressure or a Postgres outage, where today they never are (a security-audit posture change), and events can
+be lost in degraded mode. The worker protocol is frozen and has no degraded frame, while worker and environment
+state (cursors, kill lists) is class C. Which frames the hub still answers without C, and what an outpost sees on
+resume, is defined in the class-C switch plan. Until C moves none of this applies, because C stays on local
+SQLite.
+
+### 13.4 Events to Postgres
+
+Once `libs ui/streamlog-postgres` is tagged and in the BOM, Tether writes events straight to Postgres. It goes
+through a **shadow period** first: dual-write to SQLite (the source of truth) and Postgres, with a daily
+comparison of counts and digests per hour. Postgres becomes the source of truth only after a clean shadow
+period and a reversible switch. Reads move after writes.
+
+### 13.5 The switch to Postgres (after acceptance; not part of the cutover)
+
+A separate plan per class (B first, then C), each with its own copy, verification (the same range-digest
+method as section 7.3) and rollback (back to SQLite, with a reverse copy of anything written to Postgres). Each
+switch is decided by @archie and run by him with Chrispian, like the cutover. The B plan carries the two
+loss-posture decisions in 13.3; the C plan carries the worker-protocol behaviour without C.
+
+### 13.6 Framework support and open items
+
+- **Named stores and the degraded start** come from the Substrate `database` module, not app code: one shared ask
+  for the three wave-3 ports, CW-20261114-0151 (hollis-labs/substrate PR #44, under review). The default store is
+  class A (`required`); `database.Named(app, ...)` gives the data store(s) for B and C with `required: false`,
+  background reconnect with backoff, a soft `database.<name>` health check (`degraded` in the body with HTTP 200,
+  so a supervisor never restart-loops during an outage), `database.IsUnavailable(err)` and `Handle.Report(err)`
+  on use, and `Handle.OnChange` for state changes. `database.GateWith` gives the 503 answer in Tether's own
+  envelope on the protocol-fixed mounts (D2). Each named store keeps its own goose version table. Data-store
+  migrations run from a deploy step (`database.MigrateNamed`) with the migrator role, never from the running app. If the module does not land in time for the
+  Postgres step, Tether implements exactly that contract behind one small interface and moves it into the module
+  later.
+- **In-memory event batching** (bounded, drop-oldest, counter exposed in health) is Tether code for now, behind the
+  event store interface.
+- **`libs ui/streamlog-postgres`** must be tagged and in the BOM before the shadow period (CW-20261015-0017,
+  libs owner).
+- **The go-messaging library has no Postgres store** (the `messaging_*` tables, class C). Moving C to Postgres needs
+  a libs change or a Tether-side store for those tables; routed to @archie as a cross-app item. It does not affect
+  the cutover.
+
+### 13.7 Design blockers for the Postgres switch (not for the cutover)
+
+From the per-table classification (CW-20261114-0149): A 15 tables (well under 1 MB), B 9 (nearly all of the
+database: events and the identity audit), C 93. At cutover all classes share one SQLite file, so every
+transaction below stays atomic; each is redesigned in its slice before B or C moves.
+
+| # | What | Resolution (in its slice) |
+|---|---|---|
+| B-1 | `events` `max(id)` is read at boot (event identity, turn router) | keep the high-water mark in class A, **reserved before ids are used**: write the next range's ceiling to A, then mint ids inside it, so a crash can only skip ids, never reissue one a client holds; boot reads A only (S8) |
+| B-2 | go-messaging applies its schema at every open, and a checkpoint is fenced from it | schema applied by the deploy-step migrator for the data store; the fence read moves behind the C handle (S6) |
+| B-3 | the module has one store and a fatal open | CW-20261114-0151 (above) |
+| B-4 | `identity_audit` (B) is written alongside `principals` (A) on every remote request | the audit row goes through the bounded in-memory event batcher; auth never waits on B (S3) |
+| B-5 | session state (C) revokes session credentials (A) by trigger and in several close paths | revocation becomes an explicit A write after the C write, idempotent and retried from the C state on start (S9) |
+| B-6 | the events outbox is written inside domain transactions | outbox rows stay in the domain's class; event fan-out reads the outbox (S8) |
+| B-7 | the fabric repository writes A and C in one transaction | the A rows (`fabric_actors`, `fabric_agents`) are written first, then C, idempotently (S5) |
+
+20 cross-class transactions are listed with file and line in the classification; each is assigned to one of these
+patterns in its slice.
+
+### 13.8 Slice changes
+
+- S0: the CI job gains the Postgres leg (skipped until the DSN exists; required before S2 merges).
+- S1: adds the Postgres migration set and runs the schema-equality test on both dialects; FTS stays per dialect.
+  `messages.seq` makes `messages` a transform table: it is an allowlisted difference in `TestSchemaEqualsOld`,
+  and its acceptance is seq = old `rowid`, verified equal by `migrate-from`. S1 as approved (#565) equals the old
+  schema; `seq` lands in a follow-up PR with these criteria.
+- S2: the store layer is split into class handles A/B/C, with the dialect audit applied; tests run on both
+  dialects.
+- S8 (events): the event store sits behind an interface so that the streamlog-postgres writer and the shadow
+  dual-write are additions, not rewrites.
+- S12: `migrate-from` targets SQLite for the cutover; the Postgres copies (13.5) reuse its engine.
+- Carry ledger: the migrations that landed on `main` after `f6c37bfa` (`0102`, worker retirement, #559; `0103`,
+  address aliases) each get a migration per dialect in `next/` and a `migrate-from` transform.
