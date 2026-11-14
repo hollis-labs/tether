@@ -82,13 +82,32 @@ takes `urgency` (`very-low`, `low`, `normal`, `high`; default `normal`) and
 
 ## Waiting on a reply
 
-A typed message waits on its recipient when it is unread, the recipient has not
-replied to it, and either `awaiting` is the recipient or (with no `awaiting`) it
-is a `question`, `decision` or `approval_request`. Replying with `in_reply_to`
-or marking it read settles it. The caller's address is matched in its
-canonical form; a seat known by two URNs (an alias and its `agt_` id) is matched
-only by the one the mail was addressed to. `GET /messages/pending-replies?as=` and
-`tether_pending_replies` list them; the Stop gate asks the same question.
+A typed message waits on its recipient when the recipient has not replied to it
+(`in_reply_to`), it is not canceled or archived, it is younger than 7 days, and
+either `awaiting` is the recipient or (with no `awaiting`) it is a `question`,
+`decision` or `approval_request`. Reading it does not settle it: only a reply
+does (settle rule agreed 2026-11-14). Plain updates and messages never wait.
+The caller's address is matched in its canonical form; a seat known by two URNs
+(an alias and its `agt_` id) is matched only by the one the mail was addressed
+to. `GET /messages/pending-replies?as=` and `tether_pending_replies` list them.
+
+## Stop gate
+
+On worker-hosted Claude sessions with the gate on, the worker plants a Claude
+`Stop` hook (`tether-worker hook stop-gate`). When a turn is about to end it asks
+the hub `tether_pending_replies` over `/mcp` with the session's agent token. If
+anything waits, it blocks the stop once with a reason naming the messages and
+`tether_message_post`; Claude continues the turn. A stop that follows the gate's
+own block (`stop_hook_active`) is never gated, so it cannot loop. It fails open:
+an unreachable hub, a timeout (8 s) or any error lets the turn end, with one
+line on the hook's stderr.
+
+Turning it on: `catalog.defaults.stop_gate` (fleet default, `false`) and an
+agent's `stop_gate: true|false` (overrides the default either way). The hub
+sends it only to workers that advertise `stop-gate`; an older worker launches
+without it. If the session cannot reach the hub's `/mcp` (no agent token or
+hub MCP url), the worker launches without the gate and writes
+`stop-gate.disabled` with the reason in the session workspace.
 
 ## Seat status
 

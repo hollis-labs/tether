@@ -3,9 +3,15 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 )
+
+// PendingReplyWindow is how long an unanswered typed message keeps waiting; an
+// older one no longer gates a seat (it is stale, not forgotten: it stays in
+// the mailbox).
+const PendingReplyWindow = 7 * 24 * time.Hour
 
 // PendingReply is an inbound typed message that waits on the recipient
 // (CW-20261114-0013): the Stop gate asks for these before letting a turn end.
@@ -16,23 +22,25 @@ type PendingReply struct {
 	Subject   string        `json:"subject,omitempty"`
 }
 
-// PendingReplies lists unread typed messages to agentURN that need its answer:
-// those awaiting handle, and questions, decisions and approval requests that
-// await nobody in particular. A message stops pending when it is read (mark
-// read settles it) or the agent replied to it, or it was canceled or archived.
+// PendingReplies lists typed messages to agentURN that need its answer: those
+// awaiting handle, and questions, decisions and approval requests that await
+// nobody in particular. Reading one does not settle it (CW-20261114-0013
+// settle rule): it stops pending when the agent replies to it (in_reply_to),
+// when it is canceled or archived, or after PendingReplyWindow.
 func (s *Store) PendingReplies(ctx context.Context, agentURN, handle string, limit int) ([]PendingReply, error) {
+	since := time.Now().UTC().Add(-PendingReplyWindow).Format(time.RFC3339Nano)
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
 	// NeedsReply in SQL, so a backlog of unread updates cannot crowd real
 	// questions out of the limit; the Go check below is the same rule.
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.from_urn, coalesce(m.payload,'') FROM messages m
- WHERE m.to_urn=? AND m.content_type=? AND m.read_at IS NULL AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
+ WHERE m.to_urn=? AND m.content_type=? AND m.created_at > ? AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
    AND json_valid(m.payload)
    AND (json_extract(m.payload,'$.awaiting') = ?
         OR (coalesce(json_extract(m.payload,'$.awaiting'),'') = '' AND json_extract(m.payload,'$.kind') IN ('question','decision','approval_request')))
    AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.in_reply_to=m.id AND r.from_urn=?)
- ORDER BY m.created_at LIMIT ?`, agentURN, envelope.ContentType, handle, agentURN, limit)
+ ORDER BY m.created_at LIMIT ?`, agentURN, envelope.ContentType, since, handle, agentURN, limit)
 	if err != nil {
 		return nil, err
 	}

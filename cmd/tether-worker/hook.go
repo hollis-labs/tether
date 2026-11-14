@@ -5,7 +5,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"os"
+
 	"github.com/hollis-labs/tether/internal/agentevents"
+	"github.com/hollis-labs/tether/internal/workerruntime"
 )
 
 // newHookCommand is `tether-worker hook claude`: the command the Claude lifecycle hooks this worker plants run
@@ -25,5 +28,16 @@ func newHookCommand() *cobra.Command {
 			return nil
 		},
 	})
+	var hubURL, tokenFile string
+	gate := &cobra.Command{
+		Use: "stop-gate", Short: "Claude Stop hook: block the turn once while a typed message waits on this seat's reply (fails open)", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true,
+		RunE: func(c *cobra.Command, _ []string) error {
+			workerruntime.RunStopGate(c.Context(), c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr(), hubURL, tokenFile, os.Getenv("TETHER_AGENT_URN"))
+			return nil
+		},
+	}
+	gate.Flags().StringVar(&hubURL, "url", "", "the hub's /mcp endpoint")
+	gate.Flags().StringVar(&tokenFile, "token-file", "", "the session's agent token file (a path; the token is never an argument)")
+	cmd.AddCommand(gate)
 	return cmd
 }

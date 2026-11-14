@@ -424,6 +424,11 @@ type Defaults struct {
 	// Read per resume, so a catalog reload applies it without a daemon restart.
 	WorkerResume bool `yaml:"worker_resume"`
 
+	// StopGate is the fleet default for the Stop-hook reply gate on worker
+	// Claude sessions (CW-20261114-0013): off until enabled; an agent's
+	// stop_gate overrides it either way.
+	StopGate bool `yaml:"stop_gate,omitempty"`
+
 	// LaunchHost selects direct execution (default) or opt-in shim hosting.
 	// TETHER_LAUNCH_HOST overrides this value for each launch.
 	LaunchHost string `yaml:"launch_host"`
@@ -645,4 +650,13 @@ func (c *Catalog) GetContext(_ context.Context, id string) (*launchprofile.Launc
 		return &cp, nil
 	}
 	return nil, fmt.Errorf("%w: %q", launchprofile.ErrContextNotFound, id)
+}
+
+// EffectiveStopGate is whether an agent's worker Claude sessions get the
+// Stop-hook reply gate: the agent's stop_gate when set, else the fleet default.
+func EffectiveStopGate(g Global, a Agent) bool {
+	if a.StopGate != nil {
+		return *a.StopGate
+	}
+	return g.Catalog.Defaults.StopGate
 }

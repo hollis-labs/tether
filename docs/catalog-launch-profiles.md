@@ -24,6 +24,13 @@ differs from the agent id (CW-20261114-0013; see
 Validation refuses an invalid name, or one another agent holds as its handle or
 its id.
 
+## Stop gate
+
+`stop_gate: true|false` turns the Stop-hook reply gate on or off for the agent's
+worker Claude sessions, over `catalog.defaults.stop_gate` (default `false`)
+(CW-20261114-0013; see [typed-messages.md](typed-messages.md#stop-gate)).
+Closest definition wins.
+
 ## Boot recovery
 
 Agent definitions take `recovery: never|auto`. Absent means `never`. The
