@@ -39,6 +39,7 @@ func (s *Store) PendingReplies(ctx context.Context, agentURNs []string, handle s
 	}
 	// NeedsReply in SQL, so a backlog of unread updates cannot crowd real
 	// questions out of the limit; the Go check below is the same rule.
+	//nolint:gosec // G202: `in` is only "?" placeholders built from a count; every value is a bound argument
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.from_urn, coalesce(m.payload,''), m.created_at FROM messages m
  WHERE m.to_urn IN (`+in+`) AND m.content_type=? AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
    AND json_valid(m.payload)
