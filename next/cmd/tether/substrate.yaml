@@ -1,0 +1,22 @@
+# Tether on Substrate (CW-20261112-0101, slice S0). The manifest is the shell: modules and config.
+# S0 starts minimal: config, logging, health, the HTTP host, the database and the CLI. The modules the
+# port plan names in section 3 (auth, identity, secrets, policy, mcp, scheduler, queue, events) are added
+# by the slice that first configures them, so nothing starts here with a placeholder config.
+app: tether
+variant: service
+profiles: [minimal]
+modules:
+  add: [httphost, database, cli]
+config:
+  logging: { level: info, format: text }
+  # Loopback only until S4 adds the auth module and the socket and remote listeners.
+  httphost: { addr: "127.0.0.1:8949" }
+  # Relative to the data directory (TETHER_DATA_DIR); the binary replaces it with an absolute path
+  # before the database module starts.
+  database:
+    sqlite: { path: tether.db }
+  # The app's own block (internal/settings). Override any key in the YAML file named by
+  # SUBSTRATE_CONFIG; docs/architecture.md lists every key.
+  tether:
+    catalog_dir: ""
+    retention_days: 30
