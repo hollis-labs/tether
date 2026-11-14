@@ -246,8 +246,39 @@ func importFile(
 	var existing Profile
 	var foundExisting bool
 
+	// 0. A catalog agent that names its registry identity (urn:) IS that row: never
+	// mint a second one for it (CW-20261114-0013). Bootstrap used to ignore urn:, so
+	// agents registered elsewhere (agent-boot, registry_register) got a fresh
+	// duplicate here and their tether/handle external ids landed on it.
+	if kind == KindAgent {
+		if urn := catalogAgentURN(path); urn != "" {
+			row, err := svc.Lookup(ctx, urn)
+			if errors.Is(err, ErrNotFound) {
+				report.Errors = append(report.Errors, BootstrapError{
+					Path:   path,
+					Reason: fmt.Sprintf("catalog urn %s is not in the registry; not minting a duplicate (register that urn, or drop urn: from the agent)", urn),
+				})
+				return
+			}
+			if err != nil {
+				report.Errors = append(report.Errors, BootstrapError{Path: path, Reason: fmt.Sprintf("lookup catalog urn %s: %v", urn, err)})
+				return
+			}
+			existing, foundExisting = row, true
+			if primaryExtID != "" {
+				if err := svc.AttachExternalID(ctx, row.URN, "tether", primaryExtID); err != nil {
+					// Held by another row: an earlier duplicate. Say so; the operator merges it.
+					report.Errors = append(report.Errors, BootstrapError{
+						Path:   path,
+						Reason: fmt.Sprintf("tether id %q is held by another row, not the catalog urn %s: merge that row into %s (%v)", primaryExtID, row.URN, row.URN, err),
+					})
+				}
+			}
+		}
+	}
+
 	// 1. Identity-keyed lookup via external ID (CW-20260912-0052 / CW-20260912-0095).
-	if primaryExtID != "" {
+	if !foundExisting && primaryExtID != "" {
 		if row, err := svc.LookupBy(ctx, kind, primaryExtID, "tether"); err == nil {
 			existing = row
 			foundExisting = true
@@ -521,4 +552,14 @@ func isYAMLFile(name string) bool {
 // to detect the ".bak-" marker anywhere in the name.
 func isBackupFile(name string) bool {
 	return strings.Contains(name, ".bak-")
+}
+
+// catalogAgentURN is the urn: an agent file names, or "" (unreadable files are
+// reported by the translate step).
+func catalogAgentURN(path string) string {
+	var a config.Agent
+	if err := readYAMLFile(path, &a); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(a.URN)
 }

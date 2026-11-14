@@ -66,7 +66,9 @@ Errors come back as HTTP 400 `invalid_request` with
 - A seat's handle is its registry external id under substrate `handle`, unique
   among agents. Registry bootstrap gives every catalog agent the handle of its
   catalog `handle:` key when set (`cmd-builder-1` with `handle: builder-1` is
-  `@builder-1`), else of its catalog id. Until then the catalog id (substrate
+  `@builder-1`), else of its catalog id. A catalog agent with `urn:` keeps that
+  registry row: bootstrap attaches its ids there and never mints a second one
+  (an `urn:` that is not registered is reported, not created). Until then the catalog id (substrate
   `tether`) and the catalog itself resolve. Catalog validation refuses a
   `handle:` another agent holds as its handle or its id.
 - A seat that is not a catalog agent (a local agent-boot session) gets a handle
