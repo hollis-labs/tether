@@ -5,11 +5,11 @@
   a replay once it can read it. The lookups run on a context detached from the connection, with a 10s bound, and a
   connection that goes away mid-handshake gets no welcome. Each kill is logged and published as
   `session.kill_ordered` with its reason.
-- A remote device stream (a worker's connection, a Tachyon event stream) is no longer ended because its credential
+- A remote device stream (a worker's connection, a Tachyon event stream) is no longer ended (CW-20261114-0168) because its credential
   could not be re-verified while identity was unavailable (a stalled database). Before, any error, including the 1s
   verify timeout, read as revocation, and workers reconnected every 10–60s. An invalid, revoked, expired or narrowed
   credential still ends the stream at once. Verification that stays unavailable ends it after 2 minutes.
-- Every terminal `session.state_changed` carries a `reason`:
+- Every terminal `session.state_changed` carries a `reason` (CW-20261114-0168):
   - a worker session: its stop reason, `stop`, `hub_kill:<why>` or `worker_exit`;
   - a local runtime with no reason of its own: `runtime_exit` or `stop`;
   - shim recovery: `shim_recovery`.
