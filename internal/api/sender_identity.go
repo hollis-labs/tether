@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -118,17 +119,7 @@ func canonicalClaim(claimed string) string {
 // middleware. It reports whether the handler may continue.
 func (s *Server) verifyClaim(w http.ResponseWriter, r *http.Request, claimed, unverifiedEvent, refusedEvent, what string) bool {
 	p, ok := verifiedPrincipal(r)
-	if !ok || claimed == "" || p.MayActAs(canonicalClaim(claimed)) {
-		return true
-	}
-	// The same seat under its other address (catalog urn vs agent-mux form).
-	for _, form := range s.seatForms(r.Context(), canonicalClaim(claimed)) {
-		if p.MayActAs(form) {
-			return true
-		}
-	}
-	// Another form of an aliased address (address_aliases.go).
-	if s.ownsAliasOf(r.Context(), p, canonicalClaim(claimed)) {
+	if !ok || claimed == "" || s.claimHolds(r.Context(), p, claimed) {
 		return true
 	}
 	if s.enforcing() {
@@ -185,4 +176,36 @@ func senderMetadata(m map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+// claimHolds reports whether the verified principal p holds the claimed address: as itself, as the same
+// seat under its other address (catalog urn vs agent-mux form), or as another form of an aliased address.
+func (s *Server) claimHolds(ctx context.Context, p identity.Principal, claimed string) bool {
+	if p.MayActAs(canonicalClaim(claimed)) {
+		return true
+	}
+	for _, form := range s.seatForms(ctx, canonicalClaim(claimed)) {
+		if p.MayActAs(form) {
+			return true
+		}
+	}
+	return s.ownsAliasOf(ctx, p, canonicalClaim(claimed))
+}
+
+// claimVerification is what the hub knows about the address a request acts as (CW-20261114-0130), in
+// the vocabulary of from_verification: "stamped" when no ?as= was given and the principal's own address
+// is used, "verified" when the principal holds the claimed address, "unverified" when it does not, and
+// "" with no verified principal. principal is the verified principal's id.
+func (s *Server) claimVerification(r *http.Request, claimed string) (verification, principal string) {
+	p, ok := verifiedPrincipal(r)
+	if !ok {
+		return "", ""
+	}
+	switch {
+	case r.URL.Query().Get("as") == "":
+		return "stamped", p.ID
+	case s.claimHolds(r.Context(), p, claimed):
+		return "verified", p.ID
+	}
+	return "unverified", p.ID
 }

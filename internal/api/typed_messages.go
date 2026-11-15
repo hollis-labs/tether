@@ -388,6 +388,7 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "cannot tell who is setting: authenticate, or pass ?as=<your address>")
 		return
 	}
+	verification, principal := s.claimVerification(r, caller)
 	target := caller
 	if req.Target != "" {
 		urn, ok := s.resolveHandle(ctx, req.Target)
@@ -395,11 +396,11 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 			writeEnvelopeError(w, &seatstatus.Error{Field: "target", Reason: "unknown handle " + req.Target})
 			return
 		}
-		if !s.actsFor(ctx, caller, urn) && !s.maySetStatusFor(ctx, r, caller) {
-			writeError(w, http.StatusForbidden, CodeForbidden, "only the operator or a manager may set another seat's status")
-			return
-		}
 		target = urn
+	}
+	if !s.maySetStatus(ctx, r, caller, target, verification) {
+		writeError(w, http.StatusForbidden, CodeForbidden, "only the seat itself, the operator or a verified manager may set a seat's status")
+		return
 	}
 	in := seatstatus.Input{State: req.State, Reason: req.Reason, Ref: req.Ref, Owner: req.Owner, TTL: time.Duration(req.TTLSeconds) * time.Second}
 	if req.ExpiresAt != nil {
@@ -417,7 +418,8 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	d := seatstatus.Declared{AgentURN: target, State: in.State, Reason: in.Reason, Ref: in.Ref, Owner: in.Owner, Since: now, ExpiresAt: expires, SetBy: caller, UpdatedAt: now}
+	d := seatstatus.Declared{AgentURN: target, State: in.State, Reason: in.Reason, Ref: in.Ref, Owner: in.Owner, Since: now, ExpiresAt: expires, SetBy: caller,
+		SetByVerification: verification, SetByPrincipal: principal, UpdatedAt: now}
 	stored, changed, err := s.Seats.PutSeatStatus(ctx, d)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -426,7 +428,8 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 	handle := s.handleFor(ctx, target)
 	if changed && s.Bus != nil {
 		payload := map[string]any{"agent_urn": target, "handle": handle, "state": stored.State, "set_by": caller}
-		for k, v := range map[string]string{"reason": stored.Reason, "ref": stored.Ref, "owner": stored.Owner} {
+		for k, v := range map[string]string{"reason": stored.Reason, "ref": stored.Ref, "owner": stored.Owner,
+			"set_by_verification": stored.SetByVerification, "set_by_principal": stored.SetByPrincipal} {
 			if v != "" {
 				payload[k] = v
 			}
@@ -444,17 +447,37 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, StatusSetResponse{Handle: handle, Declared: stored, Changed: changed})
 }
 
-// maySetStatusFor: the operator credential, or a caller whose catalog agent has
-// the manager role.
-func (s *Server) maySetStatusFor(ctx context.Context, r *http.Request, caller string) bool {
+// maySetStatus decides who may set target's status (CW-20261114-0130):
+//   - the operator credential, any seat;
+//   - a caller the hub verified (or stamped from its own address), its own seat, or any seat when its
+//     catalog agent is a manager;
+//   - without a verified principal, only with identity off on the local socket, as before: the seat
+//     itself, the local operator, or a catalog manager.
+//
+// A claim that did not verify sets nothing, in every identity mode: it would otherwise let anyone that
+// names a seat (or a manager) set that seat's status.
+func (s *Server) maySetStatus(ctx context.Context, r *http.Request, caller, target, verification string) bool {
 	if p, ok := verifiedPrincipal(r); ok && identity.IsOperatorCredential(p) {
 		return true
 	}
-	if _, ok := verifiedPrincipal(r); !ok && s.canonicalAlias(ctx, caller) == s.canonicalAlias(ctx, identity.OperatorID) {
-		return true // the local operator on an unauthenticated socket
+	switch verification {
+	case "verified", "stamped":
+		if s.actsFor(ctx, caller, target) {
+			return true
+		}
+		a, ok := s.catalogAgentFor(ctx, caller)
+		return ok && a.IsManager()
+	case "":
+		if (s.IdentityMode != "" && s.IdentityMode != identity.Off) || identity.IsRemote(ctx) {
+			return false
+		}
+		if s.actsFor(ctx, caller, target) || s.canonicalAlias(ctx, caller) == s.canonicalAlias(ctx, identity.OperatorID) {
+			return true
+		}
+		a, ok := s.catalogAgentFor(ctx, caller)
+		return ok && a.IsManager()
 	}
-	a, ok := s.catalogAgentFor(ctx, caller)
-	return ok && a.IsManager()
+	return false
 }
 
 // catalogAgentFor is the catalog agent whose identity is urn: by its tether
