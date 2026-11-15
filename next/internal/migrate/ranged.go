@@ -111,9 +111,7 @@ feed:
 		rep.Rows += o.rows
 		if o.rows > 0 {
 			digests[o.lo] = o.digest
-			var b [8]byte
-			binary.BigEndian.PutUint64(b[:], uint64(o.lo))
-			whole.Write(b[:])
+			whole.Write(binary.AppendVarint(nil, o.lo))
 			whole.Write([]byte(o.digest))
 		}
 		if !o.changed {
