@@ -67,3 +67,47 @@ func TestSessionCreateContinuity(t *testing.T) {
 		t.Fatal("invalid continuity reached the daemon")
 	}
 }
+
+// tether_session_launch continuity=relaunch refuses to start a session that was
+// created fresh, and starts a continuation.
+func TestSessionLaunchAssertsContinuity(t *testing.T) {
+	var mu sync.Mutex
+	launched := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/sessions/fresh":
+			_, _ = w.Write([]byte(`{"id":"fresh","intent":"fresh"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/sessions/cont":
+			_, _ = w.Write([]byte(`{"id":"cont","intent":"resume","parent_session_id":"p1"}`))
+		case r.Method == http.MethodPost:
+			launched++
+			_, _ = w.Write([]byte(`{"id":"cont"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+strings.TrimPrefix(srv.URL, "http://")), "tok", []string{ScopeSessionWrite})
+	s := gomcp.NewServer("test", "0.0.1")
+	a.registerSessionTools(s)
+	c := connectInMemory(t, s)
+	call := func(args map[string]any) *mcpsdk.CallToolResult {
+		t.Helper()
+		res, err := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_session_launch", Arguments: args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	if res := call(map[string]any{"session_id": "fresh", "continuity": "relaunch"}); !res.IsError || parseToolJSON(t, res)["code"] != "invalid_request" || launched != 0 {
+		t.Fatalf("fresh session launched as a continuation: %s launched=%d", textOf(res), launched)
+	}
+	if res := call(map[string]any{"session_id": "cont", "continuity": "relaunch"}); res.IsError || launched != 1 {
+		t.Fatalf("continuation not launched: %s launched=%d", textOf(res), launched)
+	}
+	if res := call(map[string]any{"session_id": "fresh"}); res.IsError || launched != 2 {
+		t.Fatalf("plain launch changed: %s launched=%d", textOf(res), launched)
+	}
+}

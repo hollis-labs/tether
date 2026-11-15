@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -376,6 +377,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusCreated
 	if res.Replayed {
 		status = http.StatusOK
+	}
+	if !res.Replayed {
+		// Who asked for the session, so a fresh start where a continuation was expected can be traced.
+		log.Printf("api: session %s created for launch %q by principal %q (continuity %q)", res.SessionID, req.Launch, idemPrincipal, req.Continuity)
 	}
 	writeJSON(w, status, launchResponseFor(r, res))
 }
