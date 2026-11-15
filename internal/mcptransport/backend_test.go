@@ -442,3 +442,77 @@ type backendAttributionSessions struct {
 func (s backendAttributionSessions) GetSession(id string) (*store.SessionRow, error) {
 	return s.store.GetSession(id)
 }
+
+func TestBackendKnownExpiryCancelsInflightCallDuringVerifierOutage(t *testing.T) {
+	g := newBackendFixture(t)
+	op := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	mint := func(ttl time.Duration) authissuer.Token {
+		t.Helper()
+		token, err := g.issuer.Exchange(op, authissuer.Request{Audience: authissuer.TetherAudience, Scopes: []string{"tether.read"}, SessionID: "s-rot", TTL: ttl})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	first, refreshed := mint(3*time.Second), mint(6*time.Second)
+	response := g.request(t, "POST", RemoteNativePath, first.Token, backendInitialize, "")
+	id := response.Header.Get("Mcp-Session-Id")
+	requireBackendStatus(t, response, 200)
+	requireBackendStatus(t, g.request(t, "POST", RemoteNativePath, refreshed.Token, backendList, id), 200)
+	// A valid older request must not regress the already adopted expiry.
+	requireBackendStatus(t, g.request(t, "POST", RemoteNativePath, first.Token, backendList, id), 200)
+	h := g.backend.remote
+	h.mu.Lock()
+	view := h.sessions[id]
+	h.mu.Unlock()
+	if view == nil {
+		t.Fatal("missing native view")
+	}
+	entered, canceled := make(chan struct{}), make(chan struct{})
+	// Replace one eligible native handler with a blocking fixture; the real
+	// backend admission, SDK authorization and cancellation middleware remain.
+	view.view.Server.AddTool(&mcpsdk.Tool{Name: "tether_docs_list", InputSchema: map[string]any{"type": "object"}}, func(ctx context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		close(entered)
+		<-ctx.Done()
+		close(canceled)
+		return nil, ctx.Err()
+	})
+	st, ct := mcpsdk.NewInMemoryTransports()
+	ss, err := view.view.Server.Connect(context.Background(), st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cs, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "expiry-test", Version: "1"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_docs_list"})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("native call did not start")
+	}
+	g.f.verifier.unavailable.Store(true)
+	requireBackendStatus(t, g.request(t, "POST", RemoteNativePath, refreshed.Token, backendList, id), 503)
+	select {
+	case <-canceled:
+		t.Fatal("outage or original token expiry canceled refreshed view")
+	case <-time.After(time.Until(first.ExpiresAt) + 100*time.Millisecond):
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Until(refreshed.ExpiresAt) + time.Second):
+		t.Fatal("known expiry left native call running during verifier outage")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("expired call did not return")
+	}
+}

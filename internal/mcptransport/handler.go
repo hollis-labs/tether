@@ -610,6 +610,20 @@ func (h *Handler) remove(v *transportView) {
 	}
 }
 
+// expireCredential uses the latest verified expiry even when authority stores
+// are unavailable. Check and cancellation share adopt's lock, so a refresh
+// already accepted by the view cannot be replaced by an older expiry snapshot.
+func (h *Handler) expireCredential(v *transportView) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if v.tokenExp.IsZero() || time.Now().Before(v.tokenExp) {
+		return false
+	}
+	v.cancelCalls()
+	v.cancelStreams()
+	return true
+}
+
 func (h *Handler) monitor() {
 	defer close(h.done)
 	ticker := time.NewTicker(h.cfg.RecheckInterval)
@@ -628,9 +642,17 @@ func (h *Handler) monitor() {
 			}
 			h.mu.Unlock()
 			for _, v := range views {
+				if h.expireCredential(v) {
+					h.remove(v)
+					continue
+				}
 				ctx, cancel := context.WithTimeout(h.monitorCtx, h.cfg.VerificationTimeout)
 				a, err := h.admit(ctx, h.viewToken(v), v.selectors)
 				cancel()
+				if h.expireCredential(v) {
+					h.remove(v)
+					continue
+				}
 				alive := false
 				for range v.view.Server.Sessions() {
 					alive = true
