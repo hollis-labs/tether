@@ -54,6 +54,19 @@ func clamp(limit, def, maxLimit int) int {
 	return min(limit, maxLimit)
 }
 
+// LockEventSeq runs before every events insert (InsertTx does it). Readers page the log by id
+// (Since, Page, the event cursors): on Postgres an identity value can commit after a higher one, so a
+// reader past the higher id would never see the lower. A transaction-scoped advisory lock makes event
+// inserts commit in id order, as LockMessageSeq does for messages. SQLite has one writer, so there it
+// does nothing. A transaction that also inserts messages takes LockMessageSeq first.
+func LockEventSeq(ctx context.Context, tx store.Tx) error {
+	if tx.Dialect().Name() != gostore.DriverPostgres {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('tether.events.id', 0))`)
+	return err
+}
+
 // insertSQL is the one INSERT every events write goes through. A repeat of a stored event id writes
 // nothing and returns no row (the partial unique index idx_events_event_id is the conflict target on
 // both dialects).
@@ -130,6 +143,9 @@ func (s *Store) InsertTx(ctx context.Context, tx store.Tx, r Row, pending bool) 
 	}
 	r.At, r.RecordedAt, r.Pending = at.UTC(), logTime, pending
 	r.Epoch, r.PayloadDigest = 0, ""
+	if err := LockEventSeq(ctx, tx); err != nil {
+		return Row{}, false, err
+	}
 	err = tx.QueryRowContext(ctx, rebind(tx, insertSQL), r.insertValues()...).Scan(&r.Seq)
 	if errors.Is(err, sql.ErrNoRows) {
 		prev, err := scanRow(tx.QueryRowContext(ctx, rebind(tx, `SELECT `+readColumns+` FROM events WHERE event_id = ?`), r.EventID))

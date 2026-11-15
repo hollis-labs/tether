@@ -629,3 +629,49 @@ func TestWritesStayInClassB(t *testing.T) {
 		}
 	})
 }
+
+// TestEventIDsCommitInOrder holds a transaction open after its insert while a second insert runs: a
+// reader must not see the second (higher id) before the first commits, or a cursor past it would
+// skip the first forever. On Postgres the identity alone allows that; LockEventSeq prevents it.
+func TestEventIDsCommitInOrder(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		es, _ := newStore(s)
+		inserted, release := make(chan struct{}), make(chan struct{})
+		first := make(chan error, 1)
+		go func() {
+			first <- s.B().WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
+				if _, _, err := es.InsertTx(ctx, tx, eventstore.Row{Scope: "global", Kind: "first"}, false); err != nil {
+					return err
+				}
+				close(inserted)
+				select {
+				case <-release:
+				case <-time.After(5 * time.Second):
+				}
+				return nil
+			})
+		}()
+		<-inserted
+		second := make(chan error, 1)
+		go func() {
+			_, err := es.Insert(ctx, eventstore.Row{Scope: "global", Kind: "second"})
+			second <- err
+		}()
+		time.Sleep(300 * time.Millisecond)
+		if seen, err := es.Since(ctx, 0); err != nil || len(seen) != 0 {
+			t.Errorf("while the first insert is open, a reader sees %d events (%v): a later id committed first", len(seen), err)
+		}
+		close(release)
+		if err := <-first; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-second; err != nil {
+			t.Fatal(err)
+		}
+		seen, err := es.Since(ctx, 0)
+		if err != nil || len(seen) != 2 || seen[0].Kind != "first" || seen[1].Kind != "second" {
+			t.Fatalf("after both commit: %+v %v", seen, err)
+		}
+	})
+}
