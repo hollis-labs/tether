@@ -46,25 +46,24 @@ func TestRecordMessageWake(t *testing.T) {
 	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
 		ctx := context.Background()
 		ms, clock := newStore(s)
-		// next/ enforces SQLite foreign keys (unlike the old store, ADR 0008): parents first.
-		if err := s.A().WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
-			_, err := tx.ExecContext(ctx, tx.Dialect().Rebind(`INSERT INTO team_definitions (team_id, version, payload) VALUES ('team', 1, ?)`), []byte("{}"))
-			return err
-		}); err != nil {
-			t.Fatal(err)
-		}
-		exec(t, s, `INSERT INTO session_groups (id, created_at, updated_at) VALUES ('sg-1', ?, ?)`, "2026-11-14T00:00:00Z", "2026-11-14T00:00:00Z")
 		exec(t, s, `INSERT INTO team_runs (run_id, session_group_id, team_id, team_version, payload, created_at) VALUES ('run-1', 'sg-1', 'team', 1, ?, ?)`, []byte("{}"), "2026-11-14T00:00:00Z")
 		inTeam := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Metadata = map[string]string{"team_run": "run-1"} })
 		badRun := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Metadata = map[string]string{"team_run": "run-missing"} })
+		notJSON := send(t, ms, clock, alice, bob)
+		// Go's encoder writes a NUL as \u0000, which Postgres's jsonb refuses.
+		nul := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Metadata = map[string]string{"team_run": "run-1", "note": "a\x00b"} })
 		stream := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Kind = "stream.chunk" })
-		exec(t, s, `UPDATE messages SET metadata = 'not json' WHERE id = ?`, badRun.ID)
+		mixedStream := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Kind = "Stream.Chunk" })
+		exec(t, s, `UPDATE messages SET metadata = 'not json' WHERE id = ?`, notJSON.ID)
 		for _, c := range []struct {
 			id, kind, reason string
 		}{
 			{inTeam.ID, "wake.attempted", "busy"},
 			{badRun.ID, "wake.outcome", "made-up-reason"},
+			{notJSON.ID, "wake.outcome", "busy"},
+			{nul.ID, "wake.outcome", "busy"},
 			{stream.ID, "wake.outcome", ""},
+			{mixedStream.ID, "wake.outcome", ""},
 			{inTeam.ID, "wake.other", ""},
 			{"missing", "wake.outcome", ""},
 		} {
@@ -92,7 +91,7 @@ func TestRecordMessageWake(t *testing.T) {
 			}
 			got = append(got, row{kind, team, p["reason"].(string)})
 		}
-		want := []row{{"wake.attempted", "run-1", "busy"}, {"wake.outcome", "", "unknown"}}
+		want := []row{{"wake.attempted", "run-1", "busy"}, {"wake.outcome", "", "unknown"}, {"wake.outcome", "", "busy"}, {"wake.outcome", "run-1", "busy"}}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("journal %+v, want %+v", got, want)
 		}
@@ -105,9 +104,7 @@ func TestWakeTriage(t *testing.T) {
 		ms, clock := newStore(s)
 		a := send(t, ms, clock, op, bob, func(e *messaging.Envelope) { e.Payload = json.RawMessage(`{"subject":"first line\nsecond"}`) })
 		b := send(t, ms, clock, alice, bob)
-		c := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) {
-			e.Payload = json.RawMessage(`{"body":"` + string(make([]byte, 0)) + `x"}`)
-		})
+		c := send(t, ms, clock, alice, bob)
 		row, created, err := ms.TriageRecord(ctx, msgstore.TriageRow{MessageID: a.ID, Recipient: bob, Seat: "@bob", Class: "fyi", Reason: "r", Typed: true, CreatedAt: t0})
 		if err != nil || !created || row.State != msgstore.TriagePending || !row.Typed || !row.CreatedAt.Equal(t0) {
 			t.Fatalf("record %+v %v %v", row, created, err)
@@ -136,6 +133,12 @@ func TestWakeTriage(t *testing.T) {
 		if err := ms.TriageSetState(ctx, b.ID, msgstore.TriageWoken, t0); err != nil {
 			t.Fatal(err)
 		}
+		if err := ms.TriageDefer(ctx, b.ID, nb.Add(time.Hour), t0); err != nil {
+			t.Fatal(err)
+		}
+		if got, _, _ := ms.TriageGet(ctx, b.ID); !got.NotBefore.Equal(nb) {
+			t.Fatalf("defer moved a row that is not pending: not_before %v", got.NotBefore)
+		}
 		if _, ok, _ := ms.TriageGet(ctx, "nope"); ok {
 			t.Fatal("missing row found")
 		}
@@ -143,9 +146,22 @@ func TestWakeTriage(t *testing.T) {
 		if err != nil || len(fyi) != 1 || fyi[0].Subject != "first line" || !fyi[0].Typed || fyi[0].From != op {
 			t.Fatalf("fyi %+v %v", fyi, err)
 		}
+		// Canceled and archived messages drop out of the list.
+		canceled := send(t, ms, clock, op, bob)
+		archived := send(t, ms, clock, op, bob)
+		for _, id := range []string{canceled.ID, archived.ID} {
+			if _, _, err := ms.TriageRecord(ctx, msgstore.TriageRow{MessageID: id, Recipient: bob, Seat: "@bob", Class: "fyi", Reason: "r", CreatedAt: t0}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if fyi, _ = ms.TriageFYIPending(ctx, "@bob", 0); len(fyi) != 3 || fyi[0].MessageID != a.ID {
+			t.Fatalf("fyi before cancel/archive %+v", fyi)
+		}
+		exec(t, s, `UPDATE messages SET canceled_at = ? WHERE id = ?`, "2026-11-14T00:00:00Z", canceled.ID)
+		_ = ms.Archive(ctx, archived.ID, addr(t, bob))
 		_ = ms.MarkRead(ctx, a.ID, addr(t, bob))
 		if fyi, _ = ms.TriageFYIPending(ctx, "@bob", 0); len(fyi) != 0 {
-			t.Fatalf("read message still listed: %+v", fyi)
+			t.Fatalf("read, canceled or archived message still listed: %+v", fyi)
 		}
 		if last, _ := ms.SeatLastActionWake(ctx, "@bob"); !last.IsZero() {
 			t.Fatalf("clock before set %v", last)

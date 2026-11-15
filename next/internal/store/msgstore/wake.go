@@ -97,13 +97,21 @@ func (s *Store) RecordMessageWake(ctx context.Context, id, target, kind, attempt
 		return err
 	}
 	return s.c.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
+		// The team run is read from the message's metadata. On Postgres the cast is guarded by
+		// pg_input_is_valid(..., 'jsonb'), the schema trigger's own guard (IS JSON accepts text jsonb
+		// refuses), after each \u0000 escape is replaced with U+FFFD (Go writes one for a NUL; jsonb
+		// refuses it), so such metadata still yields its team_run as on SQLite. Stream kinds are
+		// matched case-insensitively on both (SQLite's LIKE folds ASCII case; ILIKE, as the triggers).
 		teamRun := `CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.team_run') END`
+		notStream := `kind NOT LIKE 'stream.%'`
 		if tx.Dialect().Name() == gostore.DriverPostgres {
-			teamRun = `CASE WHEN metadata IS JSON OBJECT THEN metadata::jsonb->>'team_run' END`
+			const md = `replace(metadata, '\u0000', '\ufffd')`
+			teamRun = `CASE WHEN pg_input_is_valid(` + md + `, 'jsonb') THEN (` + md + `)::jsonb->>'team_run' END`
+			notStream = `kind NOT ILIKE 'stream.%'`
 		}
 		_, err := tx.ExecContext(ctx, rebind(tx, `INSERT INTO message_event_journal (kind, at, payload_json, team_run_id)
  SELECT ?, ?, ?, COALESCE((SELECT run_id FROM team_runs WHERE run_id = (SELECT `+teamRun+` FROM messages WHERE id = ?)), '')
- WHERE EXISTS (SELECT 1 FROM messages WHERE id = ? AND kind NOT LIKE 'stream.%')`), kind, stamp(s.now()), string(raw), id, id)
+ WHERE EXISTS (SELECT 1 FROM messages WHERE id = ? AND `+notStream+`)`), kind, stamp(s.now()), string(raw), id, id)
 		return err
 	})
 }
@@ -189,7 +197,9 @@ func (s *Store) execC(ctx context.Context, q string, args ...any) (int64, error)
 	return n, err
 }
 
-// TriageSetState moves a triage row to state.
+// TriageSetState moves a triage row to state. It has no state guard and SetSeatLastActionWake is
+// last-writer-wins, as in the old store; on a Postgres pool these writes really run concurrently, so
+// the mail_triage caller (S6) must not rely on them to order racing wakes.
 func (s *Store) TriageSetState(ctx context.Context, messageID, state string, at time.Time) error {
 	_, err := s.execC(ctx, `UPDATE wake_triage SET state = ?, updated_at = ? WHERE message_id = ?`, state, stamp(at), messageID)
 	return err
@@ -246,7 +256,7 @@ func (s *Store) TriageFYIPending(ctx context.Context, seat string, limit int) ([
 	rows, err := r.QueryContext(ctx, rebind(r, `SELECT t.message_id, t.recipient, m.from_urn, t.typed, COALESCE(m.payload,'')
  FROM wake_triage t JOIN messages m ON m.id = t.message_id
  WHERE t.seat = ? AND t.class = 'fyi' AND t.state = 'pending' AND m.read_at IS NULL AND m.canceled_at IS NULL AND m.archived_at IS NULL
- ORDER BY t.created_at LIMIT ?`), seat, limit)
+ ORDER BY t.created_at, t.message_id LIMIT ?`), seat, limit)
 	if err != nil {
 		return nil, err
 	}
