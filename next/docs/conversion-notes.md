@@ -133,9 +133,17 @@ Known differences between the dialects, handled in the slices that port the quer
 Items to settle before class C moves to Postgres (the S2 query port keeps SQLite parity until then):
 - **Staged turn outputs with a NUL byte or invalid UTF-8** (S2b-2c, #580). Today's store keeps such a body, and on SQLite the port still does (the cutover runs on SQLite). Postgres's `text` cannot hold either, so on Postgres `StageTurnOutput` refuses them with `ErrStagedBodyUnstorable`. Before class C moves, decide between encoding such bodies and the refusal. Existing staged rows that hold such bytes need a carry plan in `migrate-from` (S12), which cannot copy them as they are into `text`. A JSON body's `\u0000` escape is plain text and is unaffected.
 
+- **Same-second session ties** (S2b-3a). "The agent's newest session" breaks `created_at` ties (one-second resolution) by rowid, insertion order, on SQLite, as the old store did. Postgres has no insertion order, so there ties break by id (random): two sessions of one agent created in the same second may then chain the wrong parent or resume the older conversation. Before class C moves, `sessions` needs an insertion-order column (an identity, as `messages.seq`).
+
 Framework items:
 - **Version tables.** Substrate #44 (named stores, one goose version table per store) is not in the pinned Substrate (`fe86d444`). Both sets use the default `goose_db_version` until the pin moves. The class-B and class-C stores need #44's per-store table before they move.
 - **Extensions.** The Postgres tests use go-store's `storetest`, which creates the `pg_trgm` and `unaccent` extensions on the test server. The server needs them, as stock Postgres 17 images provide.
+
+## Cutover pre-checks (for the runbook)
+
+Checks to run on the old store before the final copy. Each names the slice that found it.
+
+- **No session in `created` holding an admitted workspace allocation** (S2b-3a, #593). The port computes the reservation digest over the new `SessionRow`. The old digest marshalled the nullable columns as `{"Int64":0,"Valid":false}`-style objects, in a different field order, so no old digest matches, whatever the columns hold. A session whose launch stopped between admission and placement would fail every launch after the cutover and stay `created`. That state counts as live, so it blocks resume and recovery for its agent and counts against the parent's child cap. No workspace data is lost. Drain or stop any such session before the final copy.
 
 ## Data directory and the old layout
 

@@ -1,6 +1,7 @@
 package sessionstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -219,12 +220,13 @@ func (s *Store) SessionLastEventAt(ctx context.Context, sessionID string) (time.
 
 // SessionBootDir returns the path of the session's latest session.boot_dir_planted event
 // (sql.ErrNoRows when none, as before). On Postgres the payload is read under the pg_input_is_valid
-// guard after each \u0000 escape is replaced with U+FFFD, so the event SQLite would read is read.
+// guard after each unescaped \u0000 escape is replaced with U+FFFD (polPGNul), so the event SQLite
+// would read is read; a literal backslash followed by "u0000" in the path is left alone.
 func (s *Store) SessionBootDir(ctx context.Context, sessionID string) (string, error) {
 	b := s.all.B().Reader()
 	path, valid := `json_extract(payload_json,'$.path')`, `json_valid(payload_json)`
 	if b.Dialect().Name() == gostore.DriverPostgres {
-		const p = `replace(payload_json, '\u0000', '�')`
+		p := polPGNul(`payload_json`)
 		valid = `pg_input_is_valid(` + p + `, 'jsonb')`
 		path = `(CASE WHEN ` + valid + ` THEN (` + p + `)::jsonb->>'path' END)`
 	}
@@ -234,13 +236,12 @@ func (s *Store) SessionBootDir(ctx context.Context, sessionID string) (string, e
 	return root, err
 }
 
-// LatestSessionForAgent returns the agent's newest session (nil when none). Ties on created_at
-// (second resolution) break by id DESC; the old store broke them by rowid, insertion order, which
-// has no Postgres equivalent.
+// LatestSessionForAgent returns the agent's newest session (nil when none), ties broken as
+// latestSessionOrder says (rowid on SQLite, as before).
 func (s *Store) LatestSessionForAgent(ctx context.Context, agentID string) (*SessionRow, error) {
 	r := s.c.Reader()
 	var id string
-	err := r.QueryRowContext(ctx, rebind(r, `SELECT id FROM sessions WHERE logical_agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`), agentID).Scan(&id)
+	err := r.QueryRowContext(ctx, rebind(r, `SELECT id FROM sessions WHERE logical_agent_id = ? ORDER BY `+latestSessionOrder(r)+` LIMIT 1`), agentID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -323,7 +324,7 @@ func (s *Store) SetNativeStateRoot(ctx context.Context, sessionID, root string) 
 		if err != nil || !ok {
 			return err
 		}
-		raw, err := json.Marshal(root)
+		raw, err := polMarshal(root)
 		if err != nil {
 			return err
 		}
@@ -377,8 +378,29 @@ func polStringField(fields map[string]json.RawMessage, key, want string) bool {
 	return got == want
 }
 
+// polPGNul is the Postgres expression for col with each unescaped \u0000 escape (one preceded by an
+// even run of backslashes) replaced by \ufffd, so jsonb can hold it. The pattern anchors on the
+// character before the escape, so one pass misses the second of two adjacent escapes; the second
+// pass catches it. (Look-behind would need "?", which Rebind reads as a placeholder.)
+func polPGNul(col string) string {
+	const pattern = `'(^|[^\\])((\\\\)*)\\u0000', '\1\2\\ufffd', 'g'`
+	return `regexp_replace(regexp_replace(` + col + `, ` + pattern + `), ` + pattern + `)`
+}
+
+// polMarshal is json.Marshal without HTML escaping, as SQLite's json_set writes: <, > and & stay as
+// they are. A plan rewrite still sorts keys and drops duplicate keys (it goes through a Go map).
+func polMarshal(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
 func polWritePlan(ctx context.Context, tx store.Tx, sessionID string, fields map[string]json.RawMessage) error {
-	raw, err := json.Marshal(fields)
+	raw, err := polMarshal(fields)
 	if err != nil {
 		return err
 	}
