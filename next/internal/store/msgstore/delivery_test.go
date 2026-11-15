@@ -210,6 +210,26 @@ func TestCommitMessageEvents(t *testing.T) {
 		if pending, _ = es.Pending(ctx, 0, 0); total != 1 || len(pending) != 5 {
 			t.Fatalf("concurrent commits %d, outbox %d", total, len(pending))
 		}
+
+		// Concurrent drainers publishing the same ready deferred record, with the retry checkpoint
+		// not moving (Pending ends where it already is): every drainer passes the checkpoint check, so
+		// only the deferred row's DELETE (RowsAffected) keeps the record from publishing twice.
+		cp, _ = ms.MessageEventCheckpoints(ctx)
+		exec(t, s, `INSERT INTO message_event_deferred (transition_id) VALUES (?)`, int64(7))
+		ready := msgstore.DrainBatch{From: cp, Ready: []msgstore.DrainRecord{{Position: 7, Events: []eventstore.Row{lifecycle("message.consumed")}}},
+			Pending: []int64{cp.Retry}}
+		warmPool(ctx, s)
+		counts, errs = race(6, func() (int, error) { return ms.CommitMessageEvents(ctx, ready, es) })
+		total = 0
+		for i, n := range counts {
+			if errs[i] != nil {
+				t.Fatalf("concurrent ready: %v", errs[i])
+			}
+			total += n
+		}
+		if pending, _ = es.Pending(ctx, 0, 0); total != 1 || len(pending) != 6 {
+			t.Fatalf("concurrent ready publishes %d, outbox %d (want 1, 6)", total, len(pending))
+		}
 	})
 }
 

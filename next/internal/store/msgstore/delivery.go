@@ -42,8 +42,14 @@ func (s *Store) DeliveryStore(ctx context.Context) (*delivery.SQLiteStore, error
 	if err != nil {
 		return nil, err
 	}
-	return delivery.NewSQLiteStore(db), nil
+	return delivery.NewSQLiteStore(db, delivery.WithSQLiteClock(storeClock{s})), nil
 }
+
+// storeClock gives the library the store's clock, so claim, lease, backoff and readiness times are
+// all in one time base (the store's Now; time.Now outside tests).
+type storeClock struct{ s *Store }
+
+func (c storeClock) Now() time.Time { return c.s.now() }
 
 // ActivateDelivery is the old Open's delivery start-up: it creates or upgrades go-messaging's
 // messaging_* tables (the library owns that schema) and fences pre-activation library history once,
@@ -145,8 +151,13 @@ type SettledRead struct {
 // SettleReadUndelivered stamps delivered_at on the recipient's read but undelivered messages (kind
 // and thread narrowed by f), up to 500, oldest first, and returns those it stamped, so the caller
 // records their consumed receipts (the old unread-only Inbox pull's settle). Only a row this call
-// stamped is returned: on Postgres the rows are locked as they are read (SKIP LOCKED), so two
-// concurrent pulls never both report one message.
+// stamped is returned (the UPDATE's guard; on Postgres the rows are also locked as they are read,
+// SKIP LOCKED, so a concurrent pull moves on to other rows instead of waiting).
+//
+// Crash window, for the S6 caller: up to 500 rows are stamped in one transaction before the caller
+// records their receipts, where the old code went row by row. A crash in between leaves those rows
+// delivered with their deliveries open, so S6 must close receipts for rows already stamped (or
+// settle in smaller batches).
 func (s *Store) SettleReadUndelivered(ctx context.Context, to messaging.Address, f messaging.Filter) ([]SettledRead, error) {
 	where := "routing_staged = 0 AND to_urn = ? AND delivered_at IS NULL AND canceled_at IS NULL AND read_at IS NOT NULL"
 	args := []any{to.URN()}
