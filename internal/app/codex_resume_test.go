@@ -140,6 +140,15 @@ func newCodexRig(t *testing.T) *codexRig {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = svc.Manager.Shutdown(ctx)
+		// Shut down as Service.Close does before the store closes: flush the
+		// sessions' turn output and join the output-retry workers. Otherwise a
+		// late publish journals into <state.db>.turn-output-retries while
+		// TempDir is being removed ("directory not empty", CW-20261115-0028).
+		svc.turnOutputs.Range(func(_, value any) bool {
+			value.(*sessionTurnOutput).flush()
+			return true
+		})
+		svc.stopOutputRetries()
 	})
 	return &codexRig{t: t, svc: svc, bus: bus, dir: dir, repo: repo}
 }
