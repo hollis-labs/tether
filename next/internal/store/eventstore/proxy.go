@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	gostore "github.com/hollis-labs/libs/core/store"
+
 	"github.com/hollis-labs/tether/next/internal/store"
 )
 
@@ -40,7 +42,7 @@ type ProxyEventFilter struct {
 // ProxyEventsQueryLimit caps one QueryProxyEvents page.
 const ProxyEventsQueryLimit = 2000
 
-func proxyWhere(f ProxyEventFilter) (string, []any) {
+func proxyWhere(d gostore.Driver, f ProxyEventFilter) (string, []any) {
 	q := ` WHERE 1=1`
 	var args []any
 	if f.ErrorsOnly {
@@ -51,8 +53,14 @@ func proxyWhere(f ProxyEventFilter) (string, []any) {
 	}
 	if f.ToolName != "" {
 		// SQLite's LIKE folds ASCII case and Postgres's does not: lower() on both keeps the old
-		// case-insensitive prefix match.
-		q, args = q+" AND lower(tool_name) LIKE lower(?)", append(args, f.ToolName+"%")
+		// case-insensitive prefix match. On Postgres both sides are lowered under COLLATE "C" (ASCII
+		// folding, as SQLite's lower) and ESCAPE '' makes \ literal, as SQLite's LIKE has no escape.
+		if d == gostore.DriverPostgres {
+			q += ` AND lower(tool_name COLLATE "C") LIKE lower(CAST(? AS text) COLLATE "C") ESCAPE ''`
+		} else {
+			q += " AND lower(tool_name) LIKE lower(?)"
+		}
+		args = append(args, f.ToolName+"%")
 	}
 	if f.SessionID != "" {
 		q, args = q+" AND session_id = ?", append(args, f.SessionID)
@@ -104,8 +112,8 @@ func (s *Store) QueryProxyEvents(ctx context.Context, f ProxyEventFilter) ([]Pro
 	if limit < 0 || limit > ProxyEventsQueryLimit {
 		limit = ProxyEventsQueryLimit
 	}
-	where, args := proxyWhere(f)
 	r := s.b.Reader()
+	where, args := proxyWhere(r.Dialect().Name(), f)
 	rows, err := r.QueryContext(ctx, rebind(r, `SELECT id, session_id, server, tool_name, args_schema_fp, duration_ms, ok, error,
  timestamp, attribution_json, claimed_session_id, telemetry_json FROM proxy_events`+where+` ORDER BY id ASC LIMIT ?`), append(args, limit)...)
 	if err != nil {
@@ -139,8 +147,8 @@ func (s *Store) QueryProxyEvents(ctx context.Context, f ProxyEventFilter) ([]Pro
 
 // CountProxyEvents counts matching proxy events.
 func (s *Store) CountProxyEvents(ctx context.Context, f ProxyEventFilter) (int, error) {
-	where, args := proxyWhere(f)
 	r := s.b.Reader()
+	where, args := proxyWhere(r.Dialect().Name(), f)
 	var n int
 	if err := r.QueryRowContext(ctx, rebind(r, `SELECT COUNT(*) FROM proxy_events`+where), args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count proxy events: %w", err)

@@ -35,8 +35,12 @@ type MetricHistogram struct {
 }
 
 // metricsSQL builds the per-dialect aggregation. On SQLite it is the old query (json_extract and
-// json_type, guarded by json_valid). On Postgres the payload is cast once to jsonb in a subquery
-// guarded by IS JSON (Postgres 16+, so an invalid payload is skipped, not an error); "key present" is
+// json_type, guarded by json_valid). On Postgres the payload is cast once to jsonb in a subquery,
+// inside a CASE on pg_input_is_valid(payload_json, 'jsonb') (Postgres 16+): CASE fixes the order, so
+// a payload jsonb rejects (invalid JSON, or a \u0000 escape that IS JSON accepts) becomes NULL and is
+// skipped, not an error, whatever order the planner evaluates the outer filters in; OFFSET 0 keeps the
+// subquery from being flattened into them. Groups sort by byte order (COLLATE "C"), as SQLite's
+// BINARY does, so the cut at the limit is the same on both dialects. "key present" is
 // jsonb_exists (the ? operator's function form: Rebind would read a bare ? as a placeholder), which,
 // like json_type, is true for a JSON null; and ok counts when it is true or 1, matching SQLite's
 // json_extract(...)=1. A non-numeric value in a numeric field fails the cast on Postgres, where SQLite
@@ -76,9 +80,12 @@ func metricsSQL(d gostore.Driver, q MetricsQuery) (string, []any) {
 		modeExpr, groupBy = "COALESCE("+text("discovery_mode")+",'')", "1,2,3,4"
 	}
 	var b strings.Builder
-	b.WriteString(`SELECT COALESCE(` + text("tool_name") + `,''), COALESCE(` + text("server") + `,''),
- CASE WHEN ` + okExpr + ` THEN 'ok' ELSE COALESCE(NULLIF(` + text("error_class") + `,''),'upstream_error') END,
- ` + modeExpr + `, COUNT(*), ` + sum(num("args_bytes")) + `, ` + sum(num("result_bytes")) + `,
+	if pg {
+		b.WriteString(`SELECT * FROM (`)
+	}
+	b.WriteString(`SELECT COALESCE(` + text("tool_name") + `,'') AS g_tool, COALESCE(` + text("server") + `,'') AS g_server,
+ CASE WHEN ` + okExpr + ` THEN 'ok' ELSE COALESCE(NULLIF(` + text("error_class") + `,''),'upstream_error') END AS g_outcome,
+ ` + modeExpr + ` AS g_mode, COUNT(*) AS g_count, ` + sum(num("args_bytes")) + `, ` + sum(num("result_bytes")) + `,
  ` + sum("CASE WHEN "+present("args_bytes")+" THEN 1 ELSE 0 END"))
 	for index, field := range []string{"duration_ms", "gateway_ms", "forward_ms"} {
 		expr := "COALESCE(" + num(field) + ",0)"
@@ -92,7 +99,8 @@ func metricsSQL(d gostore.Driver, q MetricsQuery) (string, []any) {
 		}
 	}
 	if pg {
-		b.WriteString(` FROM (SELECT at, payload_json::jsonb AS p FROM events WHERE kind = 'tool_call_end' AND payload_json IS JSON) e WHERE 1=1`)
+		b.WriteString(` FROM (SELECT at, CASE WHEN pg_input_is_valid(payload_json, 'jsonb') THEN payload_json::jsonb END AS p
+ FROM events WHERE kind = 'tool_call_end' OFFSET 0) e WHERE p IS NOT NULL`)
 	} else {
 		b.WriteString(` FROM events WHERE kind = 'tool_call_end' AND json_valid(payload_json)`)
 	}
@@ -116,7 +124,11 @@ func metricsSQL(d gostore.Driver, q MetricsQuery) (string, []any) {
 		b.WriteString(" AND " + normalizedAt + " < ?")
 		args = append(args, q.Until.UTC().Format(fixedUTC))
 	}
-	b.WriteString(" GROUP BY " + groupBy + " ORDER BY COUNT(*) DESC,1,2,3,4 LIMIT ?")
+	if pg {
+		b.WriteString(" GROUP BY " + groupBy + `) g ORDER BY g_count DESC, g_tool COLLATE "C", g_server COLLATE "C", g_outcome COLLATE "C", g_mode COLLATE "C" LIMIT ?`)
+	} else {
+		b.WriteString(" GROUP BY " + groupBy + " ORDER BY COUNT(*) DESC,1,2,3,4 LIMIT ?")
+	}
 	args = append(args, q.Limit)
 	return b.String(), args
 }

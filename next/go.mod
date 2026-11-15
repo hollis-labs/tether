@@ -16,7 +16,7 @@ require (
 	github.com/hollis-labs/libs/app/app-host v0.1.0 // indirect
 	github.com/hollis-labs/libs/core/panics v0.1.0 // indirect
 	github.com/hollis-labs/libs/core/util v0.6.0 // indirect
-	github.com/hollis-labs/libs/mesh/core v0.6.0 // indirect
+	github.com/hollis-labs/libs/mesh/core v0.10.0 // indirect
 	github.com/hollis-labs/libs/security/auth v0.3.1 // indirect
 	github.com/hollis-labs/libs/ui/ui-go v0.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

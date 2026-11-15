@@ -64,8 +64,21 @@ var insertSQL = `INSERT INTO events (` + strings.Join(insertColumns, ", ") + `) 
 // it (the original is kept as origin_at), so a future date cannot evade at-based retention.
 const clockSkew = 5 * time.Minute
 
-// Insert writes one event in its own class B transaction. See InsertTx.
+// ErrBookkeepingKind is returned by Insert for the two kinds the old InsertEventEnvelope routed to
+// their bookkeeping paths (the environment request's fence rows and the work state rows), which are
+// S8 joints here: written as plain events they would lack those rows.
+var ErrBookkeepingKind = errors.New("eventstore: this kind is written with its bookkeeping rows, not as a plain event")
+
+// bookkeepingKinds are the kinds Insert refuses (old EnvironmentRequestKind and
+// events.KindSessionWorkStateChanged).
+var bookkeepingKinds = map[string]bool{"session.request_status": true, "session.work_state_changed": true}
+
+// Insert writes one event in its own class B transaction. See InsertTx. It refuses the bookkeeping
+// kinds (ErrBookkeepingKind) until the S8 joints that write them port.
 func (s *Store) Insert(ctx context.Context, r Row) (Row, error) {
+	if bookkeepingKinds[r.Kind] {
+		return Row{}, fmt.Errorf("%w: %s", ErrBookkeepingKind, r.Kind)
+	}
 	var out Row
 	err := s.b.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
 		var err error

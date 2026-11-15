@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,6 +101,11 @@ func TestInsertRules(t *testing.T) {
 		first, err := es.Insert(ctx, eventstore.Row{Scope: "session", Kind: "k", EventID: "evt_fixed"})
 		if err != nil {
 			t.Fatal(err)
+		}
+		for _, kind := range []string{"session.request_status", "session.work_state_changed"} {
+			if _, err := es.Insert(ctx, eventstore.Row{Scope: "session", Kind: kind}); !errors.Is(err, eventstore.ErrBookkeepingKind) {
+				t.Fatalf("%s as a plain event: %v", kind, err)
+			}
 		}
 		var again eventstore.Row
 		var existing bool
@@ -304,6 +311,52 @@ func TestIngest(t *testing.T) {
 		if n, _ := es.Count(ctx); n != 2 {
 			t.Fatalf("count %d, want 2", n)
 		}
+		// Concurrent retries of one event id: one stores it, the rest report Duplicate. The insert
+		// hook holds each racer until every one has reached it (or 300ms pass), which forces them all
+		// past the existence check together on Postgres; with the id claimed first, only one reaches
+		// it and the others wait on its digest row.
+		const racers = 4
+		var arrived atomic.Int32
+		var open sync.Once
+		gate := make(chan struct{})
+		hold := func(ctx context.Context, tx store.Tx, r eventstore.Row) (eventstore.Row, error) {
+			if arrived.Add(1) >= racers {
+				open.Do(func() { close(gate) })
+			}
+			select {
+			case <-gate:
+			case <-time.After(300 * time.Millisecond):
+			}
+			stored, _, err := es.InsertTx(ctx, tx, r, true)
+			return stored, err
+		}
+		outcomes := make(chan eventstore.IngestOutcome, racers)
+		errs := make(chan error, racers)
+		var wg sync.WaitGroup
+		for range racers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, o, err := es.IngestEvent(ctx, eventstore.Row{Scope: "global", Kind: "app.thing", EventID: "evt_race"}, "sha256:cc", "nanite", t0, hold)
+				outcomes <- o
+				errs <- err
+			}()
+		}
+		wg.Wait()
+		close(outcomes)
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("concurrent ingest: %v", err)
+			}
+		}
+		count := map[eventstore.IngestOutcome]int{}
+		for o := range outcomes {
+			count[o]++
+		}
+		if count[eventstore.IngestStored] != 1 || count[eventstore.IngestDuplicate] != racers-1 {
+			t.Fatalf("concurrent outcomes %v", count)
+		}
 	})
 }
 
@@ -387,6 +440,23 @@ func TestTombstonePayloads(t *testing.T) {
 		if got, _, _ := es.ByEventID(ctx, rs[0].EventID); got.PayloadJSON == "" {
 			t.Fatal("a failed pass wrote a tombstone")
 		}
+		// A candidate whose policy row is missing fails the pass before decide, with nothing written.
+		// (Admission only stamps stored policies, so the orphan reference is written directly, as a
+		// policy row deleted after admission would leave it.)
+		orphan := seed(t, es, eventstore.Row{Scope: "global", Kind: "orphan", PayloadJSON: `{"o":1}`})
+		exec(t, s.B(), `UPDATE events SET retention_class = ?, retention_policy_id = ? WHERE id = ?`, "R-activity", "pol-missing", orphan[0].Seq)
+		called := false
+		if _, err := es.TombstonePayloads(ctx, 0, 10, func(eventstore.TombstoneCandidate) (eventstore.TombstoneDecision, error) {
+			called = true
+			return eventstore.TombstoneDecision{Tombstone: true, Digest: "withheld"}, nil
+		}); err == nil || called {
+			t.Fatalf("missing policy: err %v, decide called %v", err, called)
+		}
+		for _, r := range []eventstore.Row{rs[0], orphan[0]} {
+			if got, _, _ := es.ByEventID(ctx, r.EventID); got.PayloadJSON == "" {
+				t.Fatalf("missing-policy pass tombstoned event %d", r.Seq)
+			}
+		}
 	})
 }
 
@@ -464,6 +534,19 @@ func TestToolCallMetrics(t *testing.T) {
 		}
 		if groups[0].Tool != "t1" || groups[0].Outcome != "ok" {
 			t.Fatalf("order: first %+v", groups[0])
+		}
+		// Payloads Postgres's jsonb rejects (invalid, or valid JSON holding a \u0000 escape) must not
+		// fail a filtered query there. SQLite counts the \u0000 one (json_valid accepts it); Postgres
+		// skips it, which is why it is under another tool name.
+		seed(t, es,
+			eventstore.Row{Scope: "global", Kind: "tool_call_end", PayloadJSON: `{"tool_name":"t1"`, At: t0.Add(time.Minute)},
+			eventstore.Row{Scope: "global", Kind: "tool_call_end", PayloadJSON: `{"tool_name":"t9","note":"a\u0000b","ok":true}`, At: t0.Add(time.Minute)},
+		)
+		if filtered, err := es.QueryToolCallMetrics(ctx, eventstore.MetricsQuery{Tool: "t1", BoundsMs: bounds}); err != nil || len(filtered) != 2 {
+			t.Fatalf("filtered with bad payloads: %+v %v", filtered, err)
+		}
+		if _, err := es.QueryToolCallMetrics(ctx, eventstore.MetricsQuery{Tool: "t9", BoundsMs: bounds}); err != nil {
+			t.Fatalf("filter on the \\u0000 payload: %v", err)
 		}
 		byMode, err := es.QueryToolCallMetrics(ctx, eventstore.MetricsQuery{ByMode: true, Tool: "t1", Since: t0, Until: t0.Add(2 * time.Second), BoundsMs: bounds})
 		if err != nil || len(byMode) != 2 {

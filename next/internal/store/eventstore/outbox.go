@@ -11,12 +11,13 @@ import (
 )
 
 // Pending returns outbox rows not yet published, oldest first, before beforeSeq when it is > 0
-// (limit default 256).
+// (limit default 256). The CAST types the first parameter as bigint on Postgres (bare, it would be
+// int4 and refuse a seq above 2^31).
 func (s *Store) Pending(ctx context.Context, beforeSeq int64, limit int) ([]Row, error) {
 	if limit <= 0 {
 		limit = 256
 	}
-	return s.query(ctx, `SELECT `+readColumns+` FROM events WHERE pending = 1 AND (? <= 0 OR id < ?) ORDER BY id ASC LIMIT ?`,
+	return s.query(ctx, `SELECT `+readColumns+` FROM events WHERE pending = 1 AND (CAST(? AS BIGINT) <= 0 OR id < ?) ORDER BY id ASC LIMIT ?`,
 		beforeSeq, beforeSeq, limit)
 }
 
@@ -74,18 +75,23 @@ func (s *Store) IngestEvent(ctx context.Context, r Row, digest, app string, at t
 	if r.EventID == "" {
 		return Row{}, IngestStored, fmt.Errorf("eventstore: an ingested event needs its event id")
 	}
+	// raced is set when the default insert finds the event already written by a path other than
+	// ingest (between the existence check and the insert), so the event was not ingested here.
+	var raced bool
 	if insert == nil {
 		insert = func(ctx context.Context, tx store.Tx, r Row) (Row, error) {
-			stored, _, err := s.InsertTx(ctx, tx, r, true)
+			stored, existing, err := s.InsertTx(ctx, tx, r, true)
+			raced = existing
 			return stored, err
 		}
 	}
 	var out Row
-	outcome := IngestStored
+	var outcome IngestOutcome
 	err := s.b.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
-		existing, err := scanRow(tx.QueryRowContext(ctx, rebind(tx, `SELECT `+readColumns+` FROM events WHERE event_id = ?`), r.EventID))
-		switch {
-		case err == nil:
+		out, outcome = Row{}, IngestStored
+		// compare reports an event that is already stored: Duplicate or Conflict against the digest
+		// recorded at its ingest, Unverifiable when it was not ingested (no digest row).
+		compare := func(existing Row) error {
 			out = existing
 			var recorded string
 			err := tx.QueryRowContext(ctx, rebind(tx, `SELECT digest FROM event_ingest_digests WHERE event_id = ?`), r.EventID).Scan(&recorded)
@@ -100,14 +106,38 @@ func (s *Store) IngestEvent(ctx context.Context, r Row, digest, app string, at t
 				outcome = IngestDuplicate
 			}
 			return nil
+		}
+		existing, err := scanRow(tx.QueryRowContext(ctx, rebind(tx, `SELECT `+readColumns+` FROM events WHERE event_id = ?`), r.EventID))
+		switch {
+		case err == nil:
+			return compare(existing)
 		case !errors.Is(err, sql.ErrNoRows):
 			return err
 		}
-		if out, err = insert(ctx, tx, r); err != nil {
+		// Claim the id before writing the event. On Postgres (READ COMMITTED) a concurrent ingest of
+		// the same id waits here on the first one's digest row and, once it commits, inserts nothing
+		// and reports against the stored event, instead of failing on the digest's primary key. On
+		// SQLite the one writer already serializes the two.
+		res, err := tx.ExecContext(ctx, rebind(tx, `INSERT INTO event_ingest_digests (event_id, digest, app, at) VALUES (?, ?, ?, ?)
+ ON CONFLICT (event_id) DO NOTHING`), r.EventID, digest, app, formatTime(at))
+		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, rebind(tx, `INSERT INTO event_ingest_digests (event_id, digest, app, at) VALUES (?, ?, ?, ?)`),
-			r.EventID, digest, app, formatTime(at))
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			existing, err := scanRow(tx.QueryRowContext(ctx, rebind(tx, `SELECT `+readColumns+` FROM events WHERE event_id = ?`), r.EventID))
+			if err != nil {
+				return fmt.Errorf("eventstore: ingest %q: digest claimed without its event: %w", r.EventID, err)
+			}
+			return compare(existing)
+		}
+		raced = false
+		if out, err = insert(ctx, tx, r); err != nil || !raced {
+			return err
+		}
+		outcome = IngestUnverifiable
+		_, err = tx.ExecContext(ctx, rebind(tx, `DELETE FROM event_ingest_digests WHERE event_id = ?`), r.EventID)
 		return err
 	})
 	if err != nil {

@@ -90,7 +90,7 @@ type TombstoneCandidate struct {
 	RecordedAt        time.Time
 	RetentionClass    string
 	RetentionPolicyID string
-	PolicyJSON        string // the stored policy snapshot ("" when the policy row is missing)
+	PolicyJSON        string // the stored policy snapshot (never empty: a missing policy row fails the pass)
 	PayloadJSON       string
 	PII               int64 // the raw flag (0 or 1 is valid; anything else is a corrupt row)
 	Sensitivity       string
@@ -113,8 +113,10 @@ type TombstoneBatch struct {
 // settled events after the cursor that still hold a payload under a retention policy, asks decide
 // about each (the retention rules, policy-snapshot verification and digest are the event slice's,
 // internal/eventretention in the old tree), and replaces the payload by the digest where decide says
-// so. The UPDATE is guarded by the values read, so a row changed in between is left alone. The pass
-// stops at the first error from decide, with nothing written.
+// so. The UPDATE is guarded by the values read, so a row changed in between is left alone. As in
+// the old store, a candidate whose retention_policy_id has no stored policy row (or an empty one)
+// fails the whole pass before decide is called, so a payload is only tombstoned under a stored
+// policy; the pass also stops at the first error from decide. Either way nothing is written.
 func (s *Store) TombstonePayloads(ctx context.Context, after int64, limit int,
 	decide func(TombstoneCandidate) (TombstoneDecision, error)) (TombstoneBatch, error) {
 	if after < 0 || limit <= 0 || limit > 1000 || decide == nil {
@@ -142,6 +144,10 @@ func (s *Store) TombstonePayloads(ctx context.Context, after int64, limit int,
 			if c.RecordedAt, err = time.Parse(time.RFC3339Nano, recorded); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("retention: event %d has an invalid recorded_at: %w", c.Seq, err)
+			}
+			if c.PolicyJSON == "" {
+				_ = rows.Close()
+				return fmt.Errorf("retention policy lookup: event %d: no stored policy %q", c.Seq, c.RetentionPolicyID)
 			}
 			selected = append(selected, c)
 		}

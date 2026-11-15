@@ -22,8 +22,8 @@ github.com/hollis-labs/libs/core/util v0.6.0 h1:uqVSuuRtKAzwDcMf5ekFlBUO9g6aZzAA
 github.com/hollis-labs/libs/core/util v0.6.0/go.mod h1:CpS3EUj+MHivKVnGWJj8Vtq1+J3TN1uPyPCbLzhQLh0=
 github.com/hollis-labs/libs/harness/core v0.16.0 h1:Kx1ycAgd61aBZJSDoOqX9CKlsvoRugcIypXJ+IEmkN0=
 github.com/hollis-labs/libs/harness/core v0.16.0/go.mod h1:9unAdOAJSvsw5i9rMub7n+kBv+YJbMVzGeTiE8HbgoI=
-github.com/hollis-labs/libs/mesh/core v0.6.0 h1:WQwxbGozmC+elJK96iNw275yNEKT+uC93qT+zoupzJI=
-github.com/hollis-labs/libs/mesh/core v0.6.0/go.mod h1:K1a1oeFXakkaJDyKogI/I2j+2lpKklTZgdtzSw45Bss=
+github.com/hollis-labs/libs/mesh/core v0.10.0 h1:PDtFkea2SA/Y750/eDQHzWHRSV/TNyufBaYMra5Xfsg=
+github.com/hollis-labs/libs/mesh/core v0.10.0/go.mod h1:4MIXuPovKfdlaHGpI2Va9nINuNKmfsed4XX53UxeoSk=
 github.com/hollis-labs/libs/security/auth v0.3.1 h1:Oi9xrIucjr0mBcGCWGOiS8KC/+cI/HH8ZJ+ZIobFXKU=
 github.com/hollis-labs/libs/security/auth v0.3.1/go.mod h1:GGJqJuSZwR57ygyml3kPt6Aw2rwPqAzTV2M9CXjTjo8=
 github.com/hollis-labs/libs/security/redact v0.2.0 h1:yaKmfWRMwlaAH1uur2yyS+DJjdhoM1XEdOdsafOhzjI=
