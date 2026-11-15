@@ -19,25 +19,31 @@ type Finding struct {
 // changes anything, and reports each check; the runbook acts on a failed one before the final copy.
 func (e *Engine) Precheck(ctx context.Context) ([]Finding, error) {
 	var out []Finding
-	for _, check := range []func(context.Context) (Finding, error){e.checkStuckLaunches, e.checkEventIdentity} {
-		f, err := check(ctx)
+	checks := []struct {
+		name string
+		run  func(context.Context) (Finding, error)
+	}{{"stuck_launches", e.checkStuckLaunches}, {"event_identity", e.checkEventIdentity}}
+	for _, c := range checks {
+		// Each check runs on its own: one that cannot run (a table missing in the source) fails with its
+		// error and the others still report.
+		f, err := c.run(ctx)
 		if err != nil {
-			return nil, err
+			f = Finding{Check: c.name, OK: false, Detail: "could not run: " + err.Error()}
 		}
 		out = append(out, f)
 	}
 	return out, nil
 }
 
-// checkStuckLaunches: no session in 'created' may hold an admitted workspace allocation (#593). Such a
-// launch stopped between admission and placement; its reservation digest was written by the old code
+// checkStuckLaunches: no session in 'created' may hold an admitted or reserved workspace allocation
+// (#593). Such a launch stopped between reservation or admission and placement; its reservation digest was written by the old code
 // (nullable columns marshaled as objects), so it never matches the new digest: the launch fails every
 // time, and the session stays 'created', counted live, blocking resume and recovery for its agent. Drain
 // or kill these sessions on the old hub before the final copy.
 func (e *Engine) checkStuckLaunches(ctx context.Context) (Finding, error) {
 	f := Finding{Check: "stuck_launches"}
 	rows, err := e.src.QueryContext(ctx, `SELECT s.id FROM sessions s JOIN workspace_scratch_allocations w ON w.session_id = s.id
-		WHERE s.state = 'created' AND w.status = 'admitted' ORDER BY s.id`)
+		WHERE s.state = 'created' AND w.status IN ('reserved', 'admitted') ORDER BY s.id`)
 	if err != nil {
 		return f, err
 	}
@@ -55,14 +61,14 @@ func (e *Engine) checkStuckLaunches(ctx context.Context) (Finding, error) {
 	}
 	f.OK = len(ids) == 0
 	if f.OK {
-		f.Detail = "no session in 'created' holds an admitted allocation"
+		f.Detail = "no session in 'created' holds a reserved or admitted allocation"
 		return f, nil
 	}
 	shown := ids
 	if len(shown) > 20 {
 		shown = shown[:20]
 	}
-	f.Detail = fmt.Sprintf("%d session(s) in 'created' hold an admitted allocation; drain or kill them on the old hub before the final copy: %s",
+	f.Detail = fmt.Sprintf("%d session(s) in 'created' hold a reserved or admitted allocation; drain or kill them on the old hub before the final copy: %s",
 		len(ids), strings.Join(shown, ", "))
 	return f, nil
 }

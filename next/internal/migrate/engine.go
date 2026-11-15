@@ -68,6 +68,9 @@ var FamilyS12c = []string{
 	// go-messaging's delivery library (SQLite only: the library has no Postgres store yet)
 	"messaging_delivery_schema", "messaging_messages", "messaging_deliveries", "messaging_attempts",
 	"messaging_receipts", "messaging_transitions", "messaging_idempotency",
+	// environment request and work state, workstreams (#597)
+	"environment_request_status", "environment_request_resolutions", "environment_request_turn_ends",
+	"environment_work_state", "workstreams", "workstream_projects",
 	// sessions and their satellites
 	"session_groups", "sessions", "session_idempotency", "session_mcp_policy", "session_provider_mappings",
 	"session_refs", "session_replacements", "session_shims", "client_attachments", "launch_plans",
@@ -86,6 +89,12 @@ var Families = map[string][]string{
 // libraryTable reports whether a table belongs to go-messaging's delivery library: the library creates it
 // (delivery.ApplySQLiteSchema), and has no Postgres store yet (Substrate gap CW-20261115-0013).
 func libraryTable(t string) bool { return strings.HasPrefix(t, "messaging_") }
+
+// libraryCursor reports whether a table holds positions in go-messaging's transitions: it can only be
+// copied together with the library's tables.
+func libraryCursor(t string) bool {
+	return t == "message_event_checkpoints" || t == "message_event_deferred"
+}
 
 // Options configure a run.
 type Options struct {
@@ -106,6 +115,9 @@ type Options struct {
 	// Progress, when set, receives one line per table.
 	Progress func(format string, args ...any)
 }
+
+// ErrIncomplete means a final run would leave source data behind: it is refused, never marked complete.
+var ErrIncomplete = errors.New("a final run must copy every source table")
 
 // ErrTargetComplete means the target's migration is complete (it may have served); migrate-from never rewrites
 // it. Use the verify-only mode to re-check it.
@@ -129,6 +141,8 @@ type Report struct {
 	// VerifyMode is "incremental" after a run (only the ranges the copy wrote are rechecked; the copy's
 	// own digests proved the rest) or "full" (Verify: every range walked).
 	VerifyMode string `json:"verify_mode"`
+	// Uncovered lists the source tables in no family and on no exclusion list (a final run refuses them).
+	Uncovered []string `json:"uncovered,omitempty"`
 	// Skipped lists the tables of the run that were not copied, with why (go-messaging's tables on a
 	// Postgres target).
 	Skipped []string `json:"skipped,omitempty"`
@@ -295,10 +309,24 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	}
 	rep := &Report{Phase: opt.Phase, Counts: map[string][2]int64{}, RowsPerSecond: map[string]float64{}, Conversions: map[string]int64{}}
 	e.conversions = rep.Conversions
-	// B1: a final run marks the database complete, and a complete database is never rewritten, so a final
-	// run must cover every family.
-	if opt.Phase == PhaseFinal && !coversAll(tables, e.sqlite()) {
-		return nil, fmt.Errorf("a final run must copy every family (--family all): a complete database is never rewritten, so a family left out would never arrive")
+	// A final run marks the database complete, and a complete database is never rewritten: whatever it
+	// leaves out never arrives. So it must cover every source table (each in the run, or on the committed
+	// exclusion list with its reason), and every one of the run's tables must be supported by the target.
+	if opt.Phase == PhaseFinal {
+		if !coversAll(tables, true) {
+			return nil, fmt.Errorf("%w: a final run must copy every family (--family all)", ErrIncomplete)
+		}
+		missing, err := e.uncovered(ctx, tables)
+		if err != nil {
+			return nil, err
+		}
+		if len(missing) > 0 {
+			rep.Uncovered = missing
+			return rep, fmt.Errorf("%w: %d source table(s) are in no family and on no exclusion list: %s", ErrIncomplete, len(missing), joinTables(missing))
+		}
+		if !e.sqlite() {
+			return rep, fmt.Errorf("%w: go-messaging has no Postgres store (CW-20261115-0013), so its tables and the delivery checkpoint cannot be copied to a Postgres target", ErrIncomplete)
+		}
 	}
 	switch opt.TargetCheck {
 	case "", "full", "quick", "none":
@@ -370,7 +398,7 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 	e.fresh = map[string]map[int64]string{}
-	if tables, err = e.prepareLibrary(ctx, tables, rep); err != nil {
+	if tables, err = e.prepareLibrary(ctx, tables, rep, true); err != nil {
 		return nil, err
 	}
 	specs := make([]tableSpec, 0, len(tables))
@@ -496,7 +524,7 @@ func (e *Engine) Verify(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 	rep.SourceSHA256, rep.SourceUnchanged = sum, true
-	if tables, err = e.prepareLibrary(ctx, tables, rep); err != nil {
+	if tables, err = e.prepareLibrary(ctx, tables, rep, false); err != nil {
 		return nil, err
 	}
 	var specs []tableSpec
@@ -545,7 +573,7 @@ func coversAll(tables []string, library bool) bool {
 // prepareLibrary makes the target ready for go-messaging's tables: on SQLite it applies the library's own
 // schema through the sanctioned library handle, so the tables exist (with the library's shape) before they
 // are copied. On Postgres the library has no store, so its tables are dropped from the run and reported.
-func (e *Engine) prepareLibrary(ctx context.Context, tables []string, rep *Report) ([]string, error) {
+func (e *Engine) prepareLibrary(ctx context.Context, tables []string, rep *Report, apply bool) ([]string, error) {
 	needs := false
 	for _, t := range tables {
 		needs = needs || libraryTable(t)
@@ -571,11 +599,32 @@ func (e *Engine) prepareLibrary(ctx context.Context, tables []string, rep *Repor
 	}
 	tables = present
 	if !e.sqlite() {
+		// The library has no Postgres store. The delivery event checkpoint and the deferred transitions
+		// refer to its transitions, so they go with it: a checkpoint copied without its transitions would
+		// skip the first N once the library's own ids start at 1.
+		var kept []string
+		for _, t := range tables {
+			if libraryTable(t) || libraryCursor(t) {
+				rep.Skipped = append(rep.Skipped, t+": go-messaging has no Postgres store (CW-20261115-0013)")
+				continue
+			}
+			kept = append(kept, t)
+		}
+		return kept, nil
+	}
+	if !apply {
+		// Verify writes nothing: a library table the target lacks is reported, not created.
 		var kept []string
 		for _, t := range tables {
 			if libraryTable(t) {
-				rep.Skipped = append(rep.Skipped, t+": go-messaging has no Postgres store (CW-20261115-0013)")
-				continue
+				var n int
+				if err := e.raw.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, t).Scan(&n); err != nil {
+					return nil, err
+				}
+				if n == 0 {
+					rep.Skipped = append(rep.Skipped, t+": not in the target (verify creates nothing)")
+					continue
+				}
 			}
 			kept = append(kept, t)
 		}

@@ -199,8 +199,18 @@ The guard (`legacyguard.Check`) reads only `state`. `tether migrate-from` boots 
 - **Families.** `--family a|b|c|all` (default `all`). A complete database is never rewritten, so the final run must cover every family.
 - **go-messaging's tables (family c).** The library creates its own tables. On a target that does not have them yet, migrate-from applies the library's schema first (`delivery.ApplySQLiteSchema` through `LibraryDB`), then copies the rows. Ids are kept, so the copied `delivery` event checkpoint never skips a transition. The NUL separator in `messaging_idempotency.scope` is copied byte for byte. On a Postgres target these tables are skipped and listed in the report (`skipped`): the library has no Postgres store yet (CW-20261115-0013).
 
-**Cutover pre-checks** (`migrate-from --old-db <copy> --precheck`): read-only, reported per check, and a non-zero exit if any fails. Run them on the day's copy before the final copy:
-- **`stuck_launches`:** no session in `created` may hold an admitted workspace allocation. The old code wrote that reservation's digest with its nullable columns marshaled as objects, so it can never match the new digest. The launch would fail every time, and the session would stay live, blocking resume and recovery for its agent. Drain or kill such sessions on the old hub first.
+**A final run must cover every source table** (cell lead's ruling on #601). Before a final run, migrate-from lists every table in the source (`sqlite_master`). Each must be in a family or on the exclusion list in `internal/migrate/exclusions.go`, which gives one entry per table with its reason and plan section. Otherwise the run is refused before anything is written (`ErrIncomplete`), and the report names the uncovered tables (`uncovered`). Until the registry, team, fabric, forum and worker families exist, `complete` is unreachable; that is correct. Bulk runs are not gated.
+
+Only these reasons may exclude a table; anything else needs the cell lead:
+- **D3 archive tables:** `ai_events`.
+- **Derived indexes rebuilt from their source:** `forum_post_fts` and its FTS5 shadow tables.
+- **SQLite internals the engine handles:** `sqlite_sequence` (carried per table), and `sqlite_stat*` (regenerated).
+- **The old version bookkeeping the new schema replaces:** `schema_migrations`.
+
+A final run is also refused on a Postgres target. go-messaging has no Postgres store, so its tables cannot be copied there. The delivery event checkpoint and the deferred transitions point into them, so they are skipped with them: a checkpoint copied without its transitions would skip the first N once the library's ids start at 1. Class C stays on SQLite through the cutover, so this only matters for rehearsals.
+
+**Cutover pre-checks** (`migrate-from --old-db <copy> --precheck`): read-only, reported per check, and a non-zero exit if any fails. Each check runs on its own: one that cannot run, for example because its table is missing, fails with its error, and the rest still report. Run them on the day's copy before the final copy:
+- **`stuck_launches`:** no session in `created` may hold a reserved or admitted workspace allocation. The old code wrote that reservation's digest with its nullable columns marshaled as objects, so it can never match the new digest. The launch would fail every time, and the session would stay live, blocking resume and recovery for its agent. Drain or kill such sessions on the old hub first.
 - **`event_identity`** (plan 13.7 B-1): no event above the frozen cutover may lack an event id, the backfill cursor may not be above the cutover, and events' AUTOINCREMENT high-water mark must be at least the largest id and the cutover.
 
 **Triggers are off during the copy.** A copied row is history, not a new event. Without this, inserting `messages` would write journal rows, and `principals` would be re-checked against today's sessions.

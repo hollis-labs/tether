@@ -120,7 +120,7 @@ a copy and writes nothing.`,
 	cmd.Flags().StringVar(&oldDB, "old-db", "", "path of a copy of the old database, made with VACUUM INTO (or .backup) (required)")
 	cmd.Flags().StringVar(&phase, "phase", "", "bulk (before the window) or final (in the window; marks the database complete); required unless --verify")
 	cmd.Flags().BoolVar(&verifyOnly, "verify", false, "compare this database with the copy and write nothing")
-	cmd.Flags().BoolVar(&precheck, "precheck", false, "run the cutover pre-checks on the copy, report, and change nothing")
+	cmd.Flags().BoolVar(&precheck, "precheck", false, "run the cutover pre-checks on the copy, report, and change nothing in it (the command still opens this data directory's database, as every command does)")
 	cmd.Flags().StringVar(&reportPath, "report", "", "write the JSON report here (mode 0600)")
 	cmd.Flags().IntVar(&batch, "batch", 2000, "rows per key range (key width for tables ranged by an integer key)")
 	cmd.Flags().IntVar(&workers, "workers", 0, "parallel range workers for tables ranged by an integer key (0: the CPUs, at most 8)")

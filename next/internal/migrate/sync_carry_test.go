@@ -57,7 +57,7 @@ func TestBulkThenFinalCarriesEveryChange(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = srcB.Close() }()
-		final := mustOK(t)(New(srcB, b, tgt).Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
+		final := mustOK(t)(New(srcB, b, tgt).Run(ctx, Options{Phase: phaseFor(d, PhaseFinal), Batch: 10}))
 		written := map[string]int{}
 		for _, c := range final.Copy {
 			written[c.Table] = c.Written

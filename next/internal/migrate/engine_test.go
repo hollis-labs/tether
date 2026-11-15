@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,6 +150,59 @@ func buildOldFixture(t *testing.T, path string) (err error) {
 	// key is unresolved until that family lands. Deferred, not a problem.
 	exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at) VALUES ('grp', 'group', 'g', 't', 't')`)
 	exec(`INSERT INTO messages (id, kind, from_urn, to_urn, created_at, group_urn, group_seq) VALUES ('m-grp', 'notice', 'f', 'grp', 'c', 'grp', 1)`)
+	// The families not ported yet (registry, teams, fabric, forums, workers...) are dropped from the
+	// fixture, so a final run covers every remaining table and final-phase behavior can be tested.
+	// TestFinalRefusesUncoveredTables checks the refusal on a source that still has one.
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		names = append(names, n)
+	}
+	_ = rows.Close()
+	inFamily := map[string]bool{}
+	for _, t := range Families["all"] {
+		inFamily[t] = true
+	}
+	var dropped []string
+	for _, n := range names {
+		if _, excluded := exclusions[n]; !excluded && !inFamily[n] {
+			dropped = append(dropped, n)
+		}
+	}
+	// Old triggers that reference a dropped table (the message journal triggers read team_runs) go too.
+	trows, err := db.Query(`SELECT name, sql FROM sqlite_master WHERE type = 'trigger'`)
+	if err != nil {
+		return err
+	}
+	var trigs [][2]string
+	for trows.Next() {
+		var n, q string
+		if err := trows.Scan(&n, &q); err != nil {
+			_ = trows.Close()
+			return err
+		}
+		trigs = append(trigs, [2]string{n, q})
+	}
+	_ = trows.Close()
+	for _, tg := range trigs {
+		for _, d := range dropped {
+			if strings.Contains(tg[1], d) {
+				exec(`DROP TRIGGER "` + tg[0] + `"`)
+				break
+			}
+		}
+	}
+	for _, n := range dropped {
+		exec(`DROP TABLE "` + n + `"`)
+	}
 	return nil
 }
 
@@ -270,15 +324,23 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 			}
 		}
 
-		final := mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 7}))
+		final := mustOK(t)(e.Run(ctx, Options{Phase: phaseFor(d, PhaseFinal), Batch: 7}))
 		for _, c := range final.Copy {
 			if c.Written != 0 {
 				t.Errorf("final over an unchanged copy wrote %d ranges of %s", c.Written, c.Table)
 			}
 		}
+		want := MarkComplete
+		if d == gostore.DriverPostgres {
+			// A final run is refused on Postgres, with its reason, and nothing is marked complete.
+			if _, err := e.Run(ctx, Options{Phase: PhaseFinal, Batch: 7}); !errors.Is(err, ErrIncomplete) {
+				t.Fatalf("final on Postgres: %v, want ErrIncomplete", err)
+			}
+			want = MarkBulk
+		}
 		var state string
-		if err := tgt.Reader().QueryRowContext(ctx, `SELECT state FROM tether_migration_mark WHERE id = 1`).Scan(&state); err != nil || state != MarkComplete {
-			t.Fatalf("mark = %q, %v", state, err)
+		if err := tgt.Reader().QueryRowContext(ctx, `SELECT state FROM tether_migration_mark WHERE id = 1`).Scan(&state); err != nil || state != want {
+			t.Fatalf("mark = %q, %v, want %q", state, err, want)
 		}
 		if got := queryInt(t, tgt, `SELECT count(*) FROM tether_migration_tables`); got != int64(len(Families["all"])-len(final.Skipped)) {
 			t.Errorf("per-table marks: %d", got)
@@ -337,7 +399,7 @@ func TestMigrateFromFindsAndRepairsDrift(t *testing.T) {
 		if rep.OK() {
 			t.Fatal("verification passed over drift")
 		}
-		final := mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
+		final := mustOK(t)(e.Run(ctx, Options{Phase: phaseFor(d, PhaseFinal), Batch: 10}))
 		recopied := 0
 		for _, c := range final.Copy {
 			recopied += c.Written
@@ -392,4 +454,13 @@ func TestOpenSourceRefusesANewDatabase(t *testing.T) {
 	if _, err := OpenSource(path); err == nil {
 		t.Fatal("a new-layout database accepted as a source")
 	}
+}
+
+// phaseFor is the phase a test runs to get a full sync: a final run on SQLite, a bulk run on Postgres,
+// where a final run is refused (go-messaging has no Postgres store, so the copy cannot be complete).
+func phaseFor(d gostore.Driver, want Phase) Phase {
+	if d == gostore.DriverPostgres && want == PhaseFinal {
+		return PhaseBulk
+	}
+	return want
 }
