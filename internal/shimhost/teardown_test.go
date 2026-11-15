@@ -19,31 +19,50 @@ import (
 )
 
 // exitWait bounds how long a test waits for a host process to be gone. It is a failure ceiling, not the expectation: the wait
-// returns the moment the process exits. It has to cover StopGrace (1s in the kill-timeout test, during which the host ignores
-// SIGTERM) plus scheduling under a loaded CI runner, so one second was flaky by construction.
+// returns the moment the process exits. It has to cover the SIGKILL that follows Stop's deadline in the kill-timeout test plus
+// scheduling under a loaded CI runner, so one second was flaky by construction.
 const exitWait = 15 * time.Second
 
+// untilObserverFree runs an observer call against a host the test has just placed or used. The host frees its single observer
+// slot asynchronously after the previous client closed (placement and earlier calls each held it), so a refusal with
+// observer_busy is retried until exitWait; any other error is real (CW-20261115-0074).
+func untilObserverFree(t *testing.T, call func() error) {
+	t.Helper()
+	deadline := time.Now().Add(exitWait)
+	for {
+		err := call()
+		var fault *Failure
+		if err == nil || !errors.As(err, &fault) || fault.Code != "observer_busy" || time.Now().After(deadline) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// inspectHost is Provider.Inspect through untilObserverFree.
+func inspectHost(t *testing.T, p *Provider, r Receipt) Inspection {
+	t.Helper()
+	var got Inspection
+	untilObserverFree(t, func() (e error) {
+		got, e = p.Inspect(context.Background(), r)
+		return e
+	})
+	return got
+}
 func testHostHandle(t *testing.T, r Receipt) *processHandle {
 	t.Helper()
 	spec, err := Descriptor(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The host frees its single observer slot asynchronously after the previous client closed (placement and earlier calls
-	// each held it), so a refusal with observer_busy is retried until it clears; any other error is real.
-	deadline := time.Now().Add(exitWait)
 	var c *Client
-	for {
-		c, err = Connect(context.Background(), r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", r.Journal, false)
-		var fault *Failure
-		if err == nil || !errors.As(err, &fault) || fault.Code != "observer_busy" || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	untilObserverFree(t, func() (e error) {
+		c, e = Connect(context.Background(), r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", r.Journal, false)
+		return e
+	})
 	defer func() { _ = c.Close() }()
 	handle, err := authenticatedProcess(c, r.HostPID)
 	if err != nil {
@@ -98,8 +117,11 @@ func TestStopRetiresCrashedHost(t *testing.T) {
 func TestStopRetiresAfterKillTimeout(t *testing.T) {
 	p, r := placedHost(t, func(c *Config, _ *shim.Launch) {
 		c.HostEnv = append(c.HostEnv, "TETHER_TEST_IGNORE_TERM=1")
-		c.StopGrace = time.Second
-		c.StopTimeout = 100 * time.Millisecond
+		// The stop deadline has to land in the grace wait after SIGTERM, which this host ignores. It used to be 100ms, which a
+		// loaded -race runner spent in the hello handshake, so Stop failed there with a socket timeout and never sent the
+		// kill (CW-20261115-0074). The deadline now covers the handshake with margin, and the grace outlasts it.
+		c.StopTimeout = 2 * time.Second
+		c.StopGrace = time.Minute
 	})
 	handle := testHostHandle(t, r)
 	if err := p.Stop(context.Background(), r); !errors.Is(err, context.DeadlineExceeded) {
@@ -122,10 +144,7 @@ func TestStopRetiresAfterKillTimeout(t *testing.T) {
 }
 func TestUnsupportedPIDFDRefusesBeforeHello(t *testing.T) {
 	p, r := placedHost(t, nil)
-	before, err := p.Inspect(context.Background(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := inspectHost(t, p, r)
 	journal := filepath.Join(filepath.Dir(r.DescriptorPath), "j")
 	snapshot := func() string {
 		entries, e := os.ReadDir(journal)
@@ -146,7 +165,7 @@ func TestUnsupportedPIDFDRefusesBeforeHello(t *testing.T) {
 	}
 	original := getPeerPIDFD
 	getPeerPIDFD = func(int) (int, error) { return -1, syscall.ENOPROTOOPT }
-	err = p.Stop(context.Background(), r)
+	err := p.Stop(context.Background(), r)
 	getPeerPIDFD = original
 	var fault *Failure
 	if !errors.As(err, &fault) || fault.Code != "unsupported" {
@@ -163,10 +182,7 @@ func TestUnsupportedPIDFDRefusesBeforeHello(t *testing.T) {
 	if snapshot() != first {
 		t.Error("unsupported stop wrote journal events")
 	}
-	after, err := p.Inspect(context.Background(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	after := inspectHost(t, p, r)
 	if after.Receipt.Epoch != before.Receipt.Epoch {
 		t.Error("unsupported stop bumped epoch")
 	}
