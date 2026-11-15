@@ -219,6 +219,7 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		svc.ReconcileStaleState()
+		go sampleWAL(ctx, svc.Store)
 
 		// Passive catalog and Cerberus bootstrap importers are retired per CW-20260914-0043.
 		// Catalog files retain their launch configuration role (repo root, workspace mode,
@@ -411,6 +412,7 @@ var daemonRunCmd = &cobra.Command{
 			},
 			LogsDir:          filepath.Join(stateRoot, "logs"),
 			SandboxProtect:   func() *daemon.SandboxProtectHealth { return sandboxProtectHealth(svc.ProtectionHealth()) },
+			WAL:              func() *daemon.WALHealth { return walHealth(svc.Store, time.Now()) },
 			SessionBootstrap: svc.Store,
 			DeliveryTrace:    svc.Store,
 			DeliveryRepair:   svc.Store,

@@ -21,11 +21,13 @@ import (
 
 func (a *Adapter) sessionEvents(ctx context.Context, sessionID string, limit int, cursor int64) ([]events.Event, error) {
 	if !a.readsViaDaemon() {
-		evs, err := a.svc.Store.ListEventsBySession(sessionID, limit, cursor)
+		readCtx, cancel := context.WithTimeout(ctx, store.HistoryDeadline)
+		defer cancel()
+		page, err := a.svc.Store.QueryEventHistory(readCtx, store.EventFilter{SessionID: sessionID, Limit: limit, Cursor: cursor})
 		if err != nil {
 			return nil, toolError("internal_error", "list events: "+err.Error())
 		}
-		return evs, nil
+		return page.Events, nil
 	}
 	res, err := a.client.SessionEvents(ctx, sessionID, limit, cursor)
 	if err != nil {

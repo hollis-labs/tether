@@ -327,6 +327,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 
 	var out []eventDTO
 	var nextCursor int64
+	var partial bool
 	if a.client != nil {
 		rows, err := a.client.EventsHistory(ctx, client.EventsHistoryQuery{
 			Scopes:    stringScopes(scopes),
@@ -339,7 +340,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 		if err != nil {
 			return nil, classifyClientErr(err, "")
 		}
-		nextCursor = rows.NextCursor
+		nextCursor, partial = rows.NextCursor, rows.Partial
 		out = make([]eventDTO, 0, len(rows.Events))
 		for _, ev := range rows.Events {
 			pj, cut, n := eventPayload(ev.PayloadJSON, full)
@@ -353,7 +354,8 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 			})
 		}
 	} else {
-		rows, err := a.svc.Store.QueryEvents(store.EventFilter{
+		readCtx, cancel := context.WithTimeout(ctx, store.HistoryDeadline)
+		page, err := a.svc.Store.QueryEventHistory(readCtx, store.EventFilter{
 			Scopes:    scopes,
 			Kinds:     kinds,
 			SessionID: sessionID,
@@ -361,11 +363,13 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 			Cursor:    cursor,
 			Limit:     limit,
 		})
+		cancel()
 		if err != nil {
 			return nil, toolError("internal_error", "query events: "+err.Error())
 		}
-		out = make([]eventDTO, 0, len(rows))
-		for _, ev := range rows {
+		nextCursor, partial = page.NextCursor, page.Partial
+		out = make([]eventDTO, 0, len(page.Events))
+		for _, ev := range page.Events {
 			pj, cut, n := eventPayload(ev.PayloadJSON, full)
 			out = append(out, eventDTO{
 				Seq:         ev.Seq,
@@ -375,9 +379,6 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 				Kind:        ev.Kind,
 				PayloadJSON: pj, PayloadTruncated: cut, PayloadBytes: n,
 			})
-		}
-		if len(rows) == limit && len(rows) > 0 {
-			nextCursor = rows[len(rows)-1].Seq
 		}
 	}
 	if n := fitBudget(out, eventPageBudget); n < len(out) {
@@ -389,6 +390,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 		"events":      out,
 		"count":       len(out),
 		"next_cursor": nextCursor,
+		"partial":     partial,
 	}), nil
 }
 

@@ -36,9 +36,15 @@ type Store struct {
 	eventsCommitted  atomic.Pointer[func()]
 	eventTxPublisher atomic.Pointer[func(context.Context, events.Tx, events.Event) (events.Event, error)]
 	db               *sql.DB
-	stateDBPath      string
-	channelAuthMu    sync.RWMutex
-	channelAuth      channels.Authorization
+	// reader is a read-only pool over the same file for history reads
+	// (CW-20261114-0166), so a long read never holds db's single connection.
+	// Nil on a store opened read-only, where db is already read-only.
+	reader      *sql.DB
+	stateDBPath string
+	// wal tracks the WAL checkpoint sequence for WALStatus.
+	wal           walMonitor
+	channelAuthMu sync.RWMutex
+	channelAuth   channels.Authorization
 	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
 	// fan-out instance on every call within a process so Subscribe/Send
 	// cross-talk works. See messaging_store.go.
@@ -127,7 +133,12 @@ func openDB(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("install replacement delivery fences: %w", err)
 	}
-	return &Store{db: db, stateDBPath: path}, nil
+	reader, err := openReader(path)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open history reader: %w", err)
+	}
+	return &Store{db: db, reader: reader, stateDBPath: path}, nil
 }
 
 // useTemplate is false in production. A test package's TestMain turns it on
@@ -181,7 +192,12 @@ func buildTemplate() ([]byte, error) {
 	return os.ReadFile(path) //nolint:gosec // G304: the file this function just created
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.reader != nil {
+		_ = s.reader.Close()
+	}
+	return s.db.Close()
+}
 
 // DB returns the underlying *sql.DB handle. Exposed for subsystems that
 // need to attach their own typed storage layer over the same database

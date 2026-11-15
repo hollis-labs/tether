@@ -70,3 +70,24 @@ func TestHandleHealth_SandboxProtectSkippedLayersAndPlanError(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261114-0166: /health carries the state database's WAL when the daemon wires it.
+func TestHandleHealth_WAL(t *testing.T) {
+	rr := httptest.NewRecorder()
+	(&Server{}).handleHealth(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if strings.Contains(rr.Body.String(), `"wal"`) {
+		t.Fatalf("a server with no WAL view reported one: %s", rr.Body)
+	}
+	want := WALHealth{WALBytes: 3410803832, CheckpointSeq: 7, LastCheckpointAgeSec: 5400, LastCheckpointObserved: true}
+	rr = httptest.NewRecorder()
+	(&Server{WAL: func() *WALHealth { return &want }}).handleHealth(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
+	var h Health
+	if err := json.Unmarshal(rr.Body.Bytes(), &h); err != nil || h.WAL == nil || *h.WAL != want {
+		t.Fatalf("wal = %+v (%v): %s", h.WAL, err, rr.Body)
+	}
+	for _, field := range []string{`"wal_bytes":3410803832`, `"last_checkpoint_age_sec":5400`} {
+		if !strings.Contains(rr.Body.String(), field) {
+			t.Errorf("/health lacks %s: %s", field, rr.Body)
+		}
+	}
+}
