@@ -5,6 +5,8 @@ name: next
 on:
   pull_request:
     branches: [substrate-port]
+    # edited: a stacked PR retargeted to substrate-port starts this gate without a close/reopen.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [substrate-port]
 
@@ -18,6 +20,8 @@ concurrency:
 jobs:
   next:
     name: next/ vet / pins / test-race / lint / scan
+    # Of the edited events, only a base change needs a run; title and body edits do not.
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
