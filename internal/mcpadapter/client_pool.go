@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"sort"
 	"strings"
@@ -51,6 +52,43 @@ type clientStatus struct {
 	stderr     string
 	exhausted  bool
 	lastLaunch *LaunchObservation
+	// kick asks a remote upstream's supervisor to retry now rather than at
+	// nextRetry (CW-20261114-0182); attempts counts finished connect attempts.
+	kick     chan struct{}
+	attempts int
+}
+
+// UpstreamStateChange is one upstream state transition, for the daemon's
+// mcp.upstream_state_changed event (CW-20261114-0182).
+type UpstreamStateChange struct {
+	ServerID    string     `json:"server_id"`
+	From        string     `json:"from"`
+	To          string     `json:"to"`
+	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
+	Attempt     int        `json:"attempt,omitempty"`
+	Error       string     `json:"error,omitempty"`
+}
+
+// Remote (http/sse) upstream retry: capped exponential backoff with jitter,
+// never giving up (CW-20261114-0182). Between attempts the upstream is
+// "recovering", with next_retry_at; an attempt is "starting". Before, an http upstream that was down
+// or restarting at its first handshake stayed "failed" until a hub reload.
+var (
+	remoteRetryBase = 5 * time.Second
+	remoteRetryMax  = 5 * time.Minute
+	// remoteRetryJitter spreads retries by up to this fraction either way.
+	remoteRetryJitter = 0.2
+)
+
+// remoteRetryDelay is the wait before remote attempt n+1 (n from 0).
+func remoteRetryDelay(n int) time.Duration {
+	d := remoteRetryBase
+	for i := 0; i < n && d < remoteRetryMax; i++ {
+		d *= 2
+	}
+	d = min(d, remoteRetryMax)
+	jitter := time.Duration((rand.Float64()*2 - 1) * remoteRetryJitter * float64(d)) //nolint:gosec // G404: jitter, not security
+	return max(d+jitter, time.Millisecond)
 }
 
 type ToolRefreshResult struct {
@@ -96,6 +134,7 @@ type ClientPool struct {
 	refreshing         map[upstreamClient]bool
 	connectFn          func(context.Context, config.MCPServerEntry) (upstreamClient, error)
 	toolRefreshHandler func(ToolRefreshResult)
+	stateHandler       func(UpstreamStateChange)
 	cancel             context.CancelFunc
 	workers            sync.WaitGroup
 	policy             recoveryPolicy
@@ -149,6 +188,61 @@ func (p *ClientPool) SetToolRefreshHandler(fn func(ToolRefreshResult)) {
 	p.toolRefreshHandler = fn
 }
 
+// SetStateHandler installs fn to be told of every upstream state transition.
+// It is called without the pool's lock held.
+func (p *ClientPool) SetStateHandler(fn func(UpstreamStateChange)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.stateHandler = fn
+}
+
+// setState moves s to state (caller holds p.mu) and returns the change to
+// report once the lock is released, or nil when the state did not change.
+func (p *ClientPool) setState(s *clientStatus, state string) func() {
+	if s.state == state {
+		return func() {}
+	}
+	change := UpstreamStateChange{ServerID: s.entry.ID, From: s.state, To: state, Attempt: s.restarts}
+	s.state = state
+	if !s.nextRetry.IsZero() && (state == "reconnecting" || state == "recovering") {
+		next := s.nextRetry
+		change.NextRetryAt = &next
+	}
+	if s.err != nil && state != "connected" {
+		change.Error = p.redactError(s.err, s.entry).Error()
+	}
+	handler := p.stateHandler
+	return func() {
+		if handler != nil {
+			handler(change)
+		}
+	}
+}
+
+// Retry asks a remote upstream that is not connected to try again now
+// instead of waiting out its backoff: on a tool list or call that needs it,
+// and on a refresh. It reports whether a retry was requested.
+func (p *ClientPool) Retry(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.statuses[id]
+	if s == nil || s.kick == nil || s.entry.Transport == "stdio" || s.state == "connected" || s.state == "excluded" {
+		return false
+	}
+	select {
+	case s.kick <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// RetryUnavailable is Retry for each id in ids.
+func (p *ClientPool) RetryUnavailable(ids map[string]bool) {
+	for id := range ids {
+		p.Retry(id)
+	}
+}
+
 // Start waits for the first bounded handshake per server, then leaves each
 // supervisor running until Shutdown. Failed siblings do not abort startup.
 func (p *ClientPool) Start(ctx context.Context) error {
@@ -167,7 +261,7 @@ func (p *ClientPool) Start(ctx context.Context) error {
 			continue
 		}
 		p.mu.Lock()
-		p.statuses[entry.ID] = &clientStatus{entry: entry, state: "starting"}
+		p.statuses[entry.ID] = &clientStatus{entry: entry, state: "starting", kick: make(chan struct{}, 1)}
 		invalid := entry.ID == "tether" || entry.ID == "" || seen[entry.ID]
 		seen[entry.ID] = true
 		if invalid {
@@ -218,10 +312,11 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 	for ctx.Err() == nil {
 		p.mu.Lock()
 		s := p.statuses[entry.ID]
-		s.state = "starting"
 		s.nextRetry = time.Time{}
 		s.client = nil
+		report := p.setState(s, "starting")
 		p.mu.Unlock()
+		report()
 		// connect (via p.connect) performs the full spawn/dial-and-handshake
 		// in one call -- the official SDK's Client.Connect does the
 		// initialize round trip internally, unlike mark3labs' separate
@@ -285,6 +380,12 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 				_ = client.Close()
 			}
 		}
+		p.mu.Lock()
+		s.attempts++
+		if err == nil && entry.Transport != "stdio" {
+			s.restarts = 0
+		}
+		p.mu.Unlock()
 		readyOnce.Do(ready)
 		first = false
 		if client != nil {
@@ -325,26 +426,61 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 						break waitExit
 					}
 				}
-			} else {
-				// HTTP/SSE have no child to respawn. Keep observed startup/refresh
-				// failures visible; remote reconnection policy is outside this change.
-				<-ctx.Done()
+			} else if err == nil {
+				// HTTP/SSE have no child to respawn; the client pool redials a
+				// dropped connection on use. Stay until shutdown, or until a retry
+				// is asked for after a refresh found the upstream failed: then
+				// reconnect from scratch (CW-20261114-0182).
+				reconnect := false
+				for !reconnect {
+					select {
+					case <-ctx.Done():
+						_ = client.Close()
+						return
+					case <-s.kick:
+						p.mu.Lock()
+						reconnect = s.state != "connected"
+						p.mu.Unlock()
+					}
+				}
 				_ = client.Close()
-				return
+				continue
 			}
 		}
 		if ctx.Err() != nil {
 			return
 		}
+		if entry.Transport != "stdio" {
+			// A remote upstream that is down or restarting is retried with
+			// backoff, without limit, and at once when Retry asks.
+			p.mu.Lock()
+			delay := remoteRetryDelay(s.restarts)
+			s.nextRetry = time.Now().UTC().Add(delay)
+			report := p.setState(s, "recovering")
+			p.mu.Unlock()
+			report()
+			slog.Warn("mcp-proxy: remote upstream retry scheduled", "server", entry.ID, "delay", delay) //nolint:gosec // G706 false positive: structured slog attrs are quoted/encoded by the handler; entry.ID is a catalog server id
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			case <-s.kick:
+				timer.Stop()
+			}
+			p.mu.Lock()
+			s.restarts++
+			p.mu.Unlock()
+			continue
+		}
 		p.mu.Lock()
 		delay, ok := p.policy.Next(s.restarts)
-		if entry.Transport != "stdio" || !ok {
+		if !ok {
 			s.state = "failed"
 			s.nextRetry = time.Time{}
-			if entry.Transport == "stdio" {
-				s.exhausted = true
-				s.err = fmt.Errorf("restart limit reached (%d); correct the upstream and start a new proxy: %w", p.policy.Limit(), s.err)
-			}
+			s.exhausted = true
+			s.err = fmt.Errorf("restart limit reached (%d); correct the upstream and start a new proxy: %w", p.policy.Limit(), s.err)
 			p.mu.Unlock()
 			slog.Error("mcp-proxy: upstream recovery stopped", "server", entry.ID, "restart_limit", p.policy.Limit())
 			return
@@ -399,10 +535,11 @@ func (p *ClientPool) publish(ctx context.Context, id string, client upstreamClie
 	s.accepted = true
 	s.degraded = false
 	s.err = nil
-	s.state = "connected"
 	s.nextRetry = time.Time{}
+	report := p.setState(s, "connected")
 	handler := p.toolRefreshHandler
 	p.mu.Unlock()
+	report()
 	refresh := ToolRefreshResult{ServerID: id, ToolCount: len(tools), Delta: delta}
 	if notify && handler != nil {
 		handler(refresh)
@@ -412,6 +549,8 @@ func (p *ClientPool) publish(ctx context.Context, id string, client upstreamClie
 }
 
 func (p *ClientPool) fail(id string, client upstreamClient, err error) {
+	report := func() {}
+	defer func() { report() }()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if s := p.statuses[id]; s != nil && s.client == client && s.state != "reconnecting" && !s.exhausted {
@@ -422,7 +561,7 @@ func (p *ClientPool) fail(id string, client upstreamClient, err error) {
 			err = &redactedError{text: redactProbeText(probeRedactor([]config.MCPServerEntry{s.entry}), err.Error()), err: err}
 		}
 		s.err = err
-		s.state = "failed"
+		report = p.setState(s, "failed")
 		slog.Warn("mcp-proxy: upstream unavailable", "server", id, "err", err)
 	}
 }
@@ -617,12 +756,54 @@ func (p *ClientPool) RefreshServer(ctx context.Context, id string) (ToolRefreshR
 		p.mu.Unlock()
 		return ToolRefreshResult{}, fmt.Errorf("unknown upstream server %q", id)
 	}
-	client, state := s.client, s.state
+	client, state, remote := s.client, s.state, s.entry.Transport != "stdio"
 	p.mu.Unlock()
+	if remote && (client == nil || state != "connected") && state != "excluded" {
+		// A refresh re-probes a remote upstream that is down rather than
+		// reporting the stale failure (CW-20261114-0182).
+		return p.retryRemote(ctx, id)
+	}
 	if client == nil || state == "starting" || state == "reconnecting" {
 		return ToolRefreshResult{}, fmt.Errorf("upstream %q unavailable (%s)", id, state)
 	}
 	return p.refreshServer(ctx, id, client, "manual")
+}
+
+// retryRemote asks a remote upstream's supervisor for an attempt now and waits
+// (bounded by the handshake timeout and ctx) for it to finish.
+func (p *ClientPool) retryRemote(ctx context.Context, id string) (ToolRefreshResult, error) {
+	p.mu.Lock()
+	before := p.statuses[id].attempts
+	p.mu.Unlock()
+	if !p.Retry(id) {
+		return ToolRefreshResult{}, fmt.Errorf("upstream %q cannot be retried", id)
+	}
+	deadline := time.NewTimer(p.policy.handshakeTimeout + time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		p.mu.Lock()
+		s := p.statuses[id]
+		done, state, count, lastErr := s.attempts > before, s.state, s.toolCount, s.err
+		p.mu.Unlock()
+		if done && state == "connected" {
+			return ToolRefreshResult{ServerID: id, ToolCount: count}, nil
+		}
+		if done {
+			if lastErr != nil {
+				return ToolRefreshResult{}, fmt.Errorf("upstream %q unavailable (%s): %w", id, state, p.redactError(lastErr, s.entry))
+			}
+			return ToolRefreshResult{}, fmt.Errorf("upstream %q unavailable (%s)", id, state)
+		}
+		select {
+		case <-ctx.Done():
+			return ToolRefreshResult{}, ctx.Err()
+		case <-deadline.C:
+			return ToolRefreshResult{}, fmt.Errorf("upstream %q unavailable (%s): retry still running", id, state)
+		case <-tick.C:
+		}
+	}
 }
 
 // RefreshAll forces a tools/list refresh for every connected upstream.
