@@ -71,6 +71,16 @@ func TestBulkThenFinalCarriesEveryChange(t *testing.T) {
 			}
 		}
 
+		// The run's verification rechecked exactly the ranges it wrote; the copy walk's digests proved the
+		// rest.
+		if final.VerifyMode != "incremental" {
+			t.Errorf("verify mode %q, want incremental", final.VerifyMode)
+		}
+		for i, v := range final.Verify {
+			if v.Ranges != final.Copy[i].Written {
+				t.Errorf("%s: rechecked %d ranges, wrote %d", v.Table, v.Ranges, final.Copy[i].Written)
+			}
+		}
 		// The result equals a fresh full run on B, table by table.
 		fresh := storetest.Raw(t, d)
 		full := mustOK(t)(New(srcB, b, fresh).Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))

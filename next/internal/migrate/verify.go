@@ -6,12 +6,23 @@ import (
 	"strings"
 )
 
-// verify re-walks every table without repairing, comparing each key range of the target with the
-// source (digests over ordered canonical rows), and checks counts, messages.seq, and on SQLite the
-// carried sequences, foreign key violations (exactly the source's) and integrity.
-func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *Report, progress func(string, ...any)) error {
-	for _, sp := range specs {
-		tr, err := e.walk(ctx, sp, batch, false)
+// verify compares each key range of the target with the source (digests over ordered canonical rows),
+// and checks counts, messages.seq, and on SQLite the carried sequences, foreign key violations (exactly
+// the source's) and integrity. With the copy walk's reports (after a run), it rechecks only the ranges the
+// copy wrote: the others were proven equal by the copy walk's own digests. Without them (Verify), it walks
+// every range.
+func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *Report, progress func(string, ...any), copyReports []TableReport) error {
+	for i, sp := range specs {
+		var tr TableReport
+		var err error
+		if copyReports != nil {
+			tr, err = e.walker(sp, batch, false).recheck(ctx, copyReports[i].written)
+			tr.Digest = copyReports[i].Digest
+			rep.VerifyMode = "incremental"
+		} else {
+			tr, err = e.walk(ctx, sp, batch, false)
+			rep.VerifyMode = "full"
+		}
 		if err != nil {
 			return err
 		}

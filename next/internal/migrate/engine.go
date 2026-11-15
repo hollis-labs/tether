@@ -93,6 +93,9 @@ type Report struct {
 	// HashSeconds is the time spent hashing the source, before and after; CopySeconds and VerifySeconds exclude it.
 	HashSeconds float64 `json:"hash_seconds"`
 	Integrity   string  `json:"integrity,omitempty"`
+	// VerifyMode is "incremental" after a run (only the ranges the copy wrote are rechecked; the copy's
+	// own digests proved the rest) or "full" (Verify: every range walked).
+	VerifyMode string `json:"verify_mode"`
 	// SourceCheck names the check run on the source (Options.SourceCheck); SourceIntegrity is its result.
 	SourceCheck string `json:"source_check"`
 	// SourceIntegrity is the source check's result, before the copy starts.
@@ -314,7 +317,7 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	rep.CopySeconds = time.Since(started).Seconds()
 
 	started = time.Now()
-	if err := e.verify(ctx, specs, batch, rep, progress); err != nil {
+	if err := e.verify(ctx, specs, batch, rep, progress, rep.Copy); err != nil {
 		return nil, err
 	}
 	rep.VerifySeconds = time.Since(started).Seconds() // the source hash after the run is in HashSeconds
@@ -346,10 +349,13 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 }
 
 func (e *Engine) walk(ctx context.Context, sp tableSpec, batch int, sync bool) (TableReport, error) {
+	return e.walker(sp, batch, sync).run(ctx)
+}
+
+func (e *Engine) walker(sp tableSpec, batch int, sync bool) *walker {
 	c, _ := store.ClassOf(sp.name)
 	h := map[store.Class]*store.Handle{store.A: e.stores.A(), store.B: e.stores.B(), store.C: e.stores.C()}[c]
-	w := &walker{src: e.src, tgt: h, sp: sp, batch: batch, sync: sync, pg: e.raw.Dialect().Name() == gostore.DriverPostgres, conversions: e.conversions}
-	return w.run(ctx)
+	return &walker{src: e.src, tgt: h, sp: sp, batch: batch, sync: sync, pg: e.raw.Dialect().Name() == gostore.DriverPostgres, conversions: e.conversions}
 }
 
 // Verify compares the target with the source without changing either and without touching the marks:
@@ -383,7 +389,7 @@ func (e *Engine) Verify(ctx context.Context, opt Options) (*Report, error) {
 		specs = append(specs, sp)
 	}
 	started := time.Now()
-	if err := e.verify(ctx, specs, batch, rep, progress); err != nil {
+	if err := e.verify(ctx, specs, batch, rep, progress, nil); err != nil {
 		return nil, err
 	}
 	rep.VerifySeconds = time.Since(started).Seconds()

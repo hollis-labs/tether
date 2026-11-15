@@ -31,7 +31,12 @@ type TableReport struct {
 	Mismatched []rangeResult `json:"mismatched_ranges,omitempty"` // verification only
 	Digest     string        `json:"digest"`
 	Seconds    float64       `json:"seconds"`
+	// written holds the bounds of the ranges a sync walk wrote, for the incremental verification.
+	written []bounds
 }
+
+// bounds is one key range, (lo, hi]; nil is open.
+type bounds struct{ lo, hi []any }
 
 // walker compares (and, when syncing, repairs) one table range by range. A range is the source rows
 // after the previous range's last key, up to and including this range's last key; the last range is
@@ -80,6 +85,7 @@ func (w *walker) run(ctx context.Context) (TableReport, error) {
 		if changed {
 			if w.sync {
 				rep.Written++
+				rep.written = append(rep.written, bounds{lo: last, hi: hi})
 			} else {
 				rep.Mismatched = append(rep.Mismatched, rr)
 			}
@@ -114,8 +120,16 @@ func (w *walker) readSource(ctx context.Context, last []any) ([][]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := w.derive(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// derive prepares rows read from the source: the Postgres class conversions, then the derived columns
+// (read as the source rowid) through the table's transform.
+func (w *walker) derive(out [][]any) error {
 	w.convert(out)
-	// Derived columns were read as the source rowid; apply the transform.
 	tr := copyTransforms[w.sp.name]
 	for i, c := range w.sp.cols {
 		if !c.derived {
@@ -124,12 +138,12 @@ func (w *walker) readSource(ctx context.Context, last []any) ([][]any, error) {
 		for _, r := range out {
 			rowid, ok := r[i].(int64)
 			if !ok {
-				return nil, fmt.Errorf("%s: rowid is %T", w.sp.name, r[i])
+				return fmt.Errorf("%s: rowid is %T", w.sp.name, r[i])
 			}
 			r[i] = tr.derived[c.name](rowid)
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // compare digests the target's rows in the range and, when syncing and they differ, replaces them with
@@ -334,4 +348,46 @@ func (w *walker) freeRowids(ctx context.Context, tx store.Tx, rows [][]any) erro
 		}
 	}
 	return nil
+}
+
+// recheck compares only the given ranges of the target with the source, after a sync wrote them. Every
+// other range was proven equal by its digest during the sync walk, and nothing else writes the target in
+// between (migrate-from holds it), so this completes the verification without a second pass over the
+// unchanged ranges (plan section 7.3, item 3).
+func (w *walker) recheck(ctx context.Context, ranges []bounds) (TableReport, error) {
+	started := time.Now()
+	rep := TableReport{Table: w.sp.name}
+	kinds := w.sp.kinds()
+	for _, b := range ranges {
+		where, args := w.rangeWhere(b.lo, b.hi)
+		//nolint:gosec // names come from the schema; values are bound
+		q := `SELECT ` + w.sp.selectList(true) + ` FROM ` + quote(w.sp.name) + where + ` ORDER BY ` + w.sp.keyOrder()
+		rows, err := w.src.QueryContext(ctx, q, args...)
+		if err != nil {
+			return rep, err
+		}
+		srcRows, err := scanAll(rows, len(w.sp.cols))
+		_ = rows.Close()
+		if err != nil {
+			return rep, err
+		}
+		if err := w.derive(srcRows); err != nil {
+			return rep, err
+		}
+		d := newRowDigest()
+		for _, r := range srcRows {
+			d.add(kinds, r)
+		}
+		changed, err := w.compare(ctx, b.lo, b.hi, d.sum(), srcRows)
+		if err != nil {
+			return rep, err
+		}
+		rep.Ranges++
+		rep.Rows += int64(len(srcRows))
+		if changed {
+			rep.Mismatched = append(rep.Mismatched, rangeResult{Lo: renderKey(b.lo), Hi: renderKey(b.hi), Rows: int64(len(srcRows)), Changed: true})
+		}
+	}
+	rep.Seconds = time.Since(started).Seconds()
+	return rep, nil
 }
