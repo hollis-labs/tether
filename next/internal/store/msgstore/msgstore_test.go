@@ -460,3 +460,66 @@ func TestInboxDeliversOnce(t *testing.T) {
 		}
 	})
 }
+
+// TestJournalIDsCommitInOrder holds a transaction open after a message state change wrote its
+// journal row (the schema trigger), while RecordMessageWake writes another: the drain reads the
+// journal by id > checkpoint, so the second (higher id) must not be visible before the first
+// commits. On Postgres the identity alone allows it; migration 00005's statement lock prevents it.
+func TestJournalIDsCommitInOrder(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		ms, clock := newStore(s)
+		m := send(t, ms, clock, alice, bob)
+		var base int
+		r := s.C().Reader()
+		if err := r.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_event_journal`).Scan(&base); err != nil {
+			t.Fatal(err)
+		}
+		inserted, release := make(chan struct{}), make(chan struct{})
+		first := make(chan error, 1)
+		go func() {
+			first <- s.C().WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
+				if _, err := tx.ExecContext(ctx, tx.Dialect().Rebind(`UPDATE messages SET read_at = ? WHERE id = ?`), "2026-11-15T00:00:00Z", m.ID); err != nil {
+					return err
+				}
+				close(inserted)
+				select {
+				case <-release:
+				case <-time.After(5 * time.Second):
+				}
+				return nil
+			})
+		}()
+		<-inserted
+		second := make(chan error, 1)
+		go func() { second <- ms.RecordMessageWake(ctx, m.ID, bob, "wake.outcome", "", 0, 0, true, true, "busy") }()
+		time.Sleep(300 * time.Millisecond)
+		var n int
+		if err := r.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_event_journal`).Scan(&n); err != nil || n != base {
+			t.Errorf("while the first journal insert is open, %d new rows are visible (%v): a later id committed first", n-base, err)
+		}
+		close(release)
+		if err := <-first; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-second; err != nil {
+			t.Fatal(err)
+		}
+		rows, err := r.QueryContext(ctx, `SELECT kind FROM message_event_journal ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = rows.Close() }()
+		var kinds []string
+		for rows.Next() {
+			var k string
+			if err := rows.Scan(&k); err != nil {
+				t.Fatal(err)
+			}
+			kinds = append(kinds, k)
+		}
+		if len(kinds) != base+2 || kinds[base] != "message.read" || kinds[base+1] != "wake.outcome" {
+			t.Fatalf("journal after both commit: %v", kinds[base:])
+		}
+	})
+}
