@@ -43,6 +43,8 @@ type walker struct {
 	batch int
 	sync  bool // repair differing ranges; otherwise only report them
 	pg    bool
+	// conversions counts, per table.column, values the Postgres target stores in another class.
+	conversions map[string]int64
 }
 
 func (w *walker) run(ctx context.Context) (TableReport, error) {
@@ -112,6 +114,7 @@ func (w *walker) readSource(ctx context.Context, last []any) ([][]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	w.convert(out)
 	// Derived columns were read as the source rowid; apply the transform.
 	tr := copyTransforms[w.sp.name]
 	for i, c := range w.sp.cols {
@@ -156,6 +159,9 @@ func (w *walker) compare(ctx context.Context, lo, hi []any, srcDigest string, sr
 			if _, err := tx.ExecContext(ctx, `DELETE FROM `+quote(w.sp.name)+where, args...); err != nil {
 				return err
 			}
+		}
+		if err := w.freeRowids(ctx, tx, srcRows); err != nil {
+			return err
 		}
 		return w.insert(ctx, tx, srcRows)
 	})
@@ -215,22 +221,45 @@ func (w *walker) insert(ctx context.Context, tx store.Tx, rows [][]any) error {
 	return nil
 }
 
-// bind converts a value for the target. SQLite keeps every value exactly as the source stored it. On
-// Postgres a bytea column takes bytes and a text column takes a string; any other mismatch is left to
-// fail the insert, so it is reported rather than coerced.
-func (w *walker) bind(k kind, v any) any {
+// convert applies, to rows read from the source, the class conversions a Postgres target forces: a bytea
+// column holds bytes and a text column a string, whatever class SQLite's affinity let the source store.
+// Each conversion is counted per table.column in the report; the rows are then digested and written as
+// converted, so verification compares like with like and the conversion is recorded, not hidden. SQLite
+// keeps every value exactly as the source stored it. Any other mismatch (text in an integer column) is
+// left to fail the insert, so it is reported rather than coerced.
+func (w *walker) convert(rows [][]any) {
 	if !w.pg {
-		return v
+		return
 	}
-	switch x := v.(type) {
-	case string:
-		if k == kindBlob {
-			return []byte(x)
+	for _, r := range rows {
+		for i, c := range w.sp.cols {
+			switch x := r[i].(type) {
+			case string:
+				if c.kind == kindBlob {
+					r[i] = []byte(x)
+					w.count(c)
+				}
+			case []byte:
+				if c.kind == kindText {
+					r[i] = string(x)
+					w.count(c)
+				}
+			}
 		}
-	case []byte:
-		if k == kindText {
-			return string(x)
-		}
+	}
+}
+
+// count records a conversion once per copied value: the copy walk counts, the verify walk does not.
+func (w *walker) count(c column) {
+	if w.sync && w.conversions != nil {
+		w.conversions[w.sp.name+"."+c.name]++
+	}
+}
+
+// bind passes a value to the driver. A non-nil empty byte slice stays an empty blob (X”), never NULL.
+func (w *walker) bind(_ kind, v any) any {
+	if b, ok := v.([]byte); ok && b != nil && len(b) == 0 {
+		return []byte{}
 	}
 	return v
 }
@@ -248,7 +277,11 @@ func scanAll(rows *sql.Rows, n int) ([][]any, error) {
 		}
 		for i, v := range vals {
 			if b, ok := v.([]byte); ok {
-				vals[i] = append([]byte(nil), b...) // the driver may reuse the buffer
+				// The driver may reuse the buffer: copy it, keeping an empty blob empty and non-nil (a
+				// nil slice would bind as NULL).
+				c := make([]byte, len(b))
+				copy(c, b)
+				vals[i] = c
 			}
 		}
 		out = append(out, vals)
@@ -277,4 +310,28 @@ func renderKey(k []any) string {
 		parts[i] = fmt.Sprint(v)
 	}
 	return strings.Join(parts, ",")
+}
+
+// freeRowids deletes target rows outside this range that hold a rowid the range's source rows carry. A
+// rowid freed by a delete in the source can be taken by a new row with a key in an earlier range; the
+// target row holding it (keyed in a later range) goes now, and its own range is re-copied when the walk
+// reaches it, since its digest then differs.
+func (w *walker) freeRowids(ctx context.Context, tx store.Tx, rows [][]any) error {
+	if !w.sp.rowid || len(rows) == 0 {
+		return nil
+	}
+	idx := len(w.sp.cols) - 1 // the rowid is the last column (specFor)
+	for start := 0; start < len(rows); start += maxParams {
+		end := min(start+maxParams, len(rows))
+		args := make([]any, 0, end-start)
+		for _, r := range rows[start:end] {
+			args = append(args, r[idx])
+		}
+		//nolint:gosec // the table name comes from the schema; the rowids are bound
+		q := `DELETE FROM ` + quote(w.sp.name) + ` WHERE rowid IN (` + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + `)`
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }

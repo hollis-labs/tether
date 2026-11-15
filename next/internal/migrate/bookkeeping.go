@@ -17,7 +17,9 @@ import (
 //
 //	tether_migration_mark      one row: state (running, bulk, complete), phase, source_sha256, times
 //	tether_migration_tables    one row per copied table: phase, rows, whole-table digest, source_sha256
-//	tether_migration_triggers  the SQLite triggers dropped for the copy, until they are recreated
+//	tether_migration_triggers  the triggers turned off for the copy, until they are back on: on SQLite each
+//	                           dropped trigger's DDL and original position; on Postgres each table whose
+//	                           user triggers are disabled (sql = pgDisabled)
 var bookkeepingDDL = []string{
 	`CREATE TABLE IF NOT EXISTS tether_migration_mark (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -38,7 +40,8 @@ var bookkeepingDDL = []string{
 	`CREATE TABLE IF NOT EXISTS tether_migration_triggers (
 		name TEXT PRIMARY KEY,
 		table_name TEXT NOT NULL,
-		sql TEXT NOT NULL
+		sql TEXT NOT NULL,
+		pos INTEGER NOT NULL
 	)`,
 }
 
@@ -86,29 +89,40 @@ func (e *Engine) recordTables(ctx context.Context, phase Phase, sum string, rep 
 	})
 }
 
-// disableTriggers turns off the target's triggers on the copied tables. SQLite has no switch: each
-// trigger's DDL is saved, then the trigger is dropped, and enableTriggers recreates it. Postgres disables
-// the user triggers per table.
+// pgDisabled marks a Postgres table whose user triggers this engine disabled.
+const pgDisabled = "pg: DISABLE TRIGGER USER"
+
+// disableTriggers turns off the target's triggers on the copied tables and records what it did in
+// tether_migration_triggers first, so an interrupted run (an error, a crash, a Ctrl-C) is put right by
+// the next start. SQLite has no switch: each trigger's DDL and position are saved, then the trigger is
+// dropped, and enableTriggers recreates them in their original order (the order SQLite fires them in).
+// Postgres disables the user triggers per table (owner rights; no superuser).
 func (e *Engine) disableTriggers(ctx context.Context, tables []string) error {
 	if !e.sqlite() {
 		for _, t := range tables {
+			if _, err := e.raw.ExecContext(ctx, `INSERT INTO tether_migration_triggers (name, table_name, sql, pos) VALUES (?, ?, ?, 0)
+				ON CONFLICT (name) DO NOTHING`, t, t, pgDisabled); err != nil {
+				return fmt.Errorf("record trigger state of %s: %w", t, err)
+			}
 			if _, err := e.raw.ExecContext(ctx, `ALTER TABLE `+quote(t)+` DISABLE TRIGGER USER`); err != nil {
 				return fmt.Errorf("disable triggers on %s: %w", t, err)
 			}
 		}
-		e.pgDisabled = tables
 		return nil
 	}
 	in := "'" + strings.Join(tables, "', '") + "'"
-	rows, err := e.raw.Reader().QueryContext(ctx, `SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name IN (`+in+`)`)
+	rows, err := e.raw.Reader().QueryContext(ctx, `SELECT name, tbl_name, sql, rowid FROM sqlite_master WHERE type = 'trigger' AND tbl_name IN (`+in+`) ORDER BY rowid`)
 	if err != nil {
 		return err
 	}
-	type trig struct{ name, table, sql string }
+	type trig struct {
+		name, table, sql string
+		pos              int64
+	}
 	var ts []trig
 	for rows.Next() {
 		var t trig
-		if err := rows.Scan(&t.name, &t.table, &t.sql); err != nil {
+		if err := rows.Scan(&t.name, &t.table, &t.sql, &t.pos); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -118,7 +132,7 @@ func (e *Engine) disableTriggers(ctx context.Context, tables []string) error {
 		return err
 	}
 	for _, t := range ts {
-		if _, err := e.raw.ExecContext(ctx, `INSERT INTO tether_migration_triggers (name, table_name, sql) VALUES (?, ?, ?)`, t.name, t.table, t.sql); err != nil {
+		if _, err := e.raw.ExecContext(ctx, `INSERT INTO tether_migration_triggers (name, table_name, sql, pos) VALUES (?, ?, ?, ?)`, t.name, t.table, t.sql, t.pos); err != nil {
 			return fmt.Errorf("save trigger %s: %w", t.name, err)
 		}
 		if _, err := e.raw.ExecContext(ctx, `DROP TRIGGER `+quote(t.name)); err != nil {
@@ -128,19 +142,10 @@ func (e *Engine) disableTriggers(ctx context.Context, tables []string) error {
 	return nil
 }
 
-// enableTriggers recreates every saved SQLite trigger and clears the list, or re-enables the Postgres
-// triggers this run disabled.
+// enableTriggers puts back every trigger recorded in tether_migration_triggers, by this run or by one
+// that stopped part way, and clears each record once its trigger is back.
 func (e *Engine) enableTriggers(ctx context.Context) error {
-	if !e.sqlite() {
-		for _, t := range e.pgDisabled {
-			if _, err := e.raw.ExecContext(ctx, `ALTER TABLE `+quote(t)+` ENABLE TRIGGER USER`); err != nil {
-				return fmt.Errorf("enable triggers on %s: %w", t, err)
-			}
-		}
-		e.pgDisabled = nil
-		return nil
-	}
-	rows, err := e.raw.Reader().QueryContext(ctx, `SELECT name, sql FROM tether_migration_triggers ORDER BY name`)
+	rows, err := e.raw.Reader().QueryContext(ctx, `SELECT name, sql FROM tether_migration_triggers ORDER BY pos, name`)
 	if err != nil {
 		return err
 	}
@@ -157,13 +162,20 @@ func (e *Engine) enableTriggers(ctx context.Context) error {
 		return err
 	}
 	for _, t := range saved {
-		var n int
-		if err := e.raw.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?`, t[0]).Scan(&n); err != nil {
-			return err
-		}
-		if n == 0 {
-			if _, err := e.raw.ExecContext(ctx, t[1]); err != nil {
-				return fmt.Errorf("recreate trigger %s: %w", t[0], err)
+		switch {
+		case t[1] == pgDisabled:
+			if _, err := e.raw.ExecContext(ctx, `ALTER TABLE `+quote(t[0])+` ENABLE TRIGGER USER`); err != nil {
+				return fmt.Errorf("enable triggers on %s: %w", t[0], err)
+			}
+		default:
+			var n int
+			if err := e.raw.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?`, t[0]).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				if _, err := e.raw.ExecContext(ctx, t[1]); err != nil {
+					return fmt.Errorf("recreate trigger %s: %w", t[0], err)
+				}
 			}
 		}
 		if _, err := e.raw.ExecContext(ctx, `DELETE FROM tether_migration_triggers WHERE name = ?`, t[0]); err != nil {

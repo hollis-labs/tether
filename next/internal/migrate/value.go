@@ -37,10 +37,12 @@ func kindOf(declared string) kind {
 	return kindText // TEXT, DATETIME, TIMESTAMP, and the FTS table's untyped columns
 }
 
-// canonical renders one value of a column of kind k. NULL is distinct from every value, and every value
-// is length-prefixed, so two different rows never render the same. A value whose storage class does not
-// fit its column (SQLite's affinity lets a TEXT value sit in an INTEGER column) renders with its own
-// class, so it differs from any value the target could hold and the range is reported, not hidden.
+// canonical renders one value of a column of kind k, tagged by the value's own storage class: text and
+// a blob of the same bytes render differently, so a change of class is a change the digest sees. NULL is
+// distinct from every value, and every value is length-prefixed, so two different rows never render the
+// same. The only normalization is an integer in a REAL column, which the drivers return either way.
+// Class conversions the target forces (Postgres: text in bytea, bytes in text) are applied to the source
+// row before it is digested and are counted in the report (walker.convert), never hidden here.
 func canonical(k kind, v any) []byte {
 	var tag byte
 	var body string
@@ -58,14 +60,8 @@ func canonical(k kind, v any) []byte {
 		tag, body = 'L', strconv.FormatBool(x)
 	case string:
 		tag, body = 'T', x
-		if k == kindBlob {
-			tag = 'B'
-		}
 	case []byte:
 		tag, body = 'B', string(x)
-		if k == kindText {
-			tag = 'T'
-		}
 	case time.Time:
 		tag, body = 'D', x.UTC().Format(time.RFC3339Nano)
 	default:

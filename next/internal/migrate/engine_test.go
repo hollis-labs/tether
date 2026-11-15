@@ -55,7 +55,8 @@ func oldFixture(t *testing.T) string {
 	exec(`INSERT INTO settings (scope, scope_id, key, value_json) VALUES ('global', '', 'k', '1')`) // CURRENT_TIMESTAMP default
 	exec(`INSERT INTO settings (scope, scope_id, key, value_json, updated_at) VALUES ('project', 'p', 'k', '"x"', '2026-01-02 03:04:05')`)
 	exec(`INSERT INTO team_definitions (team_id, version, payload) VALUES ('team', 1, ?)`, []byte(`{"members":[]}`))
-	exec(`INSERT INTO team_definitions (team_id, version, payload) VALUES ('team', 2, '{"stored":"as text"}')`)
+	exec(`INSERT INTO team_definitions (team_id, version, payload) VALUES ('team', 2, '{"stored":"as text"}')`) // text in a BLOB column
+	exec(`INSERT INTO team_definitions (team_id, version, payload) VALUES ('team', 3, X'')`)                    // an empty blob
 	exec(`INSERT INTO workers (id, label, device_id, platform, last_seen, created_at) VALUES ('w1', 'l', 'd1', 'linux', 't', 't')`)
 	exec(`INSERT INTO worker_mail_grants (worker_id, urn) VALUES ('w1', 'msg://agent/a')`)
 	exec(`INSERT INTO worker_mail_grants (worker_id, urn) VALUES ('gone', 'msg://agent/b')`) // an orphan, copied as is
@@ -63,7 +64,8 @@ func oldFixture(t *testing.T) string {
 		exec(`INSERT INTO messages (id, kind, from_urn, to_urn, payload, metadata, created_at) VALUES (?, 'notice', 'f', 't', ?, NULL, ?)`,
 			fmt.Sprintf("m-%03d", i), fmt.Sprintf("body %d ✓", i), fmt.Sprintf("2026-01-01T00:%02d:00Z", i%60))
 	}
-	exec(`DELETE FROM messages WHERE id IN ('m-007', 'm-050', 'm-120')`) // rowid gaps, including the newest
+	exec(`DELETE FROM messages WHERE id IN ('m-007', 'm-050', 'm-120')`)                                                                   // rowid gaps, including the newest
+	exec(`INSERT INTO messages (id, kind, from_urn, to_urn, payload, created_at) VALUES ('m-blob', 'notice', 'f', 't', X'626C6F62', 'c')`) // a blob in a TEXT column
 	// A group message: its parent (registry_entries) is in a later family, so in the target its foreign
 	// key is unresolved until that family lands. Deferred, not a problem.
 	exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at) VALUES ('grp', 'group', 'g', 't', 't')`)
@@ -150,7 +152,7 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 				t.Errorf("%s: counts %v", table, c)
 			}
 		}
-		if rep.Counts["messages"][0] != 118 || rep.Counts["logical_agents"][0] != 25 {
+		if rep.Counts["messages"][0] != 119 || rep.Counts["logical_agents"][0] != 25 {
 			t.Fatalf("fixture counts: %v", rep.Counts)
 		}
 		// Carried identity: messages.seq is the old rowid, gaps included; principals keep their ids.

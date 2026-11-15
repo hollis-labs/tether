@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/tether/next/internal/legacyguard"
+	"github.com/hollis-labs/tether/next/internal/migrate"
 )
 
 // oldCopy builds an old-layout database from the vendored old migrations, with a few messages.
@@ -73,11 +74,21 @@ func TestMigrateFromCommand(t *testing.T) {
 	if err := run(ctx, env(data), []string{"serve"}); !errors.Is(err, legacyguard.ErrIncompleteMigration) {
 		t.Fatalf("serve after bulk only: %v, want ErrIncompleteMigration", err)
 	}
-	if err := run(ctx, env(data), []string{"migrate-from", "--old-db", old}); err != nil {
+	if err := run(ctx, env(data), []string{"migrate-from", "--old-db", old}); err == nil || !strings.Contains(err.Error(), "--phase is required") {
+		t.Fatalf("no --phase: %v, want it required", err)
+	}
+	if err := run(ctx, env(data), []string{"migrate-from", "--old-db", old, "--phase", "final"}); err != nil {
 		t.Fatalf("final: %v", err)
 	}
 	if err := legacyguard.Check(filepath.Join(data, databaseFile)); err != nil {
 		t.Fatalf("after final: %v", err)
+	}
+	// A complete database is never rewritten; --verify re-checks it.
+	if err := run(ctx, env(data), []string{"migrate-from", "--old-db", old, "--phase", "final"}); !errors.Is(err, migrate.ErrTargetComplete) {
+		t.Fatalf("final over a complete database: %v, want ErrTargetComplete", err)
+	}
+	if err := run(ctx, env(data), []string{"migrate-from", "--old-db", old, "--verify"}); err != nil {
+		t.Fatalf("verify: %v", err)
 	}
 }
 
@@ -88,8 +99,8 @@ func TestMigrateFromRefusesALiveLookingSource(t *testing.T) {
 	if err := os.WriteFile(old+"-wal", nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run(context.Background(), env(filepath.Join(t.TempDir(), "data")), []string{"migrate-from", "--old-db", old})
-	if err == nil || !strings.Contains(err.Error(), "looks live") {
-		t.Fatalf("err = %v", err)
+	err := run(context.Background(), env(filepath.Join(t.TempDir(), "data")), []string{"migrate-from", "--old-db", old, "--phase", "bulk"})
+	if !errors.Is(err, migrate.ErrLiveSource) {
+		t.Fatalf("err = %v, want ErrLiveSource", err)
 	}
 }

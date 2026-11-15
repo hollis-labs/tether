@@ -169,11 +169,25 @@ The mark moves through these states:
 
 The guard (`legacyguard.Check`) reads only `state`. `tether migrate-from` boots with `legacyguard.CheckMigrationTarget` instead, which admits any mark state, since finishing the migration is the command's job, and still refuses an old-layout database.
 
+**A complete database is never rewritten.** It may have served, and a sync would delete the rows written since and revert the ones updated. `migrate-from` refuses it (`ErrTargetComplete`). `migrate-from --verify` re-checks it against a copy and writes nothing.
+
 **Reruns converge; they never duplicate** (cell lead, refining plan 7.2: "discard and start over" is the fallback). Every run walks each table by primary-key range. It compares a digest of the source rows with a digest of the target rows in the same range; equal ranges are kept, a differing range is deleted and re-copied, and target keys beyond the source's last key are deleted. A rerun after a crash or a bulk phase therefore finishes the copy. A final run over an unchanged copy re-copies nothing.
+
+**What the engine refuses, and how it compares:**
+- **The source** must be a copy:
+  - the path is resolved through symlinks first;
+  - a `-wal`, `-shm` or `-journal` file beside it is refused;
+  - so is a WAL-mode header, because a raw copy of a WAL database can silently miss committed pages. VACUUM INTO and `.backup` produce rollback-mode copies.
+- **The source check:** `PRAGMA integrity_check` runs on the source before the copy (`--source-check full`, the default). `quick` runs `quick_check`, and `none` trusts the check made when the copy was taken. The check used and its result are in the report.
+- **`--phase` is required.** A run that leaves it out never marks a database complete by default.
+- **NULL keys:** a source row with a NULL primary key is refused up front, naming the table, since it would never fall in a key range.
+- **Digests** tag each value by its own storage class, so text and a blob of the same bytes differ. On SQLite every value keeps its class through the copy. A Postgres target forces some conversions (text in a bytea column, bytes in a text column); these are applied to the source row before it is digested, and counted per table and column in the report (`conversions`).
+- **Reused rowids:** when a source rowid was freed and reused by a row in an earlier key range, the stale holder in the target is deleted first, and its own range is re-copied.
 
 **Triggers are off during the copy.** A copied row is history, not a new event. Without this, inserting `messages` would write journal rows, and `principals` would be re-checked against today's sessions.
 - SQLite: each trigger on a copied table is saved in `tether_migration_triggers`, dropped, and recreated after the copy. A run that stopped mid-copy has its triggers recreated first.
 - Postgres: `ALTER TABLE ... DISABLE TRIGGER USER` per table (owner rights; `session_replication_role` would need superuser).
+- Either way, the state is recorded in `tether_migration_triggers` before it changes. Triggers are put back even when the run is canceled, and a run that stopped part way is repaired by the next start. SQLite triggers are recreated in their original order, which is the order they fire in.
 
 ## Environment variables and config keys
 

@@ -283,9 +283,10 @@ S4 replaces this with two listeners:
 
 ## migrate-from (S12)
 
-`tether migrate-from --old-db <copy> [--phase bulk|final] [--report <file>]` copies an old-layout database into the data directory's database and proves the copy (plan section 7). Plan section 7.2 is the contract, and the bookkeeping is in `conversion-notes.md` ("Migration mark").
+`tether migrate-from --old-db <copy> --phase bulk|final [--report <file>] [--source-check full|quick|none]`, or `--verify`, copies an old-layout database into the data directory's database and proves the copy (plan section 7). Plan section 7.2 is the contract, and the bookkeeping is in `conversion-notes.md` ("Migration mark").
 
-- **The source** is a copy opened read-only and immutable. A file with a `-wal` or `-shm` beside it is refused as live. Its sha256 is recorded before and after the run, and must not change.
+- **The source** is a copy opened read-only and immutable. It is resolved through symlinks, and refused when it looks live or incomplete: a `-wal`, `-shm` or `-journal` file beside it, or a WAL-mode header. It is checked with `integrity_check` before the copy. Its sha256 is recorded before and after the run, and must not change.
+- **A complete database is never rewritten.** `--verify` compares it with a copy and writes nothing.
 - **Copy:** tables are copied in key order, in bounded key ranges, each range in one class transaction through the store layer. Copies keep the source's identity:
   - every column value, by name;
   - the implicit rowid on SQLite;
