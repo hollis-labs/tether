@@ -672,8 +672,11 @@ transaction below stays atomic; each is redesigned in its slice before B or C mo
 | B-5 | session state (C) revokes session credentials (A) by trigger and in several close paths | revocation becomes an explicit A write after the C write, idempotent and retried from the C state on start (S9) |
 | B-6 | the events outbox is written inside domain transactions | outbox rows stay in the domain's class; event fan-out reads the outbox (S8) |
 | B-7 | the fabric repository writes A and C in one transaction | the A rows (`fabric_actors`, `fabric_agents`) are written first, then C, idempotently (S5) |
+| B-8 | trigger `session_principal_requires_active_session` (on an A table) reads `sessions` (C) | before C moves, the check becomes app code on the A write path, reading C through its handle; until then, the trigger runs as it does today (S2a conversion notes) |
+| B-9 | trigger `replacement_principal_authority` (on an A table) reads C session state | the same pattern as B-8, in the replacement path (S9) |
+| B-10 | trigger `events_require_id_after_seed` (on `events`, B) reads the event-identity seed in A | the check moves to the event writer, which already holds the A high-water mark from B-1 (S8) |
 
-20 cross-class transactions are listed with file and line in the classification; each is assigned to one of these
+20 cross-class transactions (19 in the hub; the 20th is in sysop, which is not ported, D4) are listed with file and line in the classification; each is assigned to one of these
 patterns in its slice.
 
 ### 13.8 Slice changes
