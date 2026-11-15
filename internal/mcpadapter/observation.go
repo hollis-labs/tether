@@ -98,10 +98,11 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 				}
 			}
 
-			evs, err := a.sessionEvents(ctx, sessionID, limit, cursor)
+			page, err := a.sessionEvents(ctx, sessionID, limit, cursor)
 			if err != nil {
 				return nil, err
 			}
+			evs := page.Events
 
 			// Build DTO slice to expose consistent field names over the wire.
 			type eventDTO struct {
@@ -135,13 +136,16 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 				"ok":          true,
 				"events":      out,
 				"count":       len(out),
-				"next_cursor": int64(0),
+				"next_cursor": page.NextCursor,
+				"partial":     page.Partial,
 			}
 			// When we filled the page, the caller may need to continue paging.
 			if trimmed {
 				result["next_cursor"] = out[len(out)-1].Seq
-			} else if len(evs) == limit && len(evs) > 0 {
-				result["next_cursor"] = evs[len(evs)-1].Seq
+			}
+			if page.Partial {
+				// Out of time, not out of events: say so, never "no events".
+				result["note"] = "the read hit its deadline; more events may exist: call again with cursor=next_cursor (0: from the newest)"
 			}
 			return toolJSON(result), nil
 		},
@@ -354,7 +358,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 			})
 		}
 	} else {
-		readCtx, cancel := context.WithTimeout(ctx, store.HistoryDeadline)
+		readCtx, cancel := context.WithTimeout(ctx, historyDeadline)
 		page, err := a.svc.Store.QueryEventHistory(readCtx, store.EventFilter{
 			Scopes:    scopes,
 			Kinds:     kinds,

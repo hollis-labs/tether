@@ -54,6 +54,9 @@ func (s *Store) QueryEventHistory(ctx context.Context, f EventFilter) (EventPage
 		limit = 1000
 	}
 	db := s.historyDB()
+	if f.SessionID != "" {
+		return querySessionHistory(ctx, db, f, limit)
+	}
 	hi := f.Cursor
 	if hi <= 0 {
 		var top sql.NullInt64
@@ -102,6 +105,40 @@ func (s *Store) QueryEventHistory(ctx context.Context, f EventFilter) (EventPage
 	}
 	if len(page.Events) == limit {
 		page.NextCursor = page.Events[len(page.Events)-1].Seq
+	}
+	return page, nil
+}
+
+// querySessionHistory reads a session's history in one query: a session's
+// rows are found through its own index, so id windows (a rowid-range scan)
+// would only make an older session slower (#579 review). It is still bounded
+// by ctx and returns a partial page with a cursor when ctx runs out.
+func querySessionHistory(ctx context.Context, db *sql.DB, f EventFilter, limit int) (EventPage, error) {
+	where, args := historyWhere(f)
+	if f.SinceSeq > 0 {
+		where = append(where, "id > ?")
+		args = append(args, f.SinceSeq)
+	}
+	if f.Cursor > 0 {
+		where = append(where, "id < ?")
+		args = append(args, f.Cursor)
+	}
+	//nolint:gosec // G202: where holds fixed column predicates with ? placeholders; values are bound via args
+	query := `SELECT ` + eventReadColumns + ` FROM events WHERE ` + strings.Join(where, " AND ") + ` ORDER BY id DESC LIMIT ?`
+	got, err := scanHistory(ctx, db, query, append(args, limit))
+	page := EventPage{Events: got}
+	if err != nil {
+		if ctx.Err() == nil {
+			return EventPage{}, err
+		}
+		page.Partial, page.NextCursor = true, f.Cursor
+		if len(got) > 0 {
+			page.NextCursor = got[len(got)-1].Seq
+		}
+		return page, nil
+	}
+	if len(got) == limit {
+		page.NextCursor = got[len(got)-1].Seq
 	}
 	return page, nil
 }

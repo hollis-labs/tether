@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -184,5 +185,94 @@ func TestWALStatusTracksCheckpoints(t *testing.T) {
 	}
 	if st, _ = s.WALStatus(t0.Add(14 * time.Minute)); st.LastCheckpointAgeSec != 180 {
 		t.Fatalf("3m after the checkpoint: %+v", st)
+	}
+}
+
+// planFor is the EXPLAIN QUERY PLAN detail of query, one step per line.
+func planFor(t *testing.T, s *Store, query string, args ...any) string {
+	t.Helper()
+	rows, err := s.reader.Query(`EXPLAIN QUERY PLAN `+query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err = rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	return strings.Join(plan, "\n")
+}
+
+// #579 review: idx_events_kind_id saves a sort, so without a session+kind+id
+// index the planner chose it for session_id=? AND kind=? queries ordered or
+// maxed by id and walked every row of the kind (3.3 s for one old session on
+// the hub). Every such shape the store uses must plan on the session index.
+func TestSessionKindQueriesUseTheSessionIndex(t *testing.T) {
+	s := historyStore(t, 4)
+	for _, q := range []string{
+		`SELECT id FROM events WHERE session_id=? AND kind=? ORDER BY id DESC LIMIT 100`,
+		`SELECT id FROM events WHERE session_id=? AND kind=? ORDER BY id LIMIT 1025`,
+		`SELECT MAX(id) FROM events WHERE session_id=? AND kind=?`,
+		`SELECT COUNT(*) FROM events WHERE session_id=? AND kind=? AND id > ?`,
+	} {
+		args := []any{"s", "session.output"}
+		if strings.Count(q, "?") == 3 {
+			args = append(args, 0)
+		}
+		if plan := planFor(t, s, q, args...); !strings.Contains(plan, "idx_events_session_kind_id") {
+			t.Errorf("%s\nplans as:\n%s", q, plan)
+		}
+	}
+	query, args := historyQuery(EventFilter{Kinds: []string{"a"}})
+	if plan := planFor(t, s, query, append(args, 1, 100, 10)...); !strings.Contains(plan, "idx_events_kind_id") {
+		t.Errorf("kind history plans as:\n%s", plan)
+	}
+}
+
+// An old session's events are found, whole and within the deadline, however
+// many newer events other sessions have written since (#579 review).
+func TestOldSessionHistoryIsFoundWithinTheDeadline(t *testing.T) {
+	smallWindows(t)
+	s := historyStore(t, 0)
+	for i := range 6 {
+		if _, _, err := s.InsertEvent(events.ScopeSession, "old", []string{"session.output", "session.state_changed"}[i%2], `{}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3000 {
+		if _, err = tx.Exec(`INSERT INTO events(scope, session_id, at, kind) VALUES('session', ?, 'now', 'session.output')`, fmt.Sprintf("new-%d", i%50)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	windows := 0
+	afterHistoryWindow = func() { windows++ }
+	t.Cleanup(func() { afterHistoryWindow = nil })
+	for _, f := range []EventFilter{{SessionID: "old"}, {SessionID: "old", Kinds: []string{"session.output"}}} {
+		ctx, cancel := context.WithTimeout(context.Background(), HistoryDeadline)
+		start := time.Now()
+		p, err := s.QueryEventHistory(ctx, f)
+		cancel()
+		want := 6
+		if len(f.Kinds) > 0 {
+			want = 3
+		}
+		if err != nil || p.Partial || len(p.Events) != want || p.NextCursor != 0 {
+			t.Fatalf("%+v: err %v partial %v events %d cursor %d after %s", f, err, p.Partial, len(p.Events), p.NextCursor, time.Since(start))
+		}
+	}
+	if windows != 0 {
+		t.Fatalf("a session read scanned %d id windows; it should use the session index", windows)
 	}
 }

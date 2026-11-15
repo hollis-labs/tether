@@ -508,3 +508,27 @@ func TestDaemonOnly_SessionPeekRequiresTerminalScope(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261114-0166 (#579 review): a history read that runs out of time is
+// reported as partial with a cursor, never as a session with no events.
+func TestSessionEventsReportsAPartialRead(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	old := historyDeadline
+	historyDeadline = time.Nanosecond
+	t.Cleanup(func() { historyDeadline = old })
+	res := callAnyTool(t, f.inProcess, "tether_session_events", map[string]any{"session_id": "sess-1"})
+	if res.IsError {
+		t.Fatalf("error: %s", textOf(res))
+	}
+	got := parseToolJSON(t, res)
+	if got["partial"] != true || got["note"] == nil {
+		t.Fatalf("an out-of-time read was not reported as partial: %s", textOf(res))
+	}
+	if _, ok := got["next_cursor"]; !ok {
+		t.Fatalf("no cursor: %s", textOf(res))
+	}
+	historyDeadline = old
+	if got = parseToolJSON(t, callAnyTool(t, f.inProcess, "tether_session_events", map[string]any{"session_id": "sess-1"})); got["partial"] != false || got["count"].(float64) == 0 {
+		t.Fatalf("a full read: %v", got)
+	}
+}
