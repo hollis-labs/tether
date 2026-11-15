@@ -96,6 +96,8 @@ type Report struct {
 	// VerifyMode is "incremental" after a run (only the ranges the copy wrote are rechecked; the copy's
 	// own digests proved the rest) or "full" (Verify: every range walked).
 	VerifyMode string `json:"verify_mode"`
+	// SourceWALHeader is true for a source with a WAL-mode header (a .backup copy of a WAL database).
+	SourceWALHeader bool `json:"source_wal_header"`
 	// SourceCheck names the check run on the source (Options.SourceCheck); SourceIntegrity is its result.
 	SourceCheck string `json:"source_check"`
 	// SourceIntegrity is the source check's result, before the copy starts.
@@ -118,12 +120,14 @@ func (r *Report) OK() bool { return len(r.Problems) == 0 }
 // ErrLiveSource means the source is, or may be, a live database (or a raw copy of one missing its WAL).
 var ErrLiveSource = errors.New("migrate-from needs a copy of the old database, not the live file")
 
-// CheckSource resolves path (symlinks included) and refuses anything that may be live or incomplete:
-//   - a -wal, -shm or -journal file beside the resolved file: a process has it open, or a write was cut
-//     short;
-//   - a WAL-mode header (bytes 18 and 19 are 2): a WAL database's committed pages may live in its -wal
-//     file, so a raw copy of the main file alone can silently miss them, and immutable=1 would not
-//     notice. A copy made with VACUUM INTO (the nightly backup) or .backup is in rollback mode.
+// CheckSource resolves path (symlinks included) and refuses anything that may be live or incomplete: a
+// -wal, -shm or -journal file beside the resolved file (a process has it open, or a write was cut short),
+// or a file that is not SQLite. The source is then opened read-only and immutable and never checkpointed.
+//
+// Use VACUUM INTO for the copy (the nightly backup does; it is the rule for the live database). A .backup
+// copy is accepted too: it keeps a WAL-mode header with no -wal file, and is complete. A WAL-mode source
+// must pass the source integrity check (Run refuses SourceCheck "none" for it), since a raw copy of a WAL
+// database's main file without its -wal could miss committed pages that no header shows.
 //
 // It returns the resolved path, which the run then reads and hashes.
 func CheckSource(path string) (string, error) {
@@ -154,10 +158,21 @@ func CheckSource(path string) (string, error) {
 	if string(hdr[:16]) != "SQLite format 3\x00" {
 		return "", fmt.Errorf("%s is not a SQLite database", resolved)
 	}
-	if hdr[18] == 2 || hdr[19] == 2 {
-		return "", fmt.Errorf("%w: %s is in WAL mode; take the copy with VACUUM INTO or .backup (rollback mode), never by copying the file", ErrLiveSource, resolved)
-	}
 	return resolved, nil
+}
+
+// walHeader reports whether the database file at path has a WAL-mode header (bytes 18 and 19 are 2).
+func walHeader(path string) (bool, error) {
+	f, err := os.Open(path) //nolint:gosec // the operator names the source copy
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	var hdr [20]byte
+	if _, err := io.ReadFull(f, hdr[:]); err != nil {
+		return false, err
+	}
+	return hdr[18] == 2 || hdr[19] == 2, nil
 }
 
 // OpenSource opens a copy of an old database read-only and immutable: nothing is written to it, not
@@ -248,6 +263,14 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	case state == MarkComplete:
 		return nil, ErrTargetComplete
+	}
+	wal, err := walHeader(e.srcPath)
+	if err != nil {
+		return nil, err
+	}
+	rep.SourceWALHeader = wal
+	if wal && opt.SourceCheck == "none" {
+		return nil, fmt.Errorf("%w: %s has a WAL-mode header (a .backup copy, or a raw copy that may miss its -wal): it needs the source check (full or quick), not none", ErrLiveSource, e.srcPath)
 	}
 	integrityStart := time.Now()
 	var pragma string

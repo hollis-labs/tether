@@ -190,8 +190,9 @@ func TestNullKeyRefused(t *testing.T) {
 	}
 }
 
-// TestCheckSource: a symlink is resolved before the checks; a -wal, -shm or -journal beside the file, a
-// WAL-mode header, or a file that is not SQLite is refused.
+// TestCheckSource: a symlink is resolved before the checks; a -wal, -shm or -journal beside the file, or a
+// file that is not SQLite, is refused. A WAL-mode header without sidecars (a .backup copy) is accepted and
+// then requires the source check.
 func TestCheckSource(t *testing.T) {
 	good := oldFixture(t)
 	if got, err := CheckSource(good); err != nil || got == "" {
@@ -223,8 +224,23 @@ func TestCheckSource(t *testing.T) {
 	for _, side := range []string{"-wal", "-shm"} {
 		_ = os.Remove(wal + side) // a raw copy of the main file alone: the WAL is lost
 	}
-	if _, err := CheckSource(wal); !errors.Is(err, ErrLiveSource) {
-		t.Errorf("a WAL-mode file with no -wal beside it: %v, want ErrLiveSource", err)
+	// A WAL-mode header with no sidecar (a .backup copy of a WAL database) passes CheckSource, and then
+	// needs the source check: with "none" the run refuses it.
+	if _, err := CheckSource(wal); err != nil {
+		t.Errorf("a WAL-mode copy with no sidecar: %v, want accepted", err)
+	}
+	src, err := OpenSource(wal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = src.Close() }()
+	_, err = New(src, wal, storetest.Raw(t, gostore.DriverSQLite)).Run(context.Background(), Options{Phase: PhaseBulk, SourceCheck: "none"})
+	if !errors.Is(err, ErrLiveSource) {
+		t.Errorf("a WAL-mode source with no source check: %v, want ErrLiveSource", err)
+	}
+	rep := mustOK(t)(New(src, wal, storetest.Raw(t, gostore.DriverSQLite)).Run(context.Background(), Options{Phase: PhaseBulk, SourceCheck: "quick"}))
+	if !rep.SourceWALHeader {
+		t.Error("the report does not record the WAL-mode header")
 	}
 	notDB := filepath.Join(t.TempDir(), "x.db")
 	if err := os.WriteFile(notDB, []byte(strings.Repeat("x", 200)), 0o600); err != nil {
