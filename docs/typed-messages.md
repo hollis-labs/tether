@@ -165,6 +165,13 @@ The reply settles the parent in `GET /messages/pending-replies` and triages
   `already_answered`, `challenge_unknown`, `challenge_expired`,
   `assertion_invalid`, `assertion_stale`, `assertion_unbound`, `replayed`,
   `too_many_challenges`. Nothing is stored on a failure.
+- **Reserved metadata.** `operator_attestation` and every key under that
+  prefix (any case), and the sender stamp (`from_verification`,
+  `from_unverified`, `from_principal`), are set only by the server. Every
+  ingress drops a client's value (`POST /messages`, `/messages/notify`,
+  `/messages/request` and `/messages/post`, and so the MCP tools and federation
+  peers that use them), and the message store drops `operator_attestation` from
+  any send but the attested-reply path, so a stored value is always genuine.
 - **Audit.** Every attempt is an `identity_audit` row, `operator_reply_attested`
   or `operator_reply_refused`, with the device, the parent, the challenge, the
   elevation, the refusal code and the parent sender's `from_verification`.

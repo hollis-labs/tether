@@ -70,8 +70,9 @@ const (
 	AuditOperatorReplyRefused  = "operator_reply_refused"
 )
 
-// MetaOperatorAttestation is the stored reply's proof record.
-const MetaOperatorAttestation = "operator_attestation"
+// MetaOperatorAttestation is the stored reply's proof record. Reserved: set
+// only here (storeAttestedReply); every ingress drops a client's value.
+const MetaOperatorAttestation = store.OperatorAttestationKey
 
 type operatorReplyError struct {
 	status  int
@@ -456,7 +457,7 @@ func (s *Server) storeAttestedReply(ctx context.Context, parent messaging.Envelo
 	if thread == "" {
 		thread = parent.ID
 	}
-	return s.sendMessage(ctx, messaging.Envelope{From: from, To: parent.From, Kind: envelope.TransportKind(envelope.KindMessage), ThreadID: thread,
+	return s.sendMessage(store.WithAttestedReply(ctx), messaging.Envelope{From: from, To: parent.From, Kind: envelope.TransportKind(envelope.KindMessage), ThreadID: thread,
 		InReplyTo: c.MessageID, Payload: body, ContentType: envelope.ContentType, Metadata: map[string]string{
 			MetaFromPrincipal: identity.OperatorID, MetaFromVerification: "verified", MetaOperatorAttestation: string(proof),
 			"tether.message_id": "operator-reply:" + c.ID,

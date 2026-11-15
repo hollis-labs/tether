@@ -366,6 +366,12 @@ Where the build had to choose, and what it chose:
   parent `from_verification`; old and new key ids).
 - **`full_url`** is `GET /operator-attestation/challenges/{id}/body`, under
   the same view scope.
+- **Reserved metadata** (security review): `operator_attestation` (and its
+  prefix, any case) and the sender stamp keys are server-set. `stampSender`
+  strips them at every HTTP ingress before stamping, and the message store drops
+  `operator_attestation` from every send except the one `storeAttestedReply`
+  marks (`store.WithAttestedReply`), which covers group fan-out, mentions, A2A
+  and any future path.
 - **The reply** is a typed `message` from `@chrispian` to the asker's handle
   (or address when it has none), with `answer {option, note?}`, the option's
   label as its body, and `Re: <subject>`.

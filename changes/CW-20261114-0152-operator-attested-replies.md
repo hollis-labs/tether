@@ -9,3 +9,6 @@
     reload with any other block is refused and audited.
   - Migration 0106 adds the challenge, proof, answer and trust-root tables and an `identity_audit.detail` column.
   - Off until an approved block exists.
+  - `operator_attestation` (any key under that prefix) and the sender stamp (`from_verification`, `from_unverified`,
+    `from_principal`) are reserved: every ingress drops a client's value, and the store keeps `operator_attestation`
+    only on the attested-reply path.
