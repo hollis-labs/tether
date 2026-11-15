@@ -140,6 +140,11 @@ type Hub struct {
 	// Event is installed by the app for worker-bound output/state ingestion. It
 	// runs on the connection's ingest goroutine, never on its reader.
 	Event func(string, workerwire.Frame) error
+	// EventBatch, when set, ingests a run of output frames already queued for
+	// one worker together (CW-20261115-0027), so the app commits them in one
+	// transaction. It returns one error per frame (nil: accepted). Frames
+	// other than output still go to Event, one at a time and in order.
+	EventBatch func(string, []workerwire.Frame) []error
 	// Degraded, when set, is told when Sends to a connected worker keep timing
 	// out (CW-20261114-0104).
 	Degraded func(workerID string, d DeliveryDegraded)
@@ -497,13 +502,67 @@ func (h *Hub) runIngest(id string, c *connection, previous <-chan struct{}) {
 		case <-c.done:
 			return
 		case f := <-c.ingest:
-			h.ingestFrame(id, c, f)
+			h.ingestQueued(id, c, f)
 		case <-tick.C:
 		}
 		if len(c.ingest) == 0 {
 			h.replayDropped(c)
 		}
 	}
+}
+
+// ingestBatchMax bounds how many queued output frames one EventBatch takes.
+const ingestBatchMax = 64
+
+// ingestQueued ingests f and, when EventBatch is set and f is output, every
+// output frame already waiting behind it (up to ingestBatchMax), without
+// waiting for more. The first non-output frame ends the run and is ingested
+// after it, so frames keep their order (CW-20261115-0027).
+func (h *Hub) ingestQueued(id string, c *connection, f workerwire.Frame) {
+	if f.T != "output" || (h.EventBatch == nil && h.Event == nil) {
+		h.ingestFrame(id, c, f)
+		return
+	}
+	batch := []workerwire.Frame{f}
+	var next *workerwire.Frame
+drain:
+	for len(batch) < ingestBatchMax {
+		select {
+		case g := <-c.ingest:
+			if g.T != "output" {
+				next = &g
+				break drain
+			}
+			batch = append(batch, g)
+		default:
+			break drain
+		}
+	}
+	errs := h.eventBatch(id, batch)
+	for i, g := range batch {
+		// As ingestFrame does for one frame: a session whose frame was not
+		// accepted is replayed from its stored cursor.
+		if i < len(errs) && errs[i] != nil && !c.replaying[g.Session] {
+			c.replaying[g.Session] = true
+			_ = c.send(workerwire.Frame{T: "replay", Session: g.Session, FromSeq: h.NextSeq(g.Session)})
+		}
+	}
+	if next != nil {
+		h.ingestFrame(id, c, *next)
+	}
+}
+
+// eventBatch is EventBatch, or Event frame by frame when only Event is set:
+// either way every output frame takes the same drain path.
+func (h *Hub) eventBatch(id string, batch []workerwire.Frame) []error {
+	if h.EventBatch != nil {
+		return h.EventBatch(id, batch)
+	}
+	errs := make([]error, len(batch))
+	for i, f := range batch {
+		errs[i] = h.Event(id, f)
+	}
+	return errs
 }
 
 func (h *Hub) ingestFrame(id string, c *connection, f workerwire.Frame) {

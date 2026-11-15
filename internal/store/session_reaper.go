@@ -242,3 +242,40 @@ func (s *Store) RecordWorkerOutput(ctx context.Context, sessionID string, seq in
 	s.EventsCommitted()
 	return nil
 }
+
+// WorkerOutput is one output frame RecordWorkerOutputs commits.
+type WorkerOutput struct {
+	SessionID   string
+	Seq         int64
+	PayloadJSON string
+	At          time.Time
+}
+
+// RecordWorkerOutputs is RecordWorkerOutput for a batch (CW-20261115-0027):
+// every frame's cursor and session.output event in ONE transaction, so a batch
+// costs one commit (one WAL fsync under synchronous=FULL), not one per frame.
+// All or nothing: on an error none of the batch is recorded, and the worker
+// replays it from the stored cursors.
+func (s *Store) RecordWorkerOutputs(ctx context.Context, outs []WorkerOutput) error {
+	if len(outs) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, o := range outs {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO session_worker_seq(session_id,last_seq) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET last_seq=excluded.last_seq`, o.SessionID, o.Seq); err != nil {
+			return err
+		}
+		if err = s.publishOutboxEvent(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: o.SessionID, Kind: "session.output", At: o.At, PayloadJSON: o.PayloadJSON}); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.EventsCommitted()
+	return nil
+}

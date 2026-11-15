@@ -11,15 +11,14 @@ import (
 )
 
 // Uses the durable turn-output/routing writer for native worker result frames.
-// Called under workerIngestMu; raw journal bytes remain the session log.
+// Called under the session's ingest lock; raw journal bytes remain the session log.
 func (s *Service) workerTurnOutput(row *store.SessionRow, f workerwire.Frame) error {
 	if f.Stream != "stdout" || s.Bus == nil {
 		return nil
 	}
-	if s.workerCarries == nil {
-		s.workerCarries = map[string][]byte{}
-	}
+	s.workerStateMu.Lock()
 	carry := append(s.workerCarries[row.ID], f.Data...)
+	s.workerStateMu.Unlock()
 	for {
 		at := bytes.IndexByte(carry, '\n')
 		if at < 0 {
@@ -100,6 +99,11 @@ func (s *Service) workerTurnOutput(row *store.SessionRow, f workerwire.Frame) er
 			return err
 		}
 	}
+	s.workerStateMu.Lock()
+	if s.workerCarries == nil {
+		s.workerCarries = map[string][]byte{}
+	}
 	s.workerCarries[row.ID] = carry
+	s.workerStateMu.Unlock()
 	return nil
 }
