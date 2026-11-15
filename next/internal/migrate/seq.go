@@ -14,7 +14,9 @@ import (
 // old is the source snapshot the copy read (never a database that was VACUUMed after the copy: VACUUM may
 // renumber the rowids of a table without an INTEGER PRIMARY KEY). nw is the new database, on either
 // dialect; the queries take no parameters, so they need no rebinding.
-func VerifyMessagesSeq(ctx context.Context, old, nw *sql.DB) error {
+//
+// Both are queriers (a *sql.DB, or a go-store reader).
+func VerifyMessagesSeq(ctx context.Context, old, nw querier) error {
 	o, err := old.QueryContext(ctx, `SELECT id, rowid FROM messages ORDER BY rowid`)
 	if err != nil {
 		return fmt.Errorf("messages seq: read old: %w", err)
@@ -57,4 +59,9 @@ func VerifyMessagesSeq(ctx context.Context, old, nw *sql.DB) error {
 		return fmt.Errorf("messages seq: read new: %w", err)
 	}
 	return nil
+}
+
+// querier is the read surface VerifyMessagesSeq needs: a *sql.DB or a go-store Querier.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }

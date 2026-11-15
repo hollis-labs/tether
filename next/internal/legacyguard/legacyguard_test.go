@@ -73,3 +73,20 @@ func TestCheckRefusesUnfinishedMigration(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckMigrationTarget: migrate-from opens a database whose migration is in progress (it finishes it),
+// but never an old-layout database (that is a source, never a target).
+func TestCheckMigrationTarget(t *testing.T) {
+	for name, stmts := range map[string][]string{
+		"running":    append(append([]string{}, oldLayout...), markDDL, `INSERT INTO tether_migration_mark VALUES (1, 'running')`),
+		"bulk":       append(append([]string{}, oldLayout...), markDDL, `INSERT INTO tether_migration_mark VALUES (1, 'bulk')`),
+		"no row yet": append(append([]string{}, oldLayout...), markDDL),
+	} {
+		if err := CheckMigrationTarget(makeDB(t, stmts...)); err != nil {
+			t.Errorf("%s: CheckMigrationTarget = %v, want nil", name, err)
+		}
+	}
+	if err := CheckMigrationTarget(makeDB(t, oldLayout...)); !errors.Is(err, ErrLegacyLayout) {
+		t.Errorf("old layout: %v, want ErrLegacyLayout", err)
+	}
+}

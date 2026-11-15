@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/hollis-labs/substrate/boot"
@@ -35,7 +36,8 @@ func run(ctx context.Context, getenv func(string) string, args []string) error {
 	fsys, root := migrations.FS()
 	database.UseMigrationFS(fsys, root)
 
-	started, err := boot.StartWith(ctx, substrateApp, substrateModules, substrateConfigJSON, bootOptions(getenv))
+	migrating := command(args) == "migrate-from"
+	started, err := boot.StartWith(ctx, substrateApp, substrateModules, substrateConfigJSON, bootOptions(getenv, migrating))
 	if err != nil {
 		return err
 	}
@@ -44,6 +46,16 @@ func run(ctx context.Context, getenv func(string) string, args []string) error {
 	t := &tether{app: started.App}
 	rootCmd := cli.Root(started.App)
 	rootCmd.SetArgs(args)
-	rootCmd.AddCommand(t.serveCmd(ctx))
+	rootCmd.AddCommand(t.serveCmd(ctx), t.migrateFromCmd(ctx))
 	return rootCmd.ExecuteContext(ctx)
+}
+
+// command returns the first argument that is not a flag: the subcommand.
+func command(args []string) string {
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			return a
+		}
+	}
+	return ""
 }
