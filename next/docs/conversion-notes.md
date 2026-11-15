@@ -94,7 +94,9 @@ Decided rules for `migrations/postgres/`:
 5. **Other constructs.** `UNIQUE COLLATE NOCASE` becomes a unique index on `lower()`. `GLOB` becomes `~`. FTS5 becomes a `tsvector` with a GIN index, using the `simple` configuration. Each trigger becomes a plpgsql function.
 6. **`messages.seq` is `00002` in both sets**, so `00001` stays as approved.
 
-**Foreign keys: off on both dialects (decided by the cell lead).** The old store never turned `foreign_keys` on, so its 48 declared references and their `ON DELETE CASCADE` / `SET NULL` were never enforced. Live data holds rows that would violate them; the counts are in the cell's private inventory. The port keeps that behaviour:
+**Foreign keys: off on both dialects (decided by the cell lead).** This is a deliberate carry of live behaviour (ADR 0008), not a gap in the port. Enforcement is a post-adoption decision, taken after a cascade audit (CW-20261115-0020). The SQLite hook below goes when go-store and the database module gain the option (CW-20261115-0012).
+
+The old store never turned `foreign_keys` on, so its 48 declared references and their `ON DELETE CASCADE` / `SET NULL` were never enforced. Live data holds rows that would violate them; the counts are in the cell's private inventory. The port keeps that behaviour:
 - **SQLite:** `internal/sqlitefk` turns enforcement off on every connection. go-store opens SQLite with `foreign_keys` on and has no option for it. The package registers a modernc connection hook that runs after the DSN pragmas, and the binary imports it. When go-store and the database module gain the option, the package goes (Substrate gap CW-20261115-0012).
 - **Postgres:** the baseline declares no foreign keys.
 - **Tests:** `TestTriggerParity`'s "foreign keys not enforced" scenario shows both dialects accept an orphan row and never cascade a delete. `internal/sqlitefk` tests the hook against a control without it.
