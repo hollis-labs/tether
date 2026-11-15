@@ -57,11 +57,67 @@ func oldCopy(t *testing.T) string {
 	return path
 }
 
+// coveredCopy is oldCopy without the tables of families not ported yet (and the old triggers that read
+// them), so a final run can complete.
+func coveredCopy(t *testing.T) string {
+	t.Helper()
+	path := oldCopy(t)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var drop []string
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if !migrate.Covers(n) {
+			drop = append(drop, n)
+		}
+	}
+	_ = rows.Close()
+	trows, err := db.Query(`SELECT name, sql FROM sqlite_master WHERE type = 'trigger'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trigs [][2]string
+	for trows.Next() {
+		var n, q string
+		if err := trows.Scan(&n, &q); err != nil {
+			t.Fatal(err)
+		}
+		trigs = append(trigs, [2]string{n, q})
+	}
+	_ = trows.Close()
+	for _, tg := range trigs {
+		for _, d := range drop {
+			if strings.Contains(tg[1], d) {
+				if _, err := db.Exec(`DROP TRIGGER "` + tg[0] + `"`); err != nil {
+					t.Fatal(err)
+				}
+				break
+			}
+		}
+	}
+	for _, d := range drop {
+		if _, err := db.Exec(`DROP TABLE "` + d + `"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
 // TestMigrateFromCommand: bulk, then serve is refused (the database is not complete), then final, after
 // which the database is admitted.
 func TestMigrateFromCommand(t *testing.T) {
 	configure(t, freeAddr(t))
-	old := oldCopy(t)
+	old := coveredCopy(t)
 	data := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
 	report := filepath.Join(t.TempDir(), "report.json")
@@ -102,5 +158,47 @@ func TestMigrateFromRefusesALiveLookingSource(t *testing.T) {
 	err := run(context.Background(), env(filepath.Join(t.TempDir(), "data")), []string{"migrate-from", "--old-db", old, "--phase", "bulk"})
 	if !errors.Is(err, migrate.ErrLiveSource) {
 		t.Fatalf("err = %v, want ErrLiveSource", err)
+	}
+}
+
+// TestMigrateFromPrecheck: --precheck reports and changes nothing; it fails on a stuck launch.
+func TestMigrateFromPrecheck(t *testing.T) {
+	configure(t, freeAddr(t))
+	old := oldCopy(t)
+	data := filepath.Join(t.TempDir(), "data")
+	if err := run(context.Background(), env(data), []string{"migrate-from", "--old-db", old, "--precheck"}); err != nil {
+		t.Fatalf("precheck on a clean copy: %v", err)
+	}
+	db, err := sql.Open("sqlite", old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO sessions (id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at) VALUES ('s', 'l', 'p', 'a', 'pv', '/w', 'created', 't', 't')`,
+		`INSERT INTO workspace_scratch_allocations (session_id, operation_id, session_digest, plan_digest, root, status) VALUES ('s', 'o', 'sd', 'pd', '/r', 'admitted')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
+	err = run(context.Background(), env(data), []string{"migrate-from", "--old-db", old, "--precheck"})
+	if err == nil || !strings.Contains(err.Error(), "pre-check") {
+		t.Fatalf("precheck with a stuck launch: %v", err)
+	}
+}
+
+// TestMigrateFromFinalRefusesUncovered: on a full old copy (families not ported yet), a final run is refused
+// and names the uncovered tables; a bulk run is fine.
+func TestMigrateFromFinalRefusesUncovered(t *testing.T) {
+	configure(t, freeAddr(t))
+	old := oldCopy(t)
+	data := filepath.Join(t.TempDir(), "data")
+	if err := run(context.Background(), env(data), []string{"migrate-from", "--old-db", old, "--phase", "bulk"}); err != nil {
+		t.Fatalf("bulk: %v", err)
+	}
+	err := run(context.Background(), env(data), []string{"migrate-from", "--old-db", old, "--phase", "final"})
+	if !errors.Is(err, migrate.ErrIncomplete) || !strings.Contains(err.Error(), "registry_entries") {
+		t.Fatalf("final on a full copy: %v, want ErrIncomplete naming registry_entries", err)
 	}
 }

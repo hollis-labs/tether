@@ -18,7 +18,8 @@ import (
 // TestMigrateFromNeverRewritesACompleteTarget: once complete (it may have served), a run is refused and
 // the rows written since stay; Verify re-checks without writing.
 func TestMigrateFromNeverRewritesACompleteTarget(t *testing.T) {
-	eachTarget(t, func(t *testing.T, d gostore.Driver) {
+	// SQLite only: a Postgres target cannot be complete while go-messaging has no Postgres store.
+	for _, d := range []gostore.Driver{gostore.DriverSQLite} {
 		ctx := context.Background()
 		e, tgt := newEngine(t, d)
 		mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
@@ -43,7 +44,7 @@ func TestMigrateFromNeverRewritesACompleteTarget(t *testing.T) {
 		if got := queryInt(t, tgt, `SELECT count(*) FROM messages WHERE id = 'after-cutover'`); got != 1 {
 			t.Fatal("Verify wrote to the target")
 		}
-	})
+	}
 }
 
 // TestDigestSeesStorageClass: on SQLite a value keeps its class through the copy, and a change of class
@@ -91,7 +92,7 @@ func TestEmptyBlobStaysEmpty(t *testing.T) {
 		if got := queryInt(t, tgt, `SELECT count(*) FROM team_definitions WHERE version = 3 AND payload IS NOT NULL`); got != 1 {
 			t.Fatal("an empty blob was copied as NULL")
 		}
-		final := mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
+		final := mustOK(t)(e.Run(ctx, Options{Phase: phaseFor(d, PhaseFinal), Batch: 10}))
 		for _, c := range final.Copy {
 			if c.Written != 0 {
 				t.Errorf("final rewrote %d ranges of %s", c.Written, c.Table)
