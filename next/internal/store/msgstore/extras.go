@@ -121,7 +121,7 @@ type ReplyCandidate struct {
 
 // pgPayload is a message payload with each \u0000 escape replaced, for a jsonb cast on Postgres
 // (see PendingReplyCandidates).
-const pgPayload = `replace(m.payload, '\u0000', '\ufffd')`
+var pgPayload = pgUnNul(`m.payload`)
 
 // PendingReplyCandidates returns, newest first, typed messages (contentType) to any of the seat's
 // URNs, not canceled, archived or staged, with no reply from the seat yet, whose payload is a JSON
