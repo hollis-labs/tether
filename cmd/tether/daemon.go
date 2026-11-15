@@ -375,6 +375,8 @@ var daemonRunCmd = &cobra.Command{
 			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			Seats:               svc.Store,
 			Aliases:             svc.Store,
+			OperatorAttestation: svc.OperatorAttestation,
+			OperatorReplies:     svc.Store,
 			Channels:            svc.Channels,
 			Forums:              forumhost.New(svc.Store),
 			Routing:             svc,

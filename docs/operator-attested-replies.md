@@ -1,6 +1,7 @@
 # Operator-attested replies (contract)
 
-Status: **contract for review, revision 2** (CW-20261114-0152). No code yet.
+Status: **contract, revision 2, approved** by @archie and @photon-review. Built
+in CW-20261114-0152; see "Build notes" at the end.
 Reviewers are @archie and @photon-review. Builders are Tether (this repo),
 Tangent (the signer, CW-20261114-0153) and Tachyon (the client).
 
@@ -342,3 +343,29 @@ It **cannot**:
 - Answering anything other than the typed kinds above.
 - Changing `on_behalf_of`.
 - Issuing operator credentials to Tachyon.
+
+## Build notes
+
+Where the build had to choose, and what it chose:
+
+- **Step 7's transaction.** The message store cannot join an outside
+  transaction, so the reply itself is stored just after it. One transaction
+  re-checks `already_answered`, records the `jti` and `elevation_id` (both
+  `UNIQUE`, the replay guard against concurrent replies) and reserves the
+  parent's one answer (`operator_reply_answers`, keyed by the parent). The
+  reply is then sent. If sending fails, only the reservation is released; the
+  proofs stay spent. Every guard is in the transaction.
+- **The approved digest** is stored in the state database
+  (`operator_attestation_trust`, migration 0106), outside the catalog root a
+  plan writes to. It is the SHA-256 of the block's canonical JSON. A reload with
+  any other block, including a hand-removed one, is refused; at start such a
+  block leaves the feature off. An approved change takes effect on reload, with
+  no restart.
+- **Audit detail.** `identity_audit` gains a `detail` JSON column for the
+  fields these rows carry (device, parent, challenge, elevation, refusal code,
+  parent `from_verification`; old and new key ids).
+- **`full_url`** is `GET /operator-attestation/challenges/{id}/body`, under
+  the same view scope.
+- **The reply** is a typed `message` from `@chrispian` to the asker's handle
+  (or address when it has none), with `answer {option, note?}`, the option's
+  label as its body, and `Re: <subject>`.

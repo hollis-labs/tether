@@ -173,6 +173,11 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/messages/", "/messages/{id}/trace", map[string]string{"GET": readScope}),
 	routeScope("/messages/", "/messages/{id}/redrive", map[string]string{"POST": maintainScope}),
 	routeScope("/messages/", "/messages/{id}/purge", map[string]string{"POST": maintainScope}),
+	// Operator-attested replies (CW-20261114-0152): Tachyon's challenge and reply, Tangent's view.
+	routeScope("/messages/", "/messages/{id}/operator-reply/challenge", map[string]string{"POST": identity.ScopeOperatorReply}),
+	routeScope("/messages/", "/messages/{id}/operator-reply", map[string]string{"POST": identity.ScopeOperatorReply}),
+	routeScope("/operator-attestation/challenges/", "/operator-attestation/challenges/{id}", map[string]string{"GET": identity.ScopeOperatorReplyView}),
+	routeScope("/operator-attestation/challenges/", "/operator-attestation/challenges/{id}/body", map[string]string{"GET": identity.ScopeOperatorReplyView}),
 	routeScope("/messages/post", "/messages/post", map[string]string{"POST": messagesScope}),
 	routeScope("/messages/aliases", "/messages/aliases", map[string]string{"GET": readScope, "POST": localScope, "DELETE": localScope}),
 	routeScope("/messages/pending-replies", "/messages/pending-replies", map[string]string{"GET": readScope}),

@@ -55,6 +55,9 @@ func (s *Server) registerTypedMessageRoutes(router *http.ServeMux) {
 		router.HandleFunc("/status", s.guardAs(s.handleStatusSet))
 		router.HandleFunc("/status/", s.handleStatusGet)
 	}
+	if s.MessageStore != nil {
+		router.HandleFunc("/operator-attestation/challenges/", s.handleOperatorAttestationChallenge)
+	}
 }
 
 // handleDirectory resolves @handles for envelope.Check.

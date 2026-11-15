@@ -52,7 +52,7 @@ var apiTopLevelPaths = []string{
 	"/forums", "/forums/",
 	"/messages", "/messages/", "/messages/inbox", "/messages/list",
 	"/messages/notify", "/messages/request", "/messages/retention/candidates",
-	"/messages/subscribe", "/messages/thread/", "/messages/watch",
+	"/messages/subscribe", "/messages/thread/", "/messages/watch", "/operator-attestation/challenges/",
 	"/messages/post", "/messages/pending-replies", "/messages/pending-replies/blocked",
 	"/status", "/status/",
 	"/proxy/events",

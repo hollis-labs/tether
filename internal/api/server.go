@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -173,6 +174,10 @@ type Deps struct {
 	// verification on /messages (CW-20261010-0262).
 	IdentityMode  identity.Mode
 	IdentityAudit func(context.Context, identity.Observation) error
+	// OperatorAttestation is the operator attestation trust root in force (nil:
+	// off) and OperatorReplies its store (CW-20261114-0152).
+	OperatorAttestation func() *operatorattest.Config
+	OperatorReplies     OperatorReplyStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -224,6 +229,9 @@ type Server struct {
 	// records the finding and keeps the request.
 	IdentityMode  identity.Mode
 	IdentityAudit func(context.Context, identity.Observation) error
+	// Operator-attested replies (CW-20261114-0152, operator_reply.go).
+	OperatorAttestation func() *operatorattest.Config
+	OperatorReplies     OperatorReplyStore
 
 	chatReplays         chatReplays
 	refSourceAssertions metric.Int64Counter
@@ -275,17 +283,19 @@ func NewHandler(deps Deps) http.Handler {
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		CatalogReload:       deps.CatalogReload,
 
-		CatalogApply:     deps.CatalogApply,
-		Groups:           deps.Groups,
-		LogsDir:          deps.LogsDir,
-		DeliveryClaims:   deps.DeliveryClaims,
-		SessionBootstrap: deps.SessionBootstrap,
-		DeliveryTrace:    deps.DeliveryTrace,
-		DeliveryRepair:   deps.DeliveryRepair,
-		Retention:        deps.Retention,
-		RoutingReplies:   deps.RoutingReplies,
-		IdentityMode:     deps.IdentityMode,
-		IdentityAudit:    deps.IdentityAudit,
+		CatalogApply:        deps.CatalogApply,
+		Groups:              deps.Groups,
+		LogsDir:             deps.LogsDir,
+		DeliveryClaims:      deps.DeliveryClaims,
+		SessionBootstrap:    deps.SessionBootstrap,
+		DeliveryTrace:       deps.DeliveryTrace,
+		DeliveryRepair:      deps.DeliveryRepair,
+		Retention:           deps.Retention,
+		RoutingReplies:      deps.RoutingReplies,
+		IdentityMode:        deps.IdentityMode,
+		IdentityAudit:       deps.IdentityAudit,
+		OperatorAttestation: deps.OperatorAttestation,
+		OperatorReplies:     deps.OperatorReplies,
 	}
 	router := http.NewServeMux()
 	s.registerDocsRoutes(router)

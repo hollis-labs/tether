@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
@@ -158,6 +160,9 @@ type Service struct {
 	// stopRequests. Nil when the Manager was built without
 	// newSessionManager, in which case a stop is recorded as "completed".
 	stops *stopRequests
+	// attestation is the operator attestation trust root in force
+	// (CW-20261114-0152); nil when the feature is off.
+	attestation atomic.Pointer[operatorattest.Config]
 	// stopWatchers counts the clearStopOnExit goroutines in flight. Production never
 	// waits on it; tests that replace Service fields wait first so they do not race the
 	// goroutine's reads of Manager and stops.
@@ -429,6 +434,7 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 			return nil, fmt.Errorf("turn router: %w", err)
 		}
 	}
+	service.loadOperatorAttestation(context.Background(), cat)
 	return service, nil
 }
 

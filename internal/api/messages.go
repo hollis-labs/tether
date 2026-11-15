@@ -378,6 +378,15 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 {
 		action = parts[1]
 	}
+	// Operator-attested replies (CW-20261114-0152) authenticate on their own terms.
+	switch action {
+	case "operator-reply/challenge":
+		s.handleOperatorReplyChallenge(w, r, id)
+		return
+	case "operator-reply":
+		s.handleOperatorReply(w, r, id)
+		return
+	}
 
 	if action != "" && action != "purge" && action != "trace" && action != "reply" && action != "delivery" || r.Method == http.MethodDelete {
 		if env, err := s.MessageStore.Get(r.Context(), id); err == nil {
