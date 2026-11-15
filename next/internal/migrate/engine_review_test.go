@@ -77,8 +77,8 @@ func TestPostgresConversionsAreCounted(t *testing.T) {
 	ctx := context.Background()
 	e, _ := newEngine(t, gostore.DriverPostgres)
 	rep := mustOK(t)(e.Run(ctx, Options{Phase: PhaseBulk, Batch: 10}))
-	if rep.Conversions["messages.payload"] != 1 || rep.Conversions["team_definitions.payload"] != 1 {
-		t.Fatalf("conversions = %v, want messages.payload 1 and team_definitions.payload 1", rep.Conversions)
+	if rep.Conversions["messages.payload"] != 1 || rep.Conversions["team_definitions.payload"] != 1 || rep.Conversions["principals.display"] != 1 {
+		t.Fatalf("conversions = %v, want messages.payload, team_definitions.payload and principals.display 1 each", rep.Conversions)
 	}
 }
 

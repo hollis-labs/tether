@@ -57,7 +57,7 @@ jobs:
         run: |
           go run github.com/hollis-labs/substrate/cmd/substrate generate -f cmd/tether/substrate.yaml
           git diff --exit-code -- cmd/tether/substrate_wiring.go
-      - run: go test -race ./...
+      - run: go test -race -timeout 20m ./...
       - name: the Postgres leg ran (a skip here is a failure)
         run: go test -count=1 -v -run 'TestPostgresSchemaMatchesSQLite|TestTriggerParity|TestMessagesSeqAcceptance' ./internal/migrate | tee /tmp/pg-leg.txt && ! grep -q -- '--- SKIP' /tmp/pg-leg.txt
       - uses: golangci/golangci-lint-action@v7

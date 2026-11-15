@@ -30,7 +30,11 @@ func TestMain(m *testing.M) {
 		// Visible without -v, so a skipped Postgres leg is never mistaken for a passing one.
 		fmt.Fprintln(os.Stderr, pgSkipNotice)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if fixtureDir != "" {
+		_ = os.RemoveAll(fixtureDir)
+	}
+	os.Exit(code)
 }
 
 func migrationSource() libmigrate.Source {

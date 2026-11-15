@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
+
+	gostore "github.com/hollis-labs/libs/core/store"
 
 	"github.com/hollis-labs/tether/next/internal/store"
 )
@@ -31,7 +34,12 @@ type TableReport struct {
 	Mismatched []rangeResult `json:"mismatched_ranges,omitempty"` // verification only
 	Digest     string        `json:"digest"`
 	Seconds    float64       `json:"seconds"`
+	// written holds the bounds of the ranges a sync walk wrote, for the incremental verification.
+	written []bounds
 }
+
+// bounds is one key range, (lo, hi]; nil is open.
+type bounds struct{ lo, hi []any }
 
 // walker compares (and, when syncing, repairs) one table range by range. A range is the source rows
 // after the previous range's last key, up to and including this range's last key; the last range is
@@ -43,8 +51,10 @@ type walker struct {
 	batch int
 	sync  bool // repair differing ranges; otherwise only report them
 	pg    bool
-	// conversions counts, per table.column, values the Postgres target stores in another class.
+	// conversions counts, per table.column, values the Postgres target stores in another class; convMu
+	// guards it (parallel workers share it).
 	conversions map[string]int64
+	convMu      *sync.Mutex
 }
 
 func (w *walker) run(ctx context.Context) (TableReport, error) {
@@ -80,6 +90,7 @@ func (w *walker) run(ctx context.Context) (TableReport, error) {
 		if changed {
 			if w.sync {
 				rep.Written++
+				rep.written = append(rep.written, bounds{lo: last, hi: hi})
 			} else {
 				rep.Mismatched = append(rep.Mismatched, rr)
 			}
@@ -114,8 +125,16 @@ func (w *walker) readSource(ctx context.Context, last []any) ([][]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := w.derive(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// derive prepares rows read from the source: the Postgres class conversions, then the derived columns
+// (read as the source rowid) through the table's transform.
+func (w *walker) derive(out [][]any) error {
 	w.convert(out)
-	// Derived columns were read as the source rowid; apply the transform.
 	tr := copyTransforms[w.sp.name]
 	for i, c := range w.sp.cols {
 		if !c.derived {
@@ -124,12 +143,12 @@ func (w *walker) readSource(ctx context.Context, last []any) ([][]any, error) {
 		for _, r := range out {
 			rowid, ok := r[i].(int64)
 			if !ok {
-				return nil, fmt.Errorf("%s: rowid is %T", w.sp.name, r[i])
+				return fmt.Errorf("%s: rowid is %T", w.sp.name, r[i])
 			}
 			r[i] = tr.derived[c.name](rowid)
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // compare digests the target's rows in the range and, when syncing and they differ, replaces them with
@@ -252,7 +271,9 @@ func (w *walker) convert(rows [][]any) {
 // count records a conversion once per copied value: the copy walk counts, the verify walk does not.
 func (w *walker) count(c column) {
 	if w.sync && w.conversions != nil {
+		w.convMu.Lock()
 		w.conversions[w.sp.name+"."+c.name]++
+		w.convMu.Unlock()
 	}
 }
 
@@ -334,4 +355,100 @@ func (w *walker) freeRowids(ctx context.Context, tx store.Tx, rows [][]any) erro
 		}
 	}
 	return nil
+}
+
+// recheck compares only the given ranges of the target with the source, after a sync wrote them. Every
+// other range was proven equal by its digest during the sync walk, and nothing else writes the target in
+// between (migrate-from holds it), so this completes the verification without a second pass over the
+// unchanged ranges (plan section 7.3, item 3). The ranges are compared by workers in parallel, reading
+// the target through the read pool; mismatches are reported in key order.
+func (w *walker) recheck(ctx context.Context, ranges []bounds, workers int) (TableReport, error) {
+	started := time.Now()
+	rep := TableReport{Table: w.sp.name}
+	type result struct {
+		rows     int64
+		mismatch bool
+		err      error
+	}
+	results := make([]result, len(ranges))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for i := 0; i < max(workers, 1); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				n, differs, err := w.rangeDiffers(ctx, ranges[j])
+				results[j] = result{rows: n, mismatch: differs, err: err}
+			}
+		}()
+	}
+	for j := range ranges {
+		jobs <- j
+	}
+	close(jobs)
+	wg.Wait()
+	for j, r := range results {
+		if r.err != nil {
+			return rep, fmt.Errorf("%s: range (%s, %s]: %w", w.sp.name, renderKey(ranges[j].lo), renderKey(ranges[j].hi), r.err)
+		}
+		rep.Ranges++
+		rep.Rows += r.rows
+		if r.mismatch {
+			rep.Mismatched = append(rep.Mismatched, rangeResult{Lo: renderKey(ranges[j].lo), Hi: renderKey(ranges[j].hi), Rows: r.rows, Changed: true})
+		}
+	}
+	rep.Seconds = time.Since(started).Seconds()
+	return rep, nil
+}
+
+// rangeDiffers reads one range on both sides (the target through the read pool) and compares digests.
+func (w *walker) rangeDiffers(ctx context.Context, b bounds) (int64, bool, error) {
+	where, args := w.rangeWhere(b.lo, b.hi)
+	read := func(q gostore.Querier, source bool) ([][]any, error) {
+		//nolint:gosec // names come from the schema; values are bound
+		rows, err := q.QueryContext(ctx, `SELECT `+w.sp.selectList(source)+` FROM `+quote(w.sp.name)+where+` ORDER BY `+w.sp.keyOrder(), args...)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		return scanAll(rows, len(w.sp.cols))
+	}
+	srcRows, err := read(sourceQuerier{w.src}, true)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := w.derive(srcRows); err != nil {
+		return 0, false, err
+	}
+	tgtRows, err := read(w.tgt.Reader(), false)
+	if err != nil {
+		return 0, false, err
+	}
+	sd, td := newRowDigest(), newRowDigest()
+	for _, r := range srcRows {
+		sd.add(w.sp.kinds(), r)
+	}
+	for _, r := range tgtRows {
+		td.add(w.sp.kinds(), r)
+	}
+	return int64(len(srcRows)), sd.sum() != td.sum(), nil
+}
+
+// sourceQuerier adapts the source *sql.DB to store.Querier for rangeDiffers (no rebinding: the source is
+// SQLite, and its queries use "?").
+type sourceQuerier struct{ db *sql.DB }
+
+func (s sourceQuerier) ExecContext(ctx context.Context, q string, a ...any) (sql.Result, error) {
+	return s.db.ExecContext(ctx, q, a...)
+}
+func (s sourceQuerier) QueryContext(ctx context.Context, q string, a ...any) (*sql.Rows, error) {
+	return s.db.QueryContext(ctx, q, a...)
+}
+func (s sourceQuerier) QueryRowContext(ctx context.Context, q string, a ...any) *sql.Row {
+	return s.db.QueryRowContext(ctx, q, a...)
+}
+func (s sourceQuerier) Dialect() gostore.Dialect {
+	d, _ := gostore.DialectFor(gostore.DriverSQLite)
+	return d
 }

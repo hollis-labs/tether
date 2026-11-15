@@ -48,6 +48,7 @@ func sqliteObjects(t *testing.T, typ string) map[string][2]string {
 // engineTables are migrate-from's bookkeeping: classed (A) but created by the engine, not by migrations.
 var engineTables = map[string]bool{
 	"tether_migration_mark": true, "tether_migration_tables": true, "tether_migration_triggers": true,
+	"tether_migration_ranges": true,
 }
 
 // TestEveryTableHasAClass: each table the migrations create has exactly one class, and the class map
