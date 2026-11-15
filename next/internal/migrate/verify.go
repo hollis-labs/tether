@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // verify re-walks every table without repairing, comparing each key range of the target with the
@@ -49,6 +50,16 @@ func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *
 	}
 	rep.Sequences = map[string][2]int64{}
 	rep.ForeignKeys = map[string][2]int64{}
+	rep.ForeignKeysDeferred = map[string]int64{}
+	copied := make([]any, 0, len(specs))
+	in := make([]string, 0, len(specs))
+	for _, sp := range specs {
+		copied = append(copied, sp.name)
+		in = append(in, "?")
+	}
+	// A violation whose parent table is not copied yet (a later family) is not comparable until that
+	// family lands: it is reported as deferred, not compared.
+	parentIn := ` AND parent IN (` + strings.Join(in, ", ") + `)`
 	for _, sp := range specs {
 		var src, tgt int64
 		srcErr := e.src.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = ?`, sp.name).Scan(&src)
@@ -61,11 +72,19 @@ func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *
 		}
 		// The old store runs with foreign keys off and holds orphans: the copy must have exactly the
 		// source's violations, none added and none dropped.
-		if err := e.src.QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check(?)`, sp.name).Scan(&src); err != nil {
+		args := append([]any{sp.name}, copied...)
+		if err := e.src.QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check(?) WHERE 1 = 1`+parentIn, args...).Scan(&src); err != nil {
 			return err
 		}
-		if err := e.raw.Reader().QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check(?)`, sp.name).Scan(&tgt); err != nil {
+		if err := e.raw.Reader().QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check(?) WHERE 1 = 1`+parentIn, args...).Scan(&tgt); err != nil {
 			return err
+		}
+		var deferred int64
+		if err := e.raw.Reader().QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check(?) WHERE NOT (1 = 0`+strings.Replace(parentIn, " AND ", " OR ", 1)+`)`, args...).Scan(&deferred); err != nil {
+			return err
+		}
+		if deferred > 0 {
+			rep.ForeignKeysDeferred[sp.name] = deferred
 		}
 		if src != 0 || tgt != 0 {
 			rep.ForeignKeys[sp.name] = [2]int64{src, tgt}

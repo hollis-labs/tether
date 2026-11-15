@@ -120,6 +120,9 @@ var tableClass = map[string]Class{
 	"workstream_projects":             C, // workstream <-> project
 	"workstreams":                     C, // workstream containers
 
+	// Carried from main after the classification's snapshot.
+	"address_aliases": C, // address alias chain used to route mail (old migration 0103)
+
 	// migrate-from's bookkeeping (internal/migrate), created by the engine, not by migrations: the S0
 	// guard reads an existing tether_migration_mark as "this database was migrated".
 	"tether_migration_mark":     A,

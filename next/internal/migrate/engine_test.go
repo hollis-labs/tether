@@ -51,7 +51,7 @@ func oldFixture(t *testing.T) string {
 		exec(`INSERT INTO principals (principal_id, kind, display, token_hash, scopes_json, addresses_json, created_at) VALUES (?, 'service', 'd', ?, '[]', '[]', 't')`,
 			fmt.Sprintf("svc-%d", i), fmt.Sprintf("%064d", i))
 	}
-	exec(`DELETE FROM principals WHERE id IN (2, 5)`) // sqlite_sequence stays at 5, above max(id) 4
+	exec(`DELETE FROM principals WHERE id IN (2, 5)`)                                               // sqlite_sequence stays at 5, above max(id) 4
 	exec(`INSERT INTO settings (scope, scope_id, key, value_json) VALUES ('global', '', 'k', '1')`) // CURRENT_TIMESTAMP default
 	exec(`INSERT INTO settings (scope, scope_id, key, value_json, updated_at) VALUES ('project', 'p', 'k', '"x"', '2026-01-02 03:04:05')`)
 	exec(`INSERT INTO team_definitions (team_id, version, payload) VALUES ('team', 1, ?)`, []byte(`{"members":[]}`))
@@ -64,6 +64,10 @@ func oldFixture(t *testing.T) string {
 			fmt.Sprintf("m-%03d", i), fmt.Sprintf("body %d ✓", i), fmt.Sprintf("2026-01-01T00:%02d:00Z", i%60))
 	}
 	exec(`DELETE FROM messages WHERE id IN ('m-007', 'm-050', 'm-120')`) // rowid gaps, including the newest
+	// A group message: its parent (registry_entries) is in a later family, so in the target its foreign
+	// key is unresolved until that family lands. Deferred, not a problem.
+	exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at) VALUES ('grp', 'group', 'g', 't', 't')`)
+	exec(`INSERT INTO messages (id, kind, from_urn, to_urn, created_at, group_urn, group_seq) VALUES ('m-grp', 'notice', 'f', 'grp', 'c', 'grp', 1)`)
 	return path
 }
 
@@ -146,7 +150,7 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 				t.Errorf("%s: counts %v", table, c)
 			}
 		}
-		if rep.Counts["messages"][0] != 117 || rep.Counts["logical_agents"][0] != 25 {
+		if rep.Counts["messages"][0] != 118 || rep.Counts["logical_agents"][0] != 25 {
 			t.Fatalf("fixture counts: %v", rep.Counts)
 		}
 		// Carried identity: messages.seq is the old rowid, gaps included; principals keep their ids.
@@ -170,6 +174,9 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 			if fk := rep.ForeignKeys["worker_mail_grants"]; fk != [2]int64{1, 1} {
 				t.Errorf("worker_mail_grants FK violations = %v, want the source's one orphan, kept", fk)
 			}
+			if got := rep.ForeignKeysDeferred["messages"]; got != 1 {
+				t.Errorf("messages deferred FK violations = %d, want 1 (the group's registry entry is a later family)", got)
+			}
 			if rep.Integrity != "ok" {
 				t.Errorf("integrity %q", rep.Integrity)
 			}
@@ -180,8 +187,8 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 
 		final := mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 7}))
 		for _, c := range final.Copy {
-			if c.Recopied != 0 {
-				t.Errorf("final over an unchanged copy re-copied %d ranges of %s", c.Recopied, c.Table)
+			if c.Written != 0 {
+				t.Errorf("final over an unchanged copy wrote %d ranges of %s", c.Written, c.Table)
 			}
 		}
 		var state string
@@ -248,7 +255,7 @@ func TestMigrateFromFindsAndRepairsDrift(t *testing.T) {
 		final := mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
 		recopied := 0
 		for _, c := range final.Copy {
-			recopied += c.Recopied
+			recopied += c.Written
 		}
 		if recopied != 3 {
 			t.Errorf("final re-copied %d ranges, want 3", recopied)
@@ -267,7 +274,7 @@ func TestMigrateFromRefusesShapeMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`ALTER TABLE workers ADD COLUMN retired_at TEXT`); err != nil {
+	if _, err := db.Exec(`ALTER TABLE workers ADD COLUMN not_in_target TEXT`); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.Close()
@@ -278,7 +285,7 @@ func TestMigrateFromRefusesShapeMismatch(t *testing.T) {
 	defer func() { _ = src.Close() }()
 	tgt := storetest.Raw(t, gostore.DriverSQLite)
 	_, err = New(src, path, tgt).Run(context.Background(), Options{Phase: PhaseBulk})
-	if err == nil || !strings.Contains(err.Error(), "workers.retired_at") {
+	if err == nil || !strings.Contains(err.Error(), "workers.not_in_target") {
 		t.Fatalf("err = %v, want the unmapped source column named", err)
 	}
 	if got := queryInt(t, tgt, `SELECT count(*) FROM messages`); got != 0 {

@@ -18,8 +18,8 @@ type rangeResult struct {
 	// The range is (Lo, Hi]; an empty Lo is the start, an empty Hi the end.
 	Lo      string `json:"lo,omitempty"`
 	Hi      string `json:"hi,omitempty"`
-	Rows    int64  `json:"rows"`         // source rows in the range
-	Changed bool   `json:"changed"`      // the target range differed from the source
+	Rows    int64  `json:"rows"`    // source rows in the range
+	Changed bool   `json:"changed"` // the target range differed from the source
 }
 
 // TableReport is what one table's sync or verification found.
@@ -27,7 +27,7 @@ type TableReport struct {
 	Table      string        `json:"table"`
 	Rows       int64         `json:"rows"`
 	Ranges     int           `json:"ranges"`
-	Recopied   int           `json:"recopied_ranges"`
+	Written    int           `json:"written_ranges"`              // ranges copied or re-copied (on a fresh target, every non-empty one)
 	Mismatched []rangeResult `json:"mismatched_ranges,omitempty"` // verification only
 	Digest     string        `json:"digest"`
 	Seconds    float64       `json:"seconds"`
@@ -77,7 +77,7 @@ func (w *walker) run(ctx context.Context) (TableReport, error) {
 		rep.Rows += rr.Rows
 		if changed {
 			if w.sync {
-				rep.Recopied++
+				rep.Written++
 			} else {
 				rep.Mismatched = append(rep.Mismatched, rr)
 			}

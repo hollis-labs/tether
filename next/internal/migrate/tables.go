@@ -190,7 +190,7 @@ func (sp tableSpec) kinds() []kind {
 func quote(id string) string { return `"` + strings.ReplaceAll(id, `"`, `""`) + `"` }
 
 // selectList renders the column list for reading sp from the source or the target. SQLite returns a
-// TIMESTAMP- or DATETIME-declared column as time.Time; `col || ''` reads the stored text instead, byte for
+// TIMESTAMP- or DATETIME-declared column as time.Time; `col || ”` reads the stored text instead, byte for
 // byte (the CASE keeps a non-text value as it is).
 func (sp tableSpec) selectList(source bool) string {
 	parts := make([]string, 0, len(sp.cols))

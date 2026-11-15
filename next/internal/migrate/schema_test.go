@@ -132,9 +132,16 @@ func readOld(t *testing.T) []oldMigration {
 	return out
 }
 
-// buildOld applies the vendored migrations the way the old migrator does: its ledger table first,
+// squashedAt is the old migration 00001_schema.sql squashes (main f6c37bfa). The vendored files after it
+// are carried from main as 00003 onwards, one migration per dialect (carry ledger).
+const squashedAt = 101
+
+// buildOld applies every vendored migration the way the old migrator does: its ledger table first,
 // then each file as one multi-statement Exec inside its own transaction, in version order.
-func buildOld(t *testing.T) *sql.DB {
+func buildOld(t *testing.T) *sql.DB { return buildOldTo(t, 0) }
+
+// buildOldTo is buildOld up to and including version upTo (0 for all).
+func buildOldTo(t *testing.T, upTo int) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "old.db"))
 	if err != nil {
@@ -150,6 +157,9 @@ func buildOld(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	for _, m := range readOld(t) {
+		if upTo > 0 && m.version > upTo {
+			break
+		}
 		tx, err := db.Begin()
 		if err != nil {
 			t.Fatal(err)
@@ -322,7 +332,7 @@ func generated(o object, all []object) bool {
 func TestSchemaEqualsOld(t *testing.T) {
 	old := buildOld(t)
 	if *update {
-		writeSchema(t, old)
+		writeSchema(t, buildOldTo(t, squashedAt))
 	}
 	nw := buildNew(t)
 	oldObjs, newObjs := objects(t, old), objects(t, nw)

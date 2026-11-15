@@ -55,21 +55,25 @@ type Options struct {
 
 // Report is the result of a run, kept with the cutover record (JSON).
 type Report struct {
-	Phase           Phase                 `json:"phase"`
-	SourceSHA256    string                `json:"source_sha256"`
-	SourceUnchanged bool                  `json:"source_unchanged"`
-	Copy            []TableReport         `json:"copy"`
-	Verify          []TableReport         `json:"verify"`
-	Counts          map[string][2]int64   `json:"counts"`                 // source, target
-	Sequences       map[string][2]int64   `json:"sequences,omitempty"`    // source, target (SQLite)
-	ForeignKeys     map[string][2]int64   `json:"foreign_keys,omitempty"` // violations: source, target (SQLite)
-	Integrity       string                `json:"integrity,omitempty"`
-	MessagesSeq     string                `json:"messages_seq"`
-	Problems        []string              `json:"problems,omitempty"`
-	Mark            string                `json:"mark"`
-	CopySeconds     float64               `json:"copy_seconds"`
-	VerifySeconds   float64               `json:"verify_seconds"`
-	RowsPerSecond   map[string]float64    `json:"rows_per_second"`
+	Phase           Phase               `json:"phase"`
+	SourceSHA256    string              `json:"source_sha256"`
+	SourceUnchanged bool                `json:"source_unchanged"`
+	Copy            []TableReport       `json:"copy"`
+	Verify          []TableReport       `json:"verify"`
+	Counts          map[string][2]int64 `json:"counts"`                 // source, target
+	Sequences       map[string][2]int64 `json:"sequences,omitempty"`    // source, target (SQLite)
+	ForeignKeys     map[string][2]int64 `json:"foreign_keys,omitempty"` // violations: source, target (SQLite)
+	// ForeignKeysDeferred counts target violations whose parent table is in a family not copied yet.
+	ForeignKeysDeferred map[string]int64 `json:"foreign_keys_deferred,omitempty"`
+	// HashSeconds is the time spent hashing the source, before and after; CopySeconds and VerifySeconds exclude it.
+	HashSeconds   float64            `json:"hash_seconds"`
+	Integrity     string             `json:"integrity,omitempty"`
+	MessagesSeq   string             `json:"messages_seq"`
+	Problems      []string           `json:"problems,omitempty"`
+	Mark          string             `json:"mark"`
+	CopySeconds   float64            `json:"copy_seconds"`
+	VerifySeconds float64            `json:"verify_seconds"`
+	RowsPerSecond map[string]float64 `json:"rows_per_second"`
 }
 
 // OK is true when the run verified with no problem.
@@ -144,10 +148,12 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		progress = func(string, ...any) {}
 	}
 	rep := &Report{Phase: opt.Phase, Counts: map[string][2]int64{}, RowsPerSecond: map[string]float64{}}
+	hashStart := time.Now()
 	sum, err := FileSHA256(e.srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("hash source: %w", err)
 	}
+	rep.HashSeconds += time.Since(hashStart).Seconds()
 	rep.SourceSHA256 = sum
 	if err := e.ensureBookkeeping(ctx); err != nil {
 		return nil, err
@@ -183,7 +189,7 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		if tr.Seconds > 0 {
 			rep.RowsPerSecond[sp.name] = float64(tr.Rows) / tr.Seconds
 		}
-		progress("copy %-30s %9d rows %5d ranges %5d re-copied %7.2fs", sp.name, tr.Rows, tr.Ranges, tr.Recopied, tr.Seconds)
+		progress("copy %-30s %9d rows %5d ranges %5d written %7.2fs", sp.name, tr.Rows, tr.Ranges, tr.Written, tr.Seconds)
 	}
 	if err := e.carrySequences(ctx, tables); err != nil {
 		_ = e.enableTriggers(ctx)
@@ -198,16 +204,17 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	if err := e.verify(ctx, specs, batch, rep, progress); err != nil {
 		return nil, err
 	}
+	rep.VerifySeconds = time.Since(started).Seconds() // the source hash after the run is in HashSeconds
+	hashStart = time.Now()
 	after, err := FileSHA256(e.srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("hash source: %w", err)
 	}
+	rep.HashSeconds += time.Since(hashStart).Seconds()
 	rep.SourceUnchanged = after == sum
 	if !rep.SourceUnchanged {
 		rep.Problems = append(rep.Problems, "the source changed during the run")
 	}
-	rep.VerifySeconds = time.Since(started).Seconds()
-
 	state := MarkBulk
 	if opt.Phase == PhaseFinal {
 		state = MarkComplete
