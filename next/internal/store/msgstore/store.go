@@ -37,7 +37,8 @@ var (
 
 // Store is the messaging tables' class C store.
 type Store struct {
-	c *store.Handle
+	all *store.Stores
+	c   *store.Handle
 	// Now is the store's clock (time.Now outside tests).
 	Now func() time.Time
 	// NewMessageID mints a message id (UUIDv7, as the old store).
@@ -46,7 +47,7 @@ type Store struct {
 
 // New returns the store over the class handles.
 func New(s *store.Stores) *Store {
-	return &Store{c: s.C(), Now: time.Now, NewMessageID: func() (string, error) {
+	return &Store{all: s, c: s.C(), Now: time.Now, NewMessageID: func() (string, error) {
 		id, err := uuid.NewV7()
 		return id.String(), err
 	}}
