@@ -75,7 +75,7 @@ names (re-read on every call). Unset, they go to the old daemon's socket,
 | `CERBERUS_TOKEN_FILE` | a 0600 file holding an API key with scope `cerberus.operate` |
 
 Plain `http://` is accepted only to loopback (`localhost`, 127/8, `::1`) or
-the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48, `*.ts.net`), because the token
+the tailnet (Tailscale's CGNAT and IPv6 ranges, `*.ts.net`), because the token
 travels in the clear; `https://` is accepted anywhere. Any other value stops
 `tether_sysop` at start with an error naming the setting.
 

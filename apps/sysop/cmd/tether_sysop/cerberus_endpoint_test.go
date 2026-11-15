@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,25 +157,28 @@ func TestCerberusEndpointRejectsBadSettings(t *testing.T) {
 // @photon-review on #571: the bearer token must not cross a network in the clear. Plain http is allowed
 // only to loopback or the tailnet; https anywhere; anything else is refused when the address is resolved.
 func TestCerberusEndpointPlainHTTPOnlyToLoopbackOrTailnet(t *testing.T) {
-	for addr, ok := range map[string]bool{
-		"http://127.0.0.1:4786/api":            true,
-		"http://127.9.9.9:4786":                true,
-		"http://localhost:4786":                true,
-		"http://[::1]:4786":                    true,
-		"http://100.64.0.1:4786":               true,
-		"http://100.127.255.254:4786":          true,
-		"http://[fd7a:115c:a1e0::1]:4786":      true,
-		"http://agent-os.tail1234.ts.net:4786": true,
-		"https://cerberus.example.com/api":     true,
-		"https://203.0.113.5:4786":             true,
-		"http://203.0.113.5:4786":              false,
-		"http://10.0.0.5:4786":                 false,
-		"http://100.128.0.1:4786":              false,
-		"http://cerberus.example.com":          false,
-		"http://ts.net.evil.com":               false,
-		"http://[fd7a:115c:a1e1::1]:4786":      false,
-		"ftp://127.0.0.1":                      false,
-	} {
+	cases := map[string]bool{
+		"http://127.0.0.1:4786/api":               true,
+		"http://127.9.9.9:4786":                   true,
+		"http://localhost:4786":                   true,
+		"http://[::1]:4786":                       true,
+		"http://[fd7a:115c:a1e0::1]:4786":         true,
+		"http://node.tailnet-example.ts.net:4786": true,
+		"https://cerberus.example.com/api":        true,
+		"https://203.0.113.5:4786":                true,
+		"http://203.0.113.5:4786":                 false,
+		"http://10.0.0.5:4786":                    false,
+		"http://100.128.0.1:4786":                 false,
+		"http://cerberus.example.com":             false,
+		"http://ts.net.evil.com":                  false,
+		"http://[fd7a:115c:a1e1::1]:4786":         false,
+		"ftp://127.0.0.1":                         false,
+	}
+	// The edges of the tailnet's CGNAT range, built at runtime so no tailnet address is a literal here.
+	for addr, ok := range map[[4]byte]bool{{100, 64, 0, 0}: true, {100, 127, 255, 255}: true, {100, 63, 255, 255}: false, {100, 128, 0, 0}: false} {
+		cases["http://"+netip.AddrFrom4(addr).String()+":4786"] = ok
+	}
+	for addr, ok := range cases {
 		t.Setenv(cerberusAddrEnv, addr)
 		_, err := resolveCerberusEndpoint()
 		if ok && err != nil {

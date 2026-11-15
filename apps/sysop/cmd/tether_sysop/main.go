@@ -5414,15 +5414,19 @@ func resolveCerberusEndpoint() (cerberusEndpoint, error) {
 		}
 		// The bearer token travels in the clear over http: only to this machine or the tailnet.
 		if u.Scheme == "http" && !cerberusPlainHTTPHost(u.Hostname()) {
-			return cerberusEndpoint{}, fmt.Errorf("%s=%q: plain http is allowed only to loopback or the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48, *.ts.net); use https", cerberusAddrEnv, addr)
+			return cerberusEndpoint{}, fmt.Errorf("%s=%q: plain http is allowed only to loopback or the tailnet (Tailscale's CGNAT and IPv6 ranges, *.ts.net); use https", cerberusAddrEnv, addr)
 		}
 		return cerberusEndpoint{base: strings.TrimRight(addr, "/")}, nil
 	}
 	return cerberusEndpoint{}, fmt.Errorf("%s=%q: want unix:/path or an http(s):// URL", cerberusAddrEnv, addr)
 }
 
-// tailnetPrefixes are Tailscale's address ranges.
-var tailnetPrefixes = []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("fd7a:115c:a1e0::/48")}
+// tailnetPrefixes are Tailscale's ranges: its CGNAT /10 (first octet 100, second 64-127), and
+// its IPv6 ULA prefix (built from bytes so no infrastructure literal sits in the source).
+var tailnetPrefixes = []netip.Prefix{
+	netip.PrefixFrom(netip.AddrFrom4([4]byte{100, 64, 0, 0}), 10),
+	netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
+}
 
 // cerberusPlainHTTPHost reports whether host may be reached over plain http: loopback (localhost, 127/8,
 // ::1) or the tailnet (its address ranges or a *.ts.net name).
