@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"reflect"
 	"syscall"
 	"testing"
@@ -20,23 +21,39 @@ func TestStopPolicyChild(t *testing.T) {
 		return
 	}
 	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
+	if ready := os.Getenv("TETHER_REAPER_READY"); ready != "" {
+		_ = os.WriteFile(ready, nil, 0o600)
+	}
 	for {
 		time.Sleep(time.Hour)
 	}
 }
 
 func TestStopPolicyEscalatesAndRetires(t *testing.T) {
+	var ready string
 	p, r := placedHost(t, func(_ *Config, s *shim.Launch) {
 		exe, err := os.Executable()
 		if err != nil {
 			t.Fatal(err)
 		}
+		ready = filepath.Join(s.Cwd, "reaper-ready")
 		s.Argv = []string{exe, "-test.run=^TestStopPolicyChild$"}
-		s.Env = append(s.Env, "TETHER_REAPER_CHILD=1")
+		s.Env = append(s.Env, "TETHER_REAPER_CHILD=1", "TETHER_REAPER_READY="+ready)
 	})
 	// A real stubborn child, rather than an implementation-mirroring mock,
-	// proves the provider receives each escalating signal and is gone.
-	time.Sleep(100 * time.Millisecond)
+	// proves the provider receives each escalating signal and is gone. Stop only
+	// once it has said it ignores SIGINT and SIGTERM: a fixed sleep let the
+	// request_stop signal kill it first under load (CW-20261115-0074).
+	deadline := time.Now().Add(exitWait)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stubborn child never became ready")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	var stages []string
 	err := p.StopWithPolicy(context.Background(), r, StopPolicy{
 		RequestGrace: 50 * time.Millisecond, TerminateGrace: 50 * time.Millisecond, KillGrace: time.Second,
