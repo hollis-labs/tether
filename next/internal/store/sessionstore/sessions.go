@@ -6,8 +6,8 @@
 // The store speaks rows. What the old store did with domain types on the way in (resolving the
 // launch plan's route, launch.Plan JSON) is the session slice's (S9): the caller passes the plan
 // and route as JSON. Nullable columns that reference another table are stored NULL for an empty
-// string (next/ enforces SQLite foreign keys, gap CW-20261115-0015, so an empty-string reference
-// would fail).
+// string, as the old store's NULL-able inserts did (foreign keys are off on both dialects, as in
+// the live store; internal/sqlitefk).
 package sessionstore
 
 import (
@@ -27,6 +27,11 @@ import (
 
 // ErrSessionNotFound is returned for an unknown session id.
 var ErrSessionNotFound = errors.New("session not found")
+
+// ErrIdempotencyKeyTaken is returned by CreateSession when another create claimed the same
+// (principal, key) first; nothing is written. The caller re-reads the key (GetSessionIdempotency)
+// and replays or refuses, as for a key found before the create.
+var ErrIdempotencyKeyTaken = errors.New("record idempotency key: key already claimed")
 
 // Store is the sessions' class C store.
 type Store struct {
@@ -159,6 +164,9 @@ func (s *Store) CreateSession(ctx context.Context, row SessionRow, planJSON stri
 			if _, err := tx.ExecContext(ctx, rebind(tx, `INSERT INTO session_idempotency
  (principal_id, key, operation, request_digest, session_id, resolved_parent_session_id) VALUES (?, ?, ?, ?, ?, ?)`),
 				key.PrincipalID, key.Key, key.Operation, key.RequestDigest, row.ID, nullText(key.ResolvedParentSessionID)); err != nil {
+				if gostore.IsUniqueViolation(err) {
+					return ErrIdempotencyKeyTaken
+				}
 				return fmt.Errorf("record idempotency key: %w", err)
 			}
 		}

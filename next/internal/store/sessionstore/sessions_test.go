@@ -13,18 +13,6 @@ import (
 
 var t0 = time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
 
-// seedAgent writes the class A logical agent a session references (next/ enforces SQLite foreign
-// keys, gap CW-20261115-0015).
-func seedAgent(t *testing.T, s *store.Stores, id string) {
-	t.Helper()
-	if err := s.A().WriteTx(context.Background(), func(ctx context.Context, tx store.Tx) error {
-		_, err := tx.ExecContext(ctx, tx.Dialect().Rebind(`INSERT INTO logical_agents (id, created_at, updated_at) VALUES (?, ?, ?)`), id, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func newStore(s *store.Stores) (*sessionstore.Store, *storetest.Clock) {
 	ss := sessionstore.New(s)
 	clock := storetest.NewClock(t0)
@@ -40,7 +28,6 @@ func TestSessionsCore(t *testing.T) {
 	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
 		ctx := context.Background()
 		ss, clock := newStore(s)
-		seedAgent(t, s, "agent")
 		parent := row("ses-parent")
 		parent.App, parent.RouteJSON = "tangent", `{"channel":"news"}`
 		if _, err := ss.CreateSession(ctx, parent, `{"plan":1}`, nil); err != nil {
@@ -63,6 +50,12 @@ func TestSessionsCore(t *testing.T) {
 		}
 		if plan, _ := ss.LaunchPlanJSON(ctx, "ses-child"); plan != "null" {
 			t.Fatalf("plan %q", plan)
+		}
+		if _, err := ss.CreateSession(ctx, row("ses-dup"), "", key); !errors.Is(err, sessionstore.ErrIdempotencyKeyTaken) {
+			t.Fatalf("second claim of a key: %v", err)
+		}
+		if _, err := ss.GetSession(ctx, "ses-dup"); !errors.Is(err, sessionstore.ErrSessionNotFound) {
+			t.Fatalf("a refused create wrote its session: %v", err)
 		}
 		if rec, _ := ss.GetSessionIdempotency(ctx, "msg://agent/x/y", "k1"); rec == nil || rec.SessionID != "ses-child" {
 			t.Fatalf("idempotency %+v", rec)
