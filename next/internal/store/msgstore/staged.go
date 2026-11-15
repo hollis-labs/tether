@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	gostore "github.com/hollis-labs/libs/core/store"
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/next/internal/store"
@@ -100,15 +101,16 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	return saved, nil
 }
 
-// ErrStagedBodyUnstorable is returned for a turn output body holding a NUL byte or invalid UTF-8:
-// Postgres's text refuses both, so they are refused on both dialects (the old store kept them on
-// SQLite). A JSON body's \u0000 escape is plain text and is stored.
+// ErrStagedBodyUnstorable is returned on Postgres for a turn output body holding a NUL byte or
+// invalid UTF-8, which Postgres's text cannot hold. SQLite stores such a body as the old store did
+// (parity: the cutover runs on SQLite). A JSON body's \u0000 escape is plain text and is stored on
+// both. Moving class C to Postgres needs a carry plan for existing rows (conversion notes).
 var ErrStagedBodyUnstorable = errors.New("stage turn output: body holds a NUL byte or invalid UTF-8")
 
 // insertStaged writes the staged row unless the id exists (INSERT OR IGNORE in the old store) and
 // returns what is stored under the id.
 func (s *Store) insertStaged(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
-	if bytes.IndexByte(env.Payload, 0) >= 0 || !utf8.Valid(env.Payload) {
+	if s.c.Dialect().Name() == gostore.DriverPostgres && (bytes.IndexByte(env.Payload, 0) >= 0 || !utf8.Valid(env.Payload)) {
 		return messaging.Envelope{}, ErrStagedBodyUnstorable
 	}
 	meta, err := json.Marshal(env.Metadata)

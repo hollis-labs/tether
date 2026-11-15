@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	gostore "github.com/hollis-labs/libs/core/store"
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/next/internal/store"
@@ -145,13 +147,6 @@ func TestStagedTurnOutputs(t *testing.T) {
 		if _, err := ms.StageTurnOutput(ctx, messaging.Envelope{From: addr(t, alice)}); err == nil {
 			t.Fatal("a non-session sender was accepted")
 		}
-		for _, body := range []string{"a\x00b", "a\xffb"} {
-			if _, err := ms.StageTurnOutput(ctx, messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "ses-1"},
-				Payload: json.RawMessage(body), ContentType: "text/plain", Metadata: map[string]string{"turn_id": "turn-x", "kind": "final"}}); !errors.Is(err, msgstore.ErrStagedBodyUnstorable) {
-				t.Fatalf("body %q: %v", body, err)
-			}
-		}
-
 		if got, err := ms.StagedTurnOutput(ctx, a.ID); err != nil || got.To != msgstore.TurnOutputAddress || got.ThreadID != "ses-1" {
 			t.Fatalf("staged %+v %v", got, err)
 		}
@@ -335,6 +330,31 @@ func TestConcurrentCheckThenAct(t *testing.T) {
 		}
 		if pending, _ := es.Pending(ctx, 0, 0); len(pending) != 1 {
 			t.Fatalf("audit events %d, want 1", len(pending))
+		}
+	})
+}
+
+// TestStagedRawBytes: a raw NUL byte or invalid UTF-8 in a turn output is stored as before on
+// SQLite (parity) and refused, typed, on Postgres, whose text cannot hold it.
+func TestStagedRawBytes(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		ms, _ := newStore(s)
+		for i, body := range []string{"a\x00b", "a\xffb"} {
+			got, err := ms.StageTurnOutput(ctx, messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "ses-raw"},
+				Payload: json.RawMessage(body), ContentType: "text/plain", Metadata: map[string]string{"turn_id": fmt.Sprint("turn-raw-", i), "kind": "final"}})
+			if s.C().Dialect().Name() == gostore.DriverPostgres {
+				if !errors.Is(err, msgstore.ErrStagedBodyUnstorable) {
+					t.Fatalf("postgres, body %q: %v", body, err)
+				}
+				continue
+			}
+			if err != nil || string(got.Payload) != body {
+				t.Fatalf("sqlite, body %q: stored %q %v", body, got.Payload, err)
+			}
+			if back, err := ms.StagedTurnOutput(ctx, got.ID); err != nil || string(back.Payload) != body {
+				t.Fatalf("sqlite, body %q read back %q %v", body, back.Payload, err)
+			}
 		}
 	})
 }

@@ -122,6 +122,9 @@ Known differences between the dialects, handled in the slices that port the quer
 - **Forum search.** Search queries differ per dialect: FTS5 `MATCH` against `tsquery` (S11).
 - **Statement time.** `tether_now()` and `DEFAULT CURRENT_TIMESTAMP` use the statement start time, as SQLite's `'now'` does.
 
+Items to settle before class C moves to Postgres (the S2 query port keeps SQLite parity until then):
+- **Staged turn outputs with a NUL byte or invalid UTF-8** (S2b-2c, #580). Today's store keeps such a body, and on SQLite the port still does (the cutover runs on SQLite). Postgres's `text` cannot hold either, so on Postgres `StageTurnOutput` refuses them with `ErrStagedBodyUnstorable`. Before class C moves, decide between encoding such bodies and the refusal. Existing staged rows that hold such bytes need a carry plan in `migrate-from` (S12), which cannot copy them as they are into `text`. A JSON body's `\u0000` escape is plain text and is unaffected.
+
 Framework items:
 - **Version tables.** Substrate #44 (named stores, one goose version table per store) is not in the pinned Substrate (`fe86d444`). Both sets use the default `goose_db_version` until the pin moves. The class-B and class-C stores need #44's per-store table before they move.
 - **Extensions.** The Postgres tests use go-store's `storetest`, which creates the `pg_trgm` and `unaccent` extensions on the test server. The server needs them, as stock Postgres 17 images provide.
