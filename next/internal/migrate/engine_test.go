@@ -66,6 +66,21 @@ func oldFixture(t *testing.T) string {
 	}
 	exec(`DELETE FROM messages WHERE id IN ('m-007', 'm-050', 'm-120')`)                                                                   // rowid gaps, including the newest
 	exec(`INSERT INTO messages (id, kind, from_urn, to_urn, payload, created_at) VALUES ('m-blob', 'notice', 'f', 't', X'626C6F62', 'c')`) // a blob in a TEXT column
+	// Class B: events with an AUTOINCREMENT mark above max(id) and pending and compacted rows, the
+	// identity audit, proxy events, ingest digests and turn inputs.
+	for i := 1; i <= 45; i++ {
+		exec(`INSERT INTO events (scope, at, kind, event_id, pending, payload_json) VALUES ('session', ?, 'session.output', ?, ?, ?)`,
+			fmt.Sprintf("2026-11-%02dT00:00:00Z", 1+i%14), fmt.Sprintf("evt-%03d", i), i%9 == 0, fmt.Sprintf(`{"n":%d,"s":"é"}`, i))
+	}
+	exec(`UPDATE events SET payload_json = NULL, payload_digest = 'withheld' WHERE id IN (2, 3)`)
+	exec(`DELETE FROM events WHERE id IN (1, 45)`) // retention at the start, and the newest
+	for i := 1; i <= 30; i++ {
+		exec(`INSERT INTO identity_audit (at, principal_id, mode, authentication, method, route, verified) VALUES (?, 'p', 'observe', 'token', 'GET', '/x', ?)`,
+			fmt.Sprintf("2026-11-14T00:%02d:00Z", i), i%2)
+	}
+	exec(`INSERT INTO proxy_events (server, tool_name, duration_ms, ok, timestamp) VALUES ('s', 't', 12, 0, 'ts')`)
+	exec(`INSERT INTO event_ingest_digests (event_id, digest, app, at) VALUES ('evt-001', 'd', 'a', 't')`)
+	exec(`INSERT INTO turn_inputs (input_id, session_id, seq, source, sender_class, basis, state, submitted_at) VALUES ('ti-1', 's', 1, 'chat_send', 'operator', 'none', 'accepted', 't')`)
 	// A group message: its parent (registry_entries) is in a later family, so in the target its foreign
 	// key is unresolved until that family lands. Deferred, not a problem.
 	exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at) VALUES ('grp', 'group', 'g', 't', 't')`)
@@ -173,6 +188,9 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 			if got := queryInt(t, tgt, `SELECT seq FROM sqlite_sequence WHERE name = 'principals'`); got != 5 {
 				t.Errorf("principals sqlite_sequence = %d, want 5 (carried, above max(id) 4)", got)
 			}
+			if got := queryInt(t, tgt, `SELECT seq FROM sqlite_sequence WHERE name = 'events'`); got != 45 {
+				t.Errorf("events sqlite_sequence = %d, want 45 (the deleted newest id is never reissued)", got)
+			}
 			if fk := rep.ForeignKeys["worker_mail_grants"]; fk != [2]int64{1, 1} {
 				t.Errorf("worker_mail_grants FK violations = %v, want the source's one orphan, kept", fk)
 			}
@@ -197,7 +215,7 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 		if err := tgt.Reader().QueryRowContext(ctx, `SELECT state FROM tether_migration_mark WHERE id = 1`).Scan(&state); err != nil || state != MarkComplete {
 			t.Fatalf("mark = %q, %v", state, err)
 		}
-		if got := queryInt(t, tgt, `SELECT count(*) FROM tether_migration_tables`); got != int64(len(FamilyS12a)) {
+		if got := queryInt(t, tgt, `SELECT count(*) FROM tether_migration_tables`); got != int64(len(Families["all"])) {
 			t.Errorf("per-table marks: %d", got)
 		}
 		// After the migration, a new principal continues past the carried mark (5), never reissuing an id.

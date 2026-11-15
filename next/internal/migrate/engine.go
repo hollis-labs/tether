@@ -46,10 +46,25 @@ var FamilyS12a = []string{
 	"messages",
 }
 
+// FamilyS12b is the class B family (CW-20261115-0042): events, the identity audit and the telemetry tables.
+// The event-identity seed and high-water mark are class A (FamilyS12a); events' sqlite_sequence is carried
+// with events.
+var FamilyS12b = []string{
+	"events", "identity_audit", "proxy_events", "event_ingest_digests", "retention_audit",
+	"turn_inputs", "session_usage", "team_activation_evidence",
+}
+
+// Families are the table families migrate-from knows, by name, in copy order. "all" is every one of them.
+var Families = map[string][]string{
+	"a":   FamilyS12a,
+	"b":   FamilyS12b,
+	"all": append(append([]string{}, FamilyS12a...), FamilyS12b...),
+}
+
 // Options configure a run.
 type Options struct {
 	Phase  Phase
-	Tables []string // in copy order; FamilyS12a when empty
+	Tables []string // in copy order; Families["all"] when empty
 	Batch  int      // rows per key range; 2000 when 0
 	// SourceCheck is the check run on the source before the copy: "full" (PRAGMA integrity_check, the
 	// default), "quick" (PRAGMA quick_check: no index cross-check) or "none" (the copy was checked when it
@@ -201,7 +216,7 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	}
 	tables := opt.Tables
 	if len(tables) == 0 {
-		tables = FamilyS12a
+		tables = Families["all"]
 	}
 	batch := opt.Batch
 	if batch <= 0 {
@@ -342,7 +357,7 @@ func (e *Engine) walk(ctx context.Context, sp tableSpec, batch int, sync bool) (
 func (e *Engine) Verify(ctx context.Context, opt Options) (*Report, error) {
 	tables := opt.Tables
 	if len(tables) == 0 {
-		tables = FamilyS12a
+		tables = Families["all"]
 	}
 	batch := opt.Batch
 	if batch <= 0 {
