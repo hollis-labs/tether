@@ -16,9 +16,8 @@ permissions:
 jobs:
   next:
     name: next/ vet / pins / test-race / lint / scan
-    # Of the edited events, only a base change needs a run; title and body edits do not.
-    if: github.event.action != 'edited' || github.event.changes.base != null
-    # Job-level, so a skipped title/body edit never cancels a running gate.
+    # Every edited event reruns the gate (a title or body edit too): a skipped run would post a newer
+    # passing check over an earlier failure. The concurrency group restarts it instead.
     concurrency:
       group: next-${{ github.ref }}
       cancel-in-progress: true
