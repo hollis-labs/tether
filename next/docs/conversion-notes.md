@@ -184,6 +184,15 @@ The guard (`legacyguard.Check`) reads only `state`. `tether migrate-from` boots 
 - **Digests** tag each value by its own storage class, so text and a blob of the same bytes differ. On SQLite every value keeps its class through the copy. A Postgres target forces some conversions (text in a bytea column, bytes in a text column); these are applied to the source row before it is digested, and counted per table and column in the report (`conversions`).
 - **Reused rowids:** when a source rowid was freed and reused by a row in an earlier key range, the stale holder in the target is deleted first, and its own range is re-copied.
 
+**Ranges, workers and the window** (S12b):
+- **Fixed-width key ranges.** A table keyed by a single integer that is its rowid (`events`, `identity_audit` and the other id tables) is walked in fixed-width key ranges (`--batch` is the width) by parallel workers (`--workers`; the CPUs, at most 8). Fixed boundaries are the same in every snapshot, so an insert or a retention delete changes only the ranges that hold it.
+- **Other tables** are walked sequentially in ranges of `--batch` rows.
+- **Stored digests.** After a verified run, the target's range digests are stored in `tether_migration_ranges` (class A). The next run takes them into memory and clears the table, so a run that stops part way leaves none behind. A range whose source digest equals its stored digest is not re-read on the target, so the final run reads only the source for the unchanged ranges. The trade-off: between runs only migrate-from may write the target. A change made by anything else in between is found by `--verify`, which walks every range on both sides, and not by the final run.
+- **Verification after a run** rechecks only the ranges the run wrote, in parallel (`verify_mode: incremental`). `--verify` walks every range (`full`).
+- **Target check.** `--target-check full|quick|none` sets the check run on the result. The window run can use `none` and run `integrity_check` read-only after the new hub starts.
+- **Hashing.** The source is hashed concurrently with the copy and the verification.
+- **Families.** `--family a|b|all` (default `all`). A complete database is never rewritten, so the final run must cover every family.
+
 **Triggers are off during the copy.** A copied row is history, not a new event. Without this, inserting `messages` would write journal rows, and `principals` would be re-checked against today's sessions.
 - SQLite: each trigger on a copied table is saved in `tether_migration_triggers`, dropped, and recreated after the copy. A run that stopped mid-copy has its triggers recreated first.
 - Postgres: `ALTER TABLE ... DISABLE TRIGGER USER` per table (owner rights; `session_replication_role` would need superuser).

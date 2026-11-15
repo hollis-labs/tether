@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
+
+	gostore "github.com/hollis-labs/libs/core/store"
 
 	"github.com/hollis-labs/tether/next/internal/store"
 )
@@ -353,41 +356,95 @@ func (w *walker) freeRowids(ctx context.Context, tx store.Tx, rows [][]any) erro
 // recheck compares only the given ranges of the target with the source, after a sync wrote them. Every
 // other range was proven equal by its digest during the sync walk, and nothing else writes the target in
 // between (migrate-from holds it), so this completes the verification without a second pass over the
-// unchanged ranges (plan section 7.3, item 3).
-func (w *walker) recheck(ctx context.Context, ranges []bounds) (TableReport, error) {
+// unchanged ranges (plan section 7.3, item 3). The ranges are compared by workers in parallel, reading
+// the target through the read pool; mismatches are reported in key order.
+func (w *walker) recheck(ctx context.Context, ranges []bounds, workers int) (TableReport, error) {
 	started := time.Now()
 	rep := TableReport{Table: w.sp.name}
-	kinds := w.sp.kinds()
-	for _, b := range ranges {
-		where, args := w.rangeWhere(b.lo, b.hi)
-		//nolint:gosec // names come from the schema; values are bound
-		q := `SELECT ` + w.sp.selectList(true) + ` FROM ` + quote(w.sp.name) + where + ` ORDER BY ` + w.sp.keyOrder()
-		rows, err := w.src.QueryContext(ctx, q, args...)
-		if err != nil {
-			return rep, err
-		}
-		srcRows, err := scanAll(rows, len(w.sp.cols))
-		_ = rows.Close()
-		if err != nil {
-			return rep, err
-		}
-		if err := w.derive(srcRows); err != nil {
-			return rep, err
-		}
-		d := newRowDigest()
-		for _, r := range srcRows {
-			d.add(kinds, r)
-		}
-		changed, err := w.compare(ctx, b.lo, b.hi, d.sum(), srcRows)
-		if err != nil {
-			return rep, err
+	type result struct {
+		rows     int64
+		mismatch bool
+		err      error
+	}
+	results := make([]result, len(ranges))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for i := 0; i < max(workers, 1); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				n, differs, err := w.rangeDiffers(ctx, ranges[j])
+				results[j] = result{rows: n, mismatch: differs, err: err}
+			}
+		}()
+	}
+	for j := range ranges {
+		jobs <- j
+	}
+	close(jobs)
+	wg.Wait()
+	for j, r := range results {
+		if r.err != nil {
+			return rep, fmt.Errorf("%s: range (%s, %s]: %w", w.sp.name, renderKey(ranges[j].lo), renderKey(ranges[j].hi), r.err)
 		}
 		rep.Ranges++
-		rep.Rows += int64(len(srcRows))
-		if changed {
-			rep.Mismatched = append(rep.Mismatched, rangeResult{Lo: renderKey(b.lo), Hi: renderKey(b.hi), Rows: int64(len(srcRows)), Changed: true})
+		rep.Rows += r.rows
+		if r.mismatch {
+			rep.Mismatched = append(rep.Mismatched, rangeResult{Lo: renderKey(ranges[j].lo), Hi: renderKey(ranges[j].hi), Rows: r.rows, Changed: true})
 		}
 	}
 	rep.Seconds = time.Since(started).Seconds()
 	return rep, nil
+}
+
+// rangeDiffers reads one range on both sides (the target through the read pool) and compares digests.
+func (w *walker) rangeDiffers(ctx context.Context, b bounds) (int64, bool, error) {
+	where, args := w.rangeWhere(b.lo, b.hi)
+	read := func(q gostore.Querier, source bool) ([][]any, error) {
+		//nolint:gosec // names come from the schema; values are bound
+		rows, err := q.QueryContext(ctx, `SELECT `+w.sp.selectList(source)+` FROM `+quote(w.sp.name)+where+` ORDER BY `+w.sp.keyOrder(), args...)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		return scanAll(rows, len(w.sp.cols))
+	}
+	srcRows, err := read(sourceQuerier{w.src}, true)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := w.derive(srcRows); err != nil {
+		return 0, false, err
+	}
+	tgtRows, err := read(w.tgt.Reader(), false)
+	if err != nil {
+		return 0, false, err
+	}
+	sd, td := newRowDigest(), newRowDigest()
+	for _, r := range srcRows {
+		sd.add(w.sp.kinds(), r)
+	}
+	for _, r := range tgtRows {
+		td.add(w.sp.kinds(), r)
+	}
+	return int64(len(srcRows)), sd.sum() != td.sum(), nil
+}
+
+// sourceQuerier adapts the source *sql.DB to store.Querier for rangeDiffers (no rebinding: the source is
+// SQLite, and its queries use "?").
+type sourceQuerier struct{ db *sql.DB }
+
+func (s sourceQuerier) ExecContext(ctx context.Context, q string, a ...any) (sql.Result, error) {
+	return s.db.ExecContext(ctx, q, a...)
+}
+func (s sourceQuerier) QueryContext(ctx context.Context, q string, a ...any) (*sql.Rows, error) {
+	return s.db.QueryContext(ctx, q, a...)
+}
+func (s sourceQuerier) QueryRowContext(ctx context.Context, q string, a ...any) *sql.Row {
+	return s.db.QueryRowContext(ctx, q, a...)
+}
+func (s sourceQuerier) Dialect() gostore.Dialect {
+	d, _ := gostore.DialectFor(gostore.DriverSQLite)
+	return d
 }

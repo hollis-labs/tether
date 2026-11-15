@@ -17,7 +17,7 @@ func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *
 		var tr TableReport
 		var err error
 		if copyReports != nil {
-			tr, err = e.walker(sp, batch, false).recheck(ctx, copyReports[i].written)
+			tr, err = e.walker(sp, batch, false).recheck(ctx, copyReports[i].written, e.workers)
 			tr.Digest = copyReports[i].Digest
 			rep.VerifyMode = "incremental"
 		} else {
