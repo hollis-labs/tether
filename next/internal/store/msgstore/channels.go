@@ -60,7 +60,8 @@ type ChannelMessage struct {
 	PurgedAt *time.Time
 }
 
-// ReadChannel returns publications after since, oldest first (at most limit).
+// ReadChannel returns publications after since, oldest first (at most limit). The channel name is
+// not validated here (the old read did): the channel slice (S7) validates it before calling.
 func (s *Store) ReadChannel(ctx context.Context, name string, since int64, limit int) ([]ChannelMessage, error) {
 	return s.readChannel(ctx, name, since, limit, false)
 }
@@ -136,7 +137,8 @@ type ChannelAttach struct {
 // re-reads the message, and if it is already a publication of this channel returns it unchanged
 // (idempotent); otherwise it requires a staged, unexpired body from the session with the checked
 // kind, readdresses it to the channel, records the publication (under LockMessageSeq, so channel
-// seqs commit in order) and writes the audit event pending to the outbox.
+// seqs commit in order) and writes the audit event pending to the outbox. The caller (S7) wakes the
+// outbox after a stored attach, as the old code's EventsCommitted did (as with IngestEvent).
 func (s *Store) AttachStagedToChannel(ctx context.Context, a ChannelAttach, events *eventstore.Store) (messaging.Envelope, error) {
 	sender := messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: a.SessionID}
 	if a.MessageID == "" || a.SessionID == "" || a.Channel == "" || events == nil {
@@ -145,6 +147,12 @@ func (s *Store) AttachStagedToChannel(ctx context.Context, a ChannelAttach, even
 	target := ChannelURN(a.Channel)
 	var out messaging.Envelope
 	err := s.all.Joint(ctx, "AttachChannelMessage", func(ctx context.Context, tx store.Tx) error {
+		// Lock first, then re-read: two concurrent attaches of one output serialize here, and the
+		// second re-reads the committed publication and takes the idempotent branch instead of
+		// failing its guarded UPDATE with ErrNotFound.
+		if err := LockMessageSeq(ctx, tx); err != nil {
+			return err
+		}
 		current, staged, err := attachmentEnvelope(ctx, tx, a.MessageID)
 		if err != nil {
 			return err
@@ -167,7 +175,8 @@ func (s *Store) AttachStagedToChannel(ctx context.Context, a ChannelAttach, even
 			out = current
 			return nil
 		}
-		if len(current.Payload) == 0 || !current.CreatedAt.After(s.now().Add(-RoutingStageRetention)) {
+		// Expired as the old routingStageExpired: a zero (unparsable) created_at is not expired.
+		if len(current.Payload) == 0 || (!current.CreatedAt.IsZero() && !current.CreatedAt.After(s.now().Add(-RoutingStageRetention))) {
 			return messaging.ErrNotFound
 		}
 		if current.Metadata["kind"] != a.Kind || current.Metadata["session_id"] != a.SessionID {
@@ -180,9 +189,6 @@ func (s *Store) AttachStagedToChannel(ctx context.Context, a ChannelAttach, even
 		maps.Copy(meta, a.SetMetadata)
 		raw, err := json.Marshal(meta)
 		if err != nil {
-			return err
-		}
-		if err := LockMessageSeq(ctx, tx); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, rebind(tx, `UPDATE messages SET to_urn = ?, channel = ?, thread_id = ?, metadata = ?, routing_staged = 0

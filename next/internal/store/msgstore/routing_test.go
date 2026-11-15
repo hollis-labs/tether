@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -144,6 +145,13 @@ func TestStagedTurnOutputs(t *testing.T) {
 		if _, err := ms.StageTurnOutput(ctx, messaging.Envelope{From: addr(t, alice)}); err == nil {
 			t.Fatal("a non-session sender was accepted")
 		}
+		for _, body := range []string{"a\x00b", "a\xffb"} {
+			if _, err := ms.StageTurnOutput(ctx, messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "ses-1"},
+				Payload: json.RawMessage(body), ContentType: "text/plain", Metadata: map[string]string{"turn_id": "turn-x", "kind": "final"}}); !errors.Is(err, msgstore.ErrStagedBodyUnstorable) {
+				t.Fatalf("body %q: %v", body, err)
+			}
+		}
+
 		if got, err := ms.StagedTurnOutput(ctx, a.ID); err != nil || got.To != msgstore.TurnOutputAddress || got.ThreadID != "ses-1" {
 			t.Fatalf("staged %+v %v", got, err)
 		}
@@ -248,6 +256,85 @@ func TestA2ATasks(t *testing.T) {
 		}
 		if l, _ := ms.ListA2ATasksInStates(ctx, "TASK_STATE_WORKING"); len(l) != 0 {
 			t.Fatalf("in states %+v", l)
+		}
+	})
+}
+
+// race runs fn on n goroutines at once and returns their results.
+func race[T any](n int, fn func() (T, error)) ([]T, []error) {
+	out, errs := make([]T, n), make([]error, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			out[i], errs[i] = fn()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return out, errs
+}
+
+// TestConcurrentCheckThenAct covers the two check-then-act paths under concurrent callers (they
+// overlap on Postgres): a same-key routing reply create returns the one stored reply to every
+// caller, and concurrent attaches of one staged output all return the publication, with one audit
+// event.
+func TestConcurrentCheckThenAct(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		ms, clock := newStore(s)
+		es := eventstore.New(s)
+		es.Now = clock.Now
+		// Warm the pool, so the racers do not stagger on opening connections (one would otherwise
+		// finish before the next has a connection, and nothing would overlap).
+		warm := func() {
+			race(6, func() (struct{}, error) {
+				return struct{}{}, s.C().WriteTx(ctx, func(context.Context, store.Tx) error { time.Sleep(50 * time.Millisecond); return nil })
+			})
+		}
+		warm()
+		parent := send(t, ms, clock, op, alice)
+		in := msgstore.NewRoutingReply{From: addr(t, op), ParentID: parent.ID, Body: "hello", TargetSessionID: "ses-1", Actor: "a", IdempotencyKey: "k-race"}
+		type created struct {
+			id  string
+			new bool
+		}
+		replies, errs := race(6, func() (created, error) {
+			r, isNew, err := ms.CreateRoutingReply(ctx, in)
+			return created{r.ReplyID, isNew}, err
+		})
+		news := 0
+		for i, r := range replies {
+			if errs[i] != nil {
+				t.Fatalf("concurrent create: %v", errs[i])
+			}
+			if r.id != replies[0].id {
+				t.Fatalf("replies %+v", replies)
+			}
+			if r.new {
+				news++
+			}
+		}
+		if news != 1 {
+			t.Fatalf("%d creates stored a reply, want 1", news)
+		}
+
+		// A JSON \u0000 escape is plain text: staged, and attached, on both dialects.
+		staged := stage(t, ms, "ses-1", "turn-1", "final", `{"text":"a\u0000b"}`, nil)
+		attach := msgstore.ChannelAttach{MessageID: staged.ID, SessionID: "ses-1", Channel: "news", Kind: "final",
+			Audit: eventstore.Row{Scope: "session", SessionID: "ses-1", Kind: "session.turn.routed", PayloadJSON: `{"channel":"news"}`}}
+		warm()
+		envs, errs := race(6, func() (messaging.Envelope, error) { return ms.AttachStagedToChannel(ctx, attach, es) })
+		for i, env := range envs {
+			if errs[i] != nil || env.ID != staged.ID {
+				t.Fatalf("concurrent attach: %v %+v", errs[i], env)
+			}
+		}
+		if pending, _ := es.Pending(ctx, 0, 0); len(pending) != 1 {
+			t.Fatalf("audit events %d, want 1", len(pending))
 		}
 	})
 }

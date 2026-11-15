@@ -170,12 +170,15 @@ func (s *Store) CreateRoutingReply(ctx context.Context, in NewRoutingReply) (rep
 		initial = RoutingReplyPending
 	}
 	err = s.c.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
+		// The lock comes before the idempotency peek: on Postgres (READ COMMITTED) a concurrent create
+		// with the same key waits here, and its peek, a new statement, then sees the committed reply
+		// and returns it, instead of both peeking empty and the second failing on the unique index.
+		if err := LockMessageSeq(ctx, tx); err != nil {
+			return err
+		}
 		prior, found, err := peekRoutingReply(ctx, tx, tx.Dialect().Rebind, in)
 		if err != nil || found {
 			reply = prior
-			return err
-		}
-		if err := LockMessageSeq(ctx, tx); err != nil {
 			return err
 		}
 		now := stamp(s.now())
