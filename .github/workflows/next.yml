@@ -13,15 +13,15 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: next-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   next:
     name: next/ vet / pins / test-race / lint / scan
     # Of the edited events, only a base change needs a run; title and body edits do not.
     if: github.event.action != 'edited' || github.event.changes.base != null
+    # Job-level, so a skipped title/body edit never cancels a running gate.
+    concurrency:
+      group: next-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
