@@ -269,3 +269,14 @@ At S0, `httphost` binds `127.0.0.1:8949` (loopback; a port neither old listener 
 S4 replaces this with two listeners:
 - the unix socket at its old path;
 - the remote listener at its old loopback address, with the closed client mount list.
+
+## Store layer (S2a)
+
+`internal/store` is the only way the app reaches the database. `store.FromApp(app)` returns `*Stores`, whose handles `A()`, `B()` and `C()` reach the three storage classes (plan section 13.2). At the cutover all three wrap the one `*store.Store` that the database module opened: one write connection on the one SQLite database.
+
+- **Every write goes through `Handle.WriteTx`.** Its `Tx` attributes each statement to the table it writes (`classmap.go`), refusing a write to another class's table (`ErrCrossClassWrite`) and any statement it cannot attribute (`ErrUnclassified`). Reads are not checked.
+- **Nesting is refused.** A `WriteTx`, `Joint` or `LibraryDB` call made with a callback's ctx returns `ErrNestedWrite`: with one writer it would wait on its own caller's lock.
+- **`Stores.Joint(name, fn)` is the only cross-class write.** It is allowed for the transactions listed in `joints.go` (the classification's 19 hub transactions), each naming the slice that redesigns it before a class moves.
+- **`Stores.LibraryDB(ctx)` is the one raw `*sql.DB`.** It exists for go-messaging's tables; it is SQLite only until the library has a Postgres store.
+- **Tests:** `TestNoRawDB` keeps every other query on go-store's rebinding `Querier`. `TestTriggerCrossings` lists the triggers that reach another class.
+- **`internal/store/storetest`** gives store tests a migrated database on each dialect, with foreign keys off as in the binary.
