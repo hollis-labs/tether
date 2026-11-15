@@ -12,7 +12,7 @@
     from; nothing is lost or repeated, and a partial read is never reported as "no events".
   - **Connection:** these reads use a separate read-only connection pool (2 connections, `query_only`), never the
     writer's single connection.
-- `/health` gains `wal`:
+- `/health` gains `wal` (CW-20261114-0166):
   - `wal_bytes`: the size of the WAL file.
   - `checkpoint_seq`: the WAL header's checkpoint sequence number.
   - `last_checkpoint_age_sec`: how long that sequence has stood still. The daemon samples it every 15 s. It is a lower
