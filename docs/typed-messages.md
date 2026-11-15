@@ -121,6 +121,61 @@ The caller's address is matched in its canonical form; a seat known by two URNs
 (an alias and its `agt_` id) is matched only by the one the mail was addressed
 to. `GET /messages/pending-replies?as=` and `tether_pending_replies` list them.
 
+## Operator-attested replies
+
+Chrispian can answer a `question`, `decision` or `approval_request` addressed to
+him from Tachyon, and Tether stores it as **his verified reply**: `from` is his
+canonical address, `from_principal` is `msg://user/local/operator`,
+`from_verification` is `verified`, and `operator_attestation` records the proof.
+The reply settles the parent in `GET /messages/pending-replies` and triages
+`from_operator`. `on_behalf_of` never does this. The full contract is
+[operator-attested-replies.md](operator-attested-replies.md) (CW-20261114-0152).
+
+- **Off by default.** The feature needs an `operator_attestation` block in
+  global.yaml: Tangent's issuer, `max_age_seconds` (at most 300) and one or two
+  Ed25519 keys. The block only takes effect through an operator-approved
+  catalog plan; a hand-edited block is refused (audited
+  `operator_attestation_refused`). Without it every route answers 404
+  `feature_disabled`.
+- **Scopes.** `message.operator_reply` (Tachyon) and `message.operator_reply_view`
+  (Tangent) are device scopes given at pairing. They work only for a verified
+  device the operator paired, never for an issued token; anything else is 403
+  `not_operator_device` or `scope_required`.
+- **Routes.**
+  - `POST /messages/{id}/operator-reply/challenge` `{"option"}` returns a
+    single-use challenge (`challenge_id`, `nonce`, `binding`, `expires_at`);
+    at most 10 open per device.
+  - `GET /operator-attestation/challenges/{challenge_id}` (and `.../body`) is
+    the card Tangent shows and signs: kind, the asker with its
+    `from_verification`, subject, the chosen option, a body excerpt and the
+    full body.
+  - `POST /messages/{id}/operator-reply`
+    `{"challenge_id","option","note"?,"assertion"}` stores the reply. The
+    assertion is Tangent's EdDSA JWS (`typ: operator-reply+jwt`) bound to the
+    challenge, the option, the body and the note.
+- **Freshness** is Tether's own: the assertion and the step-up must be at most
+  `max_age_seconds` old (30 s skew), whatever the operator's `elevation_ttl`
+  says.
+- **One use.** A challenge is consumed by the first reply attempt naming it,
+  pass or fail; a `jti` or `elevation_id` is spent once; a card is answered
+  once.
+- **Failure codes:** `feature_disabled`, `not_operator_device`,
+  `scope_required`, `parent_not_found`, `parent_not_operators`,
+  `not_answerable`, `invalid_option` (both with `{field, reason}`),
+  `already_answered`, `challenge_unknown`, `challenge_expired`,
+  `assertion_invalid`, `assertion_stale`, `assertion_unbound`, `replayed`,
+  `too_many_challenges`. Nothing is stored on a failure.
+- **Reserved metadata.** `operator_attestation` and every key under that
+  prefix (any case), and the sender stamp (`from_verification`,
+  `from_unverified`, `from_principal`), are set only by the server. Every
+  ingress drops a client's value (`POST /messages`, `/messages/notify`,
+  `/messages/request` and `/messages/post`, and so the MCP tools and federation
+  peers that use them), and the message store drops `operator_attestation` from
+  any send but the attested-reply path, so a stored value is always genuine.
+- **Audit.** Every attempt is an `identity_audit` row, `operator_reply_attested`
+  or `operator_reply_refused`, with the device, the parent, the challenge, the
+  elevation, the refusal code and the parent sender's `from_verification`.
+
 ## Stop gate
 
 On worker-hosted Claude sessions with the gate on, the worker plants a Claude

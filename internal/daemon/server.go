@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"github.com/hollis-labs/tether/internal/workerhub"
 	"log"
 	"net"
@@ -123,9 +124,13 @@ type Server struct {
 	// Seats backs typed-message pending replies and seat status (CW-20261114-0013).
 	Seats api.SeatStore
 	// Aliases is the address alias directory (CW-20261114-0067).
-	Aliases  api.AddressAliasStore
-	Channels api.ChannelService
-	Routing  api.RoutingService
+	Aliases api.AddressAliasStore
+	// OperatorAttestation and OperatorReplies back operator-attested replies
+	// (CW-20261114-0152).
+	OperatorAttestation func() *operatorattest.Config
+	OperatorReplies     api.OperatorReplyStore
+	Channels            api.ChannelService
+	Routing             api.RoutingService
 	// Teams is supplied only by the opt-in daemon composition path.
 	Teams api.TeamOps
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
@@ -666,16 +671,18 @@ func (s *Server) handler(remote bool) http.Handler {
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			CatalogReload:       s.CatalogReload,
 
-			CatalogApply:     s.CatalogApply,
-			Groups:           s.Groups,
-			LogsDir:          s.LogsDir,
-			SessionBootstrap: s.SessionBootstrap,
-			DeliveryTrace:    s.DeliveryTrace,
-			DeliveryRepair:   s.DeliveryRepair,
-			Retention:        s.Retention,
-			RoutingReplies:   s.RoutingReplies,
-			IdentityMode:     s.Config.IdentityMode,
-			IdentityAudit:    s.recordIdentityObservation,
+			CatalogApply:        s.CatalogApply,
+			Groups:              s.Groups,
+			LogsDir:             s.LogsDir,
+			SessionBootstrap:    s.SessionBootstrap,
+			DeliveryTrace:       s.DeliveryTrace,
+			DeliveryRepair:      s.DeliveryRepair,
+			Retention:           s.Retention,
+			RoutingReplies:      s.RoutingReplies,
+			IdentityMode:        s.Config.IdentityMode,
+			IdentityAudit:       s.recordIdentityObservation,
+			OperatorAttestation: s.OperatorAttestation,
+			OperatorReplies:     s.OperatorReplies,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -1061,6 +1068,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/messages/notify", s.MessageStore != nil},
 		{"/messages/request", s.MessageStore != nil},
 		{"/messages/thread/", s.MessageStore != nil},
+		{"/operator-attestation/challenges/", s.MessageStore != nil},
 		{"/messages/retention/candidates", s.MessageStore != nil},
 
 		// Seat status (CW-20261114-0013). /messages/post and

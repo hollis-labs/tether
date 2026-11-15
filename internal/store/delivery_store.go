@@ -104,6 +104,8 @@ var _ InboxStore = (*deliveryBackedStore)(nil)
 // transaction open while calling Enqueue (which needs to acquire the same
 // single connection for its own BeginTx) would deadlock.
 func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	// operator_attestation is stored only by the attested-reply path.
+	env.Metadata = withoutForgedAttestation(ctx, env.Metadata)
 	// Public topics have no single-recipient delivery obligation. They remain
 	// durable messages, and readers use independent replay cursors.
 	publication, err := channels.NormalizePublication(&env)

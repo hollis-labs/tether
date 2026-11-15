@@ -34,6 +34,9 @@ func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 		// plans by delegation. TETHER_CATALOG_DELEGATED_PRIVILEGED=1 widens that to every plan.
 		DelegatedApps:       []string{"tachyon"},
 		DelegatedPrivileged: os.Getenv("TETHER_CATALOG_DELEGATED_PRIVILEGED") == "1",
+		// The operator attestation trust root is recorded as approved while its
+		// plan applies (CW-20261114-0152).
+		OnOperatorAttestation: svc.RecordOperatorAttestation,
 		Reload: func(ctx context.Context) ([]string, error) {
 			rep, err := svc.ReloadCatalog(ctx)
 			if err != nil {

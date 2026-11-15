@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 )
 
 type Global struct {
@@ -31,6 +32,12 @@ type Global struct {
 	// behavior identical to pre-federation Tether. See internal/federation
 	// and docs/messaging-federation.md.
 	Federation federation.Config `yaml:"federation"`
+	// OperatorAttestation is the trust root for operator-attested replies
+	// (CW-20261114-0152, docs/operator-attested-replies.md): Tangent's public
+	// keys. Privileged: changed only by an operator-approved catalog plan, and
+	// a reload that finds a block other than the approved one is refused. Nil
+	// leaves the feature off.
+	OperatorAttestation *operatorattest.RawConfig `yaml:"operator_attestation,omitempty"`
 }
 
 // TeamsConfig controls optional team surfaces and host activation.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/hollis-labs/tether/internal/store"
 	"time"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
@@ -56,9 +58,7 @@ func canonicalAddress(a messaging.Address) string { return a.URN() }
 // Without a verified principal nothing changes: the middleware, not this
 // function, decides whether anonymous traffic is admitted.
 func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messaging.Envelope) bool {
-	delete(env.Metadata, MetaFromVerification)
-	delete(env.Metadata, MetaFromUnverified)
-	delete(env.Metadata, MetaFromPrincipal)
+	stripReservedMetadata(env.Metadata)
 	p, ok := verifiedPrincipal(r)
 	if !ok {
 		return true
@@ -165,6 +165,28 @@ func (s *Server) guardAs(next http.HandlerFunc) http.HandlerFunc {
 
 // senderMetadata returns the daemon-stamped sender keys of m, for carrying onto
 // a stored reply. Nil when the request had no verified principal.
+// reservedMetadataKey reports whether a metadata key is set only by the server:
+// the sender stamp (from_verification, from_unverified, from_principal) and the
+// attested-reply proof (operator_attestation and every key under it). A
+// client's value for any of them is dropped at ingress, so a stored value is
+// always the server's (#586 security review).
+func reservedMetadataKey(k string) bool {
+	switch strings.ToLower(k) {
+	case MetaFromVerification, MetaFromUnverified, MetaFromPrincipal:
+		return true
+	}
+	return store.IsOperatorAttestationKey(k)
+}
+
+// stripReservedMetadata deletes every reserved key from m.
+func stripReservedMetadata(m map[string]string) {
+	for k := range m {
+		if reservedMetadataKey(k) {
+			delete(m, k)
+		}
+	}
+}
+
 func senderMetadata(m map[string]string) map[string]string {
 	var out map[string]string
 	for _, k := range []string{MetaFromVerification, MetaFromUnverified, MetaFromPrincipal} {
