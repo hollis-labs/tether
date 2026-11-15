@@ -87,14 +87,27 @@ type daemonMCP struct {
 }
 
 func (m *daemonMCP) Close() {
+	if m == nil {
+		return
+	}
 	if m.backend != nil {
 		m.backend.Close()
 	}
 	m.Handler.Close()
 }
 func (m *daemonMCP) Drain(ctx context.Context) {
+	if m == nil {
+		return
+	}
 	if m.backend != nil {
 		m.backend.Drain(ctx)
 	}
 	m.Handler.Drain(ctx)
+}
+
+func (m *daemonMCP) ToolCallRecorderStats() (uint64, uint64) {
+	if m == nil {
+		return 0, 0
+	}
+	return m.Handler.ToolCallRecorderStats()
 }

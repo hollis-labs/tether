@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -47,7 +48,7 @@ func newBackendFixtureWith(t *testing.T, configure func(*HandlerConfig)) *backen
 	if err != nil {
 		t.Fatal(err)
 	}
-	ds := &daemon.Server{Config: daemon.Config{ListenAddr: addr, IdentityMode: identity.Observe}, Identity: g.f.ids, Issuer: g.issuer, MCPBackend: b}
+	ds := &daemon.Server{Config: daemon.Config{ListenAddr: addr, IdentityMode: identity.Observe}, Identity: g.f.ids, Issuer: g.issuer, MCPBackend: b, Service: backendAttributionSessions{store: g.f.db}}
 	server := &http.Server{Handler: ds.Handler(), ConnContext: identity.ConnectionContext, ReadHeaderTimeout: time.Second}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { b.Close(); _ = server.Close(); ds.CloseIdentityAudit() })
@@ -428,4 +429,16 @@ func TestBackendAdmissionParticipatesInDrain(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The fixture's /auth/context uses the real session store. Launch operations
+// are intentionally unconfigured: the consumer exercises admission and native
+// dispatch, not an agent runtime.
+type backendAttributionSessions struct {
+	api.LaunchService
+	store *store.Store
+}
+
+func (s backendAttributionSessions) GetSession(id string) (*store.SessionRow, error) {
+	return s.store.GetSession(id)
 }
