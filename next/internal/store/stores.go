@@ -25,6 +25,8 @@ var (
 	ErrUnclassified = errors.New("store: statement not attributable to a classed table")
 	// ErrLibraryUnavailable: the library-owned tables have no store on this dialect. go-messaging v0.10.0
 	// has a SQLite store only (Substrate gap CW-20261115-0013).
+	// ErrWriteOnReader: a write or an unattributable statement was sent to a Handle's read pool.
+	ErrWriteOnReader = errors.New("store: write through the read pool")
 	ErrLibraryUnavailable = errors.New("store: go-messaging has no Postgres store; its tables are SQLite only for now")
 )
 
@@ -69,9 +71,11 @@ func (h *Handle) Class() Class { return h.class }
 // Dialect returns the dialect of the class's store.
 func (h *Handle) Dialect() store.Dialect { return h.st.Dialect() }
 
-// Reader returns the read pool of the class's store. Placeholders are rebound for the dialect. Do not
-// use it inside a WriteTx callback: read through the Tx there.
-func (h *Handle) Reader() store.Querier { return h.st.Reader() }
+// Reader returns the read pool of the class's store. Placeholders are rebound for the dialect. It runs
+// reads only: a write, or a statement it cannot attribute, is refused with ErrWriteOnReader (on Postgres
+// the read pool is an ordinary pool, so a write there would bypass the class rule). Do not use it inside
+// a WriteTx callback: read through the Tx there.
+func (h *Handle) Reader() store.Querier { return readOnly{h.st.Reader()} }
 
 // ReadTx runs fn in a read-only transaction on the class's store, for one consistent snapshot.
 func (h *Handle) ReadTx(ctx context.Context, fn func(ctx context.Context, q store.Querier) error) error {

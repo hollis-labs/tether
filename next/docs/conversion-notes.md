@@ -104,6 +104,14 @@ The old store never turned `foreign_keys` on, so its 48 declared references and 
 
 Turning enforcement on later is a separate decision for @archie. It changes delete semantics on live data: deleting a session would then remove its launch plan, MCP policy, bindings, refs, provider mappings, idempotency rows and shim, where today they stay. Such a decision must keep every orphan row (quarantined, never deleted), review every cascade before the delete paths rely on it, and declare the same constraints on both dialects.
 
+**Triggers that reach another class (for the class-move plans).** `TestTriggerCrossings` in `internal/store` lists the five triggers whose bodies reach a table of another class. A trigger cannot reach across databases, so each must be redesigned before either of its classes moves:
+- `session_terminal_revokes_credentials`, `session_delete_revokes_credentials`: sessions (C) write principals (A). This is blocker B-5 (S9).
+- `session_principal_requires_active_session`: principals (A) read sessions (C).
+- `replacement_principal_authority`: principals (A) read replacement, binding, team and registry state (C).
+- `events_require_id_after_seed`: events (B) read event_identity (A).
+
+The last three are reads, harmless while all classes share one store, and not in plan section 13.7's blocker list. The class-B plan takes the third and the class-C plan the first two (S3/S9).
+
 Known differences between the dialects, handled in the slices that port the queries:
 - **Identity gaps.** An identity value is spent by a refused or rolled-back insert; an `AUTOINCREMENT` value is not. Ids keep their order but can have gaps on Postgres, so nothing may read a gap as a deletion.
 - **Inserting into `messages`.** Insert code leaves `seq` out. On Postgres an explicit value is stored as given (a second explicit `0` hits the unique index); on SQLite the trigger replaces `0`. Only `migrate-from` writes `seq`, with the old rowid (S2).

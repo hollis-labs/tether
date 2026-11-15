@@ -10,8 +10,9 @@ type joint struct {
 }
 
 // joints is the allowlist for Stores.Joint: the cross-class transactions of the per-table classification
-// (CW-20261114-0149), named after the old function. A joint not listed here is refused. The sysop
-// tool's deleteSessionsByID writes the same tables but is not hub code, so it is not listed.
+// (CW-20261114-0149), named after the old function. A joint not listed here is refused. The
+// classification lists 20; this has 19 because the 20th, deleteSessionsByID in the separate sysop tool
+// (apps/sysop), is not hub code. It writes the same database and is reviewed with that tool, not here.
 var joints = map[string]joint{
 	// B-1: event identity in A, events in B.
 	"BackfillEventIDs": {classes: []Class{A, B}, slice: "S8 (B-1: high-water mark reserved in A)", old: "internal/store/event_identity.go:99"},

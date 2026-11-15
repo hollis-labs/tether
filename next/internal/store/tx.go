@@ -52,20 +52,54 @@ type refusal struct{ err error }
 
 func (r refusal) Value() (driver.Value, error) { return nil, r.err }
 
+// readOnly is a Handle's read pool: it refuses anything but a read.
+type readOnly struct{ store.Querier }
+
+func readOnlyCheck(q string) error {
+	tables, err := writeTargets(q)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrWriteOnReader, err)
+	}
+	if len(tables) > 0 {
+		return fmt.Errorf("%w: writes %s", ErrWriteOnReader, strings.Join(tables, ", "))
+	}
+	return nil
+}
+
+func (r readOnly) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
+	if err := readOnlyCheck(q); err != nil {
+		return nil, err
+	}
+	return r.Querier.ExecContext(ctx, q, args...)
+}
+
+func (r readOnly) QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	if err := readOnlyCheck(q); err != nil {
+		return nil, err
+	}
+	return r.Querier.QueryContext(ctx, q, args...)
+}
+
+func (r readOnly) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {
+	if err := readOnlyCheck(q); err != nil {
+		return r.Querier.QueryRowContext(ctx, "SELECT 1 WHERE CAST(? AS TEXT) IS NULL", refusal{err})
+	}
+	return r.Querier.QueryRowContext(ctx, q, args...)
+}
+
 func (t *checkedTx) check(q string) error {
-	table, write, err := writeTarget(q)
+	tables, err := writeTargets(q)
 	if err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrUnclassified, t.label, err)
 	}
-	if !write {
-		return nil
-	}
-	c, ok := ClassOf(table)
-	if !ok {
-		return fmt.Errorf("%w: %s writes %s, which has no class", ErrUnclassified, t.label, table)
-	}
-	if !t.allowed[c] {
-		return fmt.Errorf("%w: %s writes %s (class %s)", ErrCrossClassWrite, t.label, table, c)
+	for _, table := range tables {
+		c, ok := ClassOf(table)
+		if !ok {
+			return fmt.Errorf("%w: %s writes %s, which has no class", ErrUnclassified, t.label, table)
+		}
+		if !t.allowed[c] {
+			return fmt.Errorf("%w: %s writes %s (class %s)", ErrCrossClassWrite, t.label, table, c)
+		}
 	}
 	return nil
 }
@@ -73,28 +107,59 @@ func (t *checkedTx) check(q string) error {
 var (
 	lineCommentRe = regexp.MustCompile(`--[^\n]*`)
 	quotedRe      = regexp.MustCompile(`'(?:[^']|'')*'`)
-	// writeRe finds the target of a DML write, after an optional leading WITH clause: the statement it
-	// qualifies follows a ')' that closes a CTE body.
-	writeRe = regexp.MustCompile(`(?is)^(?:WITH\b.*?\)\s*)?(INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+"?([A-Za-z_][A-Za-z0-9_]*)"?`)
-	readRe  = regexp.MustCompile(`(?is)^(SELECT|VALUES|WITH)\b`)
-	dmlRe   = regexp.MustCompile(`(?i)\b(INSERT|UPDATE|DELETE)\b`)
+	// writeRe finds the target of a statement that starts with DML.
+	writeRe = regexp.MustCompile(`(?is)^(INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+"?([A-Za-z_][A-Za-z0-9_]*)"?`)
+	readRe  = regexp.MustCompile(`(?is)^(SELECT|VALUES)\b`)
+	withRe  = regexp.MustCompile(`(?is)^WITH\b`)
+	// dmlRe finds every DML keyword in a WITH statement: the main statement's and any in a CTE body
+	// (Postgres runs data-modifying CTEs). Group 1 is the keyword, group 2 the word after it.
+	dmlRe = regexp.MustCompile(`(?is)\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM|INSERT|DELETE|REPLACE)\b\s*("?[A-Za-z_][A-Za-z0-9_]*"?|\()?`)
+	// prevWordRe is the word before a match, to tell ON CONFLICT DO UPDATE and FOR [NO KEY] UPDATE from
+	// a DML UPDATE.
+	prevWordRe = regexp.MustCompile(`(?i)(\w+)\s*$`)
 )
 
-// writeTarget returns the table a statement writes, write=false for a read, or an error for a statement
-// it cannot attribute (DDL, PRAGMA, several statements in one string).
-func writeTarget(q string) (table string, write bool, err error) {
+// writeTargets returns every table a statement writes (none for a read), or an error for a statement it
+// cannot attribute: DDL, PRAGMA, several statements in one string, or DML it cannot find the target of.
+func writeTargets(q string) ([]string, error) {
 	s := strings.TrimSpace(quotedRe.ReplaceAllString(lineCommentRe.ReplaceAllString(q, " "), "''"))
 	if i := strings.Index(s, ";"); i >= 0 && strings.TrimSpace(s[i+1:]) != "" {
-		return "", false, fmt.Errorf("more than one statement in one call: %.60q", q)
+		return nil, fmt.Errorf("more than one statement in one call: %.60q", q)
 	}
 	if m := writeRe.FindStringSubmatch(s); m != nil {
-		return strings.ToLower(m[2]), true, nil
+		return []string{strings.ToLower(m[2])}, nil
 	}
 	if readRe.MatchString(s) {
-		if strings.HasPrefix(strings.ToUpper(s), "WITH") && dmlRe.MatchString(s) {
-			return "", false, fmt.Errorf("a WITH statement that writes but has no recognizable target: %.60q", q)
-		}
-		return "", false, nil
+		return nil, nil
 	}
-	return "", false, fmt.Errorf("not a read or a DML write: %.60q", q)
+	if !withRe.MatchString(s) {
+		return nil, fmt.Errorf("not a read or a DML write: %.60q", q)
+	}
+	var tables []string
+	seen := map[string]bool{}
+	for _, m := range dmlRe.FindAllStringSubmatchIndex(s, -1) {
+		kw := strings.ToUpper(strings.Join(strings.Fields(s[m[2]:m[3]]), " "))
+		next := ""
+		if m[4] >= 0 {
+			next = strings.Trim(s[m[4]:m[5]], `"`)
+		}
+		prev := ""
+		if pm := prevWordRe.FindStringSubmatch(s[:m[0]]); pm != nil {
+			prev = strings.ToUpper(pm[1])
+		}
+		switch {
+		case strings.HasPrefix(kw, "UPDATE") && (prev == "DO" || prev == "FOR" || prev == "KEY"):
+			continue // ON CONFLICT DO UPDATE, FOR [NO KEY] UPDATE: not a target
+		case kw == "REPLACE" && next == "(":
+			continue // the replace() function
+		case kw == "INSERT" || kw == "DELETE" || kw == "REPLACE" || next == "" || next == "(":
+			return nil, fmt.Errorf("DML in a WITH statement without a recognizable target: %.60q", q)
+		}
+		t := strings.ToLower(next)
+		if !seen[t] {
+			seen[t] = true
+			tables = append(tables, t)
+		}
+	}
+	return tables, nil
 }

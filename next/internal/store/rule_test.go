@@ -89,7 +89,11 @@ func TestCrossClassWriteRefused(t *testing.T) {
 		for _, c := range []struct {
 			h *store.Handle
 			q string
-		}{{s.B(), insertMessage}, {s.C(), insertSetting}, {s.C(), insertEvent}, {s.B(), insertSetting}} {
+		}{
+			{s.B(), insertMessage}, {s.C(), insertSetting}, {s.C(), insertEvent}, {s.B(), insertSetting},
+			// A data-modifying CTE (Postgres runs it): its DELETE of class C counts, not only the INSERT.
+			{s.B(), `WITH u AS (DELETE FROM messages WHERE id = ? RETURNING id) INSERT INTO events (at, kind, event_id) SELECT 't', 'k', id FROM u`},
+		} {
 			err := c.h.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
 				_, err := tx.ExecContext(ctx, c.q, "y")
 				return err
@@ -133,6 +137,27 @@ func TestNestedWriteRefused(t *testing.T) {
 		}
 		if n := count(t, s.A(), "settings"); n != 0 {
 			t.Errorf("settings holds %d rows, want 0 (each outer transaction rolled back)", n)
+		}
+	})
+}
+
+// TestReaderRefusesWrites: the read pool runs reads only. On Postgres it is an ordinary pool, so without
+// the check a write through it would bypass the class rule and the nested-write marker.
+func TestReaderRefusesWrites(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		if _, err := s.C().Reader().ExecContext(ctx, insertMessage, "r"); !errors.Is(err, store.ErrWriteOnReader) {
+			t.Errorf("Exec of a write on the reader: err = %v, want ErrWriteOnReader", err)
+		}
+		if _, err := s.B().Reader().QueryContext(ctx, insertEvent+` RETURNING id`, "r"); !errors.Is(err, store.ErrWriteOnReader) {
+			t.Errorf("Query of a write on the reader: err = %v, want ErrWriteOnReader", err)
+		}
+		var id int64
+		if err := s.B().Reader().QueryRowContext(ctx, insertEvent+` RETURNING id`, "r").Scan(&id); !errors.Is(err, store.ErrWriteOnReader) {
+			t.Errorf("QueryRow of a write on the reader: err = %v, want ErrWriteOnReader", err)
+		}
+		if n := count(t, s.C(), "messages") + count(t, s.B(), "events"); n != 0 {
+			t.Errorf("%d rows written through the reader, want 0", n)
 		}
 	})
 }
