@@ -127,6 +127,7 @@ var tableClass = map[string]Class{
 	// guard reads an existing tether_migration_mark as "this database was migrated".
 	"tether_migration_mark":     A,
 	"tether_migration_tables":   A,
+	"tether_migration_ranges":   A,
 	"tether_migration_triggers": A,
 
 	// go-messaging's tables (created by the library at open, not by migrations): class C.

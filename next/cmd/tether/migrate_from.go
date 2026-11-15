@@ -22,7 +22,7 @@ func (t *tether) migrateFromCmd(ctx context.Context) *cobra.Command {
 	var oldDB, phase, reportPath string
 	var batch int
 	var verifyOnly bool
-	var sourceCheck, family string
+	var sourceCheck, targetCheck, family string
 	cmd := &cobra.Command{
 		Use:   "migrate-from",
 		Short: "Copy an old Tether database (a copy, never the live file) into this one and verify it",
@@ -57,6 +57,7 @@ a copy and writes nothing.`,
 				Phase:       migrate.Phase(phase),
 				Batch:       batch,
 				SourceCheck: sourceCheck,
+				TargetCheck: targetCheck,
 				Progress: func(format string, args ...any) {
 					_, _ = fmt.Fprintf(out, format+"\n", args...)
 				},
@@ -102,6 +103,7 @@ a copy and writes nothing.`,
 	cmd.Flags().BoolVar(&verifyOnly, "verify", false, "compare this database with the copy and write nothing")
 	cmd.Flags().StringVar(&reportPath, "report", "", "write the JSON report here (mode 0600)")
 	cmd.Flags().IntVar(&batch, "batch", 2000, "rows per key range")
+	cmd.Flags().StringVar(&targetCheck, "target-check", "full", "check the result after the copy: full (integrity_check), quick (quick_check) or none (the range digests prove the content)")
 	cmd.Flags().StringVar(&family, "family", "all", "the table families to copy: a (class A and messages), b (events and telemetry) or all")
 	cmd.Flags().StringVar(&sourceCheck, "source-check", "full", "check the source copy first: full (integrity_check), quick (quick_check) or none (already checked when the copy was made)")
 	_ = cmd.MarkFlagRequired("old-db")

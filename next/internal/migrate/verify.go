@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // verify compares each key range of the target with the source (digests over ordered canonical rows),
@@ -11,7 +12,7 @@ import (
 // the source's) and integrity. With the copy walk's reports (after a run), it rechecks only the ranges the
 // copy wrote: the others were proven equal by the copy walk's own digests. Without them (Verify), it walks
 // every range.
-func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *Report, progress func(string, ...any), copyReports []TableReport) error {
+func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *Report, progress func(string, ...any), copyReports []TableReport, targetCheck string) error {
 	for i, sp := range specs {
 		var tr TableReport
 		var err error
@@ -104,11 +105,25 @@ func (e *Engine) verify(ctx context.Context, specs []tableSpec, batch int, rep *
 			rep.Problems = append(rep.Problems, fmt.Sprintf("%s: %d foreign key violations in the source, %d in the target", sp.name, src, tgt))
 		}
 	}
-	if err := e.raw.Reader().QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&rep.Integrity); err != nil {
+	var pragma string
+	switch targetCheck {
+	case "", "full":
+		pragma, rep.TargetCheck = `PRAGMA integrity_check`, "integrity_check"
+	case "quick":
+		pragma, rep.TargetCheck = `PRAGMA quick_check`, "quick_check"
+	case "none":
+		rep.TargetCheck = "none"
+		return nil
+	default:
+		return fmt.Errorf("target check must be full, quick or none, not %q", targetCheck)
+	}
+	started := time.Now()
+	if err := e.raw.Reader().QueryRowContext(ctx, pragma).Scan(&rep.Integrity); err != nil {
 		return err
 	}
+	rep.TargetCheckSeconds = time.Since(started).Seconds()
 	if rep.Integrity != "ok" {
-		rep.Problems = append(rep.Problems, "integrity_check: "+rep.Integrity)
+		rep.Problems = append(rep.Problems, rep.TargetCheck+": "+rep.Integrity)
 	}
 	return nil
 }

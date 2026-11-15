@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -70,6 +71,13 @@ type Options struct {
 	// default), "quick" (PRAGMA quick_check: no index cross-check) or "none" (the copy was checked when it
 	// was made, as the nightly backup is). It is reported either way.
 	SourceCheck string
+	// Workers is the number of parallel range workers for tables ranged by an integer key; the number of
+	// CPUs, at most 8, when 0.
+	Workers int
+	// TargetCheck is the check run on the target after the copy: "full" (PRAGMA integrity_check, the
+	// default), "quick" (quick_check) or "none" (the range digests already prove the content). The window
+	// run can use quick or none when the bulk copy had the full check.
+	TargetCheck string
 	// Progress, when set, receives one line per table.
 	Progress func(format string, args ...any)
 }
@@ -90,12 +98,17 @@ type Report struct {
 	ForeignKeys     map[string][2]int64 `json:"foreign_keys,omitempty"` // violations: source, target (SQLite)
 	// ForeignKeysDeferred counts target violations whose parent table is in a family not copied yet.
 	ForeignKeysDeferred map[string]int64 `json:"foreign_keys_deferred,omitempty"`
-	// HashSeconds is the time spent hashing the source, before and after; CopySeconds and VerifySeconds exclude it.
+	// HashSeconds is the time spent hashing the source, before and after. The hashing runs concurrently
+	// with the copy and the verification, so it adds to the wall time only when it is the slower of the two.
 	HashSeconds float64 `json:"hash_seconds"`
 	Integrity   string  `json:"integrity,omitempty"`
 	// VerifyMode is "incremental" after a run (only the ranges the copy wrote are rechecked; the copy's
 	// own digests proved the rest) or "full" (Verify: every range walked).
 	VerifyMode string `json:"verify_mode"`
+	// TargetCheck names the check run on the target after the copy (Options.TargetCheck); Integrity is
+	// its result.
+	TargetCheck        string  `json:"target_check,omitempty"`
+	TargetCheckSeconds float64 `json:"target_check_seconds,omitempty"`
 	// SourceWALHeader is true for a source with a WAL-mode header (a .backup copy of a WAL database).
 	SourceWALHeader bool `json:"source_wal_header"`
 	// SourceCheck names the check run on the source (Options.SourceCheck); SourceIntegrity is its result.
@@ -220,6 +233,11 @@ type Engine struct {
 	stores  *store.Stores  // row writes go through the class handles
 	// conversions is the current run's Report.Conversions, filled by the walkers.
 	conversions map[string]int64
+	// workers is the number of parallel range workers for ranged tables.
+	workers int
+	// stored holds the target's range digests the previous verified run left (loaded at the start of a
+	// run, then cleared from the database); fresh holds this run's, written back when it verifies.
+	stored, fresh map[string]map[int64]string
 }
 
 // New returns an engine from the source copy at srcPath (opened by OpenSource) to the target store.
@@ -246,13 +264,10 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	}
 	rep := &Report{Phase: opt.Phase, Counts: map[string][2]int64{}, RowsPerSecond: map[string]float64{}, Conversions: map[string]int64{}}
 	e.conversions = rep.Conversions
-	hashStart := time.Now()
-	sum, err := FileSHA256(e.srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("hash source: %w", err)
-	}
-	rep.HashSeconds += time.Since(hashStart).Seconds()
-	rep.SourceSHA256 = sum
+	// The source is hashed concurrently with the work: before (with the source check and the copy) and
+	// after (with the verification). An immutable copy cannot change under the run; the two hashes prove
+	// nothing else changed it either.
+	before := hashAsync(e.srcPath)
 	if err := e.ensureBookkeeping(ctx); err != nil {
 		return nil, err
 	}
@@ -293,9 +308,16 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		}
 	}
 	rep.SourceIntegritySeconds = time.Since(integrityStart).Seconds()
-	if err := e.setMark(ctx, MarkRunning, opt.Phase, sum, false); err != nil {
+	if err := e.setMark(ctx, MarkRunning, opt.Phase, "pending", false); err != nil {
 		return nil, err
 	}
+	e.workers = workerCount(opt.Workers)
+	// The stored range digests describe the target as the last verified run left it. They are taken into
+	// memory and cleared now, so a run that stops part way leaves none behind to trust.
+	if err := e.takeStoredDigests(ctx); err != nil {
+		return nil, err
+	}
+	e.fresh = map[string]map[int64]string{}
 	specs := make([]tableSpec, 0, len(tables))
 	for _, t := range tables {
 		sp, err := specFor(ctx, e.src, e.raw, t)
@@ -338,19 +360,26 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 	rep.CopySeconds = time.Since(started).Seconds()
+	b := <-before
+	if b.err != nil {
+		return nil, fmt.Errorf("hash source: %w", b.err)
+	}
+	sum := b.sum
+	rep.SourceSHA256 = sum
+	rep.HashSeconds += b.seconds
 
 	started = time.Now()
-	if err := e.verify(ctx, specs, batch, rep, progress, rep.Copy); err != nil {
+	after := hashAsync(e.srcPath)
+	if err := e.verify(ctx, specs, batch, rep, progress, rep.Copy, opt.TargetCheck); err != nil {
 		return nil, err
 	}
-	rep.VerifySeconds = time.Since(started).Seconds() // the source hash after the run is in HashSeconds
-	hashStart = time.Now()
-	after, err := FileSHA256(e.srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("hash source: %w", err)
+	a := <-after
+	if a.err != nil {
+		return nil, fmt.Errorf("hash source: %w", a.err)
 	}
-	rep.HashSeconds += time.Since(hashStart).Seconds()
-	rep.SourceUnchanged = after == sum
+	rep.VerifySeconds = time.Since(started).Seconds() // includes waiting for the after-hash, if it is slower
+	rep.HashSeconds += a.seconds
+	rep.SourceUnchanged = a.sum == sum
 	if !rep.SourceUnchanged {
 		rep.Problems = append(rep.Problems, "the source changed during the run")
 	}
@@ -364,6 +393,11 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	if err := e.recordTables(ctx, opt.Phase, sum, rep); err != nil {
 		return nil, err
 	}
+	if rep.OK() {
+		if err := e.storeDigests(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := e.setMark(ctx, state, opt.Phase, sum, state != MarkRunning); err != nil {
 		return nil, err
 	}
@@ -372,6 +406,17 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 }
 
 func (e *Engine) walk(ctx context.Context, sp tableSpec, batch int, sync bool) (TableReport, error) {
+	if sp.ranged() {
+		rw := &rangedWalker{walker: e.walker(sp, batch, sync), width: int64(batch), workers: e.workers}
+		if sync {
+			rw.stored = e.stored[sp.name]
+		}
+		tr, digests, err := rw.run(ctx)
+		if err == nil && sync {
+			e.fresh[sp.name] = digests
+		}
+		return tr, err
+	}
 	return e.walker(sp, batch, sync).run(ctx)
 }
 
@@ -411,8 +456,9 @@ func (e *Engine) Verify(ctx context.Context, opt Options) (*Report, error) {
 		}
 		specs = append(specs, sp)
 	}
+	e.workers = workerCount(opt.Workers)
 	started := time.Now()
-	if err := e.verify(ctx, specs, batch, rep, progress, nil); err != nil {
+	if err := e.verify(ctx, specs, batch, rep, progress, nil, opt.TargetCheck); err != nil {
 		return nil, err
 	}
 	rep.VerifySeconds = time.Since(started).Seconds()
@@ -447,4 +493,28 @@ func (e *Engine) checkKeys(ctx context.Context, sp tableSpec) error {
 		return fmt.Errorf("%w: %d in %s (key %s); a key decision is needed before this table copies", ErrNullKey, n, sp.name, strings.Join(sp.key, ", "))
 	}
 	return nil
+}
+
+type hashResult struct {
+	sum     string
+	seconds float64
+	err     error
+}
+
+// hashAsync hashes the file at path in the background.
+func hashAsync(path string) <-chan hashResult {
+	ch := make(chan hashResult, 1)
+	go func() {
+		started := time.Now()
+		sum, err := FileSHA256(path)
+		ch <- hashResult{sum: sum, seconds: time.Since(started).Seconds(), err: err}
+	}()
+	return ch
+}
+
+func workerCount(n int) int {
+	if n > 0 {
+		return n
+	}
+	return min(runtime.NumCPU(), 8)
 }
