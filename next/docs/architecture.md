@@ -18,7 +18,7 @@ Reviewers read this file first. It answers the Substrate adoption guide's sectio
 | Which routes are public, which need a scope, which authenticate themselves? | **Today:** only `/healthz` (public, served by `httphost`). **From S4:** the client API is Tether's wire protocol, kept at its paths with its ADR 0010 error envelope as declared `httphost` mounts (`Mount{Raw: true}`). Those mounts verify their own callers through the auth module, and every route on them is scoped with Tether's existing `tether.<verb>` scopes (decision D2). Only routes new to the port (operator identity, setup) live under `/api/`. The full mount list is in `conversion-notes.md`; a coverage test fails on an unscoped route or an unnamed mount. |
 | Is there background work that must drain on shutdown? | Yes, from later slices: the worker hub's outpost WebSockets (S11), SSE streams (`mailbox watch`, `/events/stream`; S4/S8), event retention as a `scheduler` job (S8), the team loop (S13) and event ingest. **Stop order:** stop accepting connections; close streams through `httphost.Stopping(r)` with a final frame; drain in-flight requests within the grace period; then stop modules in reverse start order. S0 has nothing to drain: `httphost.Serve` returns on SIGINT or SIGTERM and the modules stop (verified with a real process; see the S0 PR). |
 | What does the UI need from the framework? | Nothing; there is no UI. |
-| Does the app depend on a module or a lib that is not in the BOM? | Not at S0: `go.mod` holds Substrate (`d064f536`, BOM pins) and `modernc.org/sqlite` (the driver the database module uses). Later slices will need app libs such as `mesh/core` (messaging) and `harness/core` (sandbox, runtime events). Each is checked against `bom/bom.yaml` `app_libs` when its slice starts; a missing pin is a Substrate PR first. |
+| Does the app depend on a module or a lib that is not in the BOM? | Not at S0: `go.mod` holds Substrate (`fe86d444` since S1b, BOM pins) and `modernc.org/sqlite` (the driver the database module uses). Later slices will need app libs such as `mesh/core` (messaging) and `harness/core` (sandbox, runtime events). Each is checked against `bom/bom.yaml` `app_libs` when its slice starts; a missing pin is a Substrate PR first. |
 
 ## Layout
 
@@ -28,8 +28,9 @@ next/
   internal/settings    the tether: config block, validated at start
   internal/datadir     TETHER_DATA_DIR resolution, 0700/0600 discipline
   internal/legacyguard refuses the old database before the database module opens it
-  internal/migrate     schema-equality test (S1); migrate-from lands in S12
-  migrations/sqlite/   one goose migration set (00001: the squashed schema)
+  internal/migrate     schema tests (S1, S1b), VerifyMessagesSeq; migrate-from lands in S12
+  migrations/sqlite/   goose set for SQLite (00001: the squashed schema, 00002: messages.seq)
+  migrations/postgres/ the same versions for Postgres
   docs/                this file, conversion-notes.md, carry-ledger.md
 ```
 
@@ -84,9 +85,9 @@ Event retention is not a key yet. S8 adds it with the old `daemon.events_retenti
 
 ## Database
 
-SQLite only, through the `database` module (`database.From(app)`: one writer, a read pool), because Tether's SQL uses `?` placeholders and SQLite syntax.
+The app runs on SQLite, through the `database` module (`database.From(app)`: one writer, a read pool). The cutover stays on SQLite. The port is dialect-ready (plan section 13): classes B and C move to Postgres later, each in its own switch.
 
-There is one embedded goose migration set, `migrations/sqlite/`, registered with `database.UseMigrationFS`. It has no `postgres/` directory because the app is SQLite only.
+There is one embedded goose migration set per dialect, `migrations/sqlite/` and `migrations/postgres/`, with the same versions (`TestMigrationParity`), registered with `database.UseMigrationFS`. The runtime config still accepts only `driver: sqlite` (`cmd/tether/config.go`); S2 adds the class handles that reach Postgres.
 
 ### The squashed schema (`00001_schema.sql`)
 
@@ -108,6 +109,8 @@ Every difference must be on the test's allowlist:
 | `ai_events` and its four indexes | archived to `llm-archive.db` by `migrate-from` (S12) | plan D3: the LLM gateway is out of scope |
 | `schema_migrations` | replaced by `goose_db_version`; the old rows are kept in the archive as provenance | the old migrator's ledger |
 | `goose_db_version` (new only) | | the database module's version table |
+| `messages` (transform) | `migrate-from` writes `seq` = the old rowid; `VerifyMessagesSeq` checks it | `00002` adds `seq`; the table must otherwise equal the old one |
+| `idx_messages_seq`, `messages_assign_seq` (new only) | | `00002`: `seq` is unique, and SQLite assigns it to a new row |
 
 Three things are outside this test by design:
 - **The seven `messaging_*` tables** (`messaging_messages`, `_deliveries`, `_attempts`, `_receipts`, `_transitions`, `_idempotency`, `_delivery_schema`) belong to go-messaging (`libs/mesh/core`). The old store has `delivery.ApplySQLiteSchema` create them at open; the port does the same, so their DDL is not duplicated here. `TestNoLibraryTables` keeps them out of `00001`. The library version is pinned when the messaging slice imports it (see the Gap in `conversion-notes.md`).
@@ -116,10 +119,28 @@ Three things are outside this test by design:
 
 Rules for row identity follow from the schema and `migrate-from` keeps them:
 - Every INTEGER PRIMARY KEY and AUTOINCREMENT is exactly as before, so ids and `sqlite_sequence` carry over.
-- `messages.rowid` is the mailbox watch cursor clients hold, so `migrate-from` copies it explicitly.
-- Foreign keys are declared as before and stay unenforced (ADR 0008).
+- `messages.rowid` is the mailbox watch cursor clients hold. `00002` makes it an explicit column, `messages.seq`: `migrate-from` writes seq = the old rowid for every row, `VerifyMessagesSeq` proves it (`TestMessagesSeqAcceptance`), and a new message continues past the highest migrated seq.
+- Foreign keys are declared as before and stay unenforced (ADR 0008). go-store would turn them on, so `internal/sqlitefk` turns them off on every connection; see "Postgres baseline" in `conversion-notes.md`.
 
-A schema change made on old `main` after `f6c37bfa` (for example `0102_worker_retirement.sql`) reaches the port through the carry ledger as a new migration, `00002` onwards, plus its `migrate-from` transform. It is never an edit to `00001`.
+A schema change made on old `main` after `f6c37bfa` (for example `0102_worker_retirement.sql`) reaches the port through the carry ledger as a new migration in both dialect sets, `00003` onwards, plus its `migrate-from` transform. It is never an edit to `00001`.
+
+### The Postgres set
+
+`migrations/postgres/00001_schema.sql` is the same schema for Postgres. It is hand-maintained under the rules in its header:
+- `INTEGER` becomes `BIGINT`, `REAL` becomes `DOUBLE PRECISION`, and `BLOB` becomes `BYTEA`.
+- `TEXT`, `DATETIME` and `TIMESTAMP` become `TEXT COLLATE "C"`: timestamps stay text in the same format and compare bytewise.
+- A rowid-alias key becomes an identity column.
+- There are no foreign keys.
+- `UNIQUE COLLATE NOCASE` becomes a unique index on `lower()`.
+- FTS5 becomes a generated `tsvector` with a GIN index.
+- Each trigger becomes a plpgsql function with the same trigger name and error text.
+
+Three tests in `internal/migrate` keep the two sets in step:
+- `TestPostgresSchemaMatchesSQLite` compares the catalogs: tables, columns (type, nullability, default, identity), primary and unique keys, named indexes, CHECK counts and triggers. Every difference is on an allowlist with its reason.
+- `TestTriggerParity` runs every trigger and a set of checks and defaults on both dialects and requires the same transcript.
+- `TestMigrationsIdempotent` applies each set twice.
+
+They read `SUBSTRATE_TEST_POSTGRES_DSN` and give each test a private schema. Without the variable they skip, with a notice on stderr. CI runs them against a Postgres 17 service container and fails if they skip.
 
 ### Tables
 
