@@ -5,19 +5,22 @@ name: next
 on:
   pull_request:
     branches: [substrate-port]
+    # edited: a stacked PR retargeted to substrate-port starts this gate without a close/reopen.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [substrate-port]
 
 permissions:
   contents: read
 
-concurrency:
-  group: next-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   next:
     name: next/ vet / pins / test-race / lint / scan
+    # Every edited event reruns the gate (a title or body edit too): a skipped run would post a newer
+    # passing check over an earlier failure. The concurrency group restarts it instead.
+    concurrency:
+      group: next-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
