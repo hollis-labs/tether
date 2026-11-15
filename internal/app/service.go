@@ -94,14 +94,20 @@ type Service struct {
 	Workers      *workerhub.Hub
 	// AgentTokens, when set, registers a launch grant per worker session and
 	// deny-lists the session id when it ends (the token issuer).
-	AgentTokens    AgentTokenIssuer
-	workerIngestMu sync.Mutex
-	// workStates is the last published work-state per worker session, guarded by
-	// workerIngestMu (see recordWorkState).
+	AgentTokens AgentTokenIssuer
+	// workerIngest serializes a session's worker frames; different sessions
+	// ingest in parallel (CW-20261114-0120: it was one global lock).
+	workerIngest sessionLocks
+	// workerStateMu guards workStates and workerCarries, the per-session
+	// in-memory ingest state (each entry is only used under its session's lock).
+	workerStateMu sync.Mutex
+	// workStates is the last published work-state per worker session (see recordWorkState).
 	workStates    map[string]string
 	workerCarries map[string][]byte
-	Manager       *agentsessions.Manager
-	Bus           events.Bus
+	// sessionLogs keeps worker session logs open with group-commit fsync.
+	sessionLogs sessionLogSet
+	Manager     *agentsessions.Manager
+	Bus         events.Bus
 	// EventStamp is the stamp stage installed on Bus.
 	EventStamp *eventstamp.Stage
 	// EventPipeline exposes value-free shadow/enforcement counters.
@@ -666,6 +672,7 @@ func (s *Service) Close() error {
 		return true
 	})
 	s.stopOutputRetries()
+	s.sessionLogs.closeAll()
 	s.turnRouter.Close()
 	if s.Store == nil {
 		return nil
