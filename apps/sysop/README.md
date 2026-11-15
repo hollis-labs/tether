@@ -71,7 +71,7 @@ names (re-read on every call). Unset, they go to the old daemon's socket,
 
 | Setting | Value |
 |---|---|
-| `CERBERUS_ADDR` | `unix:/abs/path.sock`, or an `http(s)://` base URL. For the new Cerberus: `http://127.0.0.1:4786/api/cerberus/legacy` |
+| `CERBERUS_ADDR` | `unix:/abs/path.sock`, or an `http(s)://` base URL. For the new Cerberus: `http://127.0.0.1:4786/api` |
 | `CERBERUS_TOKEN_FILE` | a 0600 file holding an API key with scope `cerberus.operate` |
 
 Plain `http://` is accepted only to loopback (`localhost`, 127/8, `::1`) or

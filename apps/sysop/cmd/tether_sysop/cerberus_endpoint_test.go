@@ -26,7 +26,7 @@ func fakeCerberus(t *testing.T, fail bool) (http.Handler, func() []seenRequest) 
 		mu.Unlock()
 		if fail {
 			w.WriteHeader(http.StatusForbidden)
-			_ = json.NewEncoder(w).Encode(map[string]string{"code": "forbidden", "message": "missing scope cerberus.operate"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "forbidden", "message": "missing scope cerberus.operate", "details": map[string]any{"scope": "cerberus.operate"}})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "status": "running"})
@@ -102,14 +102,15 @@ func TestCerberusEndpointUnixAddressWithToken(t *testing.T) {
 	}
 }
 
-// An http:// base (the new Cerberus legacy API) gets <base>/resources/{id}/{action} with the bearer,
-// the token is re-read on each call, and its flat {code, message} errors surface as the error.
+// An http:// base (the new Cerberus, mounted at /api) gets <base>/resources/{id}/{action} with the
+// bearer, the token is re-read on each call, and the `message` of its flat {code, message, details}
+// error surfaces as the error (an extra field such as details is tolerated).
 func TestCerberusEndpointHTTPWithToken(t *testing.T) {
 	h, seen := fakeCerberus(t, false)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	tok := tokenFile(t, "k-one")
-	t.Setenv(cerberusAddrEnv, srv.URL+"/api/cerberus/legacy/")
+	t.Setenv(cerberusAddrEnv, srv.URL+"/api/")
 	t.Setenv(cerberusTokenFileEnv, tok)
 	if _, err := runCerberusSocketResourceAction(context.Background(), "tether-hub", "restart"); err != nil {
 		t.Fatal(err)
@@ -120,7 +121,7 @@ func TestCerberusEndpointHTTPWithToken(t *testing.T) {
 	if _, err := runCerberusSocketResourceAction(context.Background(), "tether-hub", "status"); err != nil {
 		t.Fatal(err)
 	}
-	want := []seenRequest{{"POST", "/api/cerberus/legacy/resources/tether-hub/restart", "Bearer k-one"}, {"GET", "/api/cerberus/legacy/resources/tether-hub/status", "Bearer k-two"}}
+	want := []seenRequest{{"POST", "/api/resources/tether-hub/restart", "Bearer k-one"}, {"GET", "/api/resources/tether-hub/status", "Bearer k-two"}}
 	if got := seen(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("requests = %+v", got)
 	}
@@ -128,7 +129,7 @@ func TestCerberusEndpointHTTPWithToken(t *testing.T) {
 	failing, _ := fakeCerberus(t, true)
 	bad := httptest.NewServer(failing)
 	t.Cleanup(bad.Close)
-	t.Setenv(cerberusAddrEnv, bad.URL+"/api/cerberus/legacy")
+	t.Setenv(cerberusAddrEnv, bad.URL+"/api")
 	if _, err := runCerberusSocketResourceAction(context.Background(), "tether-hub", "restart"); err == nil || !strings.Contains(err.Error(), "missing scope cerberus.operate") {
 		t.Fatalf("flat error = %v", err)
 	}
@@ -156,23 +157,23 @@ func TestCerberusEndpointRejectsBadSettings(t *testing.T) {
 // only to loopback or the tailnet; https anywhere; anything else is refused when the address is resolved.
 func TestCerberusEndpointPlainHTTPOnlyToLoopbackOrTailnet(t *testing.T) {
 	for addr, ok := range map[string]bool{
-		"http://127.0.0.1:4786/api/cerberus/legacy": true,
-		"http://127.9.9.9:4786":                     true,
-		"http://localhost:4786":                     true,
-		"http://[::1]:4786":                         true,
-		"http://100.64.0.1:4786":                    true,
-		"http://100.127.255.254:4786":               true,
-		"http://[fd7a:115c:a1e0::1]:4786":           true,
-		"http://agent-os.tail1234.ts.net:4786":      true,
-		"https://cerberus.example.com/api":          true,
-		"https://203.0.113.5:4786":                  true,
-		"http://203.0.113.5:4786":                   false,
-		"http://10.0.0.5:4786":                      false,
-		"http://100.128.0.1:4786":                   false,
-		"http://cerberus.example.com":               false,
-		"http://ts.net.evil.com":                    false,
-		"http://[fd7a:115c:a1e1::1]:4786":           false,
-		"ftp://127.0.0.1":                           false,
+		"http://127.0.0.1:4786/api":            true,
+		"http://127.9.9.9:4786":                true,
+		"http://localhost:4786":                true,
+		"http://[::1]:4786":                    true,
+		"http://100.64.0.1:4786":               true,
+		"http://100.127.255.254:4786":          true,
+		"http://[fd7a:115c:a1e0::1]:4786":      true,
+		"http://agent-os.tail1234.ts.net:4786": true,
+		"https://cerberus.example.com/api":     true,
+		"https://203.0.113.5:4786":             true,
+		"http://203.0.113.5:4786":              false,
+		"http://10.0.0.5:4786":                 false,
+		"http://100.128.0.1:4786":              false,
+		"http://cerberus.example.com":          false,
+		"http://ts.net.evil.com":               false,
+		"http://[fd7a:115c:a1e1::1]:4786":      false,
+		"ftp://127.0.0.1":                      false,
 	} {
 		t.Setenv(cerberusAddrEnv, addr)
 		_, err := resolveCerberusEndpoint()

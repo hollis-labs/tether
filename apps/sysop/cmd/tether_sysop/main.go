@@ -5362,7 +5362,7 @@ func runCerberusResourceAction(ctx context.Context, resource, action string) (st
 }
 
 // cerberusErrorResponse covers both error shapes: the old daemon's {success, error} and the new
-// Cerberus legacy API's flat {code, message} (CW-20261114-0145).
+// Cerberus API's flat {code, message, details} (CW-20261114-0145).
 type cerberusErrorResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error"`
@@ -5378,7 +5378,7 @@ func (e cerberusErrorResponse) text() string {
 }
 
 // Cerberus endpoint settings (CW-20261114-0145). CERBERUS_ADDR is unix:/path or an http(s) base URL
-// (the new Cerberus: http://127.0.0.1:4786/api/cerberus/legacy); unset keeps the old daemon's socket at
+// (the new Cerberus: http://127.0.0.1:4786/api); unset keeps the old daemon's socket at
 // ~/.cerberus/cerberus.sock. CERBERUS_TOKEN_FILE names a file whose contents are sent as a bearer token,
 // re-read on every call.
 const (
