@@ -56,6 +56,12 @@ func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRo
 	return r, nil
 }
 
+// SetStateHandler installs fn to be told of every upstream state transition
+// (connected, failed, reconnecting with its next attempt). Set it before Start.
+func (r *SharedUpstreams) SetStateHandler(fn func(UpstreamStateChange)) {
+	r.pool.SetStateHandler(fn)
+}
+
 // Start is idempotent: N clients cannot accidentally start N copies.
 func (r *SharedUpstreams) Start(ctx context.Context) error {
 	ids := []string{}
@@ -150,6 +156,11 @@ func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 	for _, status := range v.StatusSummary() {
 		if v.servers[status.ID] {
 			s.Origins = append(s.Origins, mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.CatalogedTools, InventoryExamined: status.InventoryExamined, Error: status.Error})
+			if status.Status != "connected" {
+				// A tool list or call that would use a down remote upstream
+				// retries it now (CW-20261114-0182).
+				v.runtime.pool.Retry(status.ID)
+			}
 		}
 	}
 	for _, def := range v.runtime.registry.AllDefinitions() {

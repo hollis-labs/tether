@@ -65,6 +65,7 @@ func pipelinePolicies() map[string]admissionPolicy {
 	add(Metadata, "session.scopes_narrowed", "/requested/*", "/granted/*", "/dropped/*", "/basis", "/launcher")
 	add(Metadata, "mail.triaged", "/message_id", "/recipient", "/seat", "/handle", "/class", "/reason", "/typed", "/from", "/from_handle", "/on_behalf_of", "/drafted_by")
 	add(Metadata, "worker.delivery_degraded", "/worker_id", "/consecutive_timeouts", "/ingest_backlog", "/dropped_frames", "/action")
+	add(Metadata, "mcp.upstream_state_changed", "/server_id", "/from", "/to", "/next_retry_at", "/attempt", "/error")
 	add(Metadata, "seat.gate_blocked", "/agent_urn", "/handle", "/message_ids/*", "/count")
 	add(Metadata, "seat.status", "/agent_urn", "/handle", "/state", "/reason", "/ref", "/owner", "/expires_at", "/set_by", "/set_by_verification", "/set_by_principal")
 	// Conservative compatibility entries retain every local-consumer byte. Their

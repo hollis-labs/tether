@@ -52,10 +52,15 @@ func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, id
 			if err != nil {
 				return nil, err
 			}
-			return mcpadapter.NewSharedUpstreams(entries, mcpadapter.DaemonProtectedRoots{
+			upstreams, err := mcpadapter.NewSharedUpstreams(entries, mcpadapter.DaemonProtectedRoots{
 				Catalog: svc.CatalogRoot, CatalogConfig: cat, Run: filepath.Dir(cfg.PIDFile),
 				State: filepath.Dir(config.ResolveStateDB(cat.Global.Catalog.Defaults, cat.Paths)),
 			}, true)
+			if err != nil {
+				return nil, err
+			}
+			upstreams.SetStateHandler(upstreamStatePublisher(ctx, svc.Bus))
+			return upstreams, nil
 		},
 	})
 }

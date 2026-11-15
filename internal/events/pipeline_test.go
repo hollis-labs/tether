@@ -52,6 +52,7 @@ func TestPipelineMetadataGoldensAndCompatibilityBytes(t *testing.T) {
 		"session.scopes_narrowed":         `{"requested":["tether.terminal","tether.read"],"granted":["tether.read"],"dropped":["tether.terminal"],"basis":"launcher","launcher":"msg://device/d1"}`,
 		"mail.triaged":                    `{"message_id":"m1","recipient":"msg://agent/fixture/one","seat":"msg://agent/fixture/one","handle":"@one","class":"fyi","reason":"envelope_fyi","typed":true,"from":"msg://agent/fixture/two","from_handle":"@two","on_behalf_of":"@one","drafted_by":"assistant"}`,
 		"worker.delivery_degraded":        `{"worker_id":"worker_fixture","consecutive_timeouts":3,"ingest_backlog":4096,"dropped_frames":120,"action":"reported"}`,
+		"mcp.upstream_state_changed":      `{"server_id":"tangent","from":"failed","to":"recovering","next_retry_at":"2026-11-15T00:00:05Z","attempt":1,"error":"connect refused"}`,
 		"seat.gate_blocked":               `{"agent_urn":"msg://agent/fixture/one","handle":"@one","message_ids":["m1","m2"],"count":2}`,
 		"seat.status":                     `{"agent_urn":"msg://agent/fixture/one","handle":"@one","state":"blocked","reason":"waiting","ref":"task:CW-20261114-0013","owner":"@two","expires_at":"2026-11-14T05:00:00Z","set_by":"msg://agent/fixture/one","set_by_verification":"verified","set_by_principal":"msg://session/local/s1"}`,
 	}
