@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/seatstatus"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -389,7 +390,22 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verification, principal := s.claimVerification(r, caller)
+	// A seat's own live session is the seat (#568 regression): its session
+	// credential, not a claim, binds it to the seat's logical agent. Without
+	// ?as= it sets the seat's status, not the session URN's; with ?as= naming
+	// that seat (any of its forms) the claim verifies.
+	if seat, ok := s.sessionSeat(ctx, r); ok {
+		switch as := r.URL.Query().Get("as"); {
+		case as == "":
+			caller, verification = seat, "stamped"
+		case slices.Contains(s.seatForms(ctx, seat), s.canonicalSeat(ctx, canonicalClaim(as))):
+			caller, verification = seat, "verified"
+		}
+	}
 	target := caller
+	if req.Target == "@self" {
+		req.Target = ""
+	}
 	if req.Target != "" {
 		urn, ok := s.resolveHandle(ctx, req.Target)
 		if !ok {
@@ -478,6 +494,22 @@ func (s *Server) maySetStatus(ctx context.Context, r *http.Request, caller, targ
 		return ok && a.IsManager()
 	}
 	return false
+}
+
+// sessionSeat is the seat whose own live session the request's verified
+// principal is: a session credential (verified by its token, never by a
+// claimed address) for a non-terminal session bound to a logical agent. It
+// returns the seat's canonical address.
+func (s *Server) sessionSeat(ctx context.Context, r *http.Request) (string, bool) {
+	p, ok := verifiedPrincipal(r)
+	if !ok || p.Kind != "session" || p.SessionID == "" || s.Service == nil {
+		return "", false
+	}
+	row, err := s.Service.GetSession(p.SessionID)
+	if err != nil || row == nil || row.LogicalAgentID == "" || session.State(row.State).Terminal() {
+		return "", false
+	}
+	return s.canonicalSeat(ctx, logicalAgentPrefix+row.LogicalAgentID), true
 }
 
 // catalogAgentFor is the catalog agent whose identity is urn: by its tether
