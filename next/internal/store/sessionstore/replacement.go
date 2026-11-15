@@ -174,6 +174,14 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, tx store.Tx, event
 	if err != nil || !repSameSession(source, in.Source) {
 		return SessionReplacement{}, ErrSessionReplacementUnavailable
 	}
+	// A worker-hosted session is never replaced here: the destination is created hub-local, while the
+	// remote process may still be live (a PID-absence check means nothing for a remote PID). The old
+	// store refused every such source (its in-transaction read never scanned worker_id, so the
+	// caller's row never compared equal); that was its only worker guard, kept explicit here.
+	// Replacing a worker-hosted session would be S9's decision, with the lead.
+	if source.WorkerID != "" {
+		return SessionReplacement{}, ErrSessionReplacementUnavailable
+	}
 	var state, agentID, originalPlan string
 	var exit sql.NullInt64
 	err = tx.QueryRowContext(ctx, rebind(tx, `SELECT s.state, s.exit_code, COALESCE(s.logical_agent_id,''), l.plan_json FROM sessions s JOIN launch_plans l ON l.session_id = s.id WHERE s.id = ?`), id).
@@ -297,7 +305,19 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, tx store.Tx, event
 	}
 	var runID string
 	var rosterVersion int64
-	if err := tx.QueryRowContext(ctx, rebind(tx, runSQL), in.IntentKey).Scan(&runID, &rosterVersion); err != nil || rosterVersion <= 0 || rosterVersion == math.MaxInt64 {
+	if err := tx.QueryRowContext(ctx, rebind(tx, runSQL), in.IntentKey).Scan(&runID, &rosterVersion); err != nil {
+		return result, ErrSessionReplacementUnavailable
+	}
+	if pg {
+		// Lock the roster row before reading the version and the member index the rewrite is guarded
+		// on. Two members of one team recovered at once (after a host loss) then serialize here, and
+		// the second reads the first's committed version, as SQLite's one writer gives; reading them
+		// unlocked would make the second's guarded rewrite find no row and refuse.
+		if err := tx.QueryRowContext(ctx, rebind(tx, `SELECT version FROM team_rosters WHERE run_id = ? FOR UPDATE`), runID).Scan(&rosterVersion); err != nil {
+			return result, ErrSessionReplacementUnavailable
+		}
+	}
+	if rosterVersion <= 0 || rosterVersion == math.MaxInt64 {
 		return result, ErrSessionReplacementUnavailable
 	}
 	var memberIndex int
@@ -414,16 +434,16 @@ func repUpdateOne(ctx context.Context, tx store.Tx, query string, args ...any) e
 }
 
 // repDeliveryLeased reports whether a delivery to either recipient holds an active lease. go-messaging
-// creates messaging_deliveries itself, after the migrations (on SQLite at start; on Postgres it has no
-// store yet, CW-20261115-0013): where the table does not exist there is no delivery to hold a lease.
+// creates messaging_deliveries itself, after the migrations. On SQLite the table must exist (the
+// delivery store is activated at open): a missing table is an error that refuses the replacement, as
+// in the old store. On Postgres the library has no store yet (CW-20261115-0013), so where the table
+// does not exist there is no delivery to hold a lease.
 func repDeliveryLeased(ctx context.Context, tx store.Tx, recipients ...string) (bool, error) {
-	exists := `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messaging_deliveries')`
 	if tx.Dialect().Name() == gostore.DriverPostgres {
-		exists = `SELECT to_regclass('messaging_deliveries') IS NOT NULL`
-	}
-	var present bool
-	if err := tx.QueryRowContext(ctx, exists).Scan(&present); err != nil || !present {
-		return false, err
+		var present bool
+		if err := tx.QueryRowContext(ctx, `SELECT to_regclass('messaging_deliveries') IS NOT NULL`).Scan(&present); err != nil || !present {
+			return false, err
+		}
 	}
 	var leased bool
 	err := tx.QueryRowContext(ctx, rebind(tx, `SELECT EXISTS(SELECT 1 FROM messaging_deliveries WHERE recipient_urn IN (`+placeholders(len(recipients))+`) AND active_attempt_id <> '')`),

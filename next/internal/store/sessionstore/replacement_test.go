@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	gostore "github.com/hollis-labs/libs/core/store"
@@ -27,15 +28,37 @@ const (
 	// byte for byte with what SQLite's json_set writes.
 	repRoster = `{"version":1,"members":[{"actor":"msg://agent/team/other","session_id":"ses-other","status":"active"},{"actor":"` + repActor + `","session_id":"ses-src","status":"active"}]}`
 	repMember = `{"id":"m1","actor":"` + repActor + `","session_id":"ses-src","status":"active","enrolled":true}`
+	// The roster's other member, for the two-member recovery.
+	repOther   = "msg://agent/team/other"
+	repPolicy2 = `{"session_id":"ses-other","agent_id":"agent","sealed":true}`
+	repMember2 = `{"id":"m2","actor":"` + repOther + `","session_id":"ses-other","status":"active","enrolled":true}`
 )
 
 // repTeamSource seeds a failed (exit -1) team-member session ses-src with pid 42 and every row of a
 // retained team recovery authority: enrollment and session port intents, the host intent and its
 // member, the current team binding, the active agent profile pinned to the team definition, the live
 // run and its roster, the team idempotency key, a session credential and the sealed MCP policy.
+// repDeliverySchema creates go-messaging's tables on SQLite, as the delivery store's activation does
+// at open (the replacement's lease check requires them there, as the old store did). Postgres has no
+// library store yet (CW-20261115-0013).
+func repDeliverySchema(t *testing.T, s *store.Stores) {
+	t.Helper()
+	db, err := s.LibraryDB(context.Background())
+	if errors.Is(err, store.ErrLibraryUnavailable) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := delivery.ApplySQLiteSchema(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func repTeamSource(t *testing.T, s *store.Stores, ss *sessionstore.Store) sessionstore.SessionRow {
 	t.Helper()
 	ctx := context.Background()
+	repDeliverySchema(t, s)
 	src := row("ses-src")
 	key := &sessionstore.SessionIdempotency{PrincipalID: sessionstore.IdempotencyPrincipalTeam, Key: "team-port:n1", Operation: sessionstore.IdempotencyOpCreate, RequestDigest: "d"}
 	if _, err := ss.CreateSession(ctx, src, repSrcPlan, key); err != nil {
@@ -70,6 +93,58 @@ func repTeamSource(t *testing.T, s *store.Stores, ss *sessionstore.Store) sessio
 		t.Fatal(err)
 	}
 	return got
+}
+
+// repTeamOther seeds the roster's other member (ses-other, actor repOther) with its own recovery
+// authority (ik-2, binding bind-2), sharing run-1 and its roster with repTeamSource.
+func repTeamOther(t *testing.T, s *store.Stores, ss *sessionstore.Store) sessionstore.SessionRow {
+	t.Helper()
+	ctx := context.Background()
+	other := row("ses-other")
+	key := &sessionstore.SessionIdempotency{PrincipalID: sessionstore.IdempotencyPrincipalTeam, Key: "team-port:n2", Operation: sessionstore.IdempotencyOpCreate, RequestDigest: "d"}
+	if _, err := ss.CreateSession(ctx, other, repSrcPlan, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.UpdateSessionState(ctx, "ses-other", "running", 42, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ss.SaveSessionMCPPolicy(ctx, "ses-other", "agent", repPolicy2); err != nil {
+		t.Fatal(err)
+	}
+	repExec(t, s.A(), `INSERT INTO principals (principal_id, kind, display, token_hash, scopes_json, session_id, addresses_json, created_at)
+ VALUES ('msg://session/local/ses-other', 'session', 'd', ?, '["messages:read"]', 'ses-other', '[]', '2026-11-14T00:00:00Z')`, repHash("oth"))
+	exit := -1
+	if err := ss.UpdateSessionState(ctx, "ses-other", "failed", 42, &exit); err != nil {
+		t.Fatal(err)
+	}
+	c := s.C()
+	repExec(t, c, `INSERT INTO session_provider_mappings (session_id, owner, provider, native_session_id, created_at, updated_at) VALUES ('ses-other', 'claude', 'claude', 'native-2', 'x', 'x')`)
+	repExec(t, c, `INSERT INTO registry_entries (urn, kind, display_name, status, props_json, created_at, updated_at)
+ VALUES (?, 'agent', 'a2', 'active', '{"team_definition":{"id":"team","revision":1,"digest":"dg"}}', 'x', 'x')`, repOther)
+	repExec(t, c, `INSERT INTO team_host_intents (intent_key, request, member) VALUES ('ik-2', ?, ?)`, []byte(`{"RunID":"run-1"}`), []byte(repMember2))
+	repExec(t, c, `INSERT INTO team_port_intents (port_kind, intent_key, nonce, payload, state) VALUES ('session', 'ik-2', 'n2', ?, 'done')`, []byte(`"ses-other"`))
+	repExec(t, c, `INSERT INTO team_port_intents (port_kind, intent_key, binding_secret, acquired_urn, payload, state) VALUES ('enrollment', 'ik-2', 'att-2', ?, ?, 'done')`,
+		repOther, []byte(`{"Enrollment":{"actor":"`+repOther+`","agent_id":"`+repOther+`"},"Pin":{"id":"team","revision":1,"digest":"dg"}}`))
+	repExec(t, c, `INSERT INTO runtime_bindings (id, target_urn, session_id, host_id, attempt_id, generation, visibility, leased_at, created_at, updated_at)
+ VALUES ('bind-2', ?, 'ses-other', 'team', 'att-2', 1, 'tether-hosted', 'x', 'x', 'x')`, repOther)
+	got, err := ss.GetSession(ctx, "ses-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func repInputOther(source sessionstore.SessionRow, dest string) sessionstore.TeamReplacementInput {
+	in := repInput(source, dest)
+	in.IntentKey, in.RecoveryActorURI = "ik-2", repOther
+	in.PlanJSON = strings.Replace(repDstPlan, "ses-src", "ses-other", 1)
+	in.ResealPolicy = func(policy, sourceID, agentID string) (string, error) {
+		if policy != repPolicy2 || sourceID != "ses-other" || agentID != "agent" {
+			return "", errors.New("policy mismatch")
+		}
+		return strings.Replace(policy, "ses-other", dest, 1), nil
+	}
+	return in
 }
 
 func repInput(source sessionstore.SessionRow, dest string) sessionstore.TeamReplacementInput {
@@ -297,6 +372,87 @@ func TestReplacementDeliveryFences(t *testing.T) {
 		var n int
 		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'replaced_delivery_%'`).Scan(&n); err != nil || n != 2 {
 			t.Fatalf("fence triggers %d %v", n, err)
+		}
+	})
+}
+
+// TestReplacementRefusesWorkerHosted: a worker-hosted source is never replaced (the destination
+// would be hub-local while the remote process may be live). The old store refused every such source.
+func TestReplacementRefusesWorkerHosted(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		ss, clock := newStore(s)
+		es := eventstore.New(s)
+		es.Now = clock.Now
+		repTeamSource(t, s, ss)
+		repExec(t, s.C(), `UPDATE sessions SET worker_id = 'w1' WHERE id = 'ses-src'`)
+		src, err := ss.GetSession(ctx, "ses-src")
+		if err != nil || src.WorkerID != "w1" {
+			t.Fatalf("source %+v %v", src, err)
+		}
+		if _, err := repPrepare(ctx, s, ss, es, repInput(src, "ses-dst")); !errors.Is(err, sessionstore.ErrSessionReplacementUnavailable) {
+			t.Fatalf("worker-hosted source: %v", err)
+		}
+		if _, err := ss.GetSession(ctx, "ses-dst"); !errors.Is(err, sessionstore.ErrSessionNotFound) {
+			t.Fatalf("a refused replacement created its destination: %v", err)
+		}
+	})
+}
+
+// TestReplacementTwoMembersConcurrent: two members of one team recovered at once (after a host loss)
+// both succeed, as on SQLite's one writer: on Postgres the second waits on the roster row and reads
+// the first's committed version instead of refusing.
+func TestReplacementTwoMembersConcurrent(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		ss, clock := newStore(s)
+		es := eventstore.New(s)
+		es.Now = clock.Now
+		src := repTeamSource(t, s, ss)
+		other := repTeamOther(t, s, ss)
+		inputs := []sessionstore.TeamReplacementInput{repInput(src, "ses-dst"), repInputOther(other, "ses-dst2")}
+		var next atomic.Int32
+		repWarm(s, 4)
+		results, errs := repRace(2, func() (sessionstore.SessionReplacement, error) {
+			return repPrepare(ctx, s, ss, es, inputs[next.Add(1)-1])
+		})
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("member %d (%+v): %v", i, results[i], err)
+			}
+		}
+		roster := repText(t, s.C().Reader(), `SELECT payload FROM team_rosters WHERE run_id = 'run-1'`)
+		if !strings.Contains(roster, `"version":3`) || !strings.Contains(roster, `"session_id":"ses-dst"`) || !strings.Contains(roster, `"session_id":"ses-dst2"`) {
+			t.Fatalf("roster after both recoveries: %s", roster)
+		}
+	})
+}
+
+// TestReplacementRequiresDeliveryTablesOnSQLite: on SQLite a missing messaging_deliveries refuses the
+// replacement (the old store's lease check errored there); only Postgres, where the library has no
+// store yet, skips the check.
+func TestReplacementRequiresDeliveryTablesOnSQLite(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		if s.C().Dialect().Name() == gostore.DriverPostgres {
+			t.Skip("NOTICE: Postgres has no go-messaging store yet (CW-20261115-0013); the lease check is skipped there")
+		}
+		ctx := context.Background()
+		ss, clock := newStore(s)
+		es := eventstore.New(s)
+		es.Now = clock.Now
+		src := repTeamSource(t, s, ss)
+		db, err := s.LibraryDB(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `DROP TABLE messaging_deliveries`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repPrepare(ctx, s, ss, es, repInput(src, "ses-dst")); err == nil {
+			t.Fatal("a replacement went through without the delivery table")
+		}
+		if _, err := ss.GetSession(ctx, "ses-dst"); !errors.Is(err, sessionstore.ErrSessionNotFound) {
+			t.Fatalf("a refused replacement created its destination: %v", err)
 		}
 	})
 }

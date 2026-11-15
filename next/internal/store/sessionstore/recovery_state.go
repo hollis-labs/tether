@@ -88,12 +88,19 @@ func (s *Store) markSessionRecovery(ctx context.Context, id, to, reason string) 
 }
 
 // DetachedSessionIDForAgent finds a still-live disconnected child that resume must not duplicate,
-// even when the latest checkpoint came from another session ("" when none). Ties on created_at break
-// by id DESC (the old query had none).
+// even when the latest checkpoint came from another session ("" when none). The old query had no
+// tie-break on created_at (one-second resolution) and in practice returned the first inserted of a
+// same-second tie; SQLite keeps that (rowid ASC). Postgres has no insertion order and breaks ties by
+// id DESC, as latestSessionOrder does (conversion notes: an insertion-order column before class C
+// moves).
 func (s *Store) DetachedSessionIDForAgent(ctx context.Context, agentID string) (string, error) {
 	r := s.c.Reader()
+	order := `created_at DESC, rowid ASC`
+	if r.Dialect().Name() == gostore.DriverPostgres {
+		order = `created_at DESC, id DESC`
+	}
 	var id string
-	err := r.QueryRowContext(ctx, rebind(r, `SELECT id FROM sessions WHERE logical_agent_id = ? AND state = 'detached' ORDER BY created_at DESC, id DESC LIMIT 1`), agentID).Scan(&id)
+	err := r.QueryRowContext(ctx, rebind(r, `SELECT id FROM sessions WHERE logical_agent_id = ? AND state = 'detached' ORDER BY `+order+` LIMIT 1`), agentID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

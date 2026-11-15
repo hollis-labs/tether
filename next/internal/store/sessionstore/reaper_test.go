@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	gostore "github.com/hollis-labs/libs/core/store"
+
 	"github.com/hollis-labs/tether/next/internal/store"
 	"github.com/hollis-labs/tether/next/internal/store/eventstore"
 	"github.com/hollis-labs/tether/next/internal/store/sessionstore"
@@ -300,6 +302,30 @@ func TestTeamEvidence(t *testing.T) {
 		}
 		if got, err := ss.TeamEvidence(ctx, "k", "e"); err != nil || got != `{"first":true}` {
 			t.Fatalf("evidence %q %v", got, err)
+		}
+	})
+}
+
+// TestDetachedSessionTie: same-second detached sessions resolve to the first inserted on SQLite (the
+// old query's practical order, rowid ASC) and by id DESC on Postgres.
+func TestDetachedSessionTie(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		ss, _ := newStore(s)
+		for _, id := range []string{"ses-a", "ses-z"} { // same second; ses-a first
+			r := row(id)
+			r.LogicalAgentID = "agent9"
+			if _, err := ss.CreateSession(ctx, r, "", nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		repExec(t, s.C(), `UPDATE sessions SET state = 'detached' WHERE logical_agent_id = 'agent9'`)
+		want := "ses-a"
+		if s.C().Dialect().Name() == gostore.DriverPostgres {
+			want = "ses-z"
+		}
+		if id, err := ss.DetachedSessionIDForAgent(ctx, "agent9"); err != nil || id != want {
+			t.Fatalf("detached tie %q %v, want %s", id, err, want)
 		}
 	})
 }
