@@ -107,7 +107,7 @@ func openDB(path string) (*Store, error) {
 	// workload is not read-heavy enough to justify the complexity of a
 	// separate read pool.
 	db.SetMaxOpenConns(1)
-	if _, err := Migrate(db); err != nil {
+	if _, err := MigrateWithProgress(db, MigrationProgressPath(path)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
