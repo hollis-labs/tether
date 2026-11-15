@@ -127,8 +127,14 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
+// rawDBAllowed names the functions that may call .DB(), with the reason.
+var rawDBAllowed = map[string]string{
+	"LibraryDB": "the sanctioned handle for go-messaging's tables (the library takes a raw *sql.DB)",
+}
+
 // TestNoRawDB keeps every query on go-store's rebinding Querier: no non-test code in next/ calls .DB()
-// (the raw *sql.DB, which would take "?" placeholders to Postgres unbound and bypass the class checks).
+// (the raw *sql.DB, which would take "?" placeholders to Postgres unbound and bypass the class checks),
+// except the functions on rawDBAllowed.
 func TestNoRawDB(t *testing.T) {
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()
@@ -139,6 +145,13 @@ func TestNoRawDB(t *testing.T) {
 		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			return err
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || rawDBAllowed[fn.Name.Name] == "" {
+				continue
+			}
+			fn.Body = nil // allowed: skip its body
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)

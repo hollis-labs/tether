@@ -198,3 +198,42 @@ func TestUnattributableRefused(t *testing.T) {
 		}
 	})
 }
+
+// TestLibraryDB: on SQLite the library handle is available outside a write transaction and refused inside
+// one (it would wait on the writer its caller holds); on Postgres it is unavailable.
+func TestLibraryDB(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		db, err := s.LibraryDB(ctx)
+		if s.C().Dialect().Name() != "sqlite" {
+			if !errors.Is(err, store.ErrLibraryUnavailable) {
+				t.Fatalf("postgres: err = %v, want ErrLibraryUnavailable", err)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO messages (id, kind, from_urn, to_urn, created_at) VALUES ('lib', 'k', 'f', 't', 'c')`); err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range []*store.Handle{s.A(), s.C()} {
+			var inner error
+			_ = h.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
+				_, inner = s.LibraryDB(ctx)
+				return nil
+			})
+			if !errors.Is(inner, store.ErrNestedWrite) {
+				t.Errorf("LibraryDB inside class %s WriteTx: err = %v, want ErrNestedWrite", h.Class(), inner)
+			}
+		}
+		var inner error
+		_ = s.Joint(ctx, "DrainMessageEvents", func(ctx context.Context, tx store.Tx) error {
+			_, inner = s.LibraryDB(ctx)
+			return nil
+		})
+		if !errors.Is(inner, store.ErrNestedWrite) {
+			t.Errorf("LibraryDB inside a joint: err = %v, want ErrNestedWrite", inner)
+		}
+	})
+}

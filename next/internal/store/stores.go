@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -22,6 +23,9 @@ var (
 	ErrUnknownJoint = errors.New("store: joint transaction not on the allowlist")
 	// ErrUnclassified: a statement wrote a table with no class, or could not be attributed to a table.
 	ErrUnclassified = errors.New("store: statement not attributable to a classed table")
+	// ErrLibraryUnavailable: the library-owned tables have no store on this dialect. go-messaging v0.10.0
+	// has a SQLite store only (Substrate gap CW-20261115-0013).
+	ErrLibraryUnavailable = errors.New("store: go-messaging has no Postgres store; its tables are SQLite only for now")
 )
 
 // Stores holds the three class handles. At the cutover they share one *store.Store (one write
@@ -98,6 +102,24 @@ func (s *Stores) Joint(ctx context.Context, name string, fn func(ctx context.Con
 		}
 	}
 	return writeTx(ctx, st, "joint "+name, classSet(j.classes...), fn)
+}
+
+// LibraryDB returns the database for library-owned tables (go-messaging's messaging_*, class C), which
+// the library reads and writes through a raw *sql.DB. On SQLite it is the store's single writer, so the
+// library's writes serialize with Tether's. It is the only sanctioned raw handle (TestNoRawDB).
+//
+// The rule: no library call runs inside a WriteTx or Joint callback. It would wait on the writer its own
+// caller holds. Ask for the handle with the ctx in hand, just before the call; inside a callback that
+// ctx is refused with ErrNestedWrite. On Postgres it returns ErrLibraryUnavailable.
+func (s *Stores) LibraryDB(ctx context.Context) (*sql.DB, error) {
+	if outer, ok := ctx.Value(txMarker{}).(string); ok {
+		return nil, fmt.Errorf("%w: a library call inside %s", ErrNestedWrite, outer)
+	}
+	st := s.c.st
+	if st.Dialect().Name() != store.DriverSQLite {
+		return nil, ErrLibraryUnavailable
+	}
+	return st.DB(), nil
 }
 
 func (s *Stores) handle(c Class) *Handle {

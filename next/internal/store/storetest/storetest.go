@@ -7,6 +7,8 @@ package storetest
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -112,4 +114,18 @@ func (g *IDs) New() string {
 	defer g.mu.Unlock()
 	g.n++
 	return fmt.Sprintf("%s-%d", g.prefix, g.n)
+}
+
+// LibraryDB returns the library handle for go-messaging tests, or skips the test with a notice where the
+// library has no store (Postgres, Substrate gap CW-20261115-0013).
+func LibraryDB(t *testing.T, s *store.Stores) *sql.DB {
+	t.Helper()
+	db, err := s.LibraryDB(context.Background())
+	if errors.Is(err, store.ErrLibraryUnavailable) {
+		t.Skip("NOTICE: go-messaging has no Postgres store (CW-20261115-0013); library-backed test skipped")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
