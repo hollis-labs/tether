@@ -82,7 +82,32 @@ const (
 	// AttributionAnonymous: an external launch with no verified principal. Only
 	// possible while identity is observe or off.
 	AttributionAnonymous Attribution = "anonymous_external"
+	// AttributionCatalog: a chat launch of a catalog seat; the seat's catalog
+	// definition bounds it, not the device that asked (CW-20261114-0063).
+	AttributionCatalog Attribution = "catalog"
 )
+
+// chatLaunchKey marks a context as a Tachyon chat launch (deliverChat). Like the
+// launch origin it is unexported: only LaunchChatSession sets it.
+type chatLaunchKey struct{}
+
+func withChatLaunch(ctx context.Context) context.Context {
+	return context.WithValue(ctx, chatLaunchKey{}, true)
+}
+
+func isChatLaunch(ctx context.Context) bool {
+	v, _ := ctx.Value(chatLaunchKey{}).(bool)
+	return v
+}
+
+// LaunchChatSession launches a session created by the operator chat (POST
+// /chat/{launch}/send) with the caller's context. A chat launch of a catalog
+// seat is bounded by the seat's catalog definition, the same rule as a relaunch
+// (CW-20261114-0038): the seat gets its catalog scopes, never more, whichever
+// device asked (CW-20261114-0063).
+func (s *Service) LaunchChatSession(ctx context.Context, sessionID string) (*Launched, error) {
+	return s.LaunchSessionWithContext(withChatLaunch(ctx), sessionID)
+}
 
 // launchOriginKey is unexported, and so is the setter: only code in this
 // package can mark a context as an internal launch. Nothing that serves a
@@ -207,6 +232,9 @@ const (
 	// ScopeBasisParentGrant: a resume of the same seat (same logical agent and
 	// launch id) restored what its previous session held, capped by the catalog.
 	ScopeBasisParentGrant = "parent_grant"
+	// ScopeBasisCatalog: a chat launch of a catalog seat got the seat's catalog
+	// scopes (CW-20261114-0063).
+	ScopeBasisCatalog = "catalog"
 )
 
 // KindSessionScopesNarrowed is published when a launch drops scopes the
@@ -232,6 +260,16 @@ func (s *Service) launchCeilingForSeat(ctx context.Context, row *store.SessionRo
 }
 
 func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, plan *launch.Plan, granted []string, narrow func(context.Context, []string) []string) ([]string, Attribution, string, error) {
+	if p, ok := identity.FromContext(ctx); ok && operatorChatCaller(p) && isChatLaunch(ctx) && s.catalogSeat(plan) {
+		// A chat launch of a catalog seat by the operator: granted is the seat's
+		// catalog mcp_scopes (or the default set), so nothing is added, and the
+		// device that asked does not narrow it. It is checked before the parent
+		// grant so the seat gets its catalog scopes whether or not an earlier
+		// session of it was launched narrow. Any other caller, including one with
+		// no principal (identity observe/off, which stays anonymous_external for
+		// the enforce-flip guard), falls through to the launcher bound.
+		return slices.Clone(granted), AttributionCatalog, ScopeBasisCatalog, nil
+	}
 	if parentID := s.seatParent(ctx, row, plan); parentID != "" {
 		held, ok, err := identity.NewStore(s.Store.DB()).SessionGrantedScopes(ctx, parentID)
 		if err != nil {
@@ -247,6 +285,35 @@ func (s *Service) seatCeiling(ctx context.Context, row *store.SessionRow, plan *
 	}
 	scopes, attribution, err := s.launchCeilingFor(ctx, granted, narrow)
 	return scopes, attribution, ScopeBasisLauncher, err
+}
+
+// operatorChatCaller reports whether a chat launch's caller is the operator:
+// the operator credential, or a device the operator paired (Tachyon) rather than
+// a token minted from one. Only these get the catalog basis; any other holder of
+// operate keeps the launcher bound, so launching a seat cannot widen what the
+// caller holds (CW-20261114-0063 review). Same test as the #554 device read
+// exception, without its read-scope requirement.
+func operatorChatCaller(p identity.Principal) bool {
+	if !p.Verified {
+		return false
+	}
+	if p.ID == identity.OperatorID {
+		return true
+	}
+	return p.Kind == "device" && p.TokenID == "" && p.CreatedBy == identity.OperatorID
+}
+
+// catalogSeat reports whether plan launches an agent defined in the live catalog.
+func (s *Service) catalogSeat(plan *launch.Plan) bool {
+	if plan == nil {
+		return false
+	}
+	cat := s.cat()
+	if cat == nil {
+		return false
+	}
+	_, ok := cat.Agents[plan.CatalogAgent()]
+	return ok
 }
 
 // seatParent returns the earlier session of the same seat whose grant caps
