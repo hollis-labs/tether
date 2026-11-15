@@ -43,8 +43,8 @@ var joints = map[string]joint{
 
 	// B-7: the fabric repository writes A and C in one transaction; the A rows are written first, then
 	// C, idempotently.
-	"ApplyImport":  {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/import.go:239"},
-	"EnrollActor":  {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/service.go:163"},
-	"RebindAgent":  {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/service.go:197"},
-	"RetireActor":  {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/service.go:248"},
+	"ApplyImport": {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/import.go:239"},
+	"EnrollActor": {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/service.go:163"},
+	"RebindAgent": {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/service.go:197"},
+	"RetireActor": {classes: []Class{A, C}, slice: "S5 (B-7)", old: "internal/fabricenrollment/service.go:248"},
 }

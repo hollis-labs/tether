@@ -35,7 +35,14 @@ var (
 )
 
 // Check inspects the database file at path, read-only. It never creates or modifies the file.
-func Check(path string) error {
+func Check(path string) error { return check(path, false) }
+
+// CheckMigrationTarget is Check for `tether migrate-from`: it admits a database whose migration is in
+// progress (any mark state), since finishing it is the command's job, and still refuses an old-layout
+// database, which migrate-from reads as a source and never writes into.
+func CheckMigrationTarget(path string) error { return check(path, true) }
+
+func check(path string, migrating bool) error {
 	fi, err := os.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -69,7 +76,7 @@ func Check(path string) error {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("inspect %s: %w", path, err)
 		}
-		if state == MarkComplete {
+		if state == MarkComplete || migrating {
 			return nil
 		}
 		return fmt.Errorf("%w (%s, state %q): rerun migrate-from to completion, or move the file aside and start again; see docs/conversion-notes.md",

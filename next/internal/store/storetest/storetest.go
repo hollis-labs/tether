@@ -19,8 +19,8 @@ import (
 	"github.com/hollis-labs/libs/core/store/migrate"
 	libtest "github.com/hollis-labs/libs/core/store/storetest"
 
-	"github.com/hollis-labs/tether/next/internal/store"
 	_ "github.com/hollis-labs/tether/next/internal/sqlitefk" // foreign keys off, as the binary runs
+	"github.com/hollis-labs/tether/next/internal/store"
 	"github.com/hollis-labs/tether/next/migrations"
 )
 

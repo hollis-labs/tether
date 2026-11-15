@@ -26,7 +26,7 @@ var (
 	// ErrLibraryUnavailable: the library-owned tables have no store on this dialect. go-messaging v0.10.0
 	// has a SQLite store only (Substrate gap CW-20261115-0013).
 	// ErrWriteOnReader: a write or an unattributable statement was sent to a Handle's read pool.
-	ErrWriteOnReader = errors.New("store: write through the read pool")
+	ErrWriteOnReader      = errors.New("store: write through the read pool")
 	ErrLibraryUnavailable = errors.New("store: go-messaging has no Postgres store; its tables are SQLite only for now")
 )
 

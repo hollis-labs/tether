@@ -25,8 +25,9 @@ const databaseFile = "tether.db"
 //
 // Before["database"] runs immediately before the database module opens (and migrates) the file. It
 // reads the path from the same config the module will read, so it needs no copy of the merge rule, and
-// refuses an old Tether database (legacyguard).
-func bootOptions(getenv func(string) string) boot.Options {
+// refuses an old Tether database (legacyguard). migrating is true for `tether migrate-from`, which is
+// the one command that opens a database whose migration is not yet complete (the bulk phase's mark).
+func bootOptions(getenv func(string) string, migrating bool) boot.Options {
 	return boot.Options{
 		AfterConfig: func(_ context.Context, app *module.App) error {
 			if _, err := settings.Parse(app.Config[settings.Key]); err != nil {
@@ -73,7 +74,11 @@ func bootOptions(getenv func(string) string) boot.Options {
 					return fmt.Errorf("database.sqlite.path is empty after the data directory was resolved")
 				}
 				p = filepath.Clean(p)
-				if err := legacyguard.Check(p); err != nil {
+				check := legacyguard.Check
+				if migrating {
+					check = legacyguard.CheckMigrationTarget
+				}
+				if err := check(p); err != nil {
 					return err
 				}
 				dir, err := datadir.Resolve(getenv)

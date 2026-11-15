@@ -280,3 +280,25 @@ S4 replaces this with two listeners:
 - **`Stores.LibraryDB(ctx)` is the one raw `*sql.DB`.** It exists for go-messaging's tables; it is SQLite only until the library has a Postgres store.
 - **Tests:** `TestNoRawDB` keeps every other query on go-store's rebinding `Querier`. `TestTriggerCrossings` lists the triggers that reach another class.
 - **`internal/store/storetest`** gives store tests a migrated database on each dialect, with foreign keys off as in the binary.
+
+## migrate-from (S12)
+
+`tether migrate-from --old-db <copy> --phase bulk|final [--report <file>] [--source-check full|quick|none]`, or `--verify`, copies an old-layout database into the data directory's database and proves the copy (plan section 7). Plan section 7.2 is the contract, and the bookkeeping is in `conversion-notes.md` ("Migration mark").
+
+- **The source** is a copy opened read-only and immutable. It is resolved through symlinks, and refused when it looks live or incomplete: a `-wal`, `-shm` or `-journal` file beside it, or a WAL-mode header. It is checked with `integrity_check` before the copy. Its sha256 is recorded before and after the run, and must not change.
+- **A complete database is never rewritten.** `--verify` compares it with a copy and writes nothing.
+- **Copy:** tables are copied in key order, in bounded key ranges, each range in one class transaction through the store layer. Copies keep the source's identity:
+  - every column value, by name;
+  - the implicit rowid on SQLite;
+  - the INTEGER PRIMARY KEY values;
+  - `sqlite_sequence` (an identity's `setval` on Postgres);
+  - `messages.seq` = the old rowid, through the transform registry.
+- **Foreign keys** stay off, and orphans are copied as they are.
+- **Verification**, per table:
+  - a digest over ordered canonical rows for every key range, and for the whole table;
+  - counts;
+  - `messages.seq` against the old rowid (`VerifyMessagesSeq`);
+  - on SQLite also `sqlite_sequence`, the foreign key violations (exactly the source's), and `integrity_check`.
+
+  A differing range is reported by its key bounds.
+- **Families:** S12a copies the class A tables and `messages`. Later families are added as their slices land.
