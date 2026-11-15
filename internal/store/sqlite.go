@@ -119,7 +119,7 @@ func openDB(path string) (*Store, error) {
 	// migration file so the library remains the owner of its own schema
 	// evolution, per the architecture's "reconcile the two current
 	// contracts; do not create a third competing bus."
-	if err := delivery.ApplySQLiteSchema(context.Background(), db); err != nil {
+	if err := applyDeliverySchema(context.Background(), db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply delivery schema: %w", err)
 	}
@@ -580,4 +580,20 @@ func synchronousFromEnv() (string, error) {
 		return v, nil
 	}
 	return "", fmt.Errorf("%s=%q: want FULL, NORMAL or EXTRA", SynchronousEnv, os.Getenv(SynchronousEnv))
+}
+
+// applyDeliverySchema applies the library's delivery schema only when the
+// recorded version differs from the one this build carries. The library's
+// upsert rewrites messaging_delivery_schema.applied_at on every call, so an
+// unconditional apply turned each open into a write that misreported when the
+// schema last changed (CW-20261115-0046). The tables and the version row are
+// written in one library transaction, so a matching version means the schema
+// for that version is already in place.
+func applyDeliverySchema(ctx context.Context, db *sql.DB) error {
+	var version int
+	err := db.QueryRowContext(ctx, `SELECT version FROM messaging_delivery_schema WHERE component='delivery'`).Scan(&version)
+	if err == nil && version == delivery.SQLiteSchemaVersion {
+		return nil
+	}
+	return delivery.ApplySQLiteSchema(ctx, db)
 }

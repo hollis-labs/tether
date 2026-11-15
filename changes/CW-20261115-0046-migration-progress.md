@@ -5,3 +5,5 @@
     and the one in progress.
   - **`tether migrations apply`** runs them as a separate step, before a binary swap.
   - **Docs:** CONTRIBUTING.md asks a PR whose migration takes over about 10 s on a production copy to say so.
+- Opening a state database no longer rewrites `messaging_delivery_schema.applied_at` when the delivery schema version
+  is unchanged; the library schema is applied only on a version change (CW-20261115-0046).
