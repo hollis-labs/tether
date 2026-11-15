@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	gostore "github.com/hollis-labs/libs/core/store"
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/next/internal/store"
@@ -143,17 +144,32 @@ func (s *Store) Inbox(ctx context.Context, to messaging.Address, f messaging.Fil
 	}
 	var out []messaging.Envelope
 	err := s.c.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
-		rows, err := tx.QueryContext(ctx, rebind(tx, `SELECT `+envelopeColumns+` FROM messages WHERE `+where+` ORDER BY created_at ASC, id ASC LIMIT ?`), append(args, limit)...)
+		// Deliver-once: on Postgres (READ COMMITTED, concurrent writers) the rows are locked as they are
+		// read and rows another Inbox holds are skipped; on both dialects only a row this call marked
+		// delivered is returned, so a message is never handed to two callers.
+		lock := ""
+		if tx.Dialect().Name() == gostore.DriverPostgres {
+			lock = " FOR UPDATE SKIP LOCKED"
+		}
+		rows, err := tx.QueryContext(ctx, rebind(tx, `SELECT `+envelopeColumns+` FROM messages WHERE `+where+` ORDER BY created_at ASC, id ASC LIMIT ?`+lock), append(args, limit)...)
 		if err != nil {
 			return fmt.Errorf("messaging store: inbox query: %w", err)
 		}
-		if out, err = scanEnvelopes(rows); err != nil {
+		selected, err := scanEnvelopes(rows)
+		if err != nil {
 			return err
 		}
+		out = make([]messaging.Envelope, 0, len(selected))
 		now := stamp(s.now())
-		for _, env := range out {
-			if _, err := tx.ExecContext(ctx, rebind(tx, `UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL`), now, env.ID); err != nil {
+		for _, env := range selected {
+			res, err := tx.ExecContext(ctx, rebind(tx, `UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL`), now, env.ID)
+			if err != nil {
 				return fmt.Errorf("messaging store: inbox mark delivered: %w", err)
+			}
+			if n, err := res.RowsAffected(); err != nil {
+				return fmt.Errorf("messaging store: inbox mark delivered: %w", err)
+			} else if n == 1 {
+				out = append(out, env)
 			}
 		}
 		return nil

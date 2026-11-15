@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -227,6 +228,16 @@ func TestAliasesPayloadsAndReplies(t *testing.T) {
 		if _, err := ms.ResolveMessageAddress(ctx, "nobody"); err == nil {
 			t.Fatal("unknown alias resolved")
 		}
+		// NOCASE folds ASCII only: U+212A KELVIN SIGN is not k.
+		if err := ms.SetMessageAlias(ctx, alice, "kelvin"); err != nil {
+			t.Fatal(err)
+		}
+		if a, err := ms.ResolveMessageAddress(ctx, "\u212Aelvin"); err == nil {
+			t.Fatalf("kelvin sign resolved %v", a)
+		}
+		if a, err := ms.ResolveMessageAddress(ctx, "KELVIN"); err != nil || a.URN() != alice {
+			t.Fatalf("ASCII fold %v %v", a, err)
+		}
 		const ct = "application/vnd.tether.envelope+json"
 		typed := func(payload string) func(*messaging.Envelope) {
 			return func(e *messaging.Envelope) { e.ContentType, e.Payload = ct, json.RawMessage(payload) }
@@ -239,6 +250,8 @@ func TestAliasesPayloadsAndReplies(t *testing.T) {
 		send(t, ms, clock, op, bob, func(e *messaging.Envelope) { e.ContentType, e.Payload = ct, json.RawMessage(`not json`) })
 		archived := send(t, ms, clock, op, bob, typed(`{"kind":"question"}`))
 		_ = ms.Archive(ctx, archived.ID, addr(t, bob))
+		// A \u0000 escape: valid JSON on both dialects (Postgres's jsonb would refuse it).
+		nul := send(t, ms, clock, op, bob, typed(`{"kind":"question","note":"a\u0000b"}`))
 		_ = other
 		cands, err := ms.PendingReplyCandidates(ctx, []string{bob}, "@bob", ct, []string{"question", "decision", "approval_request"}, 0)
 		if err != nil {
@@ -248,8 +261,8 @@ func TestAliasesPayloadsAndReplies(t *testing.T) {
 		for _, c := range cands {
 			ids = append(ids, c.MessageID)
 		}
-		if !reflect.DeepEqual(ids, []string{named.ID, ask.ID}) {
-			t.Fatalf("candidates %v, want %v", ids, []string{named.ID, ask.ID})
+		if !reflect.DeepEqual(ids, []string{nul.ID, named.ID, ask.ID}) {
+			t.Fatalf("candidates %v, want %v", ids, []string{nul.ID, named.ID, ask.ID})
 		}
 		if p, ok, _ := ms.PayloadWithContentType(ctx, ask.ID, ct); !ok || p != `{"kind":"question","subject":"q1"}` {
 			t.Fatalf("PayloadWithContentType %q %v", p, ok)
@@ -321,6 +334,10 @@ func TestRetention(t *testing.T) {
 		if _, err := ms.PurgeMessageBody(ctx, pending.ID, op, status); !errors.Is(err, msgstore.ErrPendingObligation) {
 			t.Fatalf("purge pending: %v", err)
 		}
+		missing := func(context.Context, string) (string, bool, error) { return "", false, nil }
+		if _, err := ms.PurgeMessageBody(ctx, retrying.ID, op, missing); !errors.Is(err, messaging.ErrNotFound) {
+			t.Fatalf("purge with no delivery row: %v", err)
+		}
 		if _, err := ms.PurgeMessageBody(ctx, consumed.ID, "not a urn", status); err == nil {
 			t.Fatal("bad authorized_by accepted")
 		}
@@ -385,6 +402,61 @@ func TestSeqIsMonotonic(t *testing.T) {
 		}
 		if len(seen) != n {
 			t.Fatalf("watched %d of %d messages", len(seen), n)
+		}
+	})
+}
+
+// TestInboxDeliversOnce runs concurrent destructive pulls for one recipient: every message is
+// returned exactly once across them (on Postgres they overlap; on SQLite the writer serializes them).
+func TestInboxDeliversOnce(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		ctx := context.Background()
+		ms, clock := newStore(s)
+		const total = 60
+		for range total {
+			send(t, ms, clock, op, bob)
+		}
+		const pullers = 6
+		got := make(chan []messaging.Envelope, pullers)
+		errs := make(chan error, pullers)
+		var wg sync.WaitGroup
+		for range pullers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				envs, err := ms.Inbox(ctx, addr(t, bob), messaging.Filter{}, false)
+				got <- envs
+				errs <- err
+			}()
+		}
+		wg.Wait()
+		close(got)
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		seen := map[string]int{}
+		for envs := range got {
+			for _, e := range envs {
+				seen[e.ID]++
+			}
+		}
+		rest, err := ms.Inbox(ctx, addr(t, bob), messaging.Filter{}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range rest {
+			seen[e.ID]++
+		}
+		if len(seen) != total {
+			t.Fatalf("delivered %d distinct messages, want %d", len(seen), total)
+		}
+		for id, n := range seen {
+			if n != 1 {
+				t.Fatalf("message %s delivered %d times", id, n)
+			}
 		}
 	})
 }

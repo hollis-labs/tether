@@ -40,11 +40,27 @@ func (s *Store) SetMessageAlias(ctx context.Context, urn, alias string) error {
 	})
 }
 
+// aliasFold is the alias column folded as SQLite's NOCASE folds it (ASCII only): lower() on SQLite;
+// on Postgres lower() under COLLATE "C", since the default collation would also fold non-ASCII
+// letters (U+212A KELVIN SIGN to k) and match aliases SQLite would not. param is the same for a
+// bound value.
+func aliasFold(q gostore.Querier) (column, param string) {
+	if q.Dialect().Name() == gostore.DriverPostgres {
+		return `lower(alias COLLATE "C")`, `lower(CAST(? AS text) COLLATE "C")`
+	}
+	return `lower(alias)`, `lower(?)`
+}
+
 // ListMessageAliases returns every alias, ordered case-insensitively (COLLATE NOCASE in the old
-// store; lower() on both dialects here).
+// store; aliasFold here), then by byte order.
 func (s *Store) ListMessageAliases(ctx context.Context) ([]MessageAlias, error) {
 	r := s.c.Reader()
-	rows, err := r.QueryContext(ctx, `SELECT urn, alias FROM message_aliases ORDER BY lower(alias), alias`)
+	column, _ := aliasFold(r)
+	order := column + ", alias"
+	if r.Dialect().Name() == gostore.DriverPostgres {
+		order = column + `, alias COLLATE "C"`
+	}
+	rows, err := r.QueryContext(ctx, `SELECT urn, alias FROM message_aliases ORDER BY `+order)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +85,8 @@ func (s *Store) ResolveMessageAddress(ctx context.Context, value string) (messag
 	}
 	r := s.c.Reader()
 	var urn string
-	err := r.QueryRowContext(ctx, rebind(r, `SELECT urn FROM message_aliases WHERE lower(alias) = lower(?)`), strings.TrimPrefix(value, "@")).Scan(&urn)
+	column, param := aliasFold(r)
+	err := r.QueryRowContext(ctx, rebind(r, `SELECT urn FROM message_aliases WHERE `+column+` = `+param), strings.TrimPrefix(value, "@")).Scan(&urn)
 	if errors.Is(err, sql.ErrNoRows) {
 		return messaging.Address{}, fmt.Errorf("unknown message alias %q", value)
 	}
@@ -102,12 +119,20 @@ type ReplyCandidate struct {
 	CreatedAt time.Time
 }
 
+// pgPayload is a message payload with each \u0000 escape replaced, for a jsonb cast on Postgres
+// (see PendingReplyCandidates).
+const pgPayload = `replace(m.payload, '\u0000', '\ufffd')`
+
 // PendingReplyCandidates returns, newest first, typed messages (contentType) to any of the seat's
 // URNs, not canceled, archived or staged, with no reply from the seat yet, whose payload is a JSON
 // object that either names handle in awaiting, or awaits nobody and has a kind in replyKinds. The
 // messaging slice parses each candidate and applies the envelope's own rule (NeedsReply in the old
 // tree). On Postgres the JSON is read under CASE WHEN ... IS JSON OBJECT, so an invalid payload is
 // skipped as json_valid skipped it on SQLite (a WHERE conjunction has no evaluation order there).
+// Postgres refuses a \u0000 escape in json and jsonb values, which IS JSON and SQLite accept, so
+// one such payload would fail the whole list: pgPayload replaces the escape with U+FFFD before the
+// cast. Only kind and awaiting are read, and neither ever matches a value holding NUL, so the result
+// is SQLite's. pg_input_is_valid catches anything else jsonb refuses (a lone surrogate escape).
 func (s *Store) PendingReplyCandidates(ctx context.Context, urns []string, handle, contentType string, replyKinds []string, limit int) ([]ReplyCandidate, error) {
 	if len(urns) == 0 || len(replyKinds) == 0 {
 		return []ReplyCandidate{}, nil
@@ -119,9 +144,9 @@ func (s *Store) PendingReplyCandidates(ctx context.Context, urns []string, handl
 	in := placeholders(len(urns))
 	var awaiting, kind, valid string
 	if r.Dialect().Name() == gostore.DriverPostgres {
-		awaiting = `(CASE WHEN m.payload IS JSON OBJECT THEN m.payload::jsonb->>'awaiting' END)`
-		kind = `(CASE WHEN m.payload IS JSON OBJECT THEN m.payload::jsonb->>'kind' END)`
-		valid = `m.payload IS JSON OBJECT`
+		valid = `(m.payload IS JSON OBJECT AND pg_input_is_valid(` + pgPayload + `, 'jsonb'))`
+		awaiting = `(CASE WHEN ` + valid + ` THEN (` + pgPayload + `)::jsonb->>'awaiting' END)`
+		kind = `(CASE WHEN ` + valid + ` THEN (` + pgPayload + `)::jsonb->>'kind' END)`
 	} else {
 		awaiting = `json_extract(m.payload,'$.awaiting')`
 		kind = `json_extract(m.payload,'$.kind')`
@@ -214,7 +239,7 @@ func (s *Store) GetBrokerEnvelope(ctx context.Context, id string) (BrokerEnvelop
 
 func (s *Store) listBroker(ctx context.Context, where string, args ...any) ([]BrokerEnvelope, error) {
 	r := s.c.Reader()
-	rows, err := r.QueryContext(ctx, rebind(r, `SELECT `+brokerColumns+` FROM broker_envelopes WHERE `+where+` ORDER BY created_at ASC`), args...)
+	rows, err := r.QueryContext(ctx, rebind(r, `SELECT `+brokerColumns+` FROM broker_envelopes WHERE `+where+` ORDER BY created_at ASC, id ASC`), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +314,9 @@ func (s *Store) eligible(ctx context.Context, r retentionRow, status DeliverySta
 			return "", false, nil
 		}
 		if !found {
+			if strict { // the old purge failed on its delivery lookup, not as a pending obligation
+				return "", false, fmt.Errorf("store: retention: purge %s: get delivery: %w", r.id, messaging.ErrNotFound)
+			}
 			return "", false, nil
 		}
 		return st, purgeEligibleStatus(st), nil
@@ -307,7 +335,7 @@ func (s *Store) ListRetentionCandidates(ctx context.Context, olderThan time.Time
 	q := s.c.Reader()
 	rows, err := q.QueryContext(ctx, rebind(q, `SELECT id, created_at, consumed_at, canceled_at, delivery_id, routing_staged,
  EXISTS (SELECT 1 FROM channel_publications p WHERE p.message_id = messages.id)
- FROM messages WHERE created_at < ? ORDER BY created_at ASC`), stamp(olderThan))
+ FROM messages WHERE created_at < ? ORDER BY created_at ASC, id ASC`), stamp(olderThan))
 	if err != nil {
 		return nil, fmt.Errorf("store: retention: list candidates: %w", err)
 	}
