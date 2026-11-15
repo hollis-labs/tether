@@ -48,7 +48,11 @@ var migrationsApplyCmd = &cobra.Command{
 	Long: `tether migrations apply opens the state database and applies the migrations
 this binary carries that it lacks, logging each one with its elapsed time, as
 the daemon would at start. Use it to run a long migration as its own release
-step before the binary swap.`,
+step before the binary swap.
+
+Run it with the daemon stopped. A migration holds SQLite's write lock for its
+whole run, so against a live daemon every write the daemon makes (mail, events,
+session state) stalls until it finishes.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		dbPath, err := migrationsStateDB(cmd)
 		if err != nil {

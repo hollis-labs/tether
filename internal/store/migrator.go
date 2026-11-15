@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,9 +49,6 @@ func MigrateWithProgress(db *sql.DB, progressPath string) (MigrateResult, error)
 	if err != nil {
 		return MigrateResult{}, fmt.Errorf("sub-fs: %w", err)
 	}
-	if progressPath != "" {
-		defer func() { _ = os.Remove(progressPath) }()
-	}
 	return migrateFSWithProgress(db, sub, progressPath)
 }
 
@@ -69,7 +67,8 @@ type MigrationProgress struct {
 func MigrationProgressPath(dbPath string) string { return dbPath + ".migrating" }
 
 // ReadMigrationProgress reads the progress file for dbPath; ok is false when
-// no migration is running.
+// no migration is running, including when the file names a process that is no
+// longer alive (a daemon that died mid-migration leaves a stale file).
 func ReadMigrationProgress(dbPath string) (MigrationProgress, bool, error) {
 	raw, err := os.ReadFile(MigrationProgressPath(dbPath)) //nolint:gosec // G304: the daemon's own state path
 	if errors.Is(err, fs.ErrNotExist) {
@@ -82,26 +81,42 @@ func ReadMigrationProgress(dbPath string) (MigrationProgress, bool, error) {
 	if err = json.Unmarshal(raw, &p); err != nil {
 		return MigrationProgress{}, false, err
 	}
+	if !processAlive(p.PID) {
+		return p, false, nil
+	}
 	return p, true, nil
+}
+
+// processAlive reports whether pid names a running process.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // afterProgressWrite, when set by a test, runs once a migration's progress
 // file is written and before the migration is applied.
 var afterProgressWrite func()
 
-func writeMigrationProgress(path string, p MigrationProgress) {
+// writeMigrationProgress writes p to path atomically and reports whether it did.
+func writeMigrationProgress(path string, p MigrationProgress) bool {
 	if path == "" {
-		return
+		return false
 	}
 	raw, _ := json.Marshal(p)
-	tmp := path + ".tmp"
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		log.Printf("store: write migration progress: %v", err)
-		return
+		return false
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		log.Printf("store: write migration progress: %v", err)
+		_ = os.Remove(tmp)
+		return false
 	}
+	return true
 }
 
 // migrateFS is the testable core — it accepts any fs.FS that lists
@@ -110,7 +125,17 @@ func migrateFS(db *sql.DB, fsys fs.FS) (MigrateResult, error) {
 	return migrateFSWithProgress(db, fsys, "")
 }
 
+// migrateFSWithProgress keeps the progress file only while it is applying a
+// migration, and removes only a file it wrote itself: a process that opens the
+// database while another is migrating it (a CLI beside the daemon) never erases
+// the migrating process's signal (#592 review).
 func migrateFSWithProgress(db *sql.DB, fsys fs.FS, progressPath string) (MigrateResult, error) {
+	wrote := false
+	defer func() {
+		if wrote {
+			_ = os.Remove(progressPath)
+		}
+	}()
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
         version    INTEGER PRIMARY KEY,
         name       TEXT NOT NULL,
@@ -157,7 +182,9 @@ func migrateFSWithProgress(db *sql.DB, fsys fs.FS, progressPath string) (Migrate
 			}
 		}
 		start := time.Now()
-		writeMigrationProgress(progressPath, MigrationProgress{Version: m.version, Name: m.name, StartedAt: start.UTC(), PID: os.Getpid(), Remaining: append([]int{}, pending...)})
+		if writeMigrationProgress(progressPath, MigrationProgress{Version: m.version, Name: m.name, StartedAt: start.UTC(), PID: os.Getpid(), Remaining: append([]int{}, pending...)}) {
+			wrote = true
+		}
 		if afterProgressWrite != nil {
 			afterProgressWrite()
 		}
