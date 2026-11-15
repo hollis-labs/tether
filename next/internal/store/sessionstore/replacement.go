@@ -589,7 +589,7 @@ func repJoin(parts ...[]byte) []byte {
 // Stores.LibraryDB, the sanctioned handle for the library's tables, and so must not run inside a
 // WriteTx or Joint. On Postgres, where go-messaging has no store yet (CW-20261115-0013), there are no
 // such tables and nothing to install: it returns nil. Idempotent (IF NOT EXISTS). The third old
-// guard, replaced_shim_delete on session_shims, is migration 00003.
+// guard, replaced_shim_delete on session_shims, is migration 00006.
 func (s *Store) InstallReplacementDeliveryFences(ctx context.Context) error {
 	db, err := s.all.LibraryDB(ctx)
 	if errors.Is(err, store.ErrLibraryUnavailable) {
