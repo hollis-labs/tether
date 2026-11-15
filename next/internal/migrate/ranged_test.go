@@ -96,3 +96,66 @@ func TestStoredDigestsTrustTheTarget(t *testing.T) {
 		t.Fatalf("the full verification did not report events range (10, 20]: %+v", rep.Problems)
 	}
 }
+
+// TestFinalMustCoverEveryFamily: a final run marks the database complete, which is never rewritten, so a
+// final run of one family is refused (the other family would never arrive).
+func TestFinalMustCoverEveryFamily(t *testing.T) {
+	ctx := context.Background()
+	e, tgt := newEngine(t, gostore.DriverSQLite)
+	for _, fam := range []string{"a", "b"} {
+		if _, err := e.Run(ctx, Options{Phase: PhaseFinal, Tables: Families[fam]}); err == nil {
+			t.Fatalf("a final run of family %s was accepted", fam)
+		}
+	}
+	mustOK(t)(e.Run(ctx, Options{Phase: PhaseBulk, Tables: Families["a"]})) // a bulk run of one family is fine
+	if got := queryInt(t, tgt, `SELECT count(*) FROM tether_migration_mark WHERE state = 'complete'`); got != 0 {
+		t.Fatal("the target was marked complete")
+	}
+}
+
+// TestStoredDigestsNeedTheSameWidth: digests stored at one range width are never trusted at another; the
+// final run reads both sides and repairs a target change.
+func TestStoredDigestsNeedTheSameWidth(t *testing.T) {
+	ctx := context.Background()
+	e, tgt := newEngine(t, gostore.DriverSQLite)
+	mustOK(t)(e.Run(ctx, Options{Phase: PhaseBulk, Batch: 10}))
+	if _, err := tgt.ExecContext(ctx, `UPDATE events SET kind = 'tampered' WHERE id = 12`); err != nil {
+		t.Fatal(err)
+	}
+	mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 5}))
+	if got := queryInt(t, tgt, `SELECT count(*) FROM events WHERE kind = 'tampered'`); got != 0 {
+		t.Fatal("a different width trusted the stored digests")
+	}
+}
+
+// TestStoredDigestsNeedAVerifiedBulk: digests are trusted only if the run that stored them left the mark at
+// bulk with their run id; after anything else (here a run that never finished) both sides are read.
+func TestStoredDigestsNeedAVerifiedBulk(t *testing.T) {
+	ctx := context.Background()
+	e, tgt := newEngine(t, gostore.DriverSQLite)
+	mustOK(t)(e.Run(ctx, Options{Phase: PhaseBulk, Batch: 10}))
+	for _, q := range []string{
+		`UPDATE events SET kind = 'tampered' WHERE id = 12`,
+		`UPDATE tether_migration_mark SET state = 'running'`, // as a run that stopped part way leaves it
+	} {
+		if _, err := tgt.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
+	if got := queryInt(t, tgt, `SELECT count(*) FROM events WHERE kind = 'tampered'`); got != 0 {
+		t.Fatal("digests from an unfinished run were trusted")
+	}
+}
+
+// TestBadTargetCheckRefusedFirst: an unknown --target-check is refused before anything is written.
+func TestBadTargetCheckRefusedFirst(t *testing.T) {
+	ctx := context.Background()
+	e, tgt := newEngine(t, gostore.DriverSQLite)
+	if _, err := e.Run(ctx, Options{Phase: PhaseBulk, TargetCheck: "maybe"}); err == nil {
+		t.Fatal("accepted")
+	}
+	if got := queryInt(t, tgt, `SELECT count(*) FROM messages`); got != 0 {
+		t.Fatal("rows were written before the refusal")
+	}
+}

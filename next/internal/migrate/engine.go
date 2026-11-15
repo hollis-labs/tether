@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	gostore "github.com/hollis-labs/libs/core/store"
@@ -98,8 +99,7 @@ type Report struct {
 	ForeignKeys     map[string][2]int64 `json:"foreign_keys,omitempty"` // violations: source, target (SQLite)
 	// ForeignKeysDeferred counts target violations whose parent table is in a family not copied yet.
 	ForeignKeysDeferred map[string]int64 `json:"foreign_keys_deferred,omitempty"`
-	// HashSeconds is the time spent hashing the source, before and after. The hashing runs concurrently
-	// with the copy and the verification, so it adds to the wall time only when it is the slower of the two.
+	// HashSeconds is the time spent hashing the source, before its first read and after its last.
 	HashSeconds float64 `json:"hash_seconds"`
 	Integrity   string  `json:"integrity,omitempty"`
 	// VerifyMode is "incremental" after a run (only the ranges the copy wrote are rechecked; the copy's
@@ -231,8 +231,12 @@ type Engine struct {
 	srcPath string
 	raw     *gostore.Store // the target store, for the engine's DDL (triggers, marks, sequences)
 	stores  *store.Stores  // row writes go through the class handles
-	// conversions is the current run's Report.Conversions, filled by the walkers.
+	// conversions is the current run's Report.Conversions, filled by the walkers under convMu (ranged
+	// tables are walked by parallel workers).
 	conversions map[string]int64
+	convMu      sync.Mutex
+	// runID stamps this run's stored range digests and its mark.
+	runID string
 	// workers is the number of parallel range workers for ranged tables.
 	workers int
 	// stored holds the target's range digests the previous verified run left (loaded at the start of a
@@ -264,19 +268,36 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	}
 	rep := &Report{Phase: opt.Phase, Counts: map[string][2]int64{}, RowsPerSecond: map[string]float64{}, Conversions: map[string]int64{}}
 	e.conversions = rep.Conversions
-	// The source is hashed concurrently with the work: before (with the source check and the copy) and
-	// after (with the verification). An immutable copy cannot change under the run; the two hashes prove
-	// nothing else changed it either.
-	before := hashAsync(e.srcPath)
+	// B1: a final run marks the database complete, and a complete database is never rewritten, so a final
+	// run must cover every family.
+	if opt.Phase == PhaseFinal && !coversAll(tables) {
+		return nil, fmt.Errorf("a final run must copy every family (--family all): a complete database is never rewritten, so a family left out would never arrive")
+	}
+	switch opt.TargetCheck {
+	case "", "full", "quick", "none":
+	default:
+		return nil, fmt.Errorf("target check must be full, quick or none, not %q", opt.TargetCheck)
+	}
+	// The source is hashed before its first read and after its last: a change between the two shows. (A
+	// hash running alongside the reads could miss a byte changed after it was read but before the hash
+	// reached it.)
+	hashStart := time.Now()
+	sum, err := FileSHA256(e.srcPath)
+	if err != nil {
+		return nil, fmt.Errorf("hash source: %w", err)
+	}
+	rep.HashSeconds += time.Since(hashStart).Seconds()
+	rep.SourceSHA256 = sum
 	if err := e.ensureBookkeeping(ctx); err != nil {
 		return nil, err
 	}
 	// A completed target may already have served: a sync would delete the rows written since and revert
 	// the ones updated. It is never rewritten; re-check it with Verify, which writes nothing.
-	switch state, err := e.markState(ctx); {
+	prevState, prevRun, err := e.markState(ctx)
+	switch {
 	case err != nil:
 		return nil, err
-	case state == MarkComplete:
+	case prevState == MarkComplete:
 		return nil, ErrTargetComplete
 	}
 	wal, err := walHeader(e.srcPath)
@@ -308,13 +329,17 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		}
 	}
 	rep.SourceIntegritySeconds = time.Since(integrityStart).Seconds()
-	if err := e.setMark(ctx, MarkRunning, opt.Phase, "pending", false); err != nil {
+	e.runID = fmt.Sprintf("%d", time.Now().UnixNano())
+	if err := e.setMark(ctx, MarkRunning, opt.Phase, sum, false); err != nil {
 		return nil, err
 	}
 	e.workers = workerCount(opt.Workers)
-	// The stored range digests describe the target as the last verified run left it. They are taken into
-	// memory and cleared now, so a run that stops part way leaves none behind to trust.
-	if err := e.takeStoredDigests(ctx); err != nil {
+	// The stored range digests describe the target as the last verified run left it. They are trusted
+	// only if that run left the mark at bulk with its run id (no serve can open a bulk database: the guard
+	// refuses it, so only migrate-from has written it since), with the same range width, digest format and
+	// target schema version. They are taken into memory and cleared now, so a run that stops part way
+	// leaves none behind to trust.
+	if err := e.takeStoredDigests(ctx, prevState == MarkBulk, prevRun, int64(batch)); err != nil {
 		return nil, err
 	}
 	e.fresh = map[string]map[int64]string{}
@@ -360,26 +385,19 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 	rep.CopySeconds = time.Since(started).Seconds()
-	b := <-before
-	if b.err != nil {
-		return nil, fmt.Errorf("hash source: %w", b.err)
-	}
-	sum := b.sum
-	rep.SourceSHA256 = sum
-	rep.HashSeconds += b.seconds
 
 	started = time.Now()
-	after := hashAsync(e.srcPath)
 	if err := e.verify(ctx, specs, batch, rep, progress, rep.Copy, opt.TargetCheck); err != nil {
 		return nil, err
 	}
-	a := <-after
-	if a.err != nil {
-		return nil, fmt.Errorf("hash source: %w", a.err)
+	rep.VerifySeconds = time.Since(started).Seconds()
+	hashStart = time.Now()
+	after, err := FileSHA256(e.srcPath)
+	if err != nil {
+		return nil, fmt.Errorf("hash source: %w", err)
 	}
-	rep.VerifySeconds = time.Since(started).Seconds() // includes waiting for the after-hash, if it is slower
-	rep.HashSeconds += a.seconds
-	rep.SourceUnchanged = a.sum == sum
+	rep.HashSeconds += time.Since(hashStart).Seconds()
+	rep.SourceUnchanged = after == sum
 	if !rep.SourceUnchanged {
 		rep.Problems = append(rep.Problems, "the source changed during the run")
 	}
@@ -394,7 +412,7 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 	if rep.OK() {
-		if err := e.storeDigests(ctx); err != nil {
+		if err := e.storeDigests(ctx, int64(batch)); err != nil {
 			return nil, err
 		}
 	}
@@ -423,7 +441,7 @@ func (e *Engine) walk(ctx context.Context, sp tableSpec, batch int, sync bool) (
 func (e *Engine) walker(sp tableSpec, batch int, sync bool) *walker {
 	c, _ := store.ClassOf(sp.name)
 	h := map[store.Class]*store.Handle{store.A: e.stores.A(), store.B: e.stores.B(), store.C: e.stores.C()}[c]
-	return &walker{src: e.src, tgt: h, sp: sp, batch: batch, sync: sync, pg: e.raw.Dialect().Name() == gostore.DriverPostgres, conversions: e.conversions}
+	return &walker{src: e.src, tgt: h, sp: sp, batch: batch, sync: sync, pg: e.raw.Dialect().Name() == gostore.DriverPostgres, conversions: e.conversions, convMu: &e.convMu}
 }
 
 // Verify compares the target with the source without changing either and without touching the marks:
@@ -465,14 +483,29 @@ func (e *Engine) Verify(ctx context.Context, opt Options) (*Report, error) {
 	return rep, nil
 }
 
-// markState reads the target's mark state ("" when there is none).
-func (e *Engine) markState(ctx context.Context) (string, error) {
+// markState reads the target's mark state and the id of the run that set it ("" when there is none).
+func (e *Engine) markState(ctx context.Context) (string, string, error) {
 	var state string
-	err := e.raw.Reader().QueryRowContext(ctx, `SELECT state FROM tether_migration_mark WHERE id = 1`).Scan(&state)
+	var run sql.NullString
+	err := e.raw.Reader().QueryRowContext(ctx, `SELECT state, run_id FROM tether_migration_mark WHERE id = 1`).Scan(&state, &run)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return "", "", nil
 	}
-	return state, err
+	return state, run.String, err
+}
+
+// coversAll reports whether tables holds every table of every family.
+func coversAll(tables []string) bool {
+	have := map[string]bool{}
+	for _, t := range tables {
+		have[t] = true
+	}
+	for _, t := range Families["all"] {
+		if !have[t] {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrNullKey means a source row has a NULL in its primary key (SQLite allows it in a non-INTEGER key). Such a
@@ -493,23 +526,6 @@ func (e *Engine) checkKeys(ctx context.Context, sp tableSpec) error {
 		return fmt.Errorf("%w: %d in %s (key %s); a key decision is needed before this table copies", ErrNullKey, n, sp.name, strings.Join(sp.key, ", "))
 	}
 	return nil
-}
-
-type hashResult struct {
-	sum     string
-	seconds float64
-	err     error
-}
-
-// hashAsync hashes the file at path in the background.
-func hashAsync(path string) <-chan hashResult {
-	ch := make(chan hashResult, 1)
-	go func() {
-		started := time.Now()
-		sum, err := FileSHA256(path)
-		ch <- hashResult{sum: sum, seconds: time.Since(started).Seconds(), err: err}
-	}()
-	return ch
 }
 
 func workerCount(n int) int {

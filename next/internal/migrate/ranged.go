@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -57,13 +58,13 @@ func (w *rangedWalker) run(ctx context.Context) (TableReport, map[int64]string, 
 		rep.Seconds = time.Since(started).Seconds()
 		return rep, map[int64]string{}, err
 	}
-	first := floorDiv(lo-1, w.width) * w.width // the range holding lo is (first, first+width]
-	var starts []int64
-	for r := first; r < hi; r += w.width {
-		starts = append(starts, r)
+	// Keys near the ends of int64 would overflow the range arithmetic; no Tether table holds such keys.
+	if lo <= math.MinInt64+w.width || hi >= math.MaxInt64-w.width {
+		return rep, nil, fmt.Errorf("%s: keys %d..%d are too close to the int64 limits for ranged copying", w.sp.name, lo, hi)
 	}
+	first := floorDiv(lo-1, w.width) * w.width // the range holding lo is (first, first+width]
 	jobs := make(chan int64)
-	results := make(chan rangeOut, len(starts))
+	results := make(chan rangeOut, w.workers*2)
 	errs := make(chan error, w.workers)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -83,8 +84,18 @@ func (w *rangedWalker) run(ctx context.Context) (TableReport, map[int64]string, 
 			}
 		}()
 	}
+	// Collect while the workers run (results is bounded), and feed the ranges lazily: key gaps cost one
+	// empty range each, never a precomputed list.
+	var outs []rangeOut
+	collected := make(chan struct{})
+	go func() {
+		for o := range results {
+			outs = append(outs, o)
+		}
+		close(collected)
+	}()
 feed:
-	for _, r := range starts {
+	for r := first; r < hi; r += w.width {
 		select {
 		case jobs <- r:
 		case <-ctx.Done():
@@ -94,14 +105,15 @@ feed:
 	close(jobs)
 	wg.Wait()
 	close(results)
+	<-collected
 	select {
 	case err := <-errs:
 		return rep, nil, err
 	default:
 	}
-	var outs []rangeOut
-	for o := range results {
-		outs = append(outs, o)
+	// A canceled parent context stops the feed early: never return the partial walk as a result.
+	if err := ctx.Err(); err != nil {
+		return rep, nil, err
 	}
 	sort.Slice(outs, func(i, j int) bool { return outs[i].lo < outs[j].lo })
 	digests := map[int64]string{}

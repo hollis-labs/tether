@@ -81,17 +81,17 @@ func TestBulkThenFinalCarriesEveryChange(t *testing.T) {
 				t.Errorf("%s: rechecked %d ranges, wrote %d", v.Table, v.Ranges, final.Copy[i].Written)
 			}
 		}
-		// The result equals a fresh full run on B, table by table.
-		fresh := storetest.Raw(t, d)
-		full := mustOK(t)(New(srcB, b, fresh).Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
-		digests := map[string]string{}
-		for _, v := range full.Verify {
-			digests[v.Table] = v.Digest
+		// The target itself equals B: a full verification reads every range on both sides.
+		full, err := New(srcB, b, tgt).Verify(ctx, Options{Batch: 10})
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, v := range final.Verify {
-			if digests[v.Table] != v.Digest {
-				t.Errorf("%s: two-phase digest differs from a full run on B", v.Table)
-			}
+		if !full.OK() || full.VerifyMode != "full" {
+			t.Fatalf("full verification after the two-phase run: %v (%s)", full.Problems, full.VerifyMode)
+		}
+		// The per-table marks record the real row counts, not just the rechecked ranges' rows.
+		if got, want := queryInt(t, tgt, `SELECT rows FROM tether_migration_tables WHERE table_name = 'events'`), queryInt(t, tgt, `SELECT count(*) FROM events`); got != want {
+			t.Errorf("tether_migration_tables.rows for events = %d, want %d", got, want)
 		}
 		if got := queryInt(t, tgt, `SELECT count(*) FROM messages WHERE id = 'm-030' OR id BETWEEN 'm-001' AND 'm-005'`); got != 0 {
 			t.Errorf("%d deleted messages survived the sync", got)

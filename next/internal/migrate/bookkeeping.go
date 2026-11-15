@@ -19,7 +19,9 @@ import (
 //	tether_migration_mark      one row: state (running, bulk, complete), phase, source_sha256, times
 //	tether_migration_tables    one row per copied table: phase, rows, whole-table digest, source_sha256
 //	tether_migration_ranges    for tables ranged by an integer key: the digest of each non-empty range as
-//	                           the last verified run left the target (cleared while a run is in progress)
+//	                           the last verified run left the target, with the range width, the digest
+//	                           format, the target's schema version and that run's id (cleared while a run
+//	                           is in progress)
 //	tether_migration_triggers  the triggers turned off for the copy, until they are back on: on SQLite each
 //	                           dropped trigger's DDL and original position; on Postgres each table whose
 //	                           user triggers are disabled (sql = pgDisabled)
@@ -30,7 +32,8 @@ var bookkeepingDDL = []string{
 		phase TEXT NOT NULL,
 		source_sha256 TEXT NOT NULL,
 		started_at TEXT NOT NULL,
-		completed_at TEXT
+		completed_at TEXT,
+		run_id TEXT
 	)`,
 	`CREATE TABLE IF NOT EXISTS tether_migration_tables (
 		table_name TEXT PRIMARY KEY,
@@ -44,6 +47,10 @@ var bookkeepingDDL = []string{
 		table_name TEXT NOT NULL,
 		lo BIGINT NOT NULL,
 		digest TEXT NOT NULL,
+		width BIGINT NOT NULL,
+		format TEXT NOT NULL,
+		schema_version BIGINT NOT NULL,
+		run_id TEXT NOT NULL,
 		PRIMARY KEY (table_name, lo)
 	)`,
 	`CREATE TABLE IF NOT EXISTS tether_migration_triggers (
@@ -74,11 +81,11 @@ func (e *Engine) setMark(ctx context.Context, state string, phase Phase, sum str
 		completed = now()
 	}
 	return e.stores.A().WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO tether_migration_mark (id, state, phase, source_sha256, started_at, completed_at)
-			VALUES (1, ?, ?, ?, ?, ?)
+		_, err := tx.ExecContext(ctx, `INSERT INTO tether_migration_mark (id, state, phase, source_sha256, started_at, completed_at, run_id)
+			VALUES (1, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET state = excluded.state, phase = excluded.phase,
-				source_sha256 = excluded.source_sha256, completed_at = excluded.completed_at`,
-			state, string(phase), sum, now(), completed)
+				source_sha256 = excluded.source_sha256, completed_at = excluded.completed_at, run_id = excluded.run_id`,
+			state, string(phase), sum, now(), completed, e.runID)
 		return err
 	})
 }
@@ -90,7 +97,7 @@ func (e *Engine) recordTables(ctx context.Context, phase Phase, sum string, rep 
 				VALUES (?, ?, ?, ?, ?, ?)
 				ON CONFLICT (table_name) DO UPDATE SET phase = excluded.phase, rows = excluded.rows, digest = excluded.digest,
 					source_sha256 = excluded.source_sha256, updated_at = excluded.updated_at`,
-				t.Table, string(phase), t.Rows, t.Digest, sum, now()); err != nil {
+				t.Table, string(phase), rep.Counts[t.Table][1], t.Digest, sum, now()); err != nil {
 				return err
 			}
 		}
@@ -263,10 +270,30 @@ func (e *Engine) carrySequences(ctx context.Context, tables []string) error {
 	return nil
 }
 
-// takeStoredDigests loads the stored range digests into memory and clears them from the database.
-func (e *Engine) takeStoredDigests(ctx context.Context) error {
+// digestFormat versions the canonical row form and the range digest. Stored digests of another format are
+// never trusted.
+const digestFormat = "ranges-v1"
+
+// schemaVersion is the target's goose version: a migration between runs could change rows in a ranged
+// table, so a stored digest is trusted only under the schema it was taken under.
+func (e *Engine) schemaVersion(ctx context.Context) (int64, error) {
+	var v int64
+	err := e.raw.Reader().QueryRowContext(ctx, `SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&v)
+	return v, err
+}
+
+// takeStoredDigests loads the stored range digests that are still valid into memory and clears all of
+// them from the database. Valid means: the previous run verified and left the mark at bulk (trusted is
+// true) with the run id the digests carry, and they match this run's range width, the digest format and
+// the target's schema version. Anything else is discarded, and those ranges are read on both sides.
+func (e *Engine) takeStoredDigests(ctx context.Context, trusted bool, prevRun string, width int64) error {
 	e.stored = map[string]map[int64]string{}
-	rows, err := e.raw.Reader().QueryContext(ctx, `SELECT table_name, lo, digest FROM tether_migration_ranges`)
+	schema, err := e.schemaVersion(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := e.raw.Reader().QueryContext(ctx, `SELECT table_name, lo, digest FROM tether_migration_ranges
+		WHERE width = ? AND format = ? AND schema_version = ? AND run_id = ?`, width, digestFormat, schema, prevRun)
 	if err != nil {
 		return err
 	}
@@ -276,6 +303,9 @@ func (e *Engine) takeStoredDigests(ctx context.Context) error {
 		if err := rows.Scan(&t, &lo, &d); err != nil {
 			_ = rows.Close()
 			return err
+		}
+		if !trusted || prevRun == "" {
+			continue
 		}
 		if e.stored[t] == nil {
 			e.stored[t] = map[int64]string{}
@@ -291,8 +321,13 @@ func (e *Engine) takeStoredDigests(ctx context.Context) error {
 	})
 }
 
-// storeDigests records this run's range digests, after it verified.
-func (e *Engine) storeDigests(ctx context.Context) error {
+// storeDigests records this run's range digests, after it verified, with the width, the format, the
+// schema version and the run id.
+func (e *Engine) storeDigests(ctx context.Context, width int64) error {
+	schema, err := e.schemaVersion(ctx)
+	if err != nil {
+		return err
+	}
 	tables := make([]string, 0, len(e.fresh))
 	for t := range e.fresh {
 		tables = append(tables, t)
@@ -308,7 +343,8 @@ func (e *Engine) storeDigests(ctx context.Context) error {
 			end := min(start+1000, len(los))
 			err := e.stores.A().WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
 				for _, lo := range los[start:end] {
-					if _, err := tx.ExecContext(ctx, `INSERT INTO tether_migration_ranges (table_name, lo, digest) VALUES (?, ?, ?)`, t, lo, e.fresh[t][lo]); err != nil {
+					if _, err := tx.ExecContext(ctx, `INSERT INTO tether_migration_ranges (table_name, lo, digest, width, format, schema_version, run_id)
+						VALUES (?, ?, ?, ?, ?, ?, ?)`, t, lo, e.fresh[t][lo], width, digestFormat, schema, e.runID); err != nil {
 						return err
 					}
 				}

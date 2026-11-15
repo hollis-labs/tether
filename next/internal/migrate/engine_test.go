@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	gostore "github.com/hollis-labs/libs/core/store"
@@ -16,9 +18,35 @@ import (
 // oldFixture builds an old-layout database at migration 0101 holding rows in every S12a table, with the
 // shapes a live database has: rowid gaps in messages, an AUTOINCREMENT mark above the highest id, an
 // orphan row, CURRENT_TIMESTAMP text, a BLOB payload, NULLs and non-ASCII text. It returns the file path.
+//
+// The fixture is built once per test binary (applying the 103 old migrations is the slow part) and each
+// test gets its own copy.
 func oldFixture(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "old.db")
+	fixtureOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "tether-migrate-fixture-")
+		if err != nil {
+			fixtureErr = err
+			return
+		}
+		fixtureDir = dir
+		fixtureTemplate = filepath.Join(dir, "old.db")
+		fixtureErr = buildOldFixture(t, fixtureTemplate)
+	})
+	if fixtureErr != nil {
+		t.Fatalf("build the old fixture: %v", fixtureErr)
+	}
+	return copyFile(t, fixtureTemplate)
+}
+
+var (
+	fixtureOnce                 sync.Once
+	fixtureDir, fixtureTemplate string
+	fixtureErr                  error
+)
+
+func buildOldFixture(t *testing.T, path string) (err error) {
+	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -81,11 +109,17 @@ func oldFixture(t *testing.T) string {
 	exec(`INSERT INTO proxy_events (server, tool_name, duration_ms, ok, timestamp) VALUES ('s', 't', 12, 0, 'ts')`)
 	exec(`INSERT INTO event_ingest_digests (event_id, digest, app, at) VALUES ('evt-001', 'd', 'a', 't')`)
 	exec(`INSERT INTO turn_inputs (input_id, session_id, seq, source, sender_class, basis, state, submitted_at) VALUES ('ti-1', 's', 1, 'chat_send', 'operator', 'none', 'accepted', 't')`)
+	exec(`INSERT INTO session_usage (session_id, turns, cost_usd, updated_at) VALUES ('s', 3, 0.25, 't')`)
+	exec(`INSERT INTO team_activation_evidence (kind, evidence_key, payload, recorded_at) VALUES ('k', 'e', '{}', 't')`)
+	exec(`INSERT INTO retention_audit (at, table_name, cutoff, removed) VALUES ('t', 'events', 'c', 2)`)
+	// A blob in a TEXT column of a ranged table (principals, keyed by its integer id): the Postgres target
+	// converts it, counted by parallel workers.
+	exec(`UPDATE principals SET display = X'64697370' WHERE id = 1`)
 	// A group message: its parent (registry_entries) is in a later family, so in the target its foreign
 	// key is unresolved until that family lands. Deferred, not a problem.
 	exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at) VALUES ('grp', 'group', 'g', 't', 't')`)
 	exec(`INSERT INTO messages (id, kind, from_urn, to_urn, created_at, group_urn, group_seq) VALUES ('m-grp', 'notice', 'f', 'grp', 'c', 'grp', 1)`)
-	return path
+	return nil
 }
 
 // applyOld runs the vendored old migrations on db (the old migrator's way; see buildOld).

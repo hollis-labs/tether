@@ -51,8 +51,10 @@ type walker struct {
 	batch int
 	sync  bool // repair differing ranges; otherwise only report them
 	pg    bool
-	// conversions counts, per table.column, values the Postgres target stores in another class.
+	// conversions counts, per table.column, values the Postgres target stores in another class; convMu
+	// guards it (parallel workers share it).
 	conversions map[string]int64
+	convMu      *sync.Mutex
 }
 
 func (w *walker) run(ctx context.Context) (TableReport, error) {
@@ -269,7 +271,9 @@ func (w *walker) convert(rows [][]any) {
 // count records a conversion once per copied value: the copy walk counts, the verify walk does not.
 func (w *walker) count(c column) {
 	if w.sync && w.conversions != nil {
+		w.convMu.Lock()
 		w.conversions[w.sp.name+"."+c.name]++
+		w.convMu.Unlock()
 	}
 }
 
