@@ -177,7 +177,7 @@ The guard (`legacyguard.Check`) reads only `state`. `tether migrate-from` boots 
 - **The source** must be a copy:
   - the path is resolved through symlinks first;
   - a `-wal`, `-shm` or `-journal` file beside it is refused;
-  - so is a WAL-mode header, because a raw copy of a WAL database can silently miss committed pages. VACUUM INTO and `.backup` produce rollback-mode copies.
+  - use VACUUM INTO for the copy (the nightly backup does, and it is the rule for the live database). A `.backup` copy of a WAL database keeps a WAL-mode header with no `-wal` file; it is accepted, but only with the source check (`full` or `quick`, never `none`), since a raw copy of a WAL database's main file without its `-wal` could miss committed pages that nothing else shows. The source is opened immutable and never checkpointed.
 - **The source check:** `PRAGMA integrity_check` runs on the source before the copy (`--source-check full`, the default). `quick` runs `quick_check`, and `none` trusts the check made when the copy was taken. The check used and its result are in the report.
 - **`--phase` is required.** A run that leaves it out never marks a database complete by default.
 - **NULL keys:** a source row with a NULL primary key is refused up front, naming the table, since it would never fall in a key range.

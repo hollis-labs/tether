@@ -80,6 +80,9 @@ a copy and writes nothing.`,
 				_, _ = fmt.Fprintf(out, "mark %s; copy %.1fs, verify %.1fs, source hash %.1fs; source unchanged: %v\n",
 					rep.Mark, rep.CopySeconds, rep.VerifySeconds, rep.HashSeconds, rep.SourceUnchanged)
 			}
+			for col, n := range rep.Conversions {
+				_, _ = fmt.Fprintf(out, "converted %s: %d values (storage class changed for the Postgres target)\n", col, n)
+			}
 			if !rep.OK() {
 				for _, p := range rep.Problems {
 					_, _ = fmt.Fprintln(out, "problem:", p)
@@ -89,7 +92,7 @@ a copy and writes nothing.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&oldDB, "old-db", "", "path of a copy of the old database, made with VACUUM INTO or .backup (required)")
+	cmd.Flags().StringVar(&oldDB, "old-db", "", "path of a copy of the old database, made with VACUUM INTO (or .backup) (required)")
 	cmd.Flags().StringVar(&phase, "phase", "", "bulk (before the window) or final (in the window; marks the database complete); required unless --verify")
 	cmd.Flags().BoolVar(&verifyOnly, "verify", false, "compare this database with the copy and write nothing")
 	cmd.Flags().StringVar(&reportPath, "report", "", "write the JSON report here (mode 0600)")
