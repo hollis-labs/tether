@@ -301,5 +301,6 @@ S4 replaces this with two listeners:
   - on SQLite also `sqlite_sequence`, the foreign key violations (exactly the source's), and `integrity_check`.
 
   A differing range is reported by its key bounds.
-- **Families:** S12a copies the class A tables and `messages`; S12b adds the class B family (events, the identity audit and telemetry). Later families are added as their slices land.
+- **Families:** S12a copies the class A tables and `messages`; S12b adds the class B family (events, the identity audit and telemetry); S12c the first class C family (messaging, go-messaging's delivery tables, sessions and their satellites). Later families are added as their slices land.
+- **Pre-checks:** `--precheck` runs the cutover pre-checks on the copy and changes nothing (`conversion-notes.md`).
 - **Speed:** tables keyed by an integer rowid are walked in fixed-width ranges by parallel workers, and stored range digests let a final run read only the source for unchanged ranges (`conversion-notes.md`, "Ranges, workers and the window").

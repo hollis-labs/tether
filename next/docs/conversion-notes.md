@@ -195,7 +195,12 @@ The guard (`legacyguard.Check`) reads only `state`. `tether migrate-from` boots 
 - **Verification after a run** rechecks only the ranges the run wrote, in parallel (`verify_mode: incremental`). `--verify` walks every range (`full`).
 - **Target check.** `--target-check full|quick|none` sets the check run on the result. The window run can use `none` and run `integrity_check` read-only after the new hub starts.
 - **Hashing.** The source is hashed concurrently with the copy and the verification.
-- **Families.** `--family a|b|all` (default `all`). A complete database is never rewritten, so the final run must cover every family.
+- **Families.** `--family a|b|c|all` (default `all`). A complete database is never rewritten, so the final run must cover every family.
+- **go-messaging's tables (family c).** The library creates its own tables. On a target that does not have them yet, migrate-from applies the library's schema first (`delivery.ApplySQLiteSchema` through `LibraryDB`), then copies the rows. Ids are kept, so the copied `delivery` event checkpoint never skips a transition. The NUL separator in `messaging_idempotency.scope` is copied byte for byte. On a Postgres target these tables are skipped and listed in the report (`skipped`): the library has no Postgres store yet (CW-20261115-0013).
+
+**Cutover pre-checks** (`migrate-from --old-db <copy> --precheck`): read-only, reported per check, and a non-zero exit if any fails. Run them on the day's copy before the final copy:
+- **`stuck_launches`:** no session in `created` may hold an admitted workspace allocation. The old code wrote that reservation's digest with its nullable columns marshaled as objects, so it can never match the new digest. The launch would fail every time, and the session would stay live, blocking resume and recovery for its agent. Drain or kill such sessions on the old hub first.
+- **`event_identity`** (plan 13.7 B-1): no event above the frozen cutover may lack an event id, the backfill cursor may not be above the cutover, and events' AUTOINCREMENT high-water mark must be at least the largest id and the cutover.
 
 **Triggers are off during the copy.** A copied row is history, not a new event. Without this, inserting `messages` would write journal rows, and `principals` would be re-checked against today's sessions.
 - SQLite: each trigger on a copied table is saved in `tether_migration_triggers`, dropped, and recreated after the copy. A run that stopped mid-copy has its triggers recreated first.

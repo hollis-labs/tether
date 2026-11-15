@@ -104,3 +104,30 @@ func TestMigrateFromRefusesALiveLookingSource(t *testing.T) {
 		t.Fatalf("err = %v, want ErrLiveSource", err)
 	}
 }
+
+// TestMigrateFromPrecheck: --precheck reports and changes nothing; it fails on a stuck launch.
+func TestMigrateFromPrecheck(t *testing.T) {
+	configure(t, freeAddr(t))
+	old := oldCopy(t)
+	data := filepath.Join(t.TempDir(), "data")
+	if err := run(context.Background(), env(data), []string{"migrate-from", "--old-db", old, "--precheck"}); err != nil {
+		t.Fatalf("precheck on a clean copy: %v", err)
+	}
+	db, err := sql.Open("sqlite", old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO sessions (id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at) VALUES ('s', 'l', 'p', 'a', 'pv', '/w', 'created', 't', 't')`,
+		`INSERT INTO workspace_scratch_allocations (session_id, operation_id, session_digest, plan_digest, root, status) VALUES ('s', 'o', 'sd', 'pd', '/r', 'admitted')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
+	err = run(context.Background(), env(data), []string{"migrate-from", "--old-db", old, "--precheck"})
+	if err == nil || !strings.Contains(err.Error(), "pre-check") {
+		t.Fatalf("precheck with a stuck launch: %v", err)
+	}
+}

@@ -21,7 +21,7 @@ import (
 func (t *tether) migrateFromCmd(ctx context.Context) *cobra.Command {
 	var oldDB, phase, reportPath string
 	var batch, workers int
-	var verifyOnly bool
+	var verifyOnly, precheck bool
 	var sourceCheck, targetCheck, family string
 	cmd := &cobra.Command{
 		Use:   "migrate-from",
@@ -34,7 +34,7 @@ marks the database complete. A complete database is never rewritten: --verify re
 a copy and writes nothing.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if !verifyOnly && phase == "" {
+			if !verifyOnly && !precheck && phase == "" {
 				return errors.New("--phase is required: bulk (before the window) or final (in the window)")
 			}
 			src, err := migrate.CheckSource(oldDB)
@@ -46,9 +46,27 @@ a copy and writes nothing.`,
 				return err
 			}
 			defer func() { _ = db.Close() }()
+			if precheck {
+				findings, err := migrate.New(db, src, database.From(t.app)).Precheck(ctx)
+				if err != nil {
+					return err
+				}
+				failed := 0
+				for _, f := range findings {
+					status := "ok"
+					if !f.OK {
+						status, failed = "FAIL", failed+1
+					}
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "precheck %-16s %-4s %s\n", f.Check, status, f.Detail)
+				}
+				if failed > 0 {
+					return fmt.Errorf("migrate-from: %d pre-check(s) failed; act on them before the final copy", failed)
+				}
+				return nil
+			}
 			tables, ok := migrate.Families[family]
 			if !ok {
-				return fmt.Errorf("--family must be a, b or all, not %q", family)
+				return fmt.Errorf("--family must be a, b, c or all, not %q", family)
 			}
 			out := cmd.OutOrStdout()
 			e := migrate.New(db, src, database.From(t.app))
@@ -102,11 +120,12 @@ a copy and writes nothing.`,
 	cmd.Flags().StringVar(&oldDB, "old-db", "", "path of a copy of the old database, made with VACUUM INTO (or .backup) (required)")
 	cmd.Flags().StringVar(&phase, "phase", "", "bulk (before the window) or final (in the window; marks the database complete); required unless --verify")
 	cmd.Flags().BoolVar(&verifyOnly, "verify", false, "compare this database with the copy and write nothing")
+	cmd.Flags().BoolVar(&precheck, "precheck", false, "run the cutover pre-checks on the copy, report, and change nothing")
 	cmd.Flags().StringVar(&reportPath, "report", "", "write the JSON report here (mode 0600)")
 	cmd.Flags().IntVar(&batch, "batch", 2000, "rows per key range (key width for tables ranged by an integer key)")
 	cmd.Flags().IntVar(&workers, "workers", 0, "parallel range workers for tables ranged by an integer key (0: the CPUs, at most 8)")
 	cmd.Flags().StringVar(&targetCheck, "target-check", "full", "check the result after the copy: full (integrity_check), quick (quick_check) or none (the range digests prove the content)")
-	cmd.Flags().StringVar(&family, "family", "all", "the table families to copy: a (class A and messages), b (events and telemetry) or all")
+	cmd.Flags().StringVar(&family, "family", "all", "the table families to copy: a (class A and messages), b (events and telemetry), c (messaging, the delivery library, sessions) or all")
 	cmd.Flags().StringVar(&sourceCheck, "source-check", "full", "check the source copy first: full (integrity_check), quick (quick_check) or none (already checked when the copy was made)")
 	_ = cmd.MarkFlagRequired("old-db")
 	return cmd

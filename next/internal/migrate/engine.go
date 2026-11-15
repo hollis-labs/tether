@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gostore "github.com/hollis-labs/libs/core/store"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 
 	"github.com/hollis-labs/tether/next/internal/store"
 )
@@ -56,12 +57,35 @@ var FamilyS12b = []string{
 	"turn_inputs", "session_usage", "team_activation_evidence",
 }
 
+// FamilyS12c is the first class C family (CW-20261115-0090): the messaging tables, go-messaging's delivery
+// library tables, and sessions with their satellites, i.e. the tables whose store code is in S2b. messages
+// itself is in FamilyS12a.
+var FamilyS12c = []string{
+	// messaging
+	"broker_envelopes", "channel_publications", "message_aliases", "address_aliases",
+	"message_event_checkpoints", "message_event_deferred", "message_event_journal", "message_purge_audit",
+	"recipient_wake_admissions", "routing_replies", "seat_wake_clock", "wake_triage", "a2a_tasks",
+	// go-messaging's delivery library (SQLite only: the library has no Postgres store yet)
+	"messaging_delivery_schema", "messaging_messages", "messaging_deliveries", "messaging_attempts",
+	"messaging_receipts", "messaging_transitions", "messaging_idempotency",
+	// sessions and their satellites
+	"session_groups", "sessions", "session_idempotency", "session_mcp_policy", "session_provider_mappings",
+	"session_refs", "session_replacements", "session_shims", "client_attachments", "launch_plans",
+	"checkpoints", "agent_recovery_cursors", "runtime_bindings", "workspace_scratch_allocations",
+	"worker_permission_parser", "seat_status",
+}
+
 // Families are the table families migrate-from knows, by name, in copy order. "all" is every one of them.
 var Families = map[string][]string{
 	"a":   FamilyS12a,
 	"b":   FamilyS12b,
-	"all": append(append([]string{}, FamilyS12a...), FamilyS12b...),
+	"c":   FamilyS12c,
+	"all": append(append(append([]string{}, FamilyS12a...), FamilyS12b...), FamilyS12c...),
 }
+
+// libraryTable reports whether a table belongs to go-messaging's delivery library: the library creates it
+// (delivery.ApplySQLiteSchema), and has no Postgres store yet (Substrate gap CW-20261115-0013).
+func libraryTable(t string) bool { return strings.HasPrefix(t, "messaging_") }
 
 // Options configure a run.
 type Options struct {
@@ -105,6 +129,9 @@ type Report struct {
 	// VerifyMode is "incremental" after a run (only the ranges the copy wrote are rechecked; the copy's
 	// own digests proved the rest) or "full" (Verify: every range walked).
 	VerifyMode string `json:"verify_mode"`
+	// Skipped lists the tables of the run that were not copied, with why (go-messaging's tables on a
+	// Postgres target).
+	Skipped []string `json:"skipped,omitempty"`
 	// TargetCheck names the check run on the target after the copy (Options.TargetCheck); Integrity is
 	// its result.
 	TargetCheck        string  `json:"target_check,omitempty"`
@@ -270,7 +297,7 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 	e.conversions = rep.Conversions
 	// B1: a final run marks the database complete, and a complete database is never rewritten, so a final
 	// run must cover every family.
-	if opt.Phase == PhaseFinal && !coversAll(tables) {
+	if opt.Phase == PhaseFinal && !coversAll(tables, e.sqlite()) {
 		return nil, fmt.Errorf("a final run must copy every family (--family all): a complete database is never rewritten, so a family left out would never arrive")
 	}
 	switch opt.TargetCheck {
@@ -343,6 +370,9 @@ func (e *Engine) Run(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 	e.fresh = map[string]map[int64]string{}
+	if tables, err = e.prepareLibrary(ctx, tables, rep); err != nil {
+		return nil, err
+	}
 	specs := make([]tableSpec, 0, len(tables))
 	for _, t := range tables {
 		sp, err := specFor(ctx, e.src, e.raw, t)
@@ -466,6 +496,9 @@ func (e *Engine) Verify(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 	rep.SourceSHA256, rep.SourceUnchanged = sum, true
+	if tables, err = e.prepareLibrary(ctx, tables, rep); err != nil {
+		return nil, err
+	}
 	var specs []tableSpec
 	for _, t := range tables {
 		sp, err := specFor(ctx, e.src, e.raw, t)
@@ -494,18 +527,78 @@ func (e *Engine) markState(ctx context.Context) (string, string, error) {
 	return state, run.String, err
 }
 
-// coversAll reports whether tables holds every table of every family.
-func coversAll(tables []string) bool {
+// coversAll reports whether tables holds every table of every family (the library tables only where the
+// target can hold them).
+func coversAll(tables []string, library bool) bool {
 	have := map[string]bool{}
 	for _, t := range tables {
 		have[t] = true
 	}
 	for _, t := range Families["all"] {
-		if !have[t] {
+		if !have[t] && (library || !libraryTable(t)) {
 			return false
 		}
 	}
 	return true
+}
+
+// prepareLibrary makes the target ready for go-messaging's tables: on SQLite it applies the library's own
+// schema through the sanctioned library handle, so the tables exist (with the library's shape) before they
+// are copied. On Postgres the library has no store, so its tables are dropped from the run and reported.
+func (e *Engine) prepareLibrary(ctx context.Context, tables []string, rep *Report) ([]string, error) {
+	needs := false
+	for _, t := range tables {
+		needs = needs || libraryTable(t)
+	}
+	if !needs {
+		return tables, nil
+	}
+	// The old store creates go-messaging's tables at open, so a live database always has them; a source
+	// that never opened the library has none, and nothing of the library's to copy.
+	var present []string
+	for _, t := range tables {
+		if libraryTable(t) {
+			var n int
+			if err := e.src.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, t).Scan(&n); err != nil {
+				return nil, err
+			}
+			if n == 0 {
+				rep.Skipped = append(rep.Skipped, t+": not in the source (the old store never opened go-messaging)")
+				continue
+			}
+		}
+		present = append(present, t)
+	}
+	tables = present
+	if !e.sqlite() {
+		var kept []string
+		for _, t := range tables {
+			if libraryTable(t) {
+				rep.Skipped = append(rep.Skipped, t+": go-messaging has no Postgres store (CW-20261115-0013)")
+				continue
+			}
+			kept = append(kept, t)
+		}
+		return kept, nil
+	}
+	// Applied once, on a target that does not have the library's tables yet. The library's schema step
+	// writes its own version row; after the first run that row is the copied source's, and applying the
+	// schema again would rewrite it, so every rerun would see that range differ.
+	var n int
+	if err := e.raw.Reader().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'messaging_delivery_schema'`).Scan(&n); err != nil {
+		return nil, err
+	}
+	if n > 0 {
+		return tables, nil
+	}
+	db, err := e.stores.LibraryDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := delivery.ApplySQLiteSchema(ctx, db); err != nil {
+		return nil, fmt.Errorf("apply go-messaging's schema to the target: %w", err)
+	}
+	return tables, nil
 }
 
 // ErrNullKey means a source row has a NULL in its primary key (SQLite allows it in a non-INTEGER key). Such a
