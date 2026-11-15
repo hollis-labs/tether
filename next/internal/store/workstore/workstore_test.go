@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	gostore "github.com/hollis-labs/libs/core/store"
+
 	"github.com/hollis-labs/tether/next/internal/store"
 	"github.com/hollis-labs/tether/next/internal/store/eventstore"
 	"github.com/hollis-labs/tether/next/internal/store/storetest"
@@ -454,6 +456,45 @@ func TestEnvironmentEvents(t *testing.T) {
 		exec(t, s.B(), `DELETE FROM events WHERE id IN (?, ?)`, seqs[0], seqs[1])
 		if w, _ := ws.EnvironmentEvents(ctx, 0, 10); w.GapReason != "purged" || w.EarliestAvailable != head {
 			t.Fatalf("purged prefix %+v", w)
+		}
+	})
+}
+
+// TestEnvironmentHeadSurvivesTailPurge: the window head is the allocated sequence (frozen protocol),
+// so a tail purge must not rewind it. Reviewer repro on #597: four events, delete the newest two, and
+// a cursor at the old head must get an empty, gap-free window, then the next event as an event.
+func TestEnvironmentHeadSurvivesTailPurge(t *testing.T) {
+	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {
+		if s.C().Dialect().Name() == gostore.DriverPostgres {
+			t.Skip("NOTICE: Postgres has no durable allocated head yet; a tail purge rewinds MAX(id). S8's B-1 high-water mark fixes it before class B moves (conversion notes)")
+		}
+		ctx := context.Background()
+		ws, _ := newStore(s)
+		var seqs []int64
+		for range 4 {
+			r, err := ws.Events.Insert(ctx, eventstore.Row{Scope: "global", Kind: "k"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			seqs = append(seqs, r.Seq)
+		}
+		head := seqs[3]
+		exec(t, s.B(), `DELETE FROM events WHERE id IN (?, ?)`, seqs[2], seqs[3])
+		w, err := ws.EnvironmentEvents(ctx, head, 10)
+		if err != nil || w.HighWater != head || w.GapReason != "" || len(w.Events) != 0 {
+			t.Fatalf("cursor at the old head after a tail purge: %+v %v (want head %d, no gap)", w, err, head)
+		}
+		next, err := ws.Events.Insert(ctx, eventstore.Row{Scope: "global", Kind: "session.ended"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w, _ = ws.EnvironmentEvents(ctx, head, 10); w.GapReason != "" || len(w.Events) != 1 || w.Events[0].Seq != next.Seq || w.HighWater != next.Seq {
+			t.Fatalf("the next event after a tail purge: %+v", w)
+		}
+		// Everything purged: the head still holds.
+		exec(t, s.B(), `DELETE FROM events`)
+		if w, _ = ws.EnvironmentEvents(ctx, next.Seq, 10); w.HighWater != next.Seq || w.GapReason != "" {
+			t.Fatalf("after a full purge: %+v", w)
 		}
 	})
 }

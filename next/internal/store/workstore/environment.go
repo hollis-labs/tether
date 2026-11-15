@@ -245,10 +245,22 @@ type EnvironmentWindow struct {
 	GapReason         string
 }
 
-// environmentBounds is the log's head and earliest stored id. Plan 13.1: the head is read from the
-// table (MAX(id)), never from sqlite_sequence as the old query also did.
+// environmentBounds is the log's head and earliest stored id. The head is frozen protocol (the
+// environment stream's cursor, environment-streams.md): the events table's allocated sequence, which
+// survives full event retention. On SQLite that is the old query, MAX(sqlite_sequence, MAX(id)) (events
+// is AUTOINCREMENT; migrate-from carries and verifies sqlite_sequence): MAX(id) alone would rewind the
+// cursor after retention deletes the newest rows, and clients would read "ahead" or lose the next event
+// as "purged". Postgres has no durable allocated head yet: it reads MAX(id), so a tail purge rewinds
+// it there. The fix is S8's B-1 high-water mark (event_identity, class A), needed before class B moves
+// (conversion notes). The sequence's last_value is not used: an uncommitted insert holding
+// LockEventSeq would read as a hole.
 func environmentBounds(ctx context.Context, q gostore.Querier) (head, earliest int64, err error) {
-	err = q.QueryRowContext(ctx, `SELECT COALESCE((SELECT MAX(id) FROM events), 0), COALESCE((SELECT MIN(id) FROM events), 0)`).Scan(&head, &earliest)
+	query := `SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0), COALESCE((SELECT MAX(id) FROM events), 0)),
+ COALESCE((SELECT MIN(id) FROM events), 0)`
+	if q.Dialect().Name() == gostore.DriverPostgres {
+		query = `SELECT COALESCE((SELECT MAX(id) FROM events), 0), COALESCE((SELECT MIN(id) FROM events), 0)`
+	}
+	err = q.QueryRowContext(ctx, query).Scan(&head, &earliest)
 	if earliest == 0 {
 		earliest = head + 1
 	}
