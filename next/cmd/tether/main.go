@@ -15,6 +15,7 @@ import (
 	"github.com/hollis-labs/substrate/modules/cli"
 	"github.com/hollis-labs/substrate/modules/database"
 
+	_ "github.com/hollis-labs/tether/next/internal/sqlitefk" // foreign keys off, as the old store ran
 	"github.com/hollis-labs/tether/next/migrations"
 )
 

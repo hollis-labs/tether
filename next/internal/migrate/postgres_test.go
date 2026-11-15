@@ -14,6 +14,7 @@ import (
 	libmigrate "github.com/hollis-labs/libs/core/store/migrate"
 	"github.com/hollis-labs/libs/core/store/storetest"
 
+	_ "github.com/hollis-labs/tether/next/internal/sqlitefk" // foreign keys off, as the binary runs
 	"github.com/hollis-labs/tether/next/migrations"
 )
 
@@ -302,7 +303,8 @@ func checkCount(sqlText string) int {
 // TestPostgresSchemaMatchesSQLite proves the Postgres set builds the same schema as the SQLite set under
 // the rules in postgres/00001_schema.sql: the same tables; per table the same columns in order with the
 // mapped type, nullability and default; the same primary key and unique keys; the same named indexes;
-// the same number of CHECK constraints; and the same triggers. The allowlists above name every
+// the same number of CHECK constraints (a count, not an expression match: TestTriggerParity exercises
+// what the checks do); and the same triggers. The allowlists above name every
 // difference, with its reason. What the triggers and checks do is TestTriggerParity's job.
 func TestPostgresSchemaMatchesSQLite(t *testing.T) {
 	lite, pg := sqliteStore(t).DB(), pgStore(t).DB()

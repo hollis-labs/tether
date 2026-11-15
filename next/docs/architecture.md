@@ -18,7 +18,7 @@ Reviewers read this file first. It answers the Substrate adoption guide's sectio
 | Which routes are public, which need a scope, which authenticate themselves? | **Today:** only `/healthz` (public, served by `httphost`). **From S4:** the client API is Tether's wire protocol, kept at its paths with its ADR 0010 error envelope as declared `httphost` mounts (`Mount{Raw: true}`). Those mounts verify their own callers through the auth module, and every route on them is scoped with Tether's existing `tether.<verb>` scopes (decision D2). Only routes new to the port (operator identity, setup) live under `/api/`. The full mount list is in `conversion-notes.md`; a coverage test fails on an unscoped route or an unnamed mount. |
 | Is there background work that must drain on shutdown? | Yes, from later slices: the worker hub's outpost WebSockets (S11), SSE streams (`mailbox watch`, `/events/stream`; S4/S8), event retention as a `scheduler` job (S8), the team loop (S13) and event ingest. **Stop order:** stop accepting connections; close streams through `httphost.Stopping(r)` with a final frame; drain in-flight requests within the grace period; then stop modules in reverse start order. S0 has nothing to drain: `httphost.Serve` returns on SIGINT or SIGTERM and the modules stop (verified with a real process; see the S0 PR). |
 | What does the UI need from the framework? | Nothing; there is no UI. |
-| Does the app depend on a module or a lib that is not in the BOM? | Not at S0: `go.mod` holds Substrate (`d064f536`, BOM pins) and `modernc.org/sqlite` (the driver the database module uses). Later slices will need app libs such as `mesh/core` (messaging) and `harness/core` (sandbox, runtime events). Each is checked against `bom/bom.yaml` `app_libs` when its slice starts; a missing pin is a Substrate PR first. |
+| Does the app depend on a module or a lib that is not in the BOM? | Not at S0: `go.mod` holds Substrate (`fe86d444` since S1b, BOM pins) and `modernc.org/sqlite` (the driver the database module uses). Later slices will need app libs such as `mesh/core` (messaging) and `harness/core` (sandbox, runtime events). Each is checked against `bom/bom.yaml` `app_libs` when its slice starts; a missing pin is a Substrate PR first. |
 
 ## Layout
 
@@ -120,7 +120,7 @@ Three things are outside this test by design:
 Rules for row identity follow from the schema and `migrate-from` keeps them:
 - Every INTEGER PRIMARY KEY and AUTOINCREMENT is exactly as before, so ids and `sqlite_sequence` carry over.
 - `messages.rowid` is the mailbox watch cursor clients hold. `00002` makes it an explicit column, `messages.seq`: `migrate-from` writes seq = the old rowid for every row, `VerifyMessagesSeq` proves it (`TestMessagesSeqAcceptance`), and a new message continues past the highest migrated seq.
-- Foreign keys are declared as before. The old store never enforced them (ADR 0008), but go-store opens SQLite with `foreign_keys` on, so the new store does. That is open; see "Postgres baseline" in `conversion-notes.md`.
+- Foreign keys are declared as before and stay unenforced (ADR 0008). go-store would turn them on, so `internal/sqlitefk` turns them off on every connection; see "Postgres baseline" in `conversion-notes.md`.
 
 A schema change made on old `main` after `f6c37bfa` (for example `0102_worker_retirement.sql`) reaches the port through the carry ledger as a new migration in both dialect sets, `00003` onwards, plus its `migrate-from` transform. It is never an edit to `00001`.
 

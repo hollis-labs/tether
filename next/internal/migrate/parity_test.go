@@ -267,6 +267,29 @@ func authorityFixture(tr *transcript, teamDefinition string) {
 
 var paritySuite = []scenario{
 	{
+		// Foreign keys are declared on SQLite and absent on Postgres; neither enforces them (the lead's
+		// decision, docs/conversion-notes.md): orphan rows are accepted and a delete never cascades.
+		name: "foreign keys not enforced",
+		expect: []string{
+			"orphan ref: ok",
+			"children after parent delete: launch_plans=1 session_mcp_policy=1 session_refs=2 runtime_bindings=1",
+		},
+		steps: func(tr *transcript) {
+			tr.exec("orphan ref", `INSERT INTO session_refs (session_id, kind, ref_id, relation, source, at) VALUES ('missing', 'k', 'r', 'read', 'api', 't')`)
+			tr.exec("orphan message group", `INSERT INTO messages (id, kind, from_urn, to_urn, created_at, group_urn) VALUES ('m', 'k', 'f', 't', 'c', 'no-such-group')`)
+			insertSession(tr, "p", "running")
+			tr.must(`INSERT INTO launch_plans (session_id, plan_json) VALUES ('p', '{}')`)
+			tr.must(`INSERT INTO session_mcp_policy (session_id, policy_json) VALUES ('p', '{}')`)
+			tr.must(`INSERT INTO session_refs (session_id, kind, ref_id, relation, source, at) VALUES ('p', 'k', 'r', 'read', 'api', 't')`)
+			tr.must(`INSERT INTO runtime_bindings (id, target_urn, session_id, host_id, attempt_id, generation, leased_at, created_at, updated_at)
+				VALUES ('rb', 'u', 'p', 'h', 'a', 1, 't', 't', 't')`)
+			tr.exec("parent delete", `DELETE FROM sessions WHERE id = 'p'`)
+			tr.query("children after parent delete", `SELECT (SELECT count(*) FROM launch_plans) AS launch_plans,
+				(SELECT count(*) FROM session_mcp_policy) AS session_mcp_policy, (SELECT count(*) FROM session_refs) AS session_refs,
+				(SELECT count(*) FROM runtime_bindings) AS runtime_bindings`)
+		},
+	},
+	{
 		name: "registry instance ids",
 		expect: []string{
 			"insert mux only: tether_instance_id=m1 mux_instance_id=m1",

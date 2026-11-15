@@ -4,7 +4,7 @@ go 1.26.11
 
 require (
 	github.com/hollis-labs/libs/core/store v0.1.0
-	github.com/hollis-labs/substrate v0.1.1-0.20261114095804-d064f53602f8
+	github.com/hollis-labs/substrate v0.1.1-0.20261114214036-fe86d4449f62
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.60.1
 )
@@ -16,7 +16,7 @@ require (
 	github.com/hollis-labs/libs/core/panics v0.1.0 // indirect
 	github.com/hollis-labs/libs/core/util v0.6.0 // indirect
 	github.com/hollis-labs/libs/security/auth v0.3.1 // indirect
-	github.com/hollis-labs/libs/ui/ui-go v0.1.0 // indirect
+	github.com/hollis-labs/libs/ui/ui-go v0.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

@@ -1,8 +1,8 @@
--- messages.seq: an explicit, monotonic message sequence (port plan section 13.1). The mailbox watch cursor
--- reads seq instead of SQLite's implicit rowid, so the cursor values clients hold stay valid:
--- migrate-from writes seq = the old rowid for every migrated row (internal/migrate.VerifyMessagesSeq
--- proves it), and the database assigns MAX(seq)+1 to a new row, as rowid assignment did. Postgres
--- assigns it from an identity column (postgres/00002_messages_seq.sql).
+-- messages.seq: an explicit message sequence (port plan section 13.1). The mailbox watch cursor reads seq
+-- instead of SQLite's implicit rowid, so the cursor values clients hold stay valid: migrate-from writes
+-- seq = the old rowid for every migrated row (internal/migrate.VerifyMessagesSeq proves it), and a new
+-- row gets seq assigned as rowid was: MAX(seq)+1, which can reuse the value of a deleted newest row.
+-- Postgres assigns it from an identity column (postgres/00002_messages_seq.sql), which never reuses one.
 
 -- +goose Up
 ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
