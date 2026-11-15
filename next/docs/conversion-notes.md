@@ -72,6 +72,14 @@ The client API keeps its root paths and the ADR 0010 error envelope `{"error":{"
 
 The old store runs go-messaging's `delivery.ApplySQLiteSchema` from `libs/mesh/core` **v0.10.0**. The live `messaging_*` tables were created and evolved by that version. The Substrate BOM pins `libs/mesh/core` at **v0.6.0** under `app_libs`. The port must open those tables with the same library version (or a later one whose schema migration accepts them), so the BOM pin has to move first. Until it does, `next/` does not import the library: S1 keeps the library tables out of the squashed schema and compares nothing against it. The messaging slice adds the import, and a test that applies the pinned library schema on top of `00001` and compares it with the old store's.
 
+### go-messaging is SQLite-only (gap CW-20261115-0013)
+
+**Status:** open. Substrate gap task CW-20261115-0013, routed to the libs owner.
+
+go-messaging's delivery store (`messaging_*` tables, class C) has only a SQLite implementation, and it needs a raw `*sql.DB`. The port reaches it through `Stores.LibraryDB(ctx)` (S2a): the one sanctioned raw handle, SQLite only, refused inside a `WriteTx` or `Joint`. Library-backed code returns `ErrLibraryUnavailable` on Postgres, and its tests skip there with a notice. Class C cannot move to Postgres until the library has a Postgres store.
+
+The Postgres store will also need the two replacement guard triggers the old store created in Go at open, on `messaging_attempts` (`replaced_delivery_claim`) and `messaging_receipts` (`replaced_delivery_receipt`). They cannot be migrations, because the library creates those tables after the migrations run. S2b-3b installs them through `LibraryDB` on SQLite (`InstallReplacementDeliveryFences`); on Postgres that is a no-op today. The third guard, `replaced_shim_delete` on `session_shims`, is migration `00003` on both dialects.
+
 ### D6: socket admission stays as today
 
 **Status:** recommended (a).
