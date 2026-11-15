@@ -107,6 +107,11 @@ var pgOnly = map[string]string{
 	"message_aliases_alias_nocase": "UNIQUE COLLATE NOCASE on message_aliases.alias, as a unique index on lower(alias)",
 }
 
+// pgOnlyTriggers names Postgres triggers the SQLite set does not have, with the reason.
+var pgOnlyTriggers = map[string]string{
+	"message_event_journal_order": "00005: journal ids commit in order (an advisory lock; SQLite has one writer)",
+}
+
 // sqliteOnly names SQLite objects (indexes, triggers) the Postgres set does not have, with the reason.
 var sqliteOnly = map[string]string{
 	"messages_assign_seq": "Postgres assigns messages.seq from an identity column",
@@ -469,6 +474,22 @@ func TestPostgresSchemaMatchesSQLite(t *testing.T) {
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE NOT tg.tgisinternal AND n.nspname = current_schema()`)
 	sort.Strings(pgTriggers)
+	seenPGOnly := map[string]bool{}
+	kept := pgTriggers[:0]
+	for _, tr := range pgTriggers {
+		name := tr[strings.Index(tr, ".")+1:]
+		if _, ok := pgOnlyTriggers[name]; ok {
+			seenPGOnly[name] = true
+			continue
+		}
+		kept = append(kept, tr)
+	}
+	pgTriggers = kept
+	for name := range pgOnlyTriggers {
+		if !seenPGOnly[name] {
+			t.Errorf("pgOnlyTriggers names %s, which postgres does not have: remove the entry", name)
+		}
+	}
 	if strings.Join(liteTriggers, "\n") != strings.Join(pgTriggers, "\n") {
 		t.Errorf("triggers differ:\nsqlite:   %v\npostgres: %v", liteTriggers, pgTriggers)
 	}
