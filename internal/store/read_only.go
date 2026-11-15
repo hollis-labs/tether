@@ -31,6 +31,32 @@ func OpenReadOnly(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// readerConns bounds the history reader pool. WAL lets these run beside the
+// writer; each is a read transaction, so a slow one holds back checkpoints,
+// which is why every history read has a deadline (HistoryDeadline).
+const readerConns = 2
+
+// openReader opens the read-only history pool over the daemon's own state
+// database (already migrated by openDB): query_only, never a writer.
+func openReader(path string) (*sql.DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	u := url.URL{Scheme: "file", Path: abs}
+	u.RawQuery = "mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(readerConns)
+	if err = db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
 // PendingMigrations reports embedded migration versions that schema_migrations
 // does not record, without writing. A database with no schema_migrations table
 // reports every embedded version as pending.

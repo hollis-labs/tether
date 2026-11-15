@@ -79,6 +79,9 @@ type Server struct {
 	// SandboxProtect, when set, fills /health's sandbox_protect field. It
 	// runs on each /health request, so it must be cheap or cache.
 	SandboxProtect func() *SandboxProtectHealth
+	// WAL, when set, reports the state database's write-ahead log on /health
+	// (CW-20261114-0166).
+	WAL func() *WALHealth
 	// Service is the LaunchService the HTTP handlers dispatch to. When nil,
 	// only /health is registered — useful for tests that don't need the
 	// session surface.
@@ -788,6 +791,19 @@ type Health struct {
 	// (CW-20261001-0142): decided from the daemon's environment, which `tether
 	// doctor` cannot see from its shell. Absent from an older daemon.
 	SandboxProtect *SandboxProtectHealth `json:"sandbox_protect,omitempty"`
+
+	// WAL is the state database's write-ahead log: its size and how long its
+	// checkpoint sequence has stood still (CW-20261114-0166). A long-held
+	// reader shows as a growing wal_bytes with a rising checkpoint age.
+	WAL *WALHealth `json:"wal,omitempty"`
+}
+
+// WALHealth is the /health view of the state database's WAL.
+type WALHealth struct {
+	WALBytes               int64  `json:"wal_bytes"`
+	CheckpointSeq          uint32 `json:"checkpoint_seq"`
+	LastCheckpointAgeSec   int64  `json:"last_checkpoint_age_sec"`
+	LastCheckpointObserved bool   `json:"last_checkpoint_observed"`
 }
 
 // HealthHardening is the launch-hardening state in GET /health.
@@ -920,6 +936,9 @@ func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode,
 	}
 	h.RemoteMCPDenials = s.RemoteMCPDenials()
 	h.RemoteMCP = s.RemoteMCPStatus()
+	if s.WAL != nil {
+		h.WAL = s.WAL()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(h)
 }
