@@ -157,13 +157,11 @@ func (s *Store) refsCount(ctx context.Context, q string, args ...any) (int, erro
 }
 
 // LatestSessionForLogicalAgent returns the newest session of a logical agent in any state ("" when
-// it has none). created_at has one-second resolution; the old store broke ties on rowid (insertion
-// order), which Postgres does not have, so ties break on id, descending. Session ids are random,
-// so two sessions of one agent created in the same second may now resolve differently.
+// it has none), ties broken as latestSessionOrder says (rowid on SQLite, as before).
 func (s *Store) LatestSessionForLogicalAgent(ctx context.Context, logicalAgentID string) (string, error) {
 	r := s.c.Reader()
 	var id string
-	err := r.QueryRowContext(ctx, rebind(r, `SELECT id FROM sessions WHERE logical_agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`),
+	err := r.QueryRowContext(ctx, rebind(r, `SELECT id FROM sessions WHERE logical_agent_id = ? ORDER BY `+latestSessionOrder(r)+` LIMIT 1`),
 		logicalAgentID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

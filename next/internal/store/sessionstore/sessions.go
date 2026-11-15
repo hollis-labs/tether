@@ -61,6 +61,18 @@ func nullText(v string) any {
 
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
 
+// latestSessionOrder is the ORDER BY for "the agent's newest session". created_at has one-second
+// resolution and the old store broke ties by rowid (insertion order); SQLite keeps that. Postgres has
+// no insertion order, so there ties break by id DESC (random ids: two sessions of one agent created
+// in the same second may resolve differently). Moving class C to Postgres needs an insertion-order
+// column for this (conversion notes).
+func latestSessionOrder(q gostore.Querier) string {
+	if q.Dialect().Name() == gostore.DriverPostgres {
+		return `created_at DESC, id DESC`
+	}
+	return `created_at DESC, rowid DESC`
+}
+
 // SessionRow is one sessions row. Empty strings for the nullable columns mean NULL.
 type SessionRow struct {
 	ID, LaunchID, ProjectID, LogicalAgentID, ProviderID, WorkerID, ProviderKind, Workspace, State string
@@ -131,7 +143,11 @@ func (s *Store) CreateSession(ctx context.Context, row SessionRow, planJSON stri
 	if row.Publication == "" {
 		row.Publication = "private-local"
 	}
+	callerWorkstream, callerApp := row.WorkstreamID, row.App
 	err := s.c.WriteTx(ctx, func(ctx context.Context, tx store.Tx) error {
+		// A retried transaction starts from the caller's values again, not from a previous attempt's
+		// inherited ones.
+		row.WorkstreamID, row.App = callerWorkstream, callerApp
 		if row.ParentSessionID != "" {
 			var ws, app sql.NullString
 			err := tx.QueryRowContext(ctx, rebind(tx, `SELECT workstream_id, app FROM sessions WHERE id = ?`), row.ParentSessionID).Scan(&ws, &app)
