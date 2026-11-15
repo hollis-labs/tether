@@ -5,6 +5,8 @@ go 1.26.11
 require (
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/libs/core/store v0.1.0
+	github.com/hollis-labs/libs/harness/core v0.16.0
+	github.com/hollis-labs/libs/mesh/core v0.10.0
 	github.com/hollis-labs/substrate v0.1.1-0.20261114214036-fe86d4449f62
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.60.1
