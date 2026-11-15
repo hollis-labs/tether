@@ -105,7 +105,7 @@ func (s *Store) RecordMessageWake(ctx context.Context, id, target, kind, attempt
 		teamRun := `CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.team_run') END`
 		notStream := `kind NOT LIKE 'stream.%'`
 		if tx.Dialect().Name() == gostore.DriverPostgres {
-			const md = `replace(metadata, '\u0000', '\ufffd')`
+			md := pgUnNul(`metadata`)
 			teamRun = `CASE WHEN pg_input_is_valid(` + md + `, 'jsonb') THEN (` + md + `)::jsonb->>'team_run' END`
 			notStream = `kind NOT ILIKE 'stream.%'`
 		}
