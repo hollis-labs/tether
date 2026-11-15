@@ -52,6 +52,12 @@ func TestRecordMessageWake(t *testing.T) {
 		notJSON := send(t, ms, clock, alice, bob)
 		// Go's encoder writes a NUL as \u0000, which Postgres's jsonb refuses.
 		nul := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Metadata = map[string]string{"team_run": "run-1", "note": "a\x00b"} })
+		// A run id holding a literal backslash followed by "u0000" (JSON "\\u0000") is not an escape:
+		// it must reach the lookup as it is, while the NUL escape beside it is mapped.
+		exec(t, s, `INSERT INTO team_runs (run_id, session_group_id, team_id, team_version, payload, created_at) VALUES (?, 'sg-2', 'team', 1, ?, ?)`, `run-\u0000`, []byte("{}"), "2026-11-14T00:00:00Z")
+		literal := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) {
+			e.Metadata = map[string]string{"team_run": `run-\u0000`, "note": "a\x00b"}
+		})
 		stream := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Kind = "stream.chunk" })
 		mixedStream := send(t, ms, clock, alice, bob, func(e *messaging.Envelope) { e.Kind = "Stream.Chunk" })
 		exec(t, s, `UPDATE messages SET metadata = 'not json' WHERE id = ?`, notJSON.ID)
@@ -62,6 +68,7 @@ func TestRecordMessageWake(t *testing.T) {
 			{badRun.ID, "wake.outcome", "made-up-reason"},
 			{notJSON.ID, "wake.outcome", "busy"},
 			{nul.ID, "wake.outcome", "busy"},
+			{literal.ID, "wake.outcome", "busy"},
 			{stream.ID, "wake.outcome", ""},
 			{mixedStream.ID, "wake.outcome", ""},
 			{inTeam.ID, "wake.other", ""},
@@ -91,7 +98,7 @@ func TestRecordMessageWake(t *testing.T) {
 			}
 			got = append(got, row{kind, team, p["reason"].(string)})
 		}
-		want := []row{{"wake.attempted", "run-1", "busy"}, {"wake.outcome", "", "unknown"}, {"wake.outcome", "", "busy"}, {"wake.outcome", "run-1", "busy"}}
+		want := []row{{"wake.attempted", "run-1", "busy"}, {"wake.outcome", "", "unknown"}, {"wake.outcome", "", "busy"}, {"wake.outcome", "run-1", "busy"}, {"wake.outcome", `run-\u0000`, "busy"}}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("journal %+v, want %+v", got, want)
 		}
