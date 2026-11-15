@@ -68,6 +68,16 @@ func nullText(s string) any {
 	return s
 }
 
+// pgUnNul is the Postgres expression for col (JSON text) with each unescaped \u0000 escape (one
+// preceded by an even run of backslashes) replaced by \ufffd, so jsonb can hold it, while a literal
+// backslash followed by "u0000" is left as it is. The pattern anchors on the character before the
+// escape, so one pass misses the second of two adjacent escapes; the second pass catches it.
+// (Look-behind would need "?", which Rebind reads as a placeholder.)
+func pgUnNul(col string) string {
+	const pattern = `'(^|[^\\])((\\\\)*)\\u0000', '\1\2\\ufffd', 'g'`
+	return `regexp_replace(regexp_replace(` + col + `, ` + pattern + `), ` + pattern + `)`
+}
+
 // LockMessageSeq must run in every transaction that inserts into messages, before the insert. The
 // mailbox watch cursor reads seq > after AND seq <= MAX(seq); on Postgres an identity value can
 // commit after a higher one, so a watcher could pass a row forever. A transaction-scoped advisory
