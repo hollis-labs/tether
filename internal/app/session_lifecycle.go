@@ -1270,6 +1270,7 @@ func (s *Service) closeCreatedSession(id string) (bool, error) {
 	if s.Registry != nil {
 		_, _ = s.Registry.RevokeSessionBindings(context.Background(), id)
 	}
+	s.publishSessionEnded(id, row.LogicalAgentID, row.State, string(session.StateKilled), &exit, EndReasonNeverStarted)
 	return true, nil
 }
 

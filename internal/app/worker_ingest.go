@@ -75,6 +75,7 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		if err = s.recordWorkState(row.ID, state, f.At); err != nil {
 			return err
 		}
+		var endReason string
 		switch state {
 		case "exited":
 			state = "completed"
@@ -83,7 +84,9 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 			}
 			// A stop the operator asked for ends as killed, like a local
 			// session's, not as the failed that exit 143 would read as.
-			if s.stops.requested(f.Session) {
+			stopRequested := s.stops.requested(f.Session)
+			endReason = s.workerEndReason(f.Session, stopRequested, s.stops.reason(f.Session))
+			if stopRequested {
 				s.stops.clear(f.Session)
 				state = "killed"
 			}
@@ -100,6 +103,9 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 			}
 		}
 		payload := map[string]any{"from": row.State, "to": state, "exit_code": f.ExitCode}
+		if endReason != "" {
+			payload["reason"] = endReason
+		}
 		if f.Error != "" {
 			payload["detail"] = f.Error
 		}

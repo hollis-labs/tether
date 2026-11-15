@@ -143,6 +143,46 @@ type Hub struct {
 	// Degraded, when set, is told when Sends to a connected worker keep timing
 	// out (CW-20261114-0104).
 	Degraded func(workerID string, d DeliveryDegraded)
+	// KillOrdered, when set, is told of every session a welcome orders the
+	// worker to kill, with why (CW-20261114-0168), before the welcome is sent.
+	KillOrdered func(workerID, sessionID, reason string)
+	// lookupHeld answers what the hub knows of a session a reconnecting worker
+	// holds; nil is the database query (heldSession). Tests replace it.
+	lookupHeld func(ctx context.Context, sessionID, workerID string) (state string, seq int64, err error)
+}
+
+// welcomeLookupTimeout bounds the handshake's lookups of the sessions a worker
+// holds. They run on a context detached from the connection's: a stream that is
+// canceled mid-handshake must not turn every remaining lookup into an error.
+var welcomeLookupTimeout = 10 * time.Second
+
+// heldSession is the hub's record of a session a worker holds: its state and
+// stored cursor, or sql.ErrNoRows when this hub has no such session on this worker.
+func (h *Hub) heldSession(ctx context.Context, sessionID, workerID string) (string, int64, error) {
+	if h.lookupHeld != nil {
+		return h.lookupHeld(ctx, sessionID, workerID)
+	}
+	var state string
+	var seq int64
+	err := h.db.QueryRowContext(ctx, `SELECT s.state,COALESCE(q.last_seq,0) FROM sessions s LEFT JOIN session_worker_seq q ON q.session_id=s.id WHERE s.id=? AND s.worker_id=?`, sessionID, workerID).Scan(&state, &seq)
+	return state, seq, err
+}
+
+// welcomeVerdict is what a welcome does with one session the worker holds. A
+// kill needs a definite answer (CW-20261114-0168): the session is terminal here,
+// or this hub has no such session on this worker. A lookup that failed (a
+// stalled database, a timeout) is no answer: the session is held, left
+// running and replayed once the hub can read it, never killed.
+func welcomeVerdict(state string, err error) (kill bool, reason string, held bool) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return true, "unknown_to_hub", false
+	case err != nil:
+		return false, "", true
+	case state == "completed" || state == "failed" || state == "killed":
+		return true, "hub_state_" + state, false
+	}
+	return false, "", false
 }
 
 func New(db *sql.DB) *Hub {
@@ -308,19 +348,46 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 		}
 		welcome.Bindings = append(welcome.Bindings, bound)
 	}
-	for _, held := range hello.Sessions {
-		var state string
-		var seq int64
-		err := h.db.QueryRowContext(r.Context(), `SELECT s.state,COALESCE(q.last_seq,0) FROM sessions s LEFT JOIN session_worker_seq q ON q.session_id=s.id WHERE s.id=? AND s.worker_id=?`, held.ID, id).Scan(&state, &seq)
-		if err != nil || state == "completed" || state == "failed" || state == "killed" {
-			welcome.Kill = append(welcome.Kill, held.ID)
-		} else {
-			welcome.Resume = append(welcome.Resume, workerwire.Cursor{Session: held.ID, FromSeq: seq + 1})
-			c.replaying[held.ID] = true
+	lookupCtx, cancelLookup := context.WithTimeout(context.WithoutCancel(r.Context()), welcomeLookupTimeout)
+	var held []string
+	kills := map[string]string{}
+	for _, s := range hello.Sessions {
+		state, seq, err := h.heldSession(lookupCtx, s.ID, id)
+		kill, reason, hold := welcomeVerdict(state, err)
+		switch {
+		case kill:
+			welcome.Kill = append(welcome.Kill, s.ID)
+			kills[s.ID] = reason
+		case hold:
+			held = append(held, s.ID)
+			log.Printf("workerhub: worker %s holds session %s the hub could not read (%v); left running, not killed, and replayed once readable", id, s.ID, err)
+		default:
+			welcome.Resume = append(welcome.Resume, workerwire.Cursor{Session: s.ID, FromSeq: seq + 1})
+			c.replaying[s.ID] = true
+		}
+	}
+	cancelLookup()
+	// A connection that went away during the lookups gets no welcome: the worker
+	// reconnects and the next handshake decides afresh.
+	if r.Context().Err() != nil {
+		return
+	}
+	for _, s := range welcome.Kill {
+		log.Printf("workerhub: worker %s: welcome orders session %s killed (%s)", id, s, kills[s])
+		if h.KillOrdered != nil {
+			h.KillOrdered(id, s, kills[s])
 		}
 	}
 	if c.send(welcome) != nil {
 		return
+	}
+	if len(held) > 0 {
+		// Held sessions replay from the stored cursor once ingest is idle (replayDropped).
+		c.pendingMu.Lock()
+		for _, s := range held {
+			c.dropped[s] = true
+		}
+		c.pendingMu.Unlock()
 	}
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)

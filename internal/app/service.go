@@ -77,6 +77,9 @@ type Service struct {
 	turnFeeds              map[string]turnFeedRegistration
 	outputRetries          outputRetryState
 	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+	// killOrders is session ID -> why a worker's welcome ordered it killed
+	// (CW-20261114-0168), until its terminal state arrives.
+	killOrders sync.Map
 
 	// TeamsEnabled grants launched sessions the team.write scope so they can
 	// call tether_team_*; set by daemon startup from modules.teams.
@@ -420,6 +423,7 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame
 	service.Workers.Degraded = service.publishWorkerDegraded
+	service.Workers.KillOrdered = service.recordWorkerKillOrder
 	service.installOutpostMail()
 	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
