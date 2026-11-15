@@ -238,7 +238,7 @@ func TestReplacementConcurrent(t *testing.T) {
 	})
 }
 
-// TestReplacedShimDelete: migration 00003's guard keeps a replaced session's shim custody row, on both
+// TestReplacedShimDelete: migration 00006's guard keeps a replaced session's shim custody row, on both
 // dialects, and leaves other shim rows deletable.
 func TestReplacedShimDelete(t *testing.T) {
 	storetest.Dialects(t, func(t *testing.T, s *store.Stores) {

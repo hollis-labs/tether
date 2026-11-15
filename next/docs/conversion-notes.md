@@ -78,7 +78,7 @@ The old store runs go-messaging's `delivery.ApplySQLiteSchema` from `libs/mesh/c
 
 go-messaging's delivery store (`messaging_*` tables, class C) has only a SQLite implementation, and it needs a raw `*sql.DB`. The port reaches it through `Stores.LibraryDB(ctx)` (S2a): the one sanctioned raw handle, SQLite only, refused inside a `WriteTx` or `Joint`. Library-backed code returns `ErrLibraryUnavailable` on Postgres, and its tests skip there with a notice. Class C cannot move to Postgres until the library has a Postgres store.
 
-The Postgres store will also need the two replacement guard triggers the old store created in Go at open, on `messaging_attempts` (`replaced_delivery_claim`) and `messaging_receipts` (`replaced_delivery_receipt`). They cannot be migrations, because the library creates those tables after the migrations run. S2b-3b installs them through `LibraryDB` on SQLite (`InstallReplacementDeliveryFences`); on Postgres that is a no-op today. The third guard, `replaced_shim_delete` on `session_shims`, is migration `00003` on both dialects.
+The Postgres store will also need the two replacement guard triggers the old store created in Go at open, on `messaging_attempts` (`replaced_delivery_claim`) and `messaging_receipts` (`replaced_delivery_receipt`). They cannot be migrations, because the library creates those tables after the migrations run. S2b-3b installs them through `LibraryDB` on SQLite (`InstallReplacementDeliveryFences`); on Postgres that is a no-op today. The third guard, `replaced_shim_delete` on `session_shims`, is migration `00006` on both dialects (numbers allocated by the lead: 00003-00004 for the 0102/0103 carries, 00005 for the journal lock).
 
 ### D6: socket admission stays as today
 
