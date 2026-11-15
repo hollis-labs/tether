@@ -31,11 +31,12 @@ import (
 func TestWorkerIngestLoad(t *testing.T) {
 	frames := envInt(t, "TETHER_INGEST_LOAD_FRAMES", 20)
 	for _, sessions := range []int{1, 20} {
-		for _, parallel := range []bool{false, true} {
+		for _, mode := range []string{"serial", "batched", "parallel"} {
+			parallel := mode == "parallel"
 			if sessions == 1 && parallel {
 				continue
 			}
-			name := fmt.Sprintf("%d-sessions-%s", sessions, map[bool]string{false: "serial", true: "parallel"}[parallel])
+			name := fmt.Sprintf("%d-sessions-%s", sessions, mode)
 			t.Run(name, func(t *testing.T) {
 				svc, ids := ingestLoadRig(t, sessions)
 				data := []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"a line of agent output about 120 bytes"}]}}` + "\n")
@@ -59,6 +60,22 @@ func TestWorkerIngestLoad(t *testing.T) {
 					close(errs)
 					for e := range errs {
 						err = errorsJoin(err, e)
+					}
+				} else if mode == "batched" {
+					// The hub's shape since CW-20261115-0027: one worker's frames,
+					// round-robin across sessions, drained up to 64 at a time.
+					var queue []workerwire.Frame
+					for seq := 1; seq <= frames; seq++ {
+						for _, id := range ids {
+							queue = append(queue, workerwire.Frame{T: "output", Session: id, Seq: int64(seq), Stream: "stdout", Data: data})
+						}
+					}
+					for len(queue) > 0 && err == nil {
+						n := min(64, len(queue))
+						for _, e := range svc.ingestWorkerOutputs("w-load", queue[:n]) {
+							err = errorsJoin(err, e)
+						}
+						queue = queue[n:]
 					}
 				} else {
 					for seq := 1; seq <= frames && err == nil; seq++ {
