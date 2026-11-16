@@ -1040,6 +1040,16 @@ chat event or approval. The host reconciles any action before it enters rich
 chat. Existing direct `/sessions/{id}` PTY routes remain separate diagnostic
 access and do not acquire a conversation writer lease.
 
+`internal/terminalattach.ChatHost` connects this surface to the durable
+`chathost.Host` in libs. The integrator supplies an authenticated target
+resolver that maps both conversation IDs and explicit session targets to the
+current binding and exact PTY session. The resolver reads the live PTY mapping
+independently of the SDK host, because input and resize call it under the SDK
+host's lease lock. The PTY interface must deliver input and resize synchronously;
+queued transports must check the same lease again at delivery. This dependency
+remains opt-in until the daemon has an authoritative conversation-to-PTY
+mapping and direct input policy for managed sessions.
+
 ---
 
 ### Driving sessions from an orchestrator

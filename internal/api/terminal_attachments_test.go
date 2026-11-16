@@ -44,7 +44,7 @@ func (h *terminalTestHost) Attach(_ context.Context, b terminalattach.Binding, r
 	h.roles[id] = role
 	return id, nil
 }
-func (h *terminalTestHost) Detach(_ context.Context, b terminalattach.Binding, id string) error {
+func (h *terminalTestHost) Detach(_ context.Context, b terminalattach.Binding, id string, _ terminalattach.Role) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if b != h.binding {

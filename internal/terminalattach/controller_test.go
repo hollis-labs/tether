@@ -42,7 +42,7 @@ func (h *fakeHost) Attach(_ context.Context, b Binding, role Role) (string, erro
 	h.attached[id] = role
 	return id, nil
 }
-func (h *fakeHost) Detach(_ context.Context, b Binding, id string) error {
+func (h *fakeHost) Detach(_ context.Context, b Binding, id string, _ Role) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if b != h.binding {

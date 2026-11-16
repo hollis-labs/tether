@@ -59,7 +59,7 @@ type Window struct {
 type Host interface {
 	Resolve(context.Context, string) (Binding, error)
 	Attach(context.Context, Binding, Role) (string, error)
-	Detach(context.Context, Binding, string) error
+	Detach(context.Context, Binding, string, Role) error
 	Claim(context.Context, Binding, string, bool) (Lease, error)
 	Renew(context.Context, Lease) (Lease, error)
 	Observe(context.Context, Binding, io.Writer, int64, func(Window) error) error
@@ -226,7 +226,7 @@ func (c *Controller) Close(ctx context.Context, id string) error {
 	if s == nil {
 		return nil
 	}
-	if err := c.host.Detach(ctx, s.binding, id); err != nil && !errors.Is(err, ErrStaleGeneration) && !errors.Is(err, ErrNotFound) {
+	if err := c.host.Detach(ctx, s.binding, id, s.attachment.Role); err != nil && !errors.Is(err, ErrStaleGeneration) && !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	s.cancel()
