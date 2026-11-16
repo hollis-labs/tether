@@ -199,3 +199,53 @@ func TestTerminalAttachmentsHTTP(t *testing.T) {
 		t.Fatalf("host input: %q", backend.input)
 	}
 }
+
+// This test pins the pre-activation boundary. CW-20261116-0019 deliberately
+// changes the direct routes once the daemon has an authoritative PTY mapping.
+func TestTerminalAttachmentOptInAndLegacyBypass(t *testing.T) {
+	service := &fakeLaunchService{}
+	off := NewHandler(Deps{Service: service})
+	if rr := terminalRequest(off, http.MethodPost, "/terminal-attachments", `{"target":"live-1"}`, ""); rr.Code != http.StatusNotFound {
+		t.Fatalf("opt-in off: %d", rr.Code)
+	}
+	for _, route := range []struct{ path, body string }{
+		{"/sessions/live-1/input", "legacy off"},
+		{"/sessions/live-1/resize", `{"rows":24,"cols":80}`},
+	} {
+		if rr := terminalRequest(off, http.MethodPost, route.path, route.body, ""); rr.Code != http.StatusNoContent {
+			t.Fatalf("legacy off %s: %d %s", route.path, rr.Code, rr.Body.String())
+		}
+	}
+
+	backend := &terminalTestHost{binding: terminalattach.Binding{OwnerID: "owner", OperativeID: "agent", ConversationID: "conv", AttemptID: "attempt", SessionID: "live-1", Generation: 1, Terminal: true}, roles: map[string]terminalattach.Role{}}
+	on := NewHandler(Deps{Service: service, TerminalHost: backend})
+	opened := terminalRequest(on, http.MethodPost, "/terminal-attachments", `{"target":"live-1","role":"controller"}`, "")
+	if opened.Code != http.StatusCreated {
+		t.Fatalf("open: %d %s", opened.Code, opened.Body.String())
+	}
+	var attachment terminalattach.Attachment
+	if err := json.Unmarshal(opened.Body.Bytes(), &attachment); err != nil {
+		t.Fatal(err)
+	}
+	if rr := terminalRequest(on, http.MethodPost, "/terminal-attachments/"+attachment.ID+"/lease", `{}`, ""); rr.Code != http.StatusOK {
+		t.Fatalf("writer claim: %d %s", rr.Code, rr.Body.String())
+	}
+	for _, route := range []struct{ path, body string }{
+		{"/sessions/live-1/input", "legacy bypass"},
+		{"/sessions/live-1/resize", `{"rows":40,"cols":100}`},
+	} {
+		if rr := terminalRequest(on, http.MethodPost, route.path, route.body, ""); rr.Code != http.StatusNoContent {
+			t.Fatalf("legacy bypass %s: %d %s", route.path, rr.Code, rr.Body.String())
+		}
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if len(service.inputLog) != 2 || string(service.inputLog[0]) != "legacy off" || string(service.inputLog[1]) != "legacy bypass" || len(service.resizeRows) != 2 || service.resizeRows[0] != 24 || service.resizeRows[1] != 40 {
+		t.Fatalf("legacy effects: input=%q resize=%v", service.inputLog, service.resizeRows)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if len(backend.input) != 0 || backend.lease.ID == "" {
+		t.Fatalf("legacy call unexpectedly consumed lease: input=%q lease=%+v", backend.input, backend.lease)
+	}
+}
