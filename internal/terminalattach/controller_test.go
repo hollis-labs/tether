@@ -12,14 +12,15 @@ import (
 )
 
 type fakeHost struct {
-	mu       sync.Mutex
-	binding  Binding
-	attached map[string]Role
-	lease    Lease
-	seq      int
-	now      *time.Time
-	inputs   [][]byte
-	resizes  [][2]uint16
+	mu          sync.Mutex
+	binding     Binding
+	attached    map[string]Role
+	lease       Lease
+	seq         int
+	now         *time.Time
+	inputs      [][]byte
+	resizes     [][2]uint16
+	beforeInput func()
 }
 
 func (h *fakeHost) Resolve(_ context.Context, target string) (Binding, error) {
@@ -101,6 +102,9 @@ func (h *fakeHost) Observe(_ context.Context, b Binding, w io.Writer, _ int64, o
 	return err
 }
 func (h *fakeHost) Input(_ context.Context, l Lease, data []byte) error {
+	if h.beforeInput != nil {
+		h.beforeInput()
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := h.valid(l); err != nil {
@@ -108,6 +112,26 @@ func (h *fakeHost) Input(_ context.Context, l Lease, data []byte) error {
 	}
 	h.inputs = append(h.inputs, bytes.Clone(data))
 	return nil
+}
+
+func TestBindingChangeBetweenAdmissionAndPTYEffect(t *testing.T) {
+	c, h, _ := newFixture()
+	ctx := context.Background()
+	a, err := c.Open(ctx, "conv-1", ControllerRole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, lease, err := c.Acquire(ctx, a.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.beforeInput = func() { h.mu.Lock(); h.binding.AttemptID = "new-attempt"; h.binding.Generation++; h.mu.Unlock() }
+	if err := c.Input(ctx, a.ID, lease, []byte("approval-looking bytes")); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("racing replacement: %v", err)
+	}
+	if len(h.inputs) != 0 {
+		t.Fatalf("stale input reached PTY: %q", h.inputs)
+	}
 }
 func (h *fakeHost) Resize(_ context.Context, l Lease, rows, cols uint16) error {
 	h.mu.Lock()
