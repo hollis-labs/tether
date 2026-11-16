@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -18,6 +19,15 @@ import (
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
+
+func retiredTestPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
+}
 
 func codexSourceFixture(t *testing.T) (*Executor, workerwire.LaunchSpec, string) {
 	t.Helper()
@@ -37,7 +47,7 @@ func codexSourceFixture(t *testing.T) (*Executor, workerwire.LaunchSpec, string)
 	if err := shimhost.WritePrivateJSON(descriptor, d); err != nil {
 		t.Fatal(err)
 	}
-	if err := shimhost.WritePrivateJSON(filepath.Join(dir, "meta.json"), execution{ID: id, Provider: "codex", State: "exited", Descriptor: descriptor, Workspace: cwd}); err != nil {
+	if err := shimhost.WritePrivateJSON(filepath.Join(dir, "meta.json"), execution{PID: retiredTestPID(t), ID: id, Provider: "codex", State: "exited", Descriptor: descriptor, Workspace: cwd}); err != nil {
 		t.Fatal(err)
 	}
 	rec := outputRecord{Frame: workerwire.Frame{Stream: "stdout", Data: []byte("{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-old\"}}}\n")}}
@@ -49,7 +59,7 @@ func codexSourceFixture(t *testing.T) (*Executor, workerwire.LaunchSpec, string)
 }
 
 func TestCodexWorkerSourceFence(t *testing.T) {
-	for _, tc := range []string{"success", "stale-generation", "wrong-thread", "wrong-actor", "live-source", "missing-transcript", "changed-cwd"} {
+	for _, tc := range []string{"success", "stale-generation", "wrong-thread", "wrong-actor", "live-source", "unknown-process", "host-only-process", "missing-transcript", "changed-cwd"} {
 		t.Run(tc, func(t *testing.T) {
 			e, spec, dir := codexSourceFixture(t)
 			before, _ := os.ReadFile(filepath.Join(dir, "meta.json"))
@@ -65,7 +75,17 @@ func TestCodexWorkerSourceFence(t *testing.T) {
 			case "live-source":
 				var v execution
 				_ = json.Unmarshal(before, &v)
-				v.HostPID = os.Getpid()
+				v.PID = os.Getpid()
+				_ = shimhost.WritePrivateJSON(filepath.Join(dir, "meta.json"), &v)
+			case "unknown-process":
+				var v execution
+				_ = json.Unmarshal(before, &v)
+				v.PID, v.HostPID = 0, 0
+				_ = shimhost.WritePrivateJSON(filepath.Join(dir, "meta.json"), &v)
+			case "host-only-process":
+				var v execution
+				_ = json.Unmarshal(before, &v)
+				v.HostPID = v.PID
 				_ = shimhost.WritePrivateJSON(filepath.Join(dir, "meta.json"), &v)
 			case "changed-cwd":
 				var v execution
@@ -180,7 +200,7 @@ func TestCodexWorkerReclaimsOnlyRetiredUnadmittedAttempt(t *testing.T) {
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			old := &execution{ID: spec.Session, Provider: "codex", State: "exited"}
+			old := &execution{PID: retiredTestPID(t), ID: spec.Session, Provider: "codex", State: "exited"}
 			if admitted {
 				old.NativeContext = &workerwire.NativeContext{Thread: spec.ResumeSessionID}
 			}

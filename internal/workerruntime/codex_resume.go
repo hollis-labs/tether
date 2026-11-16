@@ -238,10 +238,10 @@ func waitNativeReady(ctx context.Context, path string, thread, workroot string) 
 }
 
 func retiredNativeProcess(pid, hostPID int) bool {
-	if pid > 1 {
-		return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
-	}
-	return hostPID <= 1 || errors.Is(syscall.Kill(hostPID, 0), syscall.ESRCH)
+	// Until shim.started supplies a distinct child PID, the execution may
+	// still carry only the host PID. Neither missing nor host-only evidence
+	// proves the native writer retired.
+	return pid > 1 && pid != hostPID && errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 }
 
 func (e *Executor) awaitNativeRetirement(s *execution) bool {
