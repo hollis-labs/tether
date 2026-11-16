@@ -1,0 +1,1 @@
+- CW-20261116-0015: Add opt-in same-worker Codex native continuation with exact source-generation fencing, explicit current policy-digest authorization, immutable historical policy, and native-thread readiness before accepting a turn.

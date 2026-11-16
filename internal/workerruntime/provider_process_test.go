@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -62,6 +63,12 @@ func TestWorkerCodexProtocolFixture(t *testing.T) {
 		case "initialized":
 			notified = true
 			continue
+		case "thread/resume":
+			if !initialized || !notified || !bytes.Contains(f.Params, []byte("thread-fixture")) {
+				os.Exit(27)
+			}
+			thread = true
+			result = map[string]any{"thread": map[string]string{"id": "thread-fixture"}}
 		case "thread/start":
 			if !initialized || !notified {
 				os.Exit(23)
@@ -144,5 +151,60 @@ func TestWorkerTurnCompletionUsesProviderTerminal(t *testing.T) {
 		if !workerTurnComplete(p, []byte(frame)) {
 			t.Fatalf("%s terminal ignored", p)
 		}
+	}
+}
+
+func TestWorkerCodexResumeReadinessBeforeAnyTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TETHER_WORKER_PROTOCOL_FIXTURE", "1")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "codex-fixture")
+	quoted := "'" + strings.ReplaceAll(exe, "'", "'\"'\"'") + "'"
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexec "+quoted+" -test.run=^TestWorkerCodexProtocolFixture$ -- \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, cwd := t.TempDir(), t.TempDir()
+	e := NewExecutor(t.TempDir(), "/opt/worker", nil)
+	e.HubMCPURL = "https://fixture.invalid/mcp"
+	e.Tokens = &TokenMinter{}
+	spec := workerwire.LaunchSpec{Session: "continued", Provider: "codex", RuntimeKind: "jsonrpc-stdio", PermissionMode: "bypass", MCPPolicy: true, ResumeSessionID: "thread-fixture", AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: []string{"tether.read"}}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	prepared, err := e.prepareProvider(ctx, spec, binary, cwd, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := providerProcessArgs(root, spec, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- RunProviderProcess(ctx, args[2], reader, &output, os.Stderr) }()
+	if err := waitNativeReady(ctx, filepath.Join(root, "native-readiness", "ready.json"), "thread-fixture", cwd); err != nil {
+		t.Fatal(err)
+	}
+	// No input exists until readiness proves thread/resume succeeded.
+	_, err = io.WriteString(writer, "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"worker prompt\"}}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "worker answer") {
+		t.Fatal("continued thread did not answer")
 	}
 }

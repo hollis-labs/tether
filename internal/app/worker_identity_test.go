@@ -89,6 +89,10 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 			if ws.ReadJSON(&f) != nil {
 				return
 			}
+			if f.T == "resume_probe" && slices.Contains(features, workerwire.FeatureCodexResume) {
+				_ = ws.WriteJSON(workerwire.Frame{T: "resume_probed", CmdID: f.CmdID, Session: f.Session, NativeContext: &workerwire.NativeContext{Session: f.Session, Generation: "generation-1", Thread: "thread-retained", Workroot: "/worker/retained", Actor: registry.LogicalAgentBindingTarget("portfolio-manager")}})
+				continue
+			}
 			if f.T == "stop" {
 				reply := workerwire.Frame{T: "ack", CmdID: f.CmdID, Session: f.Session}
 				if failStops.Load() {
@@ -100,7 +104,11 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 			var spec workerwire.LaunchSpec
 			_ = json.Unmarshal(f.Spec, &spec)
 			specs <- spec
-			_ = ws.WriteJSON(workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: 7})
+			reply := workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: 7}
+			if spec.ResumeSourceSessionID != "" {
+				reply.NativeContext = &workerwire.NativeContext{Session: spec.Session, Generation: "new-generation", Thread: spec.ResumeSessionID, Workroot: "/worker/retained", Actor: spec.Actor}
+			}
+			_ = ws.WriteJSON(reply)
 		}
 	}()
 	reg := registry.NewService(registry.NewStorage(db.DB()))

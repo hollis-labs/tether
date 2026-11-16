@@ -91,6 +91,10 @@ func (s *Service) workerSpec(ctx context.Context, id string, p *launch.Plan) (wo
 		brand = "claude"
 	}
 	spec := workerwire.LaunchSpec{Session: id, Actor: registry.LogicalAgentBindingTarget(p.LogicalAgentID), Provider: brand, PermissionMode: p.PermissionMode, RuntimeKind: p.RuntimeKind, Args: append([]string(nil), p.Args...), Env: p.Env, BootPrompt: p.BootPrompt, BootMode: p.BootMode, BootFiles: p.BootDirOverlay, NativeFiles: p.NativeFiles, Workspace: workerwire.Workspace{Kind: "scratch"}, MCPServers: append([]string{}, launch.EffectiveMCPServers(p.Env)...), ResumeSessionID: p.ResumeProviderSessionID}
+	if p.NativeResumeOnly {
+		spec.ResumeSourceSessionID = p.ResumeSourceSessionID
+		spec.ResumeGeneration = p.WorkerSourceGeneration
+	}
 	spec.ExtractRefs = p.ExtractRefs
 	spec.AgentURN = p.IdentityURN // the seat's mail address; Actor stays the binding target
 	// The plan's map is shared; the hosted marker belongs to this session only.
@@ -157,6 +161,22 @@ const workerLaunchWait = 5 * time.Minute
 const launchFailedPrefix = "worker launch failed"
 
 func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow, p *launch.Plan) (*Launched, error) {
+	if p.NativeResumeOnly {
+		source, err := s.Store.GetSession(p.ResumeSourceSessionID)
+		if err != nil {
+			return nil, err
+		}
+		latest, err := s.Store.LatestSessionForAgent(ctx, p.LogicalAgentID)
+		if err != nil || latest == nil || latest.ID != row.ID {
+			return nil, nativeOnlyError("new attempt is no longer canonical")
+		}
+		if err := s.workerNativeSource(ctx, source, p); err != nil {
+			return nil, err
+		}
+		if err := s.workerNativeAuthority(ctx, p); err != nil {
+			return nil, err
+		}
+	}
 	spec, err := s.workerSpec(ctx, row.ID, p)
 	if err != nil {
 		return nil, err
@@ -252,6 +272,14 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		}
 		return nil, fmt.Errorf("%s: %w", launchFailedPrefix, err)
 	}
+	if p.NativeResumeOnly {
+		if result.NativeContext == nil || result.NativeContext.Thread != p.ResumeProviderSessionID || result.NativeContext.Workroot != p.WorkRoot {
+			return nil, nativeOnlyError("worker readiness identity unconfirmed; attempt remains launching")
+		}
+		if err := s.Store.UpsertSessionProviderMapping(row.ID, "tether", p.ProviderID, p.ResumeProviderSessionID); err != nil {
+			return nil, err
+		}
+	}
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err
 	}
@@ -306,5 +334,10 @@ func (s *Service) saveWorkerMCPPolicy(ctx context.Context, row *store.SessionRow
 	policy.UpstreamOwnership = ownership
 	policy.ExtractRefs = extractRefs
 	policy.EditableAgents = s.launchEditableAgents(p)
+	if p.NativeResumeOnly {
+		if err := s.workerNativePolicy(ctx, p, policy.Seal()); err != nil {
+			return err
+		}
+	}
 	return s.Store.SaveSessionMCPPolicy(ctx, policy.Seal())
 }
