@@ -261,3 +261,25 @@ func (s *Store) TriageReclassify(ctx context.Context, messageID, class, reason s
 	n, _ := res.RowsAffected()
 	return n == 1, nil
 }
+
+// TriageStrandedSeats lists seats with pending, unread action mail classified
+// at or before olderThan whose deferral (if any) has passed: mail no wake has
+// named yet (CW-20261117-0002 seat digest).
+func (s *Store) TriageStrandedSeats(ctx context.Context, olderThan, now time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT t.seat FROM wake_triage t JOIN messages m ON m.id=t.message_id
+ WHERE t.class='action' AND t.state='pending' AND t.created_at<=? AND (t.not_before IS NULL OR t.not_before<=?)
+   AND m.read_at IS NULL AND m.consumed_at IS NULL AND m.canceled_at IS NULL AND m.archived_at IS NULL`, ts(olderThan), ts(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var seat string
+		if err := rows.Scan(&seat); err != nil {
+			return nil, err
+		}
+		out = append(out, seat)
+	}
+	return out, rows.Err()
+}

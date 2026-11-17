@@ -52,6 +52,9 @@ type seatPolicy struct {
 	// forms are the addresses the seat sends and receives as (its urn and its
 	// agent-mux catalog-id form), for reply_to_own.
 	forms []string
+	// agentID is the seat's catalog id (its logical agent), for resolving its
+	// live session.
+	agentID string
 }
 
 // owns reports whether urn is one of the seat's own addresses.
@@ -444,7 +447,7 @@ func (s *Service) seatPolicyFor(to messaging.Address) seatPolicy {
 		if a.URN != "" {
 			forms = append(forms, a.URN)
 		}
-		return seatPolicy{seat: seat, handle: "@" + handle, enabled: enabled, interval: interval, forms: forms}
+		return seatPolicy{seat: seat, handle: "@" + handle, enabled: enabled, interval: interval, forms: forms, agentID: id}
 	}
 	return seatPolicy{}
 }
