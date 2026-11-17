@@ -80,7 +80,7 @@ failed attempts).
 
 On its first wake sweep after start the daemon re-classifies pending fyi mail
 that is a reply to the seat's own mail as `action`/`reply_to_own` (idempotent;
-logged and published once as `mail.triage_backfill {examined, moved, seats}`).
+logged and published once as `mail.triage_backfill {examined, moved, seat_count}`).
 The sweep then wakes each affected seat once with a digest.
 
 ## FYI ride-along

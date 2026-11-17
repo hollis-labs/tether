@@ -83,7 +83,7 @@ func (s *Service) rearmBusyWakes(sessionID string) {
 }
 
 // KindMailTriageBackfill is published once per daemon when the reply_to_own
-// backfill moved rows.
+// backfill moved rows: {examined, moved, seat_count}.
 const KindMailTriageBackfill = "mail.triage_backfill"
 
 // runReplyToOwnBackfill re-classifies pending fyi replies to a seat's own mail
@@ -106,7 +106,7 @@ func (s *Service) runReplyToOwnBackfill(ctx context.Context) {
 	if s.Bus == nil {
 		return
 	}
-	raw, _ := json.Marshal(map[string]any{"examined": examined, "moved": moved, "seats": seats})
+	raw, _ := json.Marshal(map[string]any{"examined": examined, "moved": moved, "seat_count": len(seats)})
 	e := events.Event{Scope: events.ScopeDaemon, Kind: KindMailTriageBackfill, At: time.Now().UTC(), PayloadJSON: string(raw)}
 	e.Envelope.Class.Category = "message"
 	if err := s.Bus.Publish(context.WithoutCancel(ctx), e); err != nil {
