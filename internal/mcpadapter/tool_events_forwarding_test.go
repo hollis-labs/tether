@@ -135,18 +135,18 @@ func TestCanonicalToolEventsConcurrentDaemonOnlyForwarding(t *testing.T) {
 						observed = append(observed, ev)
 					}
 				}
-				if len(observed) == 12 {
+				if len(observed) == 6 {
 					break
 				}
 				time.Sleep(time.Millisecond)
 			}
-			if len(observed) != 12 {
-				t.Fatalf("got %d observations; want 3 canonical and 3 legacy pairs", len(observed))
+			if len(observed) != 6 {
+				t.Fatalf("got %d observations; want 3 canonical pairs", len(observed))
 			}
 			phases := map[string]map[string]int{}
 			for _, ev := range observed {
 				if ev.Kind != catalog.KindToolCallStarted && ev.Kind != catalog.KindToolCallFinished {
-					continue
+					t.Fatalf("legacy %s logged (CW-20261113-0009)", ev.Kind)
 				}
 				corr := ev.Envelope.Corr
 				want, ok := wants[corr.TraceID]

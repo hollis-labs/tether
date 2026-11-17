@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -93,4 +95,54 @@ func readWALHeader(path string) (int64, uint32, error) {
 		return info.Size(), 0, nil
 	}
 	return info.Size(), binary.BigEndian.Uint32(hdr[12:16]), nil
+}
+
+// walSizeLimit is the journal_size_limit of the writer connection: the size
+// the -wal file is cut back to when the log restarts (CW-20261113-0009).
+const walSizeLimit int64 = 64 << 20
+
+// WALTruncateThreshold is the -wal size above which the daemon asks for a
+// TRUNCATE checkpoint (see TruncateWAL). journal_size_limit already trims the
+// file whenever the log restarts; this is the backstop for a log that has not
+// restarted, and it reclaims a WAL left over from before the limit existed.
+const WALTruncateThreshold int64 = 256 << 20
+
+// walTruncateBusy bounds how long a TRUNCATE checkpoint waits for readers to
+// leave the WAL. It runs on the single writer connection, so every write waits
+// with it: keep it short, and try again on a later sample instead.
+const walTruncateBusy = 250 * time.Millisecond
+
+// WALCheckpoint is one wal_checkpoint result: Busy is true when the checkpoint
+// could not finish (a reader or writer held it off), Log is the WAL's size in
+// frames and Checkpointed how many of them are now in the database file.
+type WALCheckpoint struct {
+	Busy         bool
+	Log          int
+	Checkpointed int
+}
+
+// TruncateWAL runs PRAGMA wal_checkpoint(TRUNCATE) on the writer connection
+// with a short busy timeout, then restores the normal one. A busy result is
+// not an error: the caller tries again later. A store opened read-only has no
+// writer and returns a zero result.
+func (s *Store) TruncateWAL(ctx context.Context) (WALCheckpoint, error) {
+	var out WALCheckpoint
+	if s.reader == nil {
+		return out, nil
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout="+strconv.FormatInt(walTruncateBusy.Milliseconds(), 10)); err != nil {
+		return out, err
+	}
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), "PRAGMA busy_timeout=5000") }()
+	var busy int
+	if err := conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &out.Log, &out.Checkpointed); err != nil {
+		return out, err
+	}
+	out.Busy = busy != 0
+	return out, nil
 }

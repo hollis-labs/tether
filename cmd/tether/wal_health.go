@@ -23,13 +23,35 @@ func walHealth(db *store.Store, now time.Time) *daemon.WALHealth {
 	return &daemon.WALHealth{WALBytes: st.WALBytes, CheckpointSeq: st.CheckpointSeq, LastCheckpointAgeSec: st.LastCheckpointAgeSec, LastCheckpointObserved: st.LastCheckpointObserved}
 }
 
-// sampleWAL samples the WAL until ctx ends.
+// walTruncateEvery spaces out TRUNCATE checkpoints while the WAL stays over
+// store.WALTruncateThreshold, so a reader that keeps it busy is not retried on
+// every sample.
+const walTruncateEvery = time.Minute
+
+// sampleWAL samples the WAL until ctx ends. While the -wal file is over
+// store.WALTruncateThreshold it also asks for a TRUNCATE checkpoint, at most
+// once per walTruncateEvery (CW-20261113-0009).
 func sampleWAL(ctx context.Context, db *store.Store) {
 	tick := time.NewTicker(walSampleInterval)
 	defer tick.Stop()
+	var lastTruncate time.Time
 	for {
-		if _, err := db.WALStatus(time.Now()); err != nil {
+		now := time.Now()
+		st, err := db.WALStatus(now)
+		if err != nil {
 			log.Printf("wal health: %v", err)
+		} else if st.WALBytes > store.WALTruncateThreshold && now.Sub(lastTruncate) >= walTruncateEvery {
+			lastTruncate = now
+			res, err := db.TruncateWAL(ctx)
+			switch {
+			case err != nil:
+				log.Printf("wal health: truncate checkpoint: %v", err)
+			case res.Busy:
+				log.Printf("wal health: truncate checkpoint busy (wal %d bytes, %d/%d frames checkpointed); retrying in %s", st.WALBytes, res.Checkpointed, res.Log, walTruncateEvery)
+			default:
+				after, _ := db.WALStatus(time.Now())
+				log.Printf("wal health: truncate checkpoint done (wal %d -> %d bytes)", st.WALBytes, after.WALBytes)
+			}
 		}
 		select {
 		case <-ctx.Done():

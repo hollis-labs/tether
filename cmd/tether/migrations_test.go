@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
-	"github.com/hollis-labs/tether/internal/store"
+	_ "modernc.org/sqlite"
 )
 
 func migrationsStatusOf(t *testing.T, dbPath string) MigrationsStatus {
@@ -30,18 +34,54 @@ func TestMigrationsStatusAndApply(t *testing.T) {
 	if st := migrationsStatusOf(t, dbPath); st.Exists || len(st.Pending) != 0 {
 		t.Fatalf("missing db: %+v", st)
 	}
-	s, err := store.Open(dbPath)
+	// Construct a real pre-migration database. Deleting a ledger row from a
+	// current database leaves the migration's tables and columns in place.
+	entries, err := os.ReadDir("../../internal/store/migrations")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var latest int
-	if err = s.DB().QueryRow(`SELECT max(version) FROM schema_migrations`).Scan(&latest); err != nil {
+	if len(entries) < 2 {
+		t.Fatalf("expected multiple migrations, got %d", len(entries))
+	}
+	latest, err := strconv.Atoi(strings.SplitN(entries[len(entries)-1].Name(), "_", 2)[0])
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB().Exec(`DELETE FROM schema_migrations WHERE version=?`, latest); err != nil {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	_ = s.Close()
+	defer db.Close()
+	if _, err = db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries[:len(entries)-1] {
+		name := strings.TrimSuffix(entry.Name(), ".sql")
+		parts := strings.SplitN(name, "_", 2)
+		version, err := strconv.Atoi(parts[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := os.ReadFile(filepath.Join("../../internal/store/migrations", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(string(body)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply fixture migration %s: %v", name, err)
+		}
+		if _, err = tx.Exec(`INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)`, version, parts[1], "test"); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if st := migrationsStatusOf(t, dbPath); !st.Exists || !slices.Equal(st.Pending, []int{latest}) || st.InProgress != nil {
 		t.Fatalf("one migration behind: %+v (want pending [%d])", st, latest)
 	}

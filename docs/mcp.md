@@ -1801,7 +1801,8 @@ window (CW-20261016-0138). Their payload schemas are the pinned catalog's
 `urn:hollis-labs:events:tool.call.started@1` and `tool.call.finished@1`.
 Both carry `tool`, `server`, `args_bytes` and `args_schema_fp`. Started has
 no `ok` or outcome fields. Finished adds `ok`, `error_class`, `duration_ms`,
-`gateway_ms`, `forward_ms` and `result_bytes`. Canonical payloads exclude
+`gateway_ms`, `forward_ms`, `result_bytes` and `discovery_mode` (`flat` or
+`search`; always present on rows written since CW-20261113-0009). Canonical payloads exclude
 arguments, results, error text and summaries, including scrubbed error text
 that could echo request content.
 
@@ -1814,14 +1815,22 @@ canonical metadata after the daemon validates them and resolves attribution;
 it preserves the accepted trace/span identifiers as call correlation metadata.
 These identifiers are not evidence of caller identity; scope and actor still
 come exclusively from authenticated daemon resolution.
-The legacy `proxy_events` projection still receives one completed row per call,
-and existing legacy subscribers and metrics retain their contracts. Recording
-remains best effort with bounded queues; this change does not retire legacy
-kinds or change retention.
+The legacy `proxy_events` projection still receives one completed row per call.
+Recording remains best effort with bounded queues.
+
+Since CW-20261113-0009 the daemon writes only the canonical pair to the
+`events` log; the legacy `tool_call_start`/`tool_call_end` pair doubled every
+call there. Both canonical kinds are admitted to retention class `R-activity`
+(main events window). A completed call's full legacy payload, including error
+text and attribution, lives on in `proxy_events`. Older legacy rows stay until
+the events window removes them. An in-process `tether mcp --proxy` that opens
+the state database itself still logs both pairs on its own bus.
 
 #### Tool-call telemetry v2
 
-`tool_call_start` and `tool_call_end` are durable `events` payloads. Calls
+These fields are the `tool_call_start`/`tool_call_end` payload, now recorded
+per completed call in `proxy_events` rather than the `events` log
+(CW-20261113-0009). Calls
 rejected by gateway policy or native scope validation still produce completed
 call observations. Records carry daemon-resolved credential identity and verified
 session/agent/workstream attribution, upstream `server`, `profile`, `discovery_mode`,
@@ -1883,8 +1892,9 @@ bound of the histogram bucket holding that percentile (`null` means above 5,000 
 not exact quantiles. HTTP query parameters and CLI flags mirror these names.
 
 These queries are GLOBAL and unscoped: they aggregate all callers without
-caller identity or session filtering. Each query scans retained `tool_call_end`
-events and groups them; this is suitable at the current roughly 66,000-row
+caller identity or session filtering. Each query scans retained `tool.call.finished`
+events (plus `tool_call_end` rows written before CW-20261113-0009, each call
+counted once) and groups them; this is suitable at the current roughly 66,000-row
 scale. A rollup table is the future option if retained history makes scans
 expensive. Counts survive restart and exclude start rows. The response is `{groups, truncated, window:"retained_events"}`.
 Groups are ordered by call count descending, with tool/upstream/outcome ties,

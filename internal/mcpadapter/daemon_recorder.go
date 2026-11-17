@@ -45,7 +45,10 @@ func NewDaemonToolCallRecorder(ctx context.Context, bus events.Publisher, writer
 						r.failures.Add(1)
 					}
 				}
-				if bus != nil {
+				// Only the canonical pair reaches the event log (CW-20261113-0009).
+				// The legacy tool_call_start/tool_call_end pair duplicated every
+				// call there; its full payload lives on in proxy_events above.
+				if bus != nil && isCanonicalToolCall(event.Kind) {
 					if err := bus.Publish(ctx, event); err != nil {
 						r.failures.Add(1)
 					}
@@ -57,8 +60,10 @@ func NewDaemonToolCallRecorder(ctx context.Context, bus events.Publisher, writer
 }
 
 func (r *DaemonToolCallRecorder) Publish(ctx context.Context, event events.Event) error {
-	canonical := event.Kind == catalog.KindToolCallStarted || event.Kind == catalog.KindToolCallFinished
-	if !canonical && event.Kind != events.EventTypeToolCallStart && event.Kind != events.EventTypeToolCallEnd {
+	canonical := isCanonicalToolCall(event.Kind)
+	// A legacy start has no proxy_events row and no longer goes to the event
+	// log; tool.call.started carries it (CW-20261113-0009).
+	if !canonical && event.Kind != events.EventTypeToolCallEnd {
 		return nil
 	}
 	// Stamp caller-owned verified dimensions before crossing the async queue.
@@ -85,6 +90,10 @@ func (r *DaemonToolCallRecorder) Publish(ctx context.Context, event events.Event
 		r.dropped.Add(1)
 	}
 	return nil
+}
+
+func isCanonicalToolCall(kind string) bool {
+	return kind == catalog.KindToolCallStarted || kind == catalog.KindToolCallFinished
 }
 
 func (r *DaemonToolCallRecorder) Stats() (dropped, failures uint64) {

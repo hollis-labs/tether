@@ -176,3 +176,88 @@ func payloadSubject(payload string) string {
 	}
 	return ""
 }
+
+// TriageItem is a pending triaged message listed in a coalesced wake
+// (CW-20261117-0002).
+type TriageItem struct {
+	MessageID string
+	Recipient string
+	From      string
+	Class     string
+	Reason    string
+	Typed     bool
+	Subject   string
+}
+
+// TriageSeatPending lists the seat's pending action and fyi mail that is still
+// unread, oldest first, up to limit, and the total such count.
+func (s *Store) TriageSeatPending(ctx context.Context, seat string, limit int) ([]TriageItem, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	const where = ` FROM wake_triage t JOIN messages m ON m.id=t.message_id
+ WHERE t.seat=? AND t.class IN ('action','fyi') AND t.state='pending' AND m.read_at IS NULL AND m.consumed_at IS NULL AND m.canceled_at IS NULL AND m.archived_at IS NULL`
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*)`+where, seat).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT t.message_id, t.recipient, m.from_urn, t.class, t.reason, t.typed, coalesce(m.payload,'')`+where+` ORDER BY t.created_at LIMIT ?`, seat, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []TriageItem
+	for rows.Next() {
+		var it TriageItem
+		var typed int
+		var payload string
+		if err := rows.Scan(&it.MessageID, &it.Recipient, &it.From, &it.Class, &it.Reason, &typed, &payload); err != nil {
+			return nil, 0, err
+		}
+		it.Typed = typed == 1
+		it.Subject = payloadSubject(payload)
+		out = append(out, it)
+	}
+	return out, total, rows.Err()
+}
+
+// TriageReplyCandidate is a pending fyi message that answers an earlier one.
+type TriageReplyCandidate struct {
+	MessageID  string
+	Recipient  string
+	Seat       string
+	ParentFrom string
+}
+
+// TriageFYIReplies lists pending fyi rows whose message has an in_reply_to
+// parent, with the parent's sender (for the reply_to_own backfill).
+func (s *Store) TriageFYIReplies(ctx context.Context) ([]TriageReplyCandidate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.message_id, t.recipient, t.seat, p.from_urn FROM wake_triage t
+ JOIN messages m ON m.id=t.message_id JOIN messages p ON p.id=m.in_reply_to
+ WHERE t.class='fyi' AND t.state='pending'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TriageReplyCandidate
+	for rows.Next() {
+		var c TriageReplyCandidate
+		if err := rows.Scan(&c.MessageID, &c.Recipient, &c.Seat, &c.ParentFrom); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// TriageReclassify moves a still-pending fyi row to class/reason; it reports
+// whether the row changed (an already-moved row is left alone, so a rerun is
+// a no-op).
+func (s *Store) TriageReclassify(ctx context.Context, messageID, class, reason string, at time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE wake_triage SET class=?, reason=?, updated_at=? WHERE message_id=? AND class='fyi' AND state='pending'`, class, reason, ts(at), messageID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
