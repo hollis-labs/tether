@@ -42,21 +42,29 @@ func TestTelemetryDaemonRecorderPreservesResolvedContextAndMetadata(t *testing.T
 	if err := recorder.Publish(ctx, events.Event{Kind: events.EventTypeToolCallEnd, PayloadJSON: string(raw)}); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case event := <-sink:
-		var persisted events.ToolCallEvent
-		if err := json.Unmarshal([]byte(event.PayloadJSON), &persisted); err != nil {
+	// The legacy end is recorded in proxy_events only; the event log gets the
+	// canonical tool.call.finished instead (CW-20261113-0009).
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rows, err := db.QueryProxyEvents(store.ProxyEventFilter{})
+		if err != nil {
 			t.Fatal(err)
 		}
-		rows, err := db.QueryProxyEvents(store.ProxyEventFilter{})
-		if err != nil || len(rows) != 1 {
-			t.Fatalf("projection: %+v %v", rows, err)
+		if len(rows) == 1 {
+			if rows[0].ToolCallDetails != call.ToolCallDetails || rows[0].Attribution != call.Attribution {
+				t.Fatalf("resolved call changed: %+v", rows[0])
+			}
+			break
 		}
-		if rows[0].ToolCallDetails != call.ToolCallDetails || rows[0].Attribution != call.Attribution || persisted.ToolCallDetails != call.ToolCallDetails || persisted.Attribution != call.Attribution {
-			t.Fatalf("resolved call changed: %+v / %+v", rows[0], persisted)
+		if time.Now().After(deadline) {
+			t.Fatal("daemon recorder did not persist call")
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon recorder did not persist call")
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case event := <-sink:
+		t.Fatalf("legacy %s reached the event log", event.Kind)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
