@@ -39,7 +39,7 @@ func pipelinePolicies() map[string]admissionPolicy {
 	add(Metadata, KindSessionUsage, "/input_tokens", "/output_tokens", "/cache_read_tokens", "/cache_write_tokens", "/reasoning_tokens", "/turns", "/model", "/final", "/source", "/turn_id")
 	add(Metadata, KindSessionHealthChanged, "/from", "/to", "/reasons/*", "/since")
 	add(Metadata, catalog.KindToolCallStarted, "/tool", "/server", "/args_bytes", "/args_schema_fp")
-	add(Metadata, catalog.KindToolCallFinished, "/tool", "/server", "/args_bytes", "/args_schema_fp", "/ok", "/error_class", "/duration_ms", "/gateway_ms", "/forward_ms", "/result_bytes")
+	add(Metadata, catalog.KindToolCallFinished, "/tool", "/server", "/args_bytes", "/args_schema_fp", "/ok", "/error_class", "/duration_ms", "/gateway_ms", "/forward_ms", "/result_bytes", "/discovery_mode")
 	add(Metadata, KindSessionStalled, "/reason", "/denied")
 	add(Metadata, KindSessionWorkStateChanged, "/from", "/to", "/at")
 	add(Metadata, EventTypeMachineAuthorityDecision, "/server", "/tool", "/class", "/mode", "/allowed", "/session_id", "/timestamp")

@@ -1872,7 +1872,7 @@ Record a proxied tool call. Body:
 | `ok`, `error`    | bool, string | outcome; `error` is cut to 4 KiB with a `…[truncated]` marker. A caller should cut it first: a body over 64 KiB is refused whole |
 | `timestamp`      | RFC3339 | accepted and ignored: the daemon stamps every record itself   |
 | `phase`          | string | `end` (default) records the call in `proxy_events`; `start` records nothing there and needs `publish` |
-| `publish`        | bool   | also publish the call on the daemon's event bus as `tool_call_start` or `tool_call_end`. A non-empty `session_id` must then name an existing session (400 otherwise); an empty one goes on the daemon scope |
+| `publish`        | bool   | also publish the call on the daemon's event bus as the canonical `tool.call.started` or `tool.call.finished` (CW-20261113-0009; the legacy `tool_call_start`/`tool_call_end` kinds are no longer logged). A non-empty `session_id` must then name an existing session (400 otherwise); an empty one goes on the daemon scope |
 
 Response: 201 `{"ok": true}`. 400 for an unknown `phase`, a `start` without
 `publish`, a missing or over-long field, or a body over 64 KiB; 404 for

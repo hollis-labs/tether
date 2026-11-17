@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
@@ -102,26 +103,25 @@ func TestIngestTrustedAttributionAndPublishOrder(t *testing.T) {
 			operation := New(st, bus, func(id string) error { looked = id; return nil })
 			before := time.Now().UTC()
 			err := operation.Ingest(context.Background(), ProxyEventIngestRequest{SessionID: "other", ToolName: "tool", Error: strings.Repeat("€", 5000), Timestamp: "2001-01-01T00:00:00Z", Publish: true, Attribution: callcontext.Snapshot{SessionID: "forged", Verified: true}}, func() callcontext.Snapshot { return tc.snapshot })
-			if err != nil || len(st.rows) != 1 || len(bus.published) != 2 {
+			// Only the canonical tool.call.finished is published (CW-20261113-0009).
+			if err != nil || len(st.rows) != 1 || len(bus.published) != 1 {
 				t.Fatalf("ingest=%v rows=%v published=%v", err, st.rows, bus.published)
 			}
 			row := st.rows[0]
 			if row.Attribution != tc.snapshot || row.SessionID != tc.session || row.ClaimedSessionID != "other" || row.Timestamp.Before(before) || row.Timestamp.After(time.Now()) || len(row.Error) > MaxProxyEventErrorBytes || looked != tc.session {
 				t.Fatalf("row=%+v lookup=%q", row, looked)
 			}
-			var call events.ToolCallEvent
-			if err := json.Unmarshal([]byte(bus.published[0].PayloadJSON), &call); err != nil {
-				t.Fatal(err)
+			published := bus.published[0]
+			if published.Kind != catalog.KindToolCallFinished || strings.Contains(published.PayloadJSON, "€") || strings.Contains(published.PayloadJSON, "forged") {
+				t.Fatalf("published=%+v", published)
 			}
-			if call.Attribution != row.Attribution || call.SessionID != row.SessionID || call.Error != row.Error || call.ClaimedSessionID != row.ClaimedSessionID {
-				t.Fatalf("published=%+v row=%+v", call, row)
+			// A canonical event is session-scoped only for a resolved session.
+			wantScope, wantSession := events.ScopeDaemon, ""
+			if tc.snapshot.SessionResolved {
+				wantScope, wantSession = events.ScopeSession, tc.session
 			}
-			wantScope := events.ScopeSession
-			if tc.session == "" {
-				wantScope = events.ScopeDaemon
-			}
-			if bus.published[0].Scope != wantScope {
-				t.Fatalf("scope=%s", bus.published[0].Scope)
+			if published.Scope != wantScope || published.SessionID != wantSession {
+				t.Fatalf("scope=%s session=%q", published.Scope, published.SessionID)
 			}
 		})
 	}
@@ -135,7 +135,7 @@ func TestIngestFailureAndStartSemantics(t *testing.T) {
 		wantRows, wantPublish int
 		wantMessage           string
 	}{
-		{name: "start", phase: ProxyEventPhaseStart, wantPublish: 2},
+		{name: "start", phase: ProxyEventPhaseStart, wantPublish: 1},
 		{name: "append fails before publish", appendErr: errors.New("disk"), wantMessage: "persist proxy event: disk"},
 		{name: "publish fails after append", publishErr: errors.New("bus"), wantRows: 1, wantPublish: 1, wantMessage: "publish tool call event: bus"},
 	} {
@@ -147,10 +147,10 @@ func TestIngestFailureAndStartSemantics(t *testing.T) {
 				t.Fatalf("error=%v rows=%v publish=%v", err, st.rows, bus.published)
 			}
 			if tc.phase == ProxyEventPhaseStart {
-				var call events.ToolCallEvent
-				_ = json.Unmarshal([]byte(bus.published[0].PayloadJSON), &call)
-				if call.DurationMs != 0 || call.OK || call.Error != "" || bus.published[0].Kind != events.EventTypeToolCallStart {
-					t.Fatalf("start=%+v", call)
+				var payload map[string]any
+				_ = json.Unmarshal([]byte(bus.published[0].PayloadJSON), &payload)
+				if _, ok := payload["ok"]; ok || bus.published[0].Kind != catalog.KindToolCallStarted {
+					t.Fatalf("start=%+v", bus.published[0])
 				}
 			}
 		})

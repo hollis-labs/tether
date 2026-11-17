@@ -118,7 +118,7 @@ func TestGatewayDispatchSanitizeTelemetryAndExactNames(t *testing.T) {
 					}
 					for key := range payload {
 						switch key {
-						case "tool", "server", "args_bytes", "args_schema_fp", "ok", "error_class", "duration_ms", "gateway_ms", "forward_ms", "result_bytes":
+						case "tool", "server", "args_bytes", "args_schema_fp", "ok", "error_class", "duration_ms", "gateway_ms", "forward_ms", "result_bytes", "discovery_mode":
 						default:
 							t.Fatalf("canonical content field %s", key)
 						}
