@@ -168,7 +168,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		if p.NativeResumeOnly {
 			exit := 1
 			if err := s.Store.UpdateSessionState(row.ID, "failed", 0, &exit); err != nil {
-				return nil, fmt.Errorf("settle native admission refusal (%v): %w", cause, err)
+				return nil, fmt.Errorf("settle native admission refusal (%w): %w", cause, err)
 			}
 		}
 		return nil, cause

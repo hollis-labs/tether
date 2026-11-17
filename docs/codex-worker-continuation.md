@@ -1,6 +1,6 @@
 # Same-worker Codex native continuation (CW-20261116-0015)
 
-This patch targets installed Tether b86f7292. It requires matching hub and worker builds, the worker feature `codex-native-resume-v1`, and `catalog.defaults.worker_resume`. It does not enable that setting, change a catalog, move a live manager, or implement Tachyon thread association. Independent exact-head review and operator-approved installation/transition remain required.
+This patch was initially reviewed on installed Tether b86f7292 and is now reconciled with main 0d0ac59c (CHAT2/PR604 and prerequisite PR608), including the root and Sysop dependency updates. It requires matching hub and worker builds, the worker feature `codex-native-resume-v1`, and `catalog.defaults.worker_resume`. It does not enable that setting, change a catalog, move a live manager, or implement Tachyon thread association. Independent exact-head review and operator-approved installation/transition remain required.
 
 ## Contract
 
@@ -14,7 +14,7 @@ On the worker, exclusive durable source-generation reservation precedes native-s
 
 ## Activation gate and sequence
 
-1. Independent review must approve the exact hub/worker commit and tests. Confirm the installation contains only this compatible delta; do not upgrade unrelated upstream changes.
+1. Independent review must approve the exact combined hub/worker commit and tests, including the main and CHAT2 dependency delta. Main 0d0ac59c does not contain the installed b86f7292 catalog-content-bytes fix (CW-20261115-0127); reconcile that preservation requirement before installation, rather than silently dropping installed behavior.
 2. AOM obtains explicit one-manager-at-a-time transition approval and the separately named reader-origin/catalog approval, including any `allow_unconfined_remote` opt-in. Capture canonical URN, current session, real worker workroot/native mapping, source generation, old saved policy digest, chat/history/thread and plan id/revision. Back up using the managed backup path. No credential values belong in evidence.
 3. Verify the installed worker advertises the feature, remains connected, and retains the source execution/native files. Missing historical evidence is a refusal, not permission to guess or repair DB rows.
 4. After the authorized controlled stop and confirmed provider retirement, use the authenticated local UDS resume API with the exact source and `native_only:true`. A request without the policy digest returns the proposed current digest before allocating any child. Review the named current catalog policy before supplying that digest. With an approved digest and missing generation, the source probe reports its observed generation, again before allocation. Remote error bodies deliberately do not reveal these internal details; use the supported local executor, not a borrowed credential. Re-read current state if anything changes between preparation and acceptance.
