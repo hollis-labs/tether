@@ -66,8 +66,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/libs/agent/core v0.5.0 h1:bk2GAHef+lH5ihYKBnQpir5SZoeRNTp7AyY8iYCLkr0=
 github.com/hollis-labs/libs/agent/core v0.5.0/go.mod h1:AHtYM1ZFiaAVnPQYaZjJrI8trpmwomFMPknACIUe+4Y=
-github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000231-190764babe23 h1:MF8WTW67qUeOStFgGYAODEEEpkRLVj50ur1d/Zv3cZA=
-github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000231-190764babe23/go.mod h1:b7QGBnGBRNFn0pLaNuWxImiPYWnYjimbYiiPqZ+aleU=
+github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000959-bc1013d0655e h1:P1jcipN8cmwQFwLoszmt3odFi63+xJH+/ohr7uN+1TM=
+github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000959-bc1013d0655e/go.mod h1:b7QGBnGBRNFn0pLaNuWxImiPYWnYjimbYiiPqZ+aleU=
 github.com/hollis-labs/libs/core/forums v0.3.0 h1:W3KbOgj88z1wvC1NzmwX6s95EHCseY4NTAnH5pC2xW4=
 github.com/hollis-labs/libs/core/forums v0.3.0/go.mod h1:tGNoAkvkUhIwkrPVpQO+LYSH94hYorHT8adUYC0znto=
 github.com/hollis-labs/libs/core/panics v0.1.0 h1:mWJ9yPTRCBsLFprCNGIJrroehfh/g3UaDmLEH6gncB8=

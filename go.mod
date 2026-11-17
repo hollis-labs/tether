@@ -28,7 +28,7 @@ require (
 
 require (
 	github.com/hollis-labs/libs/agent/core v0.5.0
-	github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000231-190764babe23
+	github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000959-bc1013d0655e
 	github.com/hollis-labs/libs/mesh/eventbus v0.2.0
 	github.com/hollis-labs/libs/security/redact v0.2.0
 )
