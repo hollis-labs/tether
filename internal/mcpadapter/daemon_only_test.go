@@ -443,7 +443,9 @@ func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		evs, err := f.db.ListEventsBySession("sess-1", 0, 0)
+		// Canonical events take the session scope only for a resolved
+		// session, which this unauthenticated fixture has none of.
+		evs, err := f.db.EventsSince(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -465,7 +467,7 @@ func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
 		t.Errorf("row = ok %v, error %d bytes ending %q; want a failure with a truncated error within the cap", rows[0].OK, len(rows[0].Error), rows[0].Error[max(0, len(rows[0].Error)-14):])
 	}
 	if kinds[catalog.KindToolCallStarted] != 1 || kinds[catalog.KindToolCallFinished] != 1 || kinds[events.EventTypeToolCallStart] != 0 || kinds[events.EventTypeToolCallEnd] != 0 {
-		t.Errorf("event kinds for sess-1 = %v, want one tool.call.started and one tool.call.finished and no legacy pair", kinds)
+		t.Errorf("event kinds = %v, want one tool.call.started and one tool.call.finished and no legacy pair", kinds)
 	}
 }
 
