@@ -161,25 +161,37 @@ const workerLaunchWait = 5 * time.Minute
 const launchFailedPrefix = "worker launch failed"
 
 func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow, p *launch.Plan) (*Launched, error) {
+	// This gate runs under the session launch lock, before identity preparation
+	// and before any launch frame can be sent. Settle only these known refusals;
+	// a dropped response after Send must continue to leave the attempt launching.
+	refuseBeforeSend := func(cause error) (*Launched, error) {
+		if p.NativeResumeOnly {
+			exit := 1
+			if err := s.Store.UpdateSessionState(row.ID, "failed", 0, &exit); err != nil {
+				return nil, fmt.Errorf("settle native admission refusal (%v): %w", cause, err)
+			}
+		}
+		return nil, cause
+	}
 	if p.NativeResumeOnly {
 		source, err := s.Store.GetSession(p.ResumeSourceSessionID)
 		if err != nil {
-			return nil, err
+			return refuseBeforeSend(err)
 		}
 		latest, err := s.Store.LatestSessionForAgent(ctx, p.LogicalAgentID)
 		if err != nil || latest == nil || latest.ID != row.ID {
-			return nil, nativeOnlyError("new attempt is no longer canonical")
+			return refuseBeforeSend(nativeOnlyError("new attempt is no longer canonical"))
 		}
 		if err := s.workerNativeSource(ctx, source, p); err != nil {
-			return nil, err
+			return refuseBeforeSend(err)
 		}
 		if err := s.workerNativeAuthority(ctx, p); err != nil {
-			return nil, err
+			return refuseBeforeSend(err)
 		}
 	}
 	spec, err := s.workerSpec(ctx, row.ID, p)
 	if err != nil {
-		return nil, err
+		return refuseBeforeSend(err)
 	}
 	var launchEvidence *launchprofile.LaunchEvidence
 	if p.TeamMember {

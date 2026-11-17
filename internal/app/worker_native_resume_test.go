@@ -2,10 +2,13 @@ package app
 
 import (
 	"context"
+	"github.com/gorilla/websocket"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/workerwire"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -104,7 +107,8 @@ func TestWorkerNativePolicyRequiresCurrentExactAuthorization(t *testing.T) {
 	}
 }
 
-func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
+func nativeContinuationRig(t *testing.T) (*identityRig, context.Context, store.SessionRow, api.ResumeOptions, mcpgateway.SessionPolicy) {
+	t.Helper()
 	r := newIdentityRig(t, workerwire.FeatureCodexResume, workerwire.FeatureWorkerResume, workerwire.FeatureProviderProcess, workerwire.FeatureSessionCred)
 	s := r.svc
 	s.WorkerResume = true
@@ -158,6 +162,12 @@ func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
 	}
 	ctx := identity.WithPrincipal(context.Background(), caller)
 	options := api.ResumeOptions{NativeOnly: true, SourceSessionID: source.ID, WorkerSourceGeneration: "generation-1", WorkerPolicyDigest: policy.Digest}
+	return r, ctx, source, options, policy
+}
+
+func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
+	r, ctx, source, options, policy := nativeContinuationRig(t)
+	s := r.svc
 	bad := options
 	bad.WorkerSourceGeneration = "stale"
 	if _, err := s.ResumeLogicalAgentWithContext(ctx, source.LogicalAgentID, bad); err == nil {
@@ -231,6 +241,111 @@ func TestWorkerNativeRetryOnlyUnadmittedFailedChild(t *testing.T) {
 				}
 			} else if err == nil {
 				t.Fatal("unsafe retry accepted")
+			}
+		})
+	}
+}
+
+// The first probe succeeds before the canonical child exists. A refusal at the
+// second probe/authority check must leave a retryable failed child, while a
+// dropped response after launch dispatch must retain the uncertain writer.
+func TestWorkerNativeAdmissionRefusalRecovery(t *testing.T) {
+	for _, fault := range []string{"probe-disconnect", "authority-revoked", "launch-response-lost"} {
+		t.Run(fault, func(t *testing.T) {
+			r, ctx, source, options, _ := nativeContinuationRig(t)
+			var probes, launches atomic.Int32
+			hook := func(ws *websocket.Conn, f workerwire.Frame) bool {
+				if f.T == "launch" {
+					launches.Add(1)
+					if fault == "launch-response-lost" {
+						_ = ws.Close()
+						return true
+					}
+				}
+				if f.T == "resume_probe" && probes.Add(1) == 2 {
+					switch fault {
+					case "probe-disconnect":
+						_ = ws.Close()
+						return true
+					case "authority-revoked":
+						if err := r.ids.RevokeToken(context.Background(), r.op); err != nil {
+							t.Error(err)
+						}
+					}
+				}
+				return false
+			}
+			r.frameHook.Store(&hook)
+			if _, err := r.svc.ResumeLogicalAgentWithContext(ctx, source.LogicalAgentID, options); err == nil {
+				t.Fatal("injected refusal was accepted")
+			}
+			failed, err := r.db.LatestSessionForAgent(ctx, source.LogicalAgentID)
+			if err != nil || failed == nil || failed.ID == source.ID || failed.ParentSessionID.String != source.ID {
+				t.Fatalf("missing canonical child: %+v %v", failed, err)
+			}
+			wantState, wantLaunches := "failed", int32(0)
+			if fault == "launch-response-lost" {
+				wantState, wantLaunches = "launching", 1
+			}
+			if failed.State != wantState || launches.Load() != wantLaunches {
+				t.Fatalf("state=%s launch frames=%d; want %s/%d", failed.State, launches.Load(), wantState, wantLaunches)
+			}
+			if _, err := r.db.GetSessionProviderMapping(failed.ID, "tether", source.ProviderID); err == nil {
+				t.Fatal("refused/uncertain child acquired native custody")
+			}
+			r.frameHook.Store(nil)
+			if fault != "authority-revoked" {
+				r.reconnect()
+			} else {
+				// The original revoked caller must still fail before allocating a retry.
+				if _, err := r.svc.ResumeLogicalAgentWithContext(ctx, source.LogicalAgentID, options); err == nil || !strings.Contains(err.Error(), "authority") {
+					t.Fatalf("revoked caller retry: %v", err)
+				}
+				token, err := r.ids.Mint(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				caller, err := r.ids.Verify(context.Background(), token)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx = identity.WithPrincipal(context.Background(), caller)
+			}
+			if fault == "launch-response-lost" {
+				if _, err := r.svc.ResumeLogicalAgentWithContext(ctx, source.LogicalAgentID, options); err == nil {
+					t.Fatal("uncertain writer permitted another launch")
+				}
+				latest, _ := r.db.LatestSessionForAgent(ctx, source.LogicalAgentID)
+				if latest.ID != failed.ID || latest.State != "launching" {
+					t.Fatalf("uncertain attempt changed: %+v", latest)
+				}
+				return
+			}
+			bad := options
+			bad.WorkerSourceGeneration = "stale"
+			if _, err := r.svc.ResumeLogicalAgentWithContext(ctx, source.LogicalAgentID, bad); err == nil {
+				t.Fatal("retry bypassed exact generation")
+			}
+			result, err := r.svc.ResumeLogicalAgentWithContext(ctx, source.LogicalAgentID, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, err := r.db.GetSession(result.SessionID)
+			if err != nil || child.State != "running" || child.ID == failed.ID || child.ParentSessionID.String != source.ID || child.WorkerID != source.WorkerID {
+				t.Fatalf("retry child: %+v %v", child, err)
+			}
+			spec := <-r.specs
+			if spec.ResumeSessionID != "thread-retained" || spec.ResumeGeneration != options.WorkerSourceGeneration || spec.ResumeSourceSessionID != source.ID || spec.BootPrompt != "" {
+				t.Fatalf("retry lost native context: %+v", spec)
+			}
+			select {
+			case <-r.specs:
+				t.Fatal("extra launch frame")
+			default:
+			}
+			old, _ := r.db.GetSession(failed.ID)
+			if old.State != "failed" {
+				t.Fatalf("historical refusal changed: %+v", old)
 			}
 		})
 	}
