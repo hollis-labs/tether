@@ -144,6 +144,23 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		return undo, err
 	}
 	expires := time.Now().UTC().Add(sessionTokenTTL())
+	if p.NativeResumeOnly {
+		ceiling, err := s.nativeOnlyCredentialCeiling(ctx, p)
+		if err != nil {
+			revokeBinding()
+			return undo, err
+		}
+		if !slices.Contains(ceiling.scopes, "*") {
+			scopes = slices.DeleteFunc(scopes, func(v string) bool { return !scopeHeld(ceiling.scopes, v) })
+		}
+		if len(scopes) == 0 {
+			revokeBinding()
+			return undo, launchScopeError{wanted: wanted}
+		}
+		if ceiling.expires != nil && ceiling.expires.Before(expires) {
+			expires = *ceiling.expires
+		}
+	}
 	self := "msg://session/local/" + row.ID
 	// CreatedBy records who launched the session, as the hub-local path does
 	// (mintSessionCredential). Without it every worker-hosted session credential
@@ -165,7 +182,7 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 	}
 	s.auditLaunchAttribution(ctx, row.ID, mode, attribution)
 	spec.Credential, spec.MCPScopes = token, scopes
-	revokeGrant := s.grantAgentTokens(ctx, row, spec, scopes)
+	revokeGrant := s.grantAgentTokens(ctx, row, spec, scopes, expires)
 	return func() {
 		revokeBinding()
 		revokeGrant()
@@ -231,7 +248,7 @@ type AgentTokenIssuer interface {
 // beside the existing session credential: a worker without FeatureAgentToken,
 // or an issuer failure, leaves the launch as it was. The returned func undoes
 // the grant when the launch fails.
-func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, spec *workerwire.LaunchSpec, mcpScopes []string) func() {
+func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, spec *workerwire.LaunchSpec, mcpScopes []string, expires time.Time) func() {
 	noop := func() {}
 	if s.AgentTokens == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureAgentToken) {
 		return noop
@@ -248,7 +265,7 @@ func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, s
 		return noop
 	}
 	grant := map[string][]string{"tether": canonical}
-	if err := s.AgentTokens.RegisterSessionGrant(row.ID, device, grant, time.Now().Add(sessionTokenTTL())); err != nil {
+	if err := s.AgentTokens.RegisterSessionGrant(row.ID, device, grant, expires); err != nil {
 		log.Printf("worker session %s: agent token grant failed", row.ID)
 		return noop
 	}

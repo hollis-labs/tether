@@ -1604,3 +1604,8 @@ func buildTokenIssuer(ctx context.Context, svc *app.Service, dir string) (*authi
 	go issuer.Maintain(ctx, authissuer.DefaultRotateEvery)
 	return issuer, nil
 }
+
+// GetWorkerNativeAdmission forwards durable server observations to session reads.
+func (a *serviceAdapter) GetWorkerNativeAdmission(id string) (*store.WorkerNativeAdmission, error) {
+	return a.svc.GetWorkerNativeAdmission(id)
+}
