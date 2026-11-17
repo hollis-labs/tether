@@ -31,23 +31,26 @@ still see an ordinary message of the mapped transport kind.
 | Field | Rule |
 | --- | --- |
 | `schema` | Optional on input; stored as `tether.envelope/v1`. |
-| `kind` | `question`, `update`, `handoff`, `escalation`, `approval_request`, `decision` or `message`. |
+| `kind` | `request`, `question`, `update`, `handoff`, `escalation`, `approval_request`, `decision` or `message`. `request` is "do X and report back" (CW-20261117-0003). |
 | `from` | Stamped by the server from the caller's verified identity; refused if sent. |
 | `to` | 1 to 10 `@handles` (`@[a-z][a-z0-9_-]{0,63}`), no repeats, each must resolve. |
 | `re` | Optional: `task:<task id>`, `thread:<id>` or `topic:<slug>`. |
-| `in_reply_to` | Optional message id; must be a message you sent or received. The reply joins its thread. |
+| `in_reply_to` | Optional message id; must be a message you sent or received. The reply joins its thread. When `to` or `awaiting` is unset, the server fills it with the parent sender's `@handle`, so the reply reaches and wakes the asker (not for a follow-up to your own message). |
 | `attention` | `human`, `agent` or `none`. Stored only when the sender sets it; readers derive the default (`human` when `@chrispian` is a recipient or awaited, else `agent`). |
 | `awaiting` | Optional `@handle` that must act next; must resolve. |
 | `intent` | Optional tag, `[a-z0-9._-]{1,40}`. |
-| `subject` | Optional card title, one line, at most 120 characters. |
+| `subject` | Card title, one line, at most 120 characters. Required on `request`; on `question`, `decision` and `approval_request` it defaults to the body's first line; optional otherwise. |
 | `body` | Required markdown, at most 4000 characters. |
 | `options` | `question` and `decision`: 2 to 6. `approval_request`: optional; without options the answers are `approve` and `deny`. Other kinds: none. Ids `[a-z0-9_-]{1,20}`, unique; at most one `recommended`. |
 | `default_option` | Optional option id: what happens if nobody answers. |
+| `deliverable` | Required on `request` and only there: what done looks like, at most 1000 characters. A `request` takes no options. |
+| `status` | Optional on a reply only (`in_reply_to` set): `done`, `declined` or `blocked`. |
+| `evidence` | Optional list of up to 10 one-line pointers (PR, commit, path, URL), each at most 500 characters. |
 | `answer` | Only on a reply to a `question`, `decision` or `approval_request`: `{option, note?}`, `option` one of the parent's ids. |
 | `on_behalf_of` | Optional: who the sender acts for, as a `@handle` (must resolve) or a principal URN. See "On behalf of" below. |
 | `drafted_by` | Optional: `assistant` or `human`, only with `on_behalf_of`; stored as `assistant` when omitted. |
 
-Unknown fields are refused. Transport kind mapping: `question`,
+Unknown fields are refused. Transport kind mapping: `request`, `question`,
 `approval_request`, `decision` are `request`; `update` is `status_update`;
 `handoff` and `escalation` keep their names; `message` is `notice`.
 
@@ -58,6 +61,29 @@ with the same idempotency key resends only the rest.
 
 Errors come back as HTTP 400 `invalid_request` with
 `details: {field, reason}`, for example `envelope.to[1]: unknown handle @unknown`.
+
+## Ask and reply tools
+
+`tether_ask` and `tether_reply` (MCP, message.write) are the way to ask and
+answer (CW-20261117-0003). They build the envelope, the daemon validates it
+(refusing with the field and reason) and the sender is the caller's identity.
+
+- `tether_ask(kind, to, subject, body, deliverable?, re?, options?, default_option?, attention?, urgency?)`:
+  kind `request` (needs `deliverable`), `question`, `decision`, `approval_request`,
+  `handoff` or `escalation`. A typed `request` triages as action (`envelope_kind`);
+  the recipient's wake shows the sender's handle, subject and deliverable.
+- `tether_reply(in_reply_to, body, answer?, note?, status?, evidence?, subject?, to?)`:
+  sends kind `message` to the asker (`to` defaults to the parent's sender), with
+  `awaiting` set to the asker, so it wakes them (`awaiting_recipient`, and
+  `reply_to_own` for seats with mail triage). `answer` must be one of the ask's
+  options.
+
+A plain reply (not itself an ask) never holds anyone's Stop gate: the asker is
+woken by it but does not owe a reply to the reply. Use Torque checkpoints, not
+these tools, for status and progress.
+
+Untyped replies sent with `tether_message_send` and `in_reply_to` get
+`metadata.awaiting` set to the parent's sender URN.
 
 ## On behalf of
 

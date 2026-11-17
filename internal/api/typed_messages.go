@@ -272,6 +272,17 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 				parent.Envelope = &pe
 			}
 		}
+		// A reply goes back to whoever sent the parent and awaits them
+		// (CW-20261117-0003): to and awaiting default to the parent's sender, so
+		// the asker is woken (triage awaiting_recipient / reply_to_own).
+		if asker := s.replyAsker(ctx, p, from); asker != "" {
+			if len(e.To) == 0 {
+				e.To = []string{asker}
+			}
+			if e.Awaiting == "" {
+				e.Awaiting = asker
+			}
+		}
 	}
 	if strings.HasPrefix(e.Re, "thread:") && threadID == "" {
 		threadID = strings.TrimPrefix(e.Re, "thread:")
@@ -321,6 +332,21 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// replyAsker is the @handle of the sender of p, the message a reply from
+// replier answers: "" when it has no valid handle or is the replier itself (a
+// follow-up to one's own message).
+func (s *Server) replyAsker(ctx context.Context, p messaging.Envelope, replier string) string {
+	sender := canonicalAddress(p.From)
+	if sender == replier {
+		return ""
+	}
+	h := s.handleFor(ctx, sender)
+	if !envelope.ValidHandle(h) || h == s.handleFor(ctx, replier) {
+		return ""
+	}
+	return h
 }
 
 // PendingRepliesResponse is the GET /messages/pending-replies body.

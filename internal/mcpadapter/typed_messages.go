@@ -13,7 +13,7 @@ import (
 // call comes back as invalid_request naming the field and the reason, so fix it
 // and call again.
 
-var envelopeFields = []string{"kind", "to", "re", "in_reply_to", "attention", "awaiting", "intent", "subject", "body", "options", "default_option", "answer", "on_behalf_of", "drafted_by"}
+var envelopeFields = []string{"kind", "to", "re", "in_reply_to", "attention", "awaiting", "intent", "subject", "body", "options", "default_option", "answer", "on_behalf_of", "drafted_by", "deliverable", "status", "evidence"}
 
 func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 	a.addTool(s, strictArgs(gomcp.Tool{
@@ -23,7 +23,7 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 			"question and decision need 2-6 options (mark one recommended); approval_request without options is approve/deny. " +
 			"Answer a question by replying with in_reply_to and answer.option. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringEnumProp("kind", "What this is; Tachyon renders each as a card", true, "question", "update", "handoff", "escalation", "approval_request", "decision", "message"),
+			gomcp.StringEnumProp("kind", "What this is; Tachyon renders each as a card", true, "question", "update", "handoff", "escalation", "approval_request", "decision", "message", "request"),
 			gomcp.StringArrayProp("to", "Recipients as @handles, e.g. [\"@archie\"]; @chrispian is the human operator", true),
 			gomcp.StringProp("body", "Markdown, at most 4000 characters; short, the receiver asks for more", true),
 			gomcp.StringProp("subject", "One-line card title, at most 120 characters (optional; default the body's first line)", false),
@@ -49,6 +49,57 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 			gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
 		),
 		Handler: a.handleMessagePost,
+	}), Writes())
+
+	optionsProp := gomcp.ArrayProp("options", "question/decision/approval_request choices: [{id, label, recommended?, detail?}]", false, map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id": map[string]interface{}{"type": "string"}, "label": map[string]interface{}{"type": "string"},
+			"recommended": map[string]interface{}{"type": "boolean"}, "detail": map[string]interface{}{"type": "string"},
+		},
+		"required": []string{"id", "label"},
+	})
+	a.addTool(s, strictArgs(gomcp.Tool{
+		Name: "tether_ask",
+		Description: "Ask a seat or Chrispian for something that needs an answer or an action: kind request (\"do X and report back\"; give a deliverable saying what done looks like), " +
+			"question or decision (2-6 options), approval_request, handoff or escalation. Use it whenever someone must act or answer before you can go on. " +
+			"The recipient is woken; its tether_reply comes back to you and wakes you. You are the sender (your session identity). " +
+			"Do not use it for status or progress (use Torque checkpoints or tether_status_set) or for plain FYIs (tether_message_post kind update). Requires message.write scope.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringEnumProp("kind", "request: do X and report back; question/decision: choose among options; approval_request: approve or deny; handoff; escalation", true, "request", "question", "decision", "approval_request", "handoff", "escalation"),
+			gomcp.StringArrayProp("to", "Recipients as @handles, e.g. [\"@archie\"]; @chrispian is the human operator", true),
+			gomcp.StringProp("subject", "One-line title, at most 120 characters", true),
+			gomcp.StringProp("body", "Markdown, at most 4000 characters: what you need and the context", true),
+			gomcp.StringProp("deliverable", "For a request: what done looks like (PR merged, numbers, a file path...), at most 1000 characters", false),
+			gomcp.StringProp("re", "What it is about: task:<task id>, thread:<id> or topic:<slug> (optional)", false),
+			optionsProp,
+			gomcp.StringProp("default_option", "Option id that applies if nobody answers (optional)", false),
+			gomcp.StringEnumProp("attention", "Who must look: human, agent or none (default human when @chrispian is a recipient, else agent)", false, "human", "agent", "none"),
+			gomcp.StringEnumProp("urgency", "Delivery urgency (default normal)", false, "very-low", "low", "normal", "high"),
+			gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
+			gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
+		),
+		Handler: a.handleAsk,
+	}), Writes())
+
+	a.addTool(s, strictArgs(gomcp.Tool{
+		Name: "tether_reply",
+		Description: "Answer an ask (a message from tether_ask, or any mail that asked you something): the reply goes to the asker, wakes them, and carries in_reply_to. " +
+			"Set status done, declined or blocked when it settles a request, list evidence (PR, commit, path, URL), and for a question/decision/approval_request give answer (an option id; it must be one of the ask's options). " +
+			"Do not use it for status or progress updates (use Torque checkpoints) or to start a new conversation (tether_ask). Requires message.write scope.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("in_reply_to", "Id of the message you are answering", true),
+			gomcp.StringProp("body", "Markdown, at most 4000 characters", true),
+			gomcp.StringProp("answer", "Option id you choose, for a question, decision or approval_request (approve/deny when it had no options)", false),
+			gomcp.StringProp("note", "One note on the answer, at most 1000 characters (optional)", false),
+			gomcp.StringEnumProp("status", "How this settles a request: done, declined or blocked (optional)", false, "done", "declined", "blocked"),
+			gomcp.StringArrayProp("evidence", "Pointers backing the reply: PR URL, commit, file path, event id (at most 10)", false),
+			gomcp.StringProp("subject", "One-line title (optional)", false),
+			gomcp.StringArrayProp("to", "Recipients as @handles (optional; default the asker)", false),
+			gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
+			gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
+		),
+		Handler: a.handleReply,
 	}), Writes())
 
 	a.addTool(s, strictArgs(gomcp.Tool{
@@ -131,6 +182,64 @@ func (a *Adapter) handleMessagePost(ctx context.Context, args map[string]any) (a
 		}
 	}
 	// A single recipient given as a string is accepted as a one-item list.
+	if to, ok := env["to"].(string); ok {
+		env["to"] = []string{to}
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return nil, toolError("invalid_request", "envelope: "+err.Error())
+	}
+	out, err := a.client.MessagePost(ctx, str(args, "as"), str(args, "urgency"), raw, str(args, "idempotency_key"))
+	if err != nil {
+		if isDaemonUnreachable(err) {
+			return nil, daemonUnreachableError(err)
+		}
+		return nil, classifyClientErr(err, "")
+	}
+	return toolJSON(map[string]any{"ok": true, "ids": out.IDs, "thread_id": out.ThreadID, "envelope": out.Envelope}), nil
+}
+
+// handleAsk builds and posts a typed ask (CW-20261117-0003). The daemon
+// validates it and refuses a bad one with the field and the reason.
+func (a *Adapter) handleAsk(ctx context.Context, args map[string]any) (any, error) {
+	env := map[string]any{}
+	for _, k := range []string{"kind", "to", "re", "subject", "body", "deliverable", "options", "default_option", "attention"} {
+		if v, ok := args[k]; ok && v != nil && v != "" {
+			env[k] = v
+		}
+	}
+	return a.postEnvelope(ctx, "tether_ask", env, args)
+}
+
+// handleReply builds and posts a typed reply: kind message, in_reply_to, and
+// the answer, status and evidence. The daemon addresses it to the asker and
+// awaits them, and checks answer against the ask's options.
+func (a *Adapter) handleReply(ctx context.Context, args map[string]any) (any, error) {
+	env := map[string]any{"kind": "message"}
+	for _, k := range []string{"in_reply_to", "body", "status", "evidence", "subject", "to"} {
+		if v, ok := args[k]; ok && v != nil && v != "" {
+			env[k] = v
+		}
+	}
+	if opt := strings.TrimSpace(str(args, "answer")); opt != "" {
+		answer := map[string]any{"option": opt}
+		if note := strings.TrimSpace(str(args, "note")); note != "" {
+			answer["note"] = note
+		}
+		env["answer"] = answer
+	} else if str(args, "note") != "" {
+		return nil, toolError("invalid_request", "note: only with answer")
+	}
+	return a.postEnvelope(ctx, "tether_reply", env, args)
+}
+
+func (a *Adapter) postEnvelope(ctx context.Context, tool string, env map[string]any, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeMessageWrite); err != nil {
+		return nil, err
+	}
+	if err := a.daemonClientFor(tool); err != nil {
+		return nil, err
+	}
 	if to, ok := env["to"].(string); ok {
 		env["to"] = []string{to}
 	}

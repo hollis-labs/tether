@@ -72,7 +72,7 @@ type Result struct {
 //	        a reply to mail this seat sent                      (reply_to_own)
 //	        envelope awaiting this seat                         (awaiting_recipient)
 //	        envelope question|decision|approval_request|
-//	                 escalation|handoff                         (envelope_kind)
+//	                 escalation|handoff|request                 (envelope_kind)
 //	        untyped request|escalation|handoff                  (transport_kind)
 //	read    envelope attention=none (explicit), auto-settled    (attention_none)
 //	        untyped urgency very-low, left unread               (urgency_very_low)
@@ -104,7 +104,7 @@ func Classify(in Input) Result {
 			return Result{Class: Action, Reason: "awaiting_recipient", Typed: true}
 		}
 		switch env.Kind {
-		case envelope.KindQuestion, envelope.KindDecision, envelope.KindApprovalRequest, envelope.KindEscalation, envelope.KindHandoff:
+		case envelope.KindQuestion, envelope.KindDecision, envelope.KindApprovalRequest, envelope.KindEscalation, envelope.KindHandoff, envelope.KindRequest:
 			return Result{Class: Action, Reason: "envelope_kind", Typed: true}
 		case envelope.KindUpdate, envelope.KindMessage:
 			// read or fyi below
