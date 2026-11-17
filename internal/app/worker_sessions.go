@@ -285,10 +285,18 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		return nil, fmt.Errorf("%s: %w", launchFailedPrefix, err)
 	}
 	if p.NativeResumeOnly {
-		if result.NativeContext == nil || result.NativeContext.Thread != p.ResumeProviderSessionID || result.NativeContext.Workroot != p.WorkRoot {
+		if result.NativeContext == nil || result.NativeContext.Session != row.ID || result.NativeContext.Generation == "" || result.NativeContext.Actor != spec.Actor || result.NativeContext.Thread != p.ResumeProviderSessionID || result.NativeContext.Workroot != p.WorkRoot {
 			return nil, nativeOnlyError("worker readiness identity unconfirmed; attempt remains launching")
 		}
 		if err := s.Store.UpsertSessionProviderMapping(row.ID, "tether", p.ProviderID, p.ResumeProviderSessionID); err != nil {
+			return nil, err
+		}
+		if err := s.Store.RecordWorkerNativeAdmission(store.WorkerNativeAdmission{
+			SourceSessionID: p.ResumeSourceSessionID, SourceGeneration: p.WorkerSourceGeneration,
+			ReplacementSessionID: row.ID, ReplacementGeneration: result.NativeContext.Generation,
+			WorkerID: row.WorkerID, LogicalAgentID: row.LogicalAgentID,
+			NativeThreadID: result.NativeContext.Thread, Workroot: result.NativeContext.Workroot,
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -352,4 +360,9 @@ func (s *Service) saveWorkerMCPPolicy(ctx context.Context, row *store.SessionRow
 		}
 	}
 	return s.Store.SaveSessionMCPPolicy(ctx, policy.Seal())
+}
+
+// GetWorkerNativeAdmission exposes only persisted hub-confirmed readiness.
+func (s *Service) GetWorkerNativeAdmission(id string) (*store.WorkerNativeAdmission, error) {
+	return s.Store.GetWorkerNativeAdmission(id)
 }

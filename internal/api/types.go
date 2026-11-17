@@ -396,11 +396,13 @@ type ListSessionsResponse struct {
 }
 
 type SessionDTO struct {
-	ID             string `json:"id"`
-	LaunchID       string `json:"launch_id"`
-	ProjectID      string `json:"project_id"`
-	LogicalAgentID string `json:"logical_agent_id"`
-	ProviderID     string `json:"provider_id"`
+	// NativeAdmission is null unless the hub durably confirmed native readiness.
+	NativeAdmission *store.WorkerNativeAdmission `json:"native_admission"`
+	ID              string                       `json:"id"`
+	LaunchID        string                       `json:"launch_id"`
+	ProjectID       string                       `json:"project_id"`
+	LogicalAgentID  string                       `json:"logical_agent_id"`
+	ProviderID      string                       `json:"provider_id"`
 	// ProviderKind is the runtime family ("cli" | "api"). Consumers branch
 	// on this to select PTY-specific affordances vs. API-mode affordances.
 	// Empty for sessions created before this field was added (pre-v0.0.3).

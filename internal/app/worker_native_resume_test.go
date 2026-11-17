@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/gorilla/websocket"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
@@ -192,6 +193,10 @@ func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
 	if err != nil || mapping.NativeSessionID.String != "thread-retained" {
 		t.Fatalf("mapping %+v %v", mapping, err)
 	}
+	receipt, err := s.GetWorkerNativeAdmission(child.ID)
+	if err != nil || receipt == nil || receipt.SourceSessionID != source.ID || receipt.SourceGeneration != options.WorkerSourceGeneration || receipt.ReplacementSessionID != child.ID || receipt.ReplacementGeneration != "new-generation" || receipt.NativeThreadID != "thread-retained" || receipt.Workroot != "/worker/retained" {
+		t.Fatalf("admission receipt: %+v %v", receipt, err)
+	}
 	spec := <-r.specs
 	if spec.ResumeSessionID != "thread-retained" || spec.ResumeGeneration != "generation-1" || spec.BootPrompt != "" || spec.AgentURN != r.urn {
 		t.Fatalf("wrong continuation spec %+v", spec)
@@ -293,6 +298,9 @@ func TestWorkerNativeAdmissionRefusalRecovery(t *testing.T) {
 			if _, err := r.db.GetSessionProviderMapping(failed.ID, "tether", source.ProviderID); err == nil {
 				t.Fatal("refused/uncertain child acquired native custody")
 			}
+			if receipt, err := r.svc.GetWorkerNativeAdmission(failed.ID); err != nil || receipt != nil {
+				t.Fatalf("refused attempt has admission: %+v %v", receipt, err)
+			}
 			r.frameHook.Store(nil)
 			if fault != "authority-revoked" {
 				r.reconnect()
@@ -346,6 +354,51 @@ func TestWorkerNativeAdmissionRefusalRecovery(t *testing.T) {
 			old, _ := r.db.GetSession(failed.ID)
 			if old.State != "failed" {
 				t.Fatalf("historical refusal changed: %+v", old)
+			}
+		})
+	}
+}
+
+func TestWorkerNativeAdmissionRejectsWrongReadiness(t *testing.T) {
+	for _, field := range []string{"session", "generation", "actor", "thread", "workroot"} {
+		t.Run(field, func(t *testing.T) {
+			r, ctx, source, options, _ := nativeContinuationRig(t)
+			hook := func(ws *websocket.Conn, f workerwire.Frame) bool {
+				if f.T != "launch" {
+					return false
+				}
+				receipt := &workerwire.NativeContext{Session: f.Session, Generation: "new-generation", Actor: "msg://agent/portfolio-manager", Thread: "thread-retained", Workroot: "/worker/retained"}
+				var spec workerwire.LaunchSpec
+				if err := json.Unmarshal(f.Spec, &spec); err != nil {
+					t.Error(err)
+					return true
+				}
+				receipt.Actor = spec.Actor
+				switch field {
+				case "session":
+					receipt.Session = "other"
+				case "generation":
+					receipt.Generation = ""
+				case "actor":
+					receipt.Actor = "other"
+				case "thread":
+					receipt.Thread = "other"
+				case "workroot":
+					receipt.Workroot = "/other"
+				}
+				_ = ws.WriteJSON(workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: 999999, NativeContext: receipt})
+				return true
+			}
+			r.frameHook.Store(&hook)
+			if _, err := r.svc.ResumeLogicalAgentWithContext(ctx, source.LogicalAgentID, options); err == nil {
+				t.Fatal("mismatched readiness accepted")
+			}
+			child, err := r.db.LatestSessionForAgent(ctx, source.LogicalAgentID)
+			if err != nil || child.ID == source.ID || child.State != "launching" {
+				t.Fatalf("unsafe child: %+v %v", child, err)
+			}
+			if receipt, err := r.svc.GetWorkerNativeAdmission(child.ID); err != nil || receipt != nil {
+				t.Fatalf("false admission: %+v %v", receipt, err)
 			}
 		})
 	}
