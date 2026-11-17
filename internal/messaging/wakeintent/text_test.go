@@ -1,6 +1,7 @@
 package wakeintent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -60,5 +61,18 @@ func TestWakeGuidanceNeverUnconditionallySilent(t *testing.T) {
 	}
 	if !strings.Contains(WakeGuidance, "End silently only if nothing needs action") {
 		t.Fatalf("guidance lost the conditional: %q", WakeGuidance)
+	}
+}
+
+// A typed ask's wake names the sender handle, subject and deliverable (CW-20261117-0003).
+func TestWakeTextSummarisesATypedRequest(t *testing.T) {
+	raw, _ := json.Marshal(envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindRequest, From: "@archie", To: []string{"@tether"}, Subject: "Land 0002", Body: "please", Deliverable: "Merged PR"})
+	from, _ := messaging.ParseURN("msg://agent/agent-mux/agt_archie")
+	to, _ := messaging.ParseURN("msg://agent/agent-mux/agt_me")
+	text := DefaultWakeText(messaging.Envelope{ID: "m9", From: from, To: to, Kind: messaging.MsgKindRequest, ContentType: envelope.ContentType, Payload: raw}, 1, "normal", false)
+	for _, want := range []string{"@archie request: Land 0002", "Deliverable: Merged PR", "tether_reply"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("wake text lacks %q:\n%s", want, text)
+		}
 	}
 }

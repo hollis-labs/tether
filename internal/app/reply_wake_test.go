@@ -10,6 +10,7 @@ import (
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 
+	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -210,5 +211,26 @@ func TestReplyToOwnBackfill(t *testing.T) {
 		if !strings.Contains(text, env.ID) {
 			t.Fatalf("digest wake does not name %s:\n%s", env.ID, text)
 		}
+	}
+}
+
+// CW-20261117-0003: a typed request wakes a triaged idle seat, and the turn
+// shows the sender handle, subject and deliverable.
+func TestTypedRequestWakesWithItsGist(t *testing.T) {
+	r := newTriageRig(t)
+	req := envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindRequest, From: "@peer", To: []string{"@worker"}, Subject: "Land 0002", Body: "please", Deliverable: "Merged PR and deploy event"}
+	env := r.send(peer, messaging.MsgKindRequest, envelope.ContentType, req, nil)
+	if reason := r.wake(env); reason != "" {
+		t.Fatalf("typed request: %q", reason)
+	}
+	text := r.lastText()
+	for _, want := range []string{"@peer request: Land 0002", "Deliverable: Merged PR and deploy event"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("wake lacks %q:\n%s", want, text)
+		}
+	}
+	row, _, _ := r.st.TriageGet(context.Background(), env.ID)
+	if row.Class != "action" || row.Reason != "envelope_kind" {
+		t.Fatalf("typed request triaged %s/%s", row.Class, row.Reason)
 	}
 }

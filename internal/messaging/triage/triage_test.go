@@ -30,6 +30,7 @@ func TestClassify(t *testing.T) {
 		{"no attention set is fyi for an update", typed(envelope.Envelope{Kind: envelope.KindUpdate}), FYI, "envelope_fyi", false},
 		{"question", typed(envelope.Envelope{Kind: envelope.KindQuestion, Attention: envelope.AttentionAgent}), Action, "envelope_kind", false},
 		{"handoff", typed(envelope.Envelope{Kind: envelope.KindHandoff, Attention: envelope.AttentionAgent}), Action, "envelope_kind", false},
+		{"request", typed(envelope.Envelope{Kind: envelope.KindRequest, Attention: envelope.AttentionAgent}), Action, "envelope_kind", false},
 		{"update", typed(envelope.Envelope{Kind: envelope.KindUpdate, Attention: envelope.AttentionAgent}), FYI, "envelope_fyi", false},
 		{"update awaiting me", typed(envelope.Envelope{Kind: envelope.KindUpdate, Attention: envelope.AttentionAgent, Awaiting: "@me"}), Action, "awaiting_recipient", false},
 		{"untyped request", Input{Kind: messaging.MsgKindRequest}, Action, "transport_kind", false},

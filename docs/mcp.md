@@ -197,7 +197,7 @@ Mutating tools require a **token** and the corresponding **scope**:
 | Scope | Grants access to |
 |---|---|
 | `session.write` | `tether_session_create`, `tether_session_launch`, `tether_session_stop`, `tether_session_send_input`, `tether_session_send_turn`, `tether_session_resize`, `tether_logical_agent_resume` |
-| `message.write` | `tether_message_post`, `tether_status_set`, `tether_message_send`, `tether_message_notify`, `tether_message_consume`, `tether_message_cancel`, `tether_message_reply`, `tether_message_interrupt`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive` |
+| `message.write` | `tether_ask`, `tether_reply`, `tether_message_post`, `tether_status_set`, `tether_message_send`, `tether_message_notify`, `tether_message_consume`, `tether_message_cancel`, `tether_message_reply`, `tether_message_interrupt`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive` |
 | `registry.write` | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_scoped_binding_set` |
 | `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
 | `delivery.write` | `tether_message_redrive`, `tether_message_purge` |
@@ -1127,6 +1127,14 @@ are addressed using URNs in the form `msg://<kind>/<authority>/<id>[/<subid>]`.
 `status_update`, `escalation`. Use `metadata.urgency` or
 `tether_message_notify.urgency` for delivery urgency: `very-low`, `low`,
 `normal`, or `high`.
+
+#### `tether_ask` / `tether_reply` _(message.write)_
+Typed ask and reply (CW-20261117-0003). `tether_ask(kind, to, subject, body, deliverable?, re?, options?,
+default_option?, attention?, urgency?)` sends a `request` (do X and report back; `deliverable` required),
+`question`, `decision`, `approval_request`, `handoff` or `escalation`. `tether_reply(in_reply_to, body, answer?, note?,
+status?, evidence?, subject?, to?)` answers it: it goes to the asker, awaits them and wakes them; `answer` must be one
+of the ask's options; `status` is `done`, `declined` or `blocked`. Use them when someone must act or answer, not for
+status or progress (Torque checkpoints). See [typed-messages.md](typed-messages.md).
 
 #### `tether_message_post` _(message.write)_
 Send a typed envelope to seats or Chrispian by `@handle` (CW-20261114-0013). The daemon stamps the sender, resolves
