@@ -14,7 +14,7 @@ On the worker, exclusive durable source-generation reservation precedes native-s
 
 ## Activation gate and sequence
 
-1. Independent review must approve the exact combined hub/worker commit and tests, including the main and CHAT2 dependency delta. Main 0d0ac59c does not contain the installed b86f7292 catalog-content-bytes fix (CW-20261115-0127); reconcile that preservation requirement before installation, rather than silently dropping installed behavior.
+1. Independent review must approve the exact combined hub/worker commit and tests, including the main and CHAT2 dependency delta. The installed b86f7292 catalog-content-bytes fix (CW-20261115-0127) is preserved exactly in separate commit 72f5fe74, without unrelated PR602 changes. Review the additional main and migration inventory below before installation.
 2. AOM obtains explicit one-manager-at-a-time transition approval and the separately named reader-origin/catalog approval, including any `allow_unconfined_remote` opt-in. Capture canonical URN, current session, real worker workroot/native mapping, source generation, old saved policy digest, chat/history/thread and plan id/revision. Back up using the managed backup path. No credential values belong in evidence.
 3. Verify the installed worker advertises the feature, remains connected, and retains the source execution/native files. Missing historical evidence is a refusal, not permission to guess or repair DB rows.
 4. After the authorized controlled stop and confirmed provider retirement, use the authenticated local UDS resume API with the exact source and `native_only:true`. A request without the policy digest returns the proposed current digest before allocating any child. Review the named current catalog policy before supplying that digest. With an approved digest and missing generation, the source probe reports its observed generation, again before allocation. Remote error bodies deliberately do not reveal these internal details; use the supported local executor, not a borrowed credential. Re-read current state if anything changes between preparation and acceptance.
@@ -32,3 +32,25 @@ A failed or ambiguous response is not permission to stop another session, reuse 
 Tachyon must associate the replacement with the existing owner-visible thread/history and original plan immediately at continuation completion, before the agent makes any proxied tool call. The old lazy plan `Service.Attach` behavior is insufficient (0084/0128). Required fields are old/new canonical session UUIDs, stable agent identity, verified parent, same worker, actual native thread and workroot. Tachyon owns the UI association delta; CHAT-1 consumes the recovery contract. Source messages, plan identity, steps and revision history must survive, without duplicating a plan.
 
 Integration acceptance is a real authorized one-manager transition: before/after native-thread/workroot/URN and saved-policy evidence, immediate panel plan/history before any tool call, then a user question depending on pre-transition context and real reader calls. Parent0084 and access0003 retain this live acceptance; this patch does not close them.
+
+## Deployment delta inventory
+
+The comparison is installed `b86f7292aa7883cec1851e85fc1cbeccfc0841a7` to main `0d0ac59c7df9cad1f2c803655b69e7c3a1e76824`, plus this continuation series and the exact catalog preservation commit. The installed catalog commit is not an ancestor of main; their common baseline is `673598263d1b3c4036b7c72d4ca403eb42ae35fc`. This is source inventory only: no live database was inspected or migrated.
+
+| Main change | Deployment review concern |
+| --- | --- |
+| PR599 / 775e6e58 | Launch continuation assertions and principal audit recording. |
+| PR594 / 52deeca6 | A seat's own live session can set its own status. |
+| PR592 / bfa4d72d; PR608 / 28cc708b | Migration progress and status/apply CLI; corrected pre-migration test fixture. |
+| PR586 / 62083396 | Operator-attested replies, catalog trust-root configuration and approval, new migration0106. Installing code does not authorize trust-root enrollment. |
+| PR598 / 783acbcd; PR589 / 91f1678c | Shimhost/OpenAI/Codex test stability and test-rig shutdown changes. |
+| PR581 / 666abaee | MCP HTTP upstream retry/backoff and daemon upstream-state reporting. |
+| PR584 / 6840a09a | Session-log group commit, per-session ingest locking and worker ingestion batching. |
+| PR606 / 51a4fb51; PR609 / 1b6ffaa6 | Reply wakes, coalescing, turn-end rearming and pending-mail seat digest wakes. |
+| PR605 / 719ddb00 | Canonical tool-call logging and bounded WAL maintenance. |
+| PR607 / 0c45cc10 | Request envelope kind and typed ask/reply tools. |
+| PR604 / 0d0ac59c | Opt-in terminal attach and writer leases over chathost. Root and Sysop both move mesh/core to v0.11.0, agent/core to v0.5.0 and agent/sdk to v0.0.0-20261117000959-bc1013d0655e. |
+
+The only added numbered SQL migration in that comparison is `internal/store/migrations/0106_operator_attested_replies.sql`. It creates `operator_reply_challenges` plus its device/consumption/expiry index, `operator_reply_proofs` with unique proof/elevation replay guards, `operator_reply_answers` keyed by parent message, and singleton `operator_attestation_trust`; it adds nullable `detail TEXT` to `identity_audit`. It does not populate a trust root or rewrite session/plan history. The continuation patch adds no numbered migration.
+
+At the separately authorized deployment gate, the release owner must obtain a managed database backup and inspect pending migrations using the candidate's read-only `tether migrations status --state-db <approved-path> --json`. Actual pending versions depend on the live database and are not established by this inventory. `tether migrations apply` writes and must run with the daemon stopped, per its command contract; ordinary store opening also migrates. Neither command was run against live data here. Migration locking, progress reporting and the added audit column must be included in the maintenance plan. There is no down-migration in this patch: binary rollback alone does not reverse schema, proofs, or conversation writes. Any database restore requires its own approved recovery plan and accounting for writes since backup.
