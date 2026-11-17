@@ -202,6 +202,11 @@ type Service struct {
 	// wakePark carries the wake sweep's parked deliveries between ticks.
 	// See wakeParkSet in wake.go.
 	wakePark wakeParkSet
+	// wakeRearm holds wakes refused as busy, re-armed on their session's turn
+	// end (CW-20261117-0002).
+	wakeRearm wakeRearmSet
+	// replyBackfill runs the reply_to_own triage backfill once per daemon.
+	replyBackfill sync.Once
 	// mailTriager gates wakes for seats with mail_triage on (CW-20261114-0017).
 	mailTriager *mailTriage
 
