@@ -68,6 +68,18 @@ the agent reads it.
 A triaged seat's old mail has no age bound in the wake sweep: coalescing makes
 a backlog one turn, not a turn per message.
 
+## Seat digest wakes
+
+The wake sweep walks deliveries, so pending action mail whose delivery will not
+be swept (a worker adapter already acknowledged it while triage held the wake,
+or it sits behind a deep backlog) would never wake its seat. A seat pass after
+each sweep (at most every 30 s) finds triaged seats with pending, unread action
+mail older than 2 minutes and past any deferral, and gives each live, idle
+session one **digest** turn listing all its pending mail (`Mailbox wake
+(daemon-injected, digest)`); the listed mail is settled as above. It keeps the
+seat's action interval. A busy or offline seat is retried on a later pass, so it
+is woken once its session is idle again.
+
 ## Busy seats
 
 A wake that finds its session mid-turn is released with a short backoff

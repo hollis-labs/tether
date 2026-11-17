@@ -207,6 +207,8 @@ type Service struct {
 	wakeRearm wakeRearmSet
 	// replyBackfill runs the reply_to_own triage backfill once per daemon.
 	replyBackfill sync.Once
+	// seatDigest throttles the seat digest wake pass (CW-20261117-0002).
+	seatDigest seatDigestState
 	// mailTriager gates wakes for seats with mail_triage on (CW-20261114-0017).
 	mailTriager *mailTriage
 

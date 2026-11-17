@@ -478,7 +478,9 @@ func (s *Service) attemptWakeUngated(ctx context.Context, env messaging.Envelope
 // the file doc comment.
 func (s *Service) RunWakeSweep(ctx context.Context) (int, error) {
 	s.replyBackfill.Do(func() { s.runReplyToOwnBackfill(ctx) })
-	return runWakeSweep(ctx, s.Store, s.Registry, s.runtimeSeam(), &s.wakePark)
+	n, err := runWakeSweep(ctx, s.Store, s.Registry, s.runtimeSeam(), &s.wakePark)
+	s.runSeatDigestWakes(ctx)
+	return n, err
 }
 
 func resolveActorSession(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, logicalAgentID string) (string, error) {
