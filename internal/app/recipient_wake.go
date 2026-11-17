@@ -56,10 +56,13 @@ func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, 
 	if text == "" {
 		text = sweepWakeText(env)
 	}
+	// Coalesced wake (CW-20261117-0002): the turn lists the seat's other pending mail.
+	text, commitDigest := rt.triage.withDigest(ctx, env, text)
 	delegated = true
 	out = attemptRecipientWake(ctx, st, reg, rt, env.ID, env.To, sessionID, text)
 	if out.Delivered {
 		rt.triage.woke(ctx, env)
+		commitDigest()
 	}
 	return out
 }

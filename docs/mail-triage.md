@@ -32,9 +32,9 @@ overrides an action rule.
 | Order | Class | Rules | What happens |
 | --- | --- | --- | --- |
 | 1 | `human` | from the operator; envelope attention human (set by the sender, or the default when `@chrispian` is a recipient or awaited) | wakes now, never capped |
-| 2 | `action` | `urgency: high`; envelope `awaiting` this seat; envelope `question`, `decision`, `approval_request`, `escalation`, `handoff`; untyped `request`, `escalation`, `handoff` | wakes, at most once per `action_interval` per seat |
+| 2 | `action` | `urgency: high`; a reply to mail this seat sent (`reply_to_own`: its `in_reply_to` names a message from the seat, by urn or catalog-id form); envelope `awaiting` this seat; envelope `question`, `decision`, `approval_request`, `escalation`, `handoff`; untyped `request`, `escalation`, `handoff` | wakes, at most once per `action_interval` per seat |
 | 3 | `read` | envelope `attention: none` set by the sender (marked read by the hub, `message.read`); untyped `urgency: very-low` (left unread) | no wake |
-| 4 | `fyi` | envelope `update`, `message`; untyped `notice`, `status_update`, `response` | no wake; rides along on the next human prompt |
+| 4 | `fyi` | envelope `update`, `message`; untyped `notice`, `status_update`, `response` | no wake; rides along on the seat's next wake (digest) or human prompt |
 | - | `action` | anything else | as action |
 
 Rules live in `internal/messaging/triage` (`Classify`). A typed envelope stores
@@ -44,10 +44,44 @@ Rules live in `internal/messaging/triage` (`Classify`). A typed envelope stores
 ## Interrupt cap and batching
 
 An action wake starts the seat's interval. A later action mail is deferred to
-its end (the wake sweep parks it until then, without claiming the delivery). A
-delivered wake of the seat, action or human, marks its other pending action
-mail **covered**: the wake text already counts every unread message, so they do
-not wake again. Human mail is never capped or deferred.
+its end (the wake sweep parks it until then, without claiming the delivery):
+the interval is a debounce, nothing is dropped. Human mail is never capped or
+deferred.
+
+Every wake of a triaged seat is **coalesced** (CW-20261117-0002): its text ends
+with a digest of the seat's other pending, unread action and fyi mail, one line
+each (id, sender, subject; replies to the seat are tagged `[reply to you]`, fyi
+`[fyi]`), up to 15 lines and a count of the rest:
+
+```
+Also pending for you (3):
+- `01a1…` @archie: Re: CW-20261115-0110 API: approved, build it [reply to you]
+- `01a1…` @photon-review: #800 G6b verdict
+- `01a1…` @nanite: Deploy done [fyi]
+```
+
+Once the wake is delivered, the action mail it named is marked **covered** (it
+never wakes on its own; it was named in a delivered turn) and the fyi mail
+**surfaced** (typed fyi also read). Covered mail stays unread in the inbox until
+the agent reads it.
+
+A triaged seat's old mail has no age bound in the wake sweep: coalescing makes
+a backlog one turn, not a turn per message.
+
+## Busy seats
+
+A wake that finds its session mid-turn is released with a short backoff
+(5 s doubling, capped at 60 s) and re-armed on the session's next turn end, so
+it is delivered when the turn finishes however long the turn ran. Busy wakes no
+longer count toward the 12-attempt give-up (which still applies to offline and
+failed attempts).
+
+## Backfill
+
+On its first wake sweep after start the daemon re-classifies pending fyi mail
+that is a reply to the seat's own mail as `action`/`reply_to_own` (idempotent;
+logged and published once as `mail.triage_backfill {examined, moved, seats}`).
+The sweep then wakes each affected seat once with a digest.
 
 ## FYI ride-along
 

@@ -8,10 +8,11 @@ import (
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 )
 
-// WakeGuidance is the instruction every generated mailbox wake carries. The wake is a pointer
-// to the mail, not a turn to report on: a mail check with nothing actionable ends silently
-// (CW-20261114-0009).
-const WakeGuidance = "Read it from your inbox. If nothing needs Chrispian, mark it read and end the turn silently, with no message. Otherwise handle it; it does not interrupt your current task unless it is urgent. Marking a message read or consumed settles it; this is the only push you get for it."
+// WakeGuidance is the instruction every generated mailbox wake carries
+// (CW-20261117-0002; it replaced CW-20261114-0009's "end the turn silently"
+// default, which left replies unanswered). A wake that needs nothing ends
+// silently; anything that asked something gets a reply.
+const WakeGuidance = "Read and handle these. Reply to anything that asked you something. End silently only if nothing needs action. Marking a message read or consumed settles it."
 
 // DefaultWakeText is the generated mailbox-wake turn, used when the sender supplied no wake
 // text. unread < 1 omits the count (the sweep's retried wakes do not recompute it). retried

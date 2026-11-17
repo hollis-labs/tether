@@ -697,3 +697,25 @@ func (s *Store) ReadyDeliveryPage(ctx context.Context, afterID, upToID delivery.
 	page.Exhausted = raw < limit
 	return page, nil
 }
+
+// RearmDeliveries makes retry-scheduled deliveries claimable now: a wake that
+// found its session busy is retried on that session's turn end instead of
+// waiting out its backoff (CW-20261117-0002). Only retry_scheduled rows move;
+// a row that was since claimed, delivered or dead-lettered is untouched. It
+// returns how many rows were re-armed.
+func (s *Store) RearmDeliveries(ctx context.Context, ids []delivery.DeliveryID) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	now := time.Now().UTC().Format(deliverySQLiteTimeFormat)
+	var total int64
+	for _, id := range ids {
+		res, err := s.db.ExecContext(ctx, `UPDATE messaging_deliveries SET next_attempt_at=? WHERE status=? AND id=?`, now, string(delivery.DeliveryRetryScheduled), string(id))
+		if err != nil {
+			return total, fmt.Errorf("rearm deliveries: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
+}
