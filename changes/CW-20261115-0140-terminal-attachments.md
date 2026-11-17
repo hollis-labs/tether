@@ -1,0 +1,1 @@
+- Add an opt-in observe-first terminal attachment API with explicit writer leases, generation fencing, replay-gap headers and diagnostic labeling (CW-20261115-0140).

@@ -3241,3 +3241,5 @@ references are supplied by this source change. Current-trust and Basalisk status
 must be deployed and cross-service verified before privileged consumption;
 Tether still owns authoritative outcome/requester checks and exactly-once
 continuation. Basalisk remains the sole human assurance authority.
+
+See [terminal attachments](terminal-attachments.md) for the optional host-backed PTY API.

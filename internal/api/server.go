@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/router"
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/terminalattach"
 )
 
 // AttachmentStore is the narrow storage contract for listing client
@@ -84,6 +85,9 @@ type Deps struct {
 	ProxyEvents ProxyEventStore
 	// Attachments, when non-nil, enables GET /sessions/{id}/attachments.
 	Attachments AttachmentStore
+	// TerminalHost enables observe-first terminal attachments. The authoritative
+	// conversation host resolves targets and fences runtime generations.
+	TerminalHost terminalattach.Host
 	// Registry, when non-nil, enables the /registry/... federation
 	// directory routes wired in registerRegistryRoutes. Absent the dep,
 	// the daemon falls through to its 404 default — matches the
@@ -210,6 +214,7 @@ type Server struct {
 	Routing             RoutingService
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
+	Terminal            *terminalattach.Controller
 	Registry            RegistryService
 	Settings            SettingsService
 	RegistryCatalogRoot string
@@ -297,9 +302,13 @@ func NewHandler(deps Deps) http.Handler {
 		OperatorAttestation: deps.OperatorAttestation,
 		OperatorReplies:     deps.OperatorReplies,
 	}
+	if deps.TerminalHost != nil {
+		s.Terminal = terminalattach.New(deps.TerminalHost)
+	}
 	router := http.NewServeMux()
 	s.registerDocsRoutes(router)
 	s.registerSessionRoutes(router)
+	s.registerTerminalAttachmentRoutes(router)
 	s.registerAIRoutes(router)
 	s.registerCheckpointRoutes(router)
 	s.registerBrokerRoutes(router)
