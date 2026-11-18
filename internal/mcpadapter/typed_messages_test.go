@@ -188,3 +188,36 @@ func TestAskReplyRoundTrip(t *testing.T) {
 		t.Fatalf("status without in_reply_to: %v", err)
 	}
 }
+
+// TestMessagePostSchemaDeclaresEveryEnvelopeField pins CW-20261118-0024:
+// strictArgs refuses undeclared arguments, so every field the handler forwards
+// must be in the schema. deliverable was missing, which made kind request
+// impossible to send through tether_message_post.
+func TestMessagePostSchemaDeclaresEveryEnvelopeField(t *testing.T) {
+	declared := declaredArgNames(messagePostInputSchema())
+	for _, f := range append([]string{"as", "urgency", "idempotency_key"}, envelopeFields...) {
+		if _, ok := declared[f]; !ok {
+			t.Errorf("tether_message_post schema does not declare %q", f)
+		}
+	}
+}
+
+func TestMessagePostSendsRequestWithDeliverable(t *testing.T) {
+	a := newTypedAdapter(t)
+	ctx := context.Background()
+	post := strictArgs(gomcp.Tool{Name: "tether_message_post", InputSchema: messagePostInputSchema(), Handler: a.handleMessagePost})
+	res, err := post.Handler(ctx, map[string]any{
+		"as": "msg://agent/agent-mux/agt_me", "kind": "request", "to": []any{"@archie"}, "re": "task:CW-20261118-0024",
+		"attention": "agent", "subject": "Lead idle", "body": "You have been idle for 30 minutes.", "deliverable": "A reply with status done, declined or blocked",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ := toolOut(t, res)["envelope"].(map[string]any)
+	if env["deliverable"] != "A reply with status done, declined or blocked" || env["kind"] != "request" {
+		t.Fatalf("envelope = %v", env)
+	}
+	if _, err := post.Handler(ctx, map[string]any{"as": "msg://agent/agent-mux/agt_me", "kind": "request", "to": []any{"@archie"}, "subject": "x", "body": "x"}); err == nil || !strings.Contains(err.Error(), "deliverable") {
+		t.Fatalf("request without deliverable: %v", err)
+	}
+}
