@@ -22,33 +22,8 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 			"The server stamps you as the sender, checks every @handle and the envelope, and refuses a bad one with the field and the reason. " +
 			"question and decision need 2-6 options (mark one recommended); approval_request without options is approve/deny. " +
 			"Answer a question by replying with in_reply_to and answer.option. Requires message.write scope.",
-		InputSchema: gomcp.InputSchema(
-			gomcp.StringEnumProp("kind", "What this is; Tachyon renders each as a card", true, "question", "update", "handoff", "escalation", "approval_request", "decision", "message", "request"),
-			gomcp.StringArrayProp("to", "Recipients as @handles, e.g. [\"@archie\"]; @chrispian is the human operator", true),
-			gomcp.StringProp("body", "Markdown, at most 4000 characters; short, the receiver asks for more", true),
-			gomcp.StringProp("subject", "One-line card title, at most 120 characters (optional; default the body's first line)", false),
-			gomcp.StringProp("re", "What it is about: task:<task id>, thread:<id> or topic:<slug> (optional)", false),
-			gomcp.StringProp("in_reply_to", "Message id this answers (optional); joins its thread", false),
-			gomcp.StringEnumProp("attention", "Who must look: human, agent or none (default human when @chrispian is a recipient or awaited, else agent)", false, "human", "agent", "none"),
-			gomcp.StringProp("awaiting", "@handle that must act next (optional)", false),
-			gomcp.StringProp("intent", "Short routing tag, [a-z0-9._-]{1,40} (optional)", false),
-			gomcp.StringProp("on_behalf_of", "Who you are sending this for, as a @handle or URN, when you act for someone (e.g. an assistant for @chrispian). It is your claim, shown to recipients; it never makes the mail theirs (optional)", false),
-			gomcp.StringEnumProp("drafted_by", "Who wrote it, with on_behalf_of only (default assistant)", false, "assistant", "human"),
-			gomcp.ArrayProp("options", "question/decision/approval_request choices: [{id, label, recommended?, detail?}]", false, map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id": map[string]interface{}{"type": "string"}, "label": map[string]interface{}{"type": "string"},
-					"recommended": map[string]interface{}{"type": "boolean"}, "detail": map[string]interface{}{"type": "string"},
-				},
-				"required": []string{"id", "label"},
-			}),
-			gomcp.StringProp("default_option", "Option id that applies if nobody answers (optional)", false),
-			gomcp.ObjectProp("answer", "On a reply to a question/decision/approval_request: {option, note?}", false),
-			gomcp.StringEnumProp("urgency", "Delivery urgency (default normal); a critical approval is an approval_request at high", false, "very-low", "low", "normal", "high"),
-			gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
-			gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
-		),
-		Handler: a.handleMessagePost,
+		InputSchema: messagePostInputSchema(),
+		Handler:     a.handleMessagePost,
 	}), Writes())
 
 	optionsProp := gomcp.ArrayProp("options", "question/decision/approval_request choices: [{id, label, recommended?, detail?}]", false, map[string]interface{}{
@@ -359,4 +334,40 @@ func (a *Adapter) handleStopGateReport(ctx context.Context, args map[string]any)
 		return nil, classifyClientErr(err, "")
 	}
 	return toolJSON(out), nil
+}
+
+// messagePostInputSchema declares every envelope field tether_message_post
+// forwards (envelopeFields) plus as, urgency and idempotency_key. strictArgs
+// refuses anything undeclared, so a field missing here cannot be sent at all
+// (CW-20261118-0024: kind request needs deliverable).
+func messagePostInputSchema() any {
+	return gomcp.InputSchema(
+		gomcp.StringEnumProp("kind", "What this is; Tachyon renders each as a card", true, "question", "update", "handoff", "escalation", "approval_request", "decision", "message", "request"),
+		gomcp.StringArrayProp("to", "Recipients as @handles, e.g. [\"@archie\"]; @chrispian is the human operator", true),
+		gomcp.StringProp("body", "Markdown, at most 4000 characters; short, the receiver asks for more", true),
+		gomcp.StringProp("subject", "One-line card title, at most 120 characters (optional; default the body's first line)", false),
+		gomcp.StringProp("re", "What it is about: task:<task id>, thread:<id> or topic:<slug> (optional)", false),
+		gomcp.StringProp("in_reply_to", "Message id this answers (optional); joins its thread", false),
+		gomcp.StringEnumProp("attention", "Who must look: human, agent or none (default human when @chrispian is a recipient or awaited, else agent)", false, "human", "agent", "none"),
+		gomcp.StringProp("awaiting", "@handle that must act next (optional)", false),
+		gomcp.StringProp("intent", "Short routing tag, [a-z0-9._-]{1,40} (optional)", false),
+		gomcp.StringProp("on_behalf_of", "Who you are sending this for, as a @handle or URN, when you act for someone (e.g. an assistant for @chrispian). It is your claim, shown to recipients; it never makes the mail theirs (optional)", false),
+		gomcp.StringEnumProp("drafted_by", "Who wrote it, with on_behalf_of only (default assistant)", false, "assistant", "human"),
+		gomcp.ArrayProp("options", "question/decision/approval_request choices: [{id, label, recommended?, detail?}]", false, map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{"type": "string"}, "label": map[string]interface{}{"type": "string"},
+				"recommended": map[string]interface{}{"type": "boolean"}, "detail": map[string]interface{}{"type": "string"},
+			},
+			"required": []string{"id", "label"},
+		}),
+		gomcp.StringProp("default_option", "Option id that applies if nobody answers (optional)", false),
+		gomcp.ObjectProp("answer", "On a reply to a question/decision/approval_request: {option, note?}", false),
+		gomcp.StringProp("deliverable", "Required for kind request: what done looks like (PR merged, numbers, a file path...), at most 1000 characters; only a request carries one", false),
+		gomcp.StringEnumProp("status", "On a reply (in_reply_to): how it settles a request: done, declined or blocked (optional)", false, "done", "declined", "blocked"),
+		gomcp.StringArrayProp("evidence", "Pointers backing a reply: PR URL, commit, file path, event id (at most 10, one line each)", false),
+		gomcp.StringEnumProp("urgency", "Delivery urgency (default normal); a critical approval is an approval_request at high", false, "very-low", "low", "normal", "high"),
+		gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
+		gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
+	)
 }

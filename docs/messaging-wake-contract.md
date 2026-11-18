@@ -111,12 +111,20 @@ kind.
     `request`, `handoff`, `escalation`). This is the deliberate design of
     CW-20261117-0002 and is pinned by `triage_test.go`.
 - **`awaiting`** on a typed envelope is the `@handle` that must act next; it
-  makes the message `action` for that seat. On an **untyped reply**
-  (`in_reply_to` set), the server stamps `metadata.awaiting` with the parent
-  message's sender when the caller did not set it (CW-20261117-0003), so every
-  reply names the asker. A payload `"awaiting": null` in untyped mail does not
-  suppress that: the server does not read the payload. To say "nobody is
-  awaited", send a typed envelope with no `awaiting`.
+  makes the message `action` for that seat. On a **reply** (`in_reply_to`
+  set) an omitted `awaiting` is never "nobody":
+  - typed reply (HTTP `POST /messages/post`, MCP `tether_message_post` or
+    `tether_reply`): the server fills `to` and `awaiting` with the parent's
+    sender (the asker) when they are empty (CW-20261117-0003). An explicit
+    `awaiting` is kept. There is no value meaning "nobody awaited" on a reply;
+  - untyped reply (`POST /messages`, `tether_message_send`): the server stamps
+    `metadata.awaiting` with the parent's sender when unset. It does not read
+    the payload, so a payload `"awaiting": null` changes nothing.
+
+  Only a typed message that is **not** a reply can leave `awaiting` empty and
+  mean nobody is awaited. To close a thread without waking the asker, use
+  `attention: none` and accept that the reply-to-own rule above still wakes a
+  triaged asker.
 
 ## Idempotency and duplicate sends
 
@@ -196,8 +204,17 @@ Mail to an alias wakes the canonical address's session.
 
 The watchdog asks a lead to act; it must never take delivery for completion.
 
-1. **Send** a typed request with `tether_message_post` (HTTP
-   `POST /messages/post`):
+1. **Send** a typed request. A request must carry `subject` and
+   `deliverable` (what done looks like); the server refuses it otherwise.
+   - HTTP: `POST /messages/post?urgency=normal` with header
+     `Idempotency-Key: <key>` and body
+     `{"kind":"request","to":["@<lead>"],"re":"task:<id>","attention":"agent","subject":"<one line>","body":"<text>","deliverable":"<what done looks like>"}`.
+     Omit `from`/`as`: the daemon stamps the authenticated principal.
+   - MCP: `tether_ask` (kind `request`, with `deliverable`), or
+     `tether_message_post`, which declares `deliverable`, `status` and
+     `evidence` from CW-20261118-0024; on a daemon built before that,
+     `tether_message_post` cannot send a request (it refuses `deliverable` as
+     an unknown argument), so use `tether_ask` there.
    - `kind: request`, `to: ["@<lead>"]`, `attention: agent`,
      `re: task:<task id>` when there is one, a short `subject`/`body`;
    - no `awaiting` (the request kind already makes it action);
