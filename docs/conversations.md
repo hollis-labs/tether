@@ -12,7 +12,7 @@ that runs it being relaunched or replaced.
 | Column | Meaning |
 |---|---|
 | `conversation_id` | Opaque ULID minted by the daemon. Never derived from a session ID; clients must not parse it. |
-| `owner` | The owner. Today always `msg://user/agent-mux/operator` (one daemon, one operator). |
+| `owner` | The owner. Today always `msg://user/local/operator` (`identity.OperatorID`; one daemon, one operator). |
 | `agent` | The operative: the catalog agent (`launch.Plan.CatalogAgentID` for team members, else the logical agent). |
 | `seat` | The seat the conversation is durable for: the session's `logical_agent_id`. |
 | `kind` | `stable` (durable for a seat). `embedded` is reserved. |

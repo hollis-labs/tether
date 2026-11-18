@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/identity"
 )
 
 // Conversation-to-session mapping (CW-20261118-0008, docs/conversations.md).
@@ -20,8 +22,9 @@ import (
 // under its lease lock.
 
 // ConversationOwnerOperator is the owner of every conversation this daemon
-// mints today: the daemon serves one operator.
-const ConversationOwnerOperator = "msg://user/agent-mux/operator"
+// mints today: the daemon serves one operator, and this is the principal the
+// chat handler's Authorize checks callers against.
+const ConversationOwnerOperator = identity.OperatorID
 
 // ConversationKindStable is a conversation durable for one seat.
 const ConversationKindStable = "stable"
