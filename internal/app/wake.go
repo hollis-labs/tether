@@ -441,6 +441,13 @@ func (s *Service) SessionBoundToActor(sessionID, actorID string) bool {
 func (s *Service) AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
 	ctx = s.mailWakeInputContext(ctx, messageID)
 	env, getErr := s.Store.MessagingStore().Get(ctx, messageID)
+	if getErr == nil && env.Metadata[wakeintent.MetadataKey] != "" {
+		// A repeated notify of an admitted message reports its stored outcome
+		// (CW-20261118-0024), not a fresh triage or resolution answer.
+		if prior, ok := storedRecipientWake(ctx, s.Store, messageID); ok {
+			return prior
+		}
+	}
 	if getErr == nil {
 		// Hub mail triage (CW-20261114-0017): the notify path is gated like the others.
 		if d := s.mailTriager.gate(ctx, env); !d.wake {
