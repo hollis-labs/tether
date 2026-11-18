@@ -269,6 +269,9 @@ type DaemonConfig struct {
 	// EventIngest turns on POST /events, the generic publish route for apps.
 	// Off unless enabled.
 	EventIngest EventIngestConfig `yaml:"event_ingest,omitempty"`
+	// ChatWire serves the chat wire (libs/agent/chat) for this daemon's seats
+	// at /chat/v1 (CW-20261118-0011). Off unless enabled.
+	ChatWire ChatWireConfig `yaml:"chat_wire,omitempty"`
 	// RemoteListener adds an enforce-only loopback TCP listener beside listen_addr.
 	RemoteListener RemoteListenerConfig `yaml:"remote_listener,omitempty"`
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
@@ -290,6 +293,11 @@ type DaemonConfig struct {
 	// proxy_events, ai_events, identity_audit and terminal a2a_tasks.
 	// Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
+}
+
+// ChatWireConfig is daemon.chat_wire.
+type ChatWireConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
 }
 
 // EventIngestConfig configures POST /events (CW-20261020-0010). Unknown kinds

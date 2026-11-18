@@ -35,6 +35,7 @@ type Target struct {
 type Store interface {
 	Conversation(ctx context.Context, id string) (store.Conversation, error)
 	ConversationForSession(ctx context.Context, sessionID string) (store.Conversation, int64, error)
+	ConversationForSeat(ctx context.Context, seat string) (store.Conversation, error)
 }
 
 // Resolver maps conversation and session IDs to the current Target.
@@ -48,6 +49,16 @@ func (r Resolver) ByConversation(ctx context.Context, id string) (Target, error)
 		return Target{}, ErrNotFound
 	}
 	c, err := r.Store.Conversation(ctx, id)
+	return target(c, err)
+}
+
+// BySeat returns the current target of a seat's stable conversation. The chat
+// wire (internal/chatwire) names an agent by its seat.
+func (r Resolver) BySeat(ctx context.Context, seat string) (Target, error) {
+	if r.Store == nil || seat == "" {
+		return Target{}, ErrNotFound
+	}
+	c, err := r.Store.ConversationForSeat(ctx, seat)
 	return target(c, err)
 }
 

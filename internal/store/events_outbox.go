@@ -38,6 +38,7 @@ func (s *Store) EventsCommitted() {
 	if fn := s.eventsCommitted.Load(); fn != nil {
 		(*fn)()
 	}
+	s.flushConversationMoved()
 }
 
 type eventWriter interface {

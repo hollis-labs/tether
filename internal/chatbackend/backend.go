@@ -9,7 +9,7 @@
 //   - claudestdio: `claude -p --input-format stream-json --output-format stream-json`. Content and deltas come from
 //     stdout through chatstream/adapter/claudejson; submit is a stream-json user frame, cancel an interrupt request.
 //
-// The interface is shaped so a chat.Runner (libs/agent/chat, not tagged yet) can wrap a Backend without changing it:
+// The interface is shaped so a chat.Runner (libs/agent/chat; internal/chatwire.Runner) wraps a Backend unchanged:
 // Runner.Start is Submit, Run.Events and Run.Cancel are the same, Info.Deltas is the runner's capabilities.deltas, and
 // Observed feeds the turns the Service did not start. Approvals are not bridged: agents keep their own permission mode,
 // and a Backend reports none (Info.Approvals false).

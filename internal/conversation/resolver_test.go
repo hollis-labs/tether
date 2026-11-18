@@ -45,6 +45,12 @@ func TestResolverByConversationAndBySession(t *testing.T) {
 	if err != nil || got.Generation != 2 || got.SessionID != "s2" || got.WorkerID != "worker-1" || got.AttemptID == first.AttemptID {
 		t.Fatalf("after resume = %+v err=%v", got, err)
 	}
+	if bySeat, err := r.BySeat(ctx, "seat"); err != nil || bySeat != got {
+		t.Fatalf("BySeat = %+v, %v; want %+v", bySeat, err, got)
+	}
+	if _, err := r.BySeat(ctx, "nobody"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown seat: %v", err)
+	}
 	old, current, err := r.BySession(ctx, "s1")
 	if err != nil || current || old != got {
 		t.Fatalf("superseded session = %+v current=%v err=%v; want %+v, not current", old, current, err, got)

@@ -109,6 +109,8 @@ type Backend struct {
 	observed   chan chatbackend.ObservedRun
 	startOnce  sync.Once
 	bg         sync.WaitGroup // interrupts sent off the stdout path
+	ready      chan struct{}  // closed once Run follows the Tap
+	readyOnce  sync.Once
 }
 
 // input is one user frame the CLI will run as a turn.
@@ -188,11 +190,15 @@ func New(cfg Config) *Backend {
 	if cfg.NewRunID == nil {
 		cfg.NewRunID = newRunID
 	}
-	return &Backend{cfg: cfg, observedN: make(chan struct{}, 1), observed: make(chan chatbackend.ObservedRun)}
+	return &Backend{cfg: cfg, observedN: make(chan struct{}, 1), observed: make(chan chatbackend.ObservedRun), ready: make(chan struct{})}
 }
 
 // Info implements chatbackend.Backend.
 func (b *Backend) Info() chatbackend.Info { return chatbackend.Info{Deltas: true, Approvals: false} }
+
+// Ready is closed once Run follows the Tap. Stdout the CLI writes before then reaches no backend, so a caller that
+// starts Run and submits at once waits for it (CW-20261118-0011).
+func (b *Backend) Ready() <-chan struct{} { return b.ready }
 
 // Observed implements chatbackend.Backend.
 func (b *Backend) Observed() <-chan chatbackend.ObservedRun { return b.observed }
@@ -213,6 +219,7 @@ func (b *Backend) Run(ctx context.Context) error {
 	b.startOnce.Do(func() { go b.forwardObserved(ctx) })
 	unsubscribe := b.cfg.Tap.Subscribe(b.subscriber())
 	defer unsubscribe()
+	b.readyOnce.Do(func() { close(b.ready) })
 	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
 	var err error
