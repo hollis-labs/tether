@@ -21,6 +21,20 @@ func bigListResult(n int) *mcpsdk.CallToolResult {
 	return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: string(raw)}}}
 }
 
+// bigPlanResult is shaped like a tether_catalog_plan_get read: one diff string
+// of diffBytes and nFiles planned files (CW-20261118-0033).
+func bigPlanResult(nFiles, diffBytes int) *mcpsdk.CallToolResult {
+	files := make([]map[string]any, nFiles)
+	for i := range files {
+		files[i] = map[string]any{"path": fmt.Sprintf("agents/a%d.yaml", i), "action": "replace"}
+	}
+	raw, _ := json.Marshal(map[string]any{"ok": true, "data": map[string]any{
+		"plan_id": "cp_test", "state": "planned", "digest": strings.Repeat("d", 64),
+		"diff": strings.Repeat("+ line\n", diffBytes/7), "files": files,
+	}})
+	return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: string(raw)}}}
+}
+
 // resultCapHarness serves search mode over an in-memory connection with the
 // real logging middleware followed by the result cap, as the gateway wires them.
 func resultCapHarness(t *testing.T, profile *mcpgateway.Profile) (*mcpsdk.ClientSession, *gatewayEventCapture) {
@@ -35,8 +49,14 @@ func resultCapHarness(t *testing.T, profile *mcpgateway.Profile) (*mcpsdk.Client
 		{Name: "alpha_dump_widgets", Description: "Dump widgets.", InputSchema: schema, Annotations: read},
 		{Name: "alpha_create_widgets", Description: "Create widgets and return a receipt.", InputSchema: schema},
 	})
+	mustRegister(t, registry, "tether", nil, []*mcpsdk.Tool{
+		{Name: "tether_catalog_plan_get", Description: "Read a catalog plan.", InputSchema: schema, Annotations: read},
+	})
 	gateway := a.gatewayService(registry, nil, mcpgateway.Selection{Mode: mcpgateway.Search}, nil)
 	gateway.Dispatch = func(_ context.Context, name string, _, _ map[string]any) (*mcpsdk.CallToolResult, error) {
+		if name == "tether_catalog_plan_get" {
+			return bigPlanResult(5, 40<<10), nil
+		}
 		return bigListResult(600), nil
 	}
 	capture := &gatewayEventCapture{}
@@ -171,6 +191,36 @@ func TestResultCapProfileAndEnvOverrides(t *testing.T) {
 	res, _ = off.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_tool_call", Arguments: map[string]any{"name": "alpha_list_widgets", "arguments": map[string]any{}}})
 	if texts := callText(t, res); len(texts) != 1 {
 		t.Fatalf("%s=0 must turn the cap off, got %d blocks", mcpgateway.ResultCapEnv, len(texts))
+	}
+}
+
+// CW-20261118-0033: a catalog plan read is never cut, even with a diff over the
+// cap and no profile override, so an approver always sees every planned file.
+func TestResultCapNeverCutsACatalogPlanRead(t *testing.T) {
+	c, capture := resultCapHarness(t, nil)
+	res, err := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_tool_call", Arguments: map[string]any{"name": "tether_catalog_plan_get", "arguments": map[string]any{"plan_id": "cp_test"}}})
+	if err != nil || res.IsError {
+		t.Fatalf("call: %v %v", res, err)
+	}
+	texts := callText(t, res)
+	if len(texts) != 1 {
+		t.Fatalf("a plan read must arrive whole with no marker block, got %d blocks", len(texts))
+	}
+	if len(texts[0]) <= mcpgateway.DefaultResultCapBytes {
+		t.Fatalf("fixture too small to exercise the cap: %d bytes", len(texts[0]))
+	}
+	var body struct {
+		Data struct {
+			Files []map[string]any `json:"files"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(texts[0]), &body); err != nil || len(body.Data.Files) != 5 {
+		t.Fatalf("want all 5 files, got %d (err %v)", len(body.Data.Files), err)
+	}
+	for _, ev := range endEvents(t, capture) {
+		if ev.ToolName == "tether_catalog_plan_get" && ev.ResultCapped {
+			t.Fatal("plan read reported as capped")
+		}
 	}
 }
 
