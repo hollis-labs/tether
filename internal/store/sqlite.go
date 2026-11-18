@@ -352,6 +352,15 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 			return err
 		}
 	}
+	// The seat's conversation follows this session in the same transaction:
+	// created at generation 1 for a first session, moved (+1) otherwise.
+	catalogAgentID := ""
+	if plan != nil {
+		catalogAgentID = plan.CatalogAgentID
+	}
+	if err := recordConversationTx(context.Background(), tx, row.ID, catalogAgentID, sessionConversationReason(row.Intent)); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

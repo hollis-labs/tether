@@ -88,9 +88,21 @@ func TestTeamReplacementAtomicallyRemapsOriginalAuthorityAndFreezesOldExecution(
 	if _, err = r.svc.Store.DB().Exec(`INSERT INTO team_roster_snapshots(run_id,version,payload) SELECT run_id,version,payload FROM team_rosters WHERE run_id='run'`); err != nil {
 		t.Fatal(err)
 	}
+	// The member's create wrote its seat's conversation at generation 1.
+	source, _, err := r.svc.Store.ConversationForSession(ctx, in.Source.ID)
+	if err != nil || source.SessionID != in.Source.ID || source.Generation != 1 {
+		t.Fatalf("source conversation = %+v %v", source, err)
+	}
+	before := source.Generation
 	result, err := prepareReplacement(t, r, in)
 	if err != nil || result.ReplacementID != in.DestinationID {
 		t.Fatalf("replacement=%+v %v", result, err)
+	}
+	// The seat's conversation moved to the replacement, one generation up, in
+	// the replacement's transaction.
+	conv, held, err := r.svc.Store.ConversationForSession(ctx, in.DestinationID)
+	if err != nil || conv.SessionID != in.DestinationID || conv.Generation != before+1 || held != before+1 || conv.Seat != in.Source.LogicalAgentID || conv.ID != source.ID {
+		t.Fatalf("conversation after replacement = %+v held=%d err=%v; before=%d", conv, held, err, before)
 	}
 	binding, err := r.svc.Registry.CurrentBinding(ctx, actor)
 	if err != nil {
@@ -155,6 +167,9 @@ func TestTeamReplacementAtomicallyRemapsOriginalAuthorityAndFreezesOldExecution(
 	in.DestinationID = "different-destination"
 	if _, err := prepareReplacement(t, r, in); !errors.Is(err, store.ErrSessionReplacementUnavailable) {
 		t.Fatal("second replacement admitted", err)
+	}
+	if after, err := r.svc.Store.Conversation(ctx, conv.ID); err != nil || after != conv {
+		t.Fatalf("retry or refused replacement moved the conversation: %+v %v", after, err)
 	}
 }
 
