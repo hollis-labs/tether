@@ -83,8 +83,8 @@ func TestConversationFollowsSeatAcrossCreateLaunchResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recordConversationTx(ctx, tx, "s3", "", ConversationReasonResume); err != nil {
-		t.Fatal(err)
+	if moved, err := recordConversationTx(ctx, tx, "s3", "", ConversationReasonResume); err != nil || moved != "" {
+		t.Fatalf("retry = moved %q, %v", moved, err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
@@ -163,5 +163,51 @@ func TestNewULIDIsTimeOrderedAndWellFormed(t *testing.T) {
 	// Known encoding of the timestamp part (ULID spec: 10 chars of 48-bit ms).
 	if got := newULID(time.UnixMilli(1469918176385))[:10]; got != "01ARYZ6S41" {
 		t.Fatalf("timestamp encoding = %q", got)
+	}
+}
+
+// OnConversationMoved fires after the commit of every write that raised a
+// conversation's generation, and not for a create, an ad-hoc session or a
+// no-op rewrite.
+func TestConversationMovedHook(t *testing.T) {
+	ctx := context.Background()
+	db := openTestStoreForSessions(t)
+	var got []string
+	db.OnConversationMoved(func(id string) {
+		c, err := db.Conversation(ctx, id) // after the commit: the new generation is visible
+		if err != nil {
+			t.Errorf("read in hook: %v", err)
+		}
+		got = append(got, id+"@"+c.SessionID)
+	})
+	mkConversationSession(t, db, "s1", "seat", "", nil)
+	mkConversationSession(t, db, "adhoc", "", "", nil)
+	if len(got) != 0 {
+		t.Fatalf("create reported a move: %v", got)
+	}
+	mkConversationSession(t, db, "s2", "seat", "s1", nil)
+	c, _, err := db.ConversationForSession(ctx, "s2")
+	if err != nil || len(got) != 1 || got[0] != c.ID+"@s2" {
+		t.Fatalf("moves = %v (conversation %+v, %v)", got, c, err)
+	}
+	if bySeat, err := db.ConversationForSeat(ctx, "seat"); err != nil || bySeat.ID != c.ID {
+		t.Fatalf("ConversationForSeat = %+v, %v", bySeat, err)
+	}
+	if _, err := db.ConversationForSeat(ctx, "nobody"); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("unknown seat: %v", err)
+	}
+	// A move written on a caller's transaction is reported on EventsCommitted.
+	db.queueConversationMoved(c.ID)
+	if len(got) != 1 {
+		t.Fatal("a queued move was reported before EventsCommitted")
+	}
+	db.EventsCommitted()
+	if len(got) != 2 {
+		t.Fatalf("moves after EventsCommitted = %v", got)
+	}
+	db.OnConversationMoved(nil)
+	mkConversationSession(t, db, "s3", "seat", "s2", nil)
+	if len(got) != 2 {
+		t.Fatalf("removed hook still called: %v", got)
 	}
 }

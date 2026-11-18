@@ -33,6 +33,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
+	"github.com/hollis-labs/tether/internal/chatwire"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -338,6 +339,26 @@ var daemonRunCmd = &cobra.Command{
 			}
 			eventIngest = ing
 		}
+		// The chat wire (CW-20261118-0011), behind daemon.chat_wire.enabled.
+		var chatWire *chatwire.Wire
+		if cfg.ChatWire {
+			chatWire, err = chatwire.Open(ctx, chatwire.Config{StateDir: stateRoot, Store: svc.Store, Sessions: svc})
+			if err != nil {
+				_ = closeService()
+				return fmt.Errorf("chat wire: %w", err)
+			}
+			api.EnableChatWireScopes()
+			log.Printf("chat wire: serving %s (daemon.chat_wire.enabled)", chatwire.Prefix)
+		}
+		closeChatWire := func() {
+			if chatWire != nil {
+				closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := chatWire.Close(closeCtx); err != nil {
+					log.Printf("chat wire: close: %v", err)
+				}
+			}
+		}
 		server := &daemon.Server{
 			Environment:              environmentDescriptor,
 			EnvironmentReport:        environmentReport,
@@ -423,11 +444,15 @@ var daemonRunCmd = &cobra.Command{
 			// Complete reducer persistence and join the routing worker before
 			// closing the store, even after the server has drained sessions.
 			Close: func() error {
+				closeChatWire()
 				stopReport()
 				return closeService()
 			},
 		}
 
+		if chatWire != nil {
+			server.ChatWire = chatWire.Handler()
+		}
 		if mcpHandler != nil {
 			server.MCP = mcpHandler
 			server.MCPShutdown = mcpHandler.Close
@@ -1418,6 +1443,7 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		RemoteListener:      remote,
 		Modules:             profile,
 		TeamsEnabled:        profile.Enabled(environment.Teams),
+		ChatWire:            d.ChatWire.Enabled,
 		IdentityMode:        mode,
 		IdentityPoints:      identityPointModes(cat.Global.Identity),
 		ServiceTokenRequest: cat.Global.Identity.ServiceRequest,

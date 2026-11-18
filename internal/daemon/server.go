@@ -36,7 +36,10 @@ type Config struct {
 	RemoteListener RemoteListenerConfig
 	Modules        *environment.Profile
 	TeamsEnabled   bool
-	IdentityMode   identity.Mode
+	// ChatWire is daemon.chat_wire.enabled: serve the chat wire for this
+	// daemon's seats at /chat/v1 (CW-20261118-0011). Default off.
+	ChatWire     bool
+	IdentityMode identity.Mode
 	// IdentityPoints overrides IdentityMode per enforcement point (CW-20261010-0268).
 	IdentityPoints map[string]identity.Mode
 	// ServiceTokenRequest is identity.service_request: "auto" issues a session's request
@@ -140,6 +143,9 @@ type Server struct {
 	DeliveryClaims api.DeliveryClaimer
 	// Attachments is optional; when set, GET /sessions/{id}/attachments works.
 	Attachments api.AttachmentStore
+	// ChatWire is the chat wire's handler (internal/chatwire, CW-20261118-0011),
+	// mounted at /chat/v1. Set only when Config.ChatWire is on.
+	ChatWire http.Handler
 	// Registry is optional; when set, /registry/* federation directory
 	// endpoints are mounted. Populated by app.Service.Registry at daemon
 	// startup.
@@ -665,6 +671,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			Teams:               teams,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,
+			ChatWire:            s.ChatWire,
 			ProxyEvents:         s.ProxyEvents,
 			Registry:            s.Registry,
 			Settings:            s.Settings,
@@ -1104,6 +1111,8 @@ func (s *Server) apiMounts() []apiMount {
 		// without a mount and 404'd in production.
 		{"/chat/agents", hasService && s.Catalog != nil},
 		{"/chat/agents/", hasService && s.Catalog != nil},
+		// The chat wire (CW-20261118-0011), only when daemon.chat_wire is on.
+		{"/chat/v1/", s.ChatWire != nil},
 
 		// "/registry/" is a subtree pattern -- it already covers
 		// /registry/bindings* and /registry/scoped-bindings* (T07, T08)

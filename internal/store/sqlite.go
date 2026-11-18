@@ -36,7 +36,13 @@ type Store struct {
 	// commits (see events_outbox.go).
 	eventsCommitted  atomic.Pointer[func()]
 	eventTxPublisher atomic.Pointer[func(context.Context, events.Tx, events.Event) (events.Event, error)]
-	db               *sql.DB
+	// conversationMoved is called after a committed write moved a conversation
+	// (OnConversationMoved); movedPending holds moves written on a caller's
+	// transaction until EventsCommitted.
+	conversationMoved atomic.Pointer[func(string)]
+	movedMu           sync.Mutex
+	movedPending      []string
+	db                *sql.DB
 	// reader is a read-only pool over the same file for history reads
 	// (CW-20261114-0166), so a long read never holds db's single connection.
 	// Nil on a store opened read-only, where db is already read-only.
@@ -358,10 +364,15 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 	if plan != nil {
 		catalogAgentID = plan.CatalogAgentID
 	}
-	if err := recordConversationTx(context.Background(), tx, row.ID, catalogAgentID, sessionConversationReason(row.Intent)); err != nil {
+	moved, err := recordConversationTx(context.Background(), tx, row.ID, catalogAgentID, sessionConversationReason(row.Intent))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.noteConversationMoved(moved)
+	return nil
 }
 
 func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {

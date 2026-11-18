@@ -88,6 +88,9 @@ type Deps struct {
 	// TerminalHost enables observe-first terminal attachments. The authoritative
 	// conversation host resolves targets and fences runtime generations.
 	TerminalHost terminalattach.Host
+	// ChatWire, when non-nil, is mounted at /chat/v1 (chat_wire.go,
+	// CW-20261118-0011): the daemon sets it only when its chat_wire flag is on.
+	ChatWire http.Handler
 	// Registry, when non-nil, enables the /registry/... federation
 	// directory routes wired in registerRegistryRoutes. Absent the dep,
 	// the daemon falls through to its 404 default — matches the
@@ -215,6 +218,7 @@ type Server struct {
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
 	Terminal            *terminalattach.Controller
+	ChatWire            http.Handler
 	Registry            RegistryService
 	Settings            SettingsService
 	RegistryCatalogRoot string
@@ -283,6 +287,7 @@ func NewHandler(deps Deps) http.Handler {
 		Routing:             deps.Routing,
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,
+		ChatWire:            deps.ChatWire,
 		Registry:            deps.Registry,
 		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
@@ -319,6 +324,7 @@ func NewHandler(deps Deps) http.Handler {
 
 	s.registerCatalogApplyRoutes(router)
 	s.registerChatRoutes(router)
+	s.registerChatWireRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)
 	s.registerWorkstreamRoutes(router)
