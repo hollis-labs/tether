@@ -12,7 +12,7 @@ require (
 	github.com/hollis-labs/libs/llm/core v0.2.0
 	github.com/hollis-labs/libs/mesh/core v0.11.0
 	github.com/hollis-labs/libs/security/policy v0.1.0
-	github.com/hollis-labs/libs/ui/ui-go v0.1.0
+	github.com/hollis-labs/libs/ui/ui-go v0.4.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
