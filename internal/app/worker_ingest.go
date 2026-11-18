@@ -66,6 +66,7 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 		switch state {
 		case "exited":
 			s.sessionLogs.closeSession(row.ID)
+			s.dropStdioTap(row.ID, nil)
 			state = "completed"
 			if f.ExitCode != nil && *f.ExitCode != 0 {
 				state = "failed"
