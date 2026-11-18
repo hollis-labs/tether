@@ -186,6 +186,12 @@ type Service struct {
 	// ends (CW-20261001-0033).
 	subprocessLogs sync.Map
 
+	// stdioTaps holds each Claude streaming-stdio session's chat tap
+	// (*claudestdio.Tap), keyed by session id: local sessions from launch
+	// until they end, worker sessions from the first chat backend until they
+	// exit (chat_stdio.go, CW-20261118-0010).
+	stdioTaps sync.Map
+
 	// specResolver is the S5 Spec-path launch resolver. It is constructed
 	// lazily on first use (only when the launch engine is "spec") via
 	// specResolverOnce and reused across launches. specResolverErr records

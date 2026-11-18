@@ -2,12 +2,12 @@
 // agent session submits a user turn, cancels it, yields the turn's events, and reports turns the agent ran that were not
 // submitted through it (observed runs). Task CW-20261118-0010; design in direction/proposals/chat-attach-wire.md.
 //
-// Two implementations are planned, one per Claude runtime:
+// Two implementations, one per Claude runtime:
 //
 //   - claudepty: the Claude Code TUI in a PTY. Content comes from the vendor transcript (whole messages, no deltas), turn
 //     boundaries from Tether's Claude hooks, submit and cancel are keystrokes.
-//   - streaming stdio (later): `claude -p --input-format stream-json --output-format stream-json`. Content and deltas come
-//     from stdout through chatstream/adapter/claudejson; submit is a stream-json user frame, cancel an interrupt request.
+//   - claudestdio: `claude -p --input-format stream-json --output-format stream-json`. Content and deltas come from
+//     stdout through chatstream/adapter/claudejson; submit is a stream-json user frame, cancel an interrupt request.
 //
 // The interface is shaped so a chat.Runner (libs/agent/chat, not tagged yet) can wrap a Backend without changing it:
 // Runner.Start is Submit, Run.Events and Run.Cancel are the same, Info.Deltas is the runner's capabilities.deltas, and
