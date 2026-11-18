@@ -1,0 +1,62 @@
+{"parentUuid":"9ee87a54-a5bd-4afb-8dae-5d0e3e2ac7df","isSidechain":false,"promptId":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","type":"user","message":{"role":"user","content":"The tether-mail plugin sent a message:\n<mail wake: content redacted>"},"uuid":"400e71d4-b23c-409e-990a-44143adc84be","timestamp":"2026-11-18T16:33:26.376Z","promptSource":"system","turnOrigin":"system"}
+{"type":"attachment","attachment":{"type":"instructions"}}
+{"type":"attachment","attachment":{"type":"session_context"}}
+{"type":"attachment","attachment":{"type":"date"}}
+{"type":"attachment","attachment":{"type":"credential_org"}}
+{"type":"attachment","attachment":{"type":"remote_session_change"}}
+{"type":"attachment","attachment":{"type":"prompt_snapshot"}}
+{"type":"api-request"}
+{"type":"last-prompt"}
+{"type":"mode"}
+{"type":"permission-mode"}
+{"type":"session-owner"}
+{"type":"atis-latch"}
+{"type":"bridge-session"}
+{"type":"tools-used"}
+{"parentUuid":"2567b407-f914-4669-85e6-7ec72062b9c6","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiTwu6AR3b7JABomTqX","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01LsWYuw61fDJfkKHaDS2fWn","name":"Bash","input":{"command":"redacted"},"caller":{"type":"direct"}}],"container":null,"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"df65fcde-b2ef-49e4-9ef7-b5585eae63e5","timestamp":"2026-11-18T16:33:30.243Z"}
+{"type":"file-history-snapshot"}
+{"parentUuid":"df65fcde-b2ef-49e4-9ef7-b5585eae63e5","isSidechain":false,"promptId":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01LsWYuw61fDJfkKHaDS2fWn","type":"tool_result","content":"redacted output","is_error":false}]},"uuid":"1889b931-9ead-4347-b840-47010711cb40","timestamp":"2026-11-18T16:33:31.461Z"}
+{"type":"attachment","attachment":{"type":"prompt_snapshot"}}
+{"type":"attachment","attachment":{"type":"environment"}}
+{"type":"attachment","attachment":{"type":"model"}}
+{"type":"attachment","attachment":{"type":"output_style_instructions"}}
+{"type":"attachment","attachment":{"type":"deferred_tools_delta"}}
+{"type":"attachment","attachment":{"type":"agent_listing_delta"}}
+{"type":"attachment","attachment":{"type":"mcp_instructions_delta"}}
+{"type":"attachment","attachment":{"type":"skill_listing"}}
+{"type":"attachment","attachment":{"type":"output_style"}}
+{"type":"api-request"}
+{"type":"last-prompt"}
+{"type":"mode"}
+{"type":"permission-mode"}
+{"type":"session-owner"}
+{"type":"atis-latch"}
+{"type":"bridge-session"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-18T16:33:33.581Z","content":"Read hello.txt and tell me the launch code in one short sentence."}
+{"parentUuid":"7f0a56a0-9e87-4d75-828b-5f1c5de62d89","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiUJpCH5eujuXyzHmu9","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"redacted-signature"}],"container":null,"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"5789fbea-f6af-4db6-a201-60d2224d159a","timestamp":"2026-11-18T16:33:33.837Z"}
+{"parentUuid":"5789fbea-f6af-4db6-a201-60d2224d159a","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiUJpCH5eujuXyzHmu9","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01SxpFuMfvgEbLuDxvxwzZbo","name":"Bash","input":{"command":"redacted"},"caller":{"type":"direct"}}],"container":null,"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"cbf09220-6949-479e-9a3d-14de2356223c","timestamp":"2026-11-18T16:33:34.106Z"}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-11-18T16:33:34.834Z","content":"Read hello.txt and tell me the launch code in one short sentence."}
+{"parentUuid":"cbf09220-6949-479e-9a3d-14de2356223c","isSidechain":false,"promptId":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01SxpFuMfvgEbLuDxvxwzZbo","type":"tool_result","content":"redacted output","is_error":false}]},"uuid":"20e8f37b-1852-4da8-a543-0a5eb20f08cf","timestamp":"2026-11-18T16:33:34.827Z"}
+{"type":"attachment","attachment":{"type":"queued_command","prompt":"Read hello.txt and tell me the launch code in one short sentence.","source_uuid":"525d3373-9ada-4594-b316-4065c72b0322"},"timestamp":"2026-11-18T16:33:33.527Z"}
+{"type":"attachment","attachment":{"type":"output_style"}}
+{"type":"api-request"}
+{"parentUuid":"104b8ac7-83c3-4473-ba6e-dc22dae6f97c","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiUZDMr4vu8c6168oG3","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01Cx8RnhKXeh53zr5rWQ5CpE","name":"Bash","input":{"command":"redacted"},"caller":{"type":"direct"}}],"container":null,"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"8c35539e-fd8f-46a0-91d4-aefb7a2d1f2e","timestamp":"2026-11-18T16:33:36.537Z"}
+{"parentUuid":"8c35539e-fd8f-46a0-91d4-aefb7a2d1f2e","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiUZDMr4vu8c6168oG3","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01R8ZeZPc8MUHkHLd5Qxi1JK","name":"Bash","input":{"command":"redacted"},"caller":{"type":"direct"}}],"container":null,"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"febab43f-2146-45c2-b801-4d994875cc3b","timestamp":"2026-11-18T16:33:36.945Z"}
+{"parentUuid":"8c35539e-fd8f-46a0-91d4-aefb7a2d1f2e","isSidechain":false,"promptId":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01Cx8RnhKXeh53zr5rWQ5CpE","type":"tool_result","content":"redacted output","is_error":false}]},"uuid":"9200982f-c742-44b7-9bcd-f3c5370d632c","timestamp":"2026-11-18T16:33:37.792Z"}
+{"parentUuid":"febab43f-2146-45c2-b801-4d994875cc3b","isSidechain":false,"promptId":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01R8ZeZPc8MUHkHLd5Qxi1JK","type":"tool_result","content":"redacted output","is_error":false}]},"uuid":"4aeca52c-22a5-4863-91d7-5347b21d0c4d","timestamp":"2026-11-18T16:33:38.461Z"}
+{"type":"attachment","attachment":{"type":"output_style"}}
+{"type":"api-request"}
+{"parentUuid":"c437f216-354e-4a19-b5ad-fc95c7d641f1","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiUpmFhX6bY6U4TwuPW","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"redacted-signature"}],"container":null,"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"58b42c40-c62e-4969-9030-f912d2985ac4","timestamp":"2026-11-18T16:33:41.100Z"}
+{"parentUuid":"58b42c40-c62e-4969-9030-f912d2985ac4","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiUpmFhX6bY6U4TwuPW","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01KSsrX7xVCTEerZjFxw5Mye","name":"Bash","input":{"command":"redacted"},"caller":{"type":"direct"}}],"container":null,"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"f53c6f3c-2996-48d5-be88-58ad08c1e2b5","timestamp":"2026-11-18T16:33:41.519Z"}
+{"type":"last-prompt"}
+{"type":"mode"}
+{"type":"permission-mode"}
+{"type":"session-owner"}
+{"type":"atis-latch"}
+{"type":"bridge-session"}
+{"parentUuid":"f53c6f3c-2996-48d5-be88-58ad08c1e2b5","isSidechain":false,"promptId":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01KSsrX7xVCTEerZjFxw5Mye","type":"tool_result","content":"redacted output","is_error":false}]},"uuid":"11486589-b514-4b53-823a-62408e8cb443","timestamp":"2026-11-18T16:33:42.709Z"}
+{"type":"attachment","attachment":{"type":"output_style"}}
+{"type":"api-request"}
+{"parentUuid":"ef8bbed7-969c-4a55-b8fa-dbe9c06bfdfe","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAiV8tukb9SQQFopDE6i","type":"message","role":"assistant","content":[{"type":"text","text":"redacted reply text"}],"container":null,"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"input_transformations":[]},"uuid":"4dd030fd-5206-46ba-936f-be81d8cdd31b","timestamp":"2026-11-18T16:33:45.819Z"}
+{"parentUuid":"4dd030fd-5206-46ba-936f-be81d8cdd31b","isSidechain":false,"type":"system","subtype":"stop_hook_summary","uuid":"ed1ec58e-ddbb-43de-9975-e365f52f5a8c","timestamp":"2026-11-18T16:33:45.968Z","level":"suggestion"}
+{"parentUuid":"ed1ec58e-ddbb-43de-9975-e365f52f5a8c","isSidechain":false,"type":"system","subtype":"turn_duration","uuid":"0cbd920e-c1b9-4c90-9d65-4052e999a91a","timestamp":"2026-11-18T16:33:45.972Z","isMeta":false,"durationMs":19668}
