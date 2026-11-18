@@ -118,6 +118,10 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	if _, lost := ev.(gopevents.SessionLost); lost {
 		o.markSessionLost()
 	}
+	switch ev.(type) {
+	case gopevents.Done, gopevents.Error:
+		o.turnEnded()
+	}
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
@@ -129,6 +133,21 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 			o.emptyTerminal(turnoutput.KindFailure, "")
 		}
 	}
+}
+
+// turnEndRearmDelay lets the runtime settle to idle before the re-armed wakes
+// are retried. A var so tests can shorten it.
+var turnEndRearmDelay = 750 * time.Millisecond
+
+// turnEnded re-arms the wakes this session refused while busy
+// (CW-20261117-0002). It runs off the observer goroutine, after a short delay
+// so the next sweep finds the session idle.
+func (o *sessionTurnOutput) turnEnded() {
+	if o.service == nil {
+		return
+	}
+	svc, id := o.service, o.row.ID
+	time.AfterFunc(turnEndRearmDelay, func() { svc.rearmBusyWakes(id) })
 }
 
 func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
@@ -154,6 +173,9 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		return
 	}
 	o.recordEnvironmentRequest(ev, origin)
+	if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
+		o.turnEnded()
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if ev.Kind == runtimeevents.KindSessionLost {

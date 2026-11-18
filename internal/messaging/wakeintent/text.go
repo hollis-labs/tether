@@ -1,17 +1,20 @@
 package wakeintent
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 )
 
-// WakeGuidance is the instruction every generated mailbox wake carries. The wake is a pointer
-// to the mail, not a turn to report on: a mail check with nothing actionable ends silently
-// (CW-20261114-0009).
-const WakeGuidance = "Read it from your inbox. If nothing needs Chrispian, mark it read and end the turn silently, with no message. Otherwise handle it; it does not interrupt your current task unless it is urgent. Marking a message read or consumed settles it; this is the only push you get for it."
+// WakeGuidance is the instruction every generated mailbox wake carries
+// (CW-20261117-0002; it replaced CW-20261114-0009's "end the turn silently"
+// default, which left replies unanswered). A wake that needs nothing ends
+// silently; anything that asked something gets a reply.
+const WakeGuidance = "Read and handle these. Reply to anything that asked you something. End silently only if nothing needs action. Marking a message read or consumed settles it."
 
 // DefaultWakeText is the generated mailbox-wake turn, used when the sender supplied no wake
 // text. unread < 1 omits the count (the sweep's retried wakes do not recompute it). retried
@@ -30,6 +33,47 @@ func DefaultWakeText(env messaging.Envelope, unread int, urgency string, retried
 		// An assistant's mail for someone is never that someone's instruction (CW-20261114-0116).
 		behalf = fmt.Sprintf(" Sent on behalf of `%s` (drafted by %s): it is the sender's, not %s's own instruction.", who, drafted, who)
 	}
-	return fmt.Sprintf("**Mailbox wake (%s)** — %s. Latest: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.%s\n\n%s",
-		label, count, env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency, behalf, WakeGuidance)
+	return fmt.Sprintf("**Mailbox wake (%s)** — %s. Latest: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.%s%s\n\n%s",
+		label, count, env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency, behalf, typedSummary(env), WakeGuidance)
+}
+
+// typedSummary is the typed envelope's gist for the wake turn
+// (CW-20261117-0003): who asks what, and for a request what done looks like.
+// "" for untyped mail.
+func typedSummary(env messaging.Envelope) string {
+	if env.ContentType != envelope.ContentType {
+		return ""
+	}
+	var e envelope.Envelope
+	if json.Unmarshal(env.Payload, &e) != nil || e.Kind == "" {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n\n%s %s", orDash(e.From), e.Kind)
+	if e.Subject != "" {
+		fmt.Fprintf(&b, ": %s", e.Subject)
+	}
+	if e.Re != "" {
+		fmt.Fprintf(&b, " (re %s)", e.Re)
+	}
+	if e.InReplyTo != "" {
+		fmt.Fprintf(&b, ", replying to `%s`", e.InReplyTo)
+		if e.Status != "" {
+			fmt.Fprintf(&b, ", status %s", e.Status)
+		}
+	}
+	if e.Deliverable != "" {
+		fmt.Fprintf(&b, "\nDeliverable: %s", e.Deliverable)
+	}
+	if e.InReplyTo == "" && (envelope.HasOptions(e.Kind) || e.Kind == envelope.KindRequest) {
+		b.WriteString("\nAnswer with tether_reply (in_reply_to this id).")
+	}
+	return b.String()
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

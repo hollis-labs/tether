@@ -6,7 +6,6 @@ package proxyevents
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
@@ -331,11 +330,13 @@ func validateIngest(req *ProxyEventIngestRequest) string {
 	return ""
 }
 
-// publishToolCallEvent publishes req on the daemon's bus in the shape
-// LoggingMiddleware publishes a proxied call in-process, stamped with the
-// daemon's own time.
+// publishToolCallEvent publishes req on the daemon's bus as the canonical
+// tool.call.started / tool.call.finished observation LoggingMiddleware's
+// recorder publishes for an in-daemon call. The legacy tool_call_start /
+// tool_call_end pair is no longer written to the event log (CW-20261113-0009):
+// it doubled every call there, and an end's full payload is already the
+// proxy_events row recorded above.
 func (s *Service) publishToolCallEvent(ctx context.Context, req ProxyEventIngestRequest) error {
-	kind := events.EventTypeToolCallEnd
 	tce := events.ToolCallEvent{
 		ToolCallDetails:  req.ToolCallDetails,
 		Attribution:      req.Attribution,
@@ -346,28 +347,10 @@ func (s *Service) publishToolCallEvent(ctx context.Context, req ProxyEventIngest
 		ArgsSchemaFP:     req.ArgsSchemaFP,
 		DurationMs:       req.DurationMs,
 		OK:               req.OK,
-		Error:            req.Error,
 		Timestamp:        time.Now().UTC(),
 	}
 	if req.Phase == ProxyEventPhaseStart {
-		kind = events.EventTypeToolCallStart
-		tce.DurationMs, tce.OK, tce.Error = 0, false, ""
-	}
-	raw, err := json.Marshal(tce)
-	if err != nil {
-		return err
-	}
-	scope := events.ScopeSession
-	if tce.SessionID == "" {
-		scope = events.ScopeDaemon
-	}
-	if err := s.bus.Publish(ctx, events.Event{
-		Scope:       scope,
-		SessionID:   tce.SessionID,
-		Kind:        kind,
-		PayloadJSON: string(raw),
-	}); err != nil {
-		return err
+		tce.DurationMs, tce.OK = 0, false
 	}
 	// The authenticated boundary resolved this snapshot; body attribution is ignored.
 	ctx = callcontext.WithSnapshot(ctx, req.Attribution)

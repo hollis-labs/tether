@@ -41,7 +41,7 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	case <-ctx.Done():
 		return api.LaunchResult{}, ctx.Err()
 	}
-	if opts.NativeOnly && opts.SourceSessionID == "" || !opts.NativeOnly && (opts.SourceSessionID != "" || opts.ResumeWorkRoot != "") {
+	if opts.NativeOnly && opts.SourceSessionID == "" || !opts.NativeOnly && (opts.SourceSessionID != "" || opts.ResumeWorkRoot != "" || opts.WorkerSourceGeneration != "" || opts.WorkerPolicyDigest != "") {
 		return api.LaunchResult{}, nativeOnlyError("exact source and native-only mode required")
 	}
 	if opts.IdempotencyKey == "" {
@@ -56,9 +56,9 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	digest := resumeRequestDigest(logicalAgentID)
 	if opts.NativeOnly {
 		digest = requestDigest(struct {
-			Agent, Source, WorkRoot string
-			NativeOnly              bool
-		}{logicalAgentID, opts.SourceSessionID, opts.ResumeWorkRoot, true})
+			Agent, Source, WorkRoot, Generation, Policy string
+			NativeOnly                                  bool
+		}{logicalAgentID, opts.SourceSessionID, opts.ResumeWorkRoot, opts.WorkerSourceGeneration, opts.WorkerPolicyDigest, true})
 	}
 	replayed, err := s.replayIfKeyed(principal, opts.IdempotencyKey, store.IdempotencyOpResume, digest)
 	if err != nil {
@@ -121,7 +121,13 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("agent %q has never launched a session; cannot resume", logicalAgentID)
 	}
 	if opts.NativeOnly && (parent == nil || parent.ID != opts.SourceSessionID) {
-		return api.LaunchResult{}, nativeOnlyError("canonical source changed or missing")
+		// A rejected native-only worker attempt may be retried from its unchanged
+		// source. The worker's durable claim still refuses unknown teardown or any
+		// previously successful writer. Never skip a successful or unrelated child.
+		parent, err = s.retryWorkerNativeSource(parent, opts)
+		if err != nil {
+			return api.LaunchResult{}, err
+		}
 	}
 	if parent == nil && ck == nil {
 		return api.LaunchResult{}, fmt.Errorf("%w: agent %q has no previous session or checkpoint", store.ErrSessionNotFound, logicalAgentID)
@@ -194,6 +200,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	// resume used to fall back to the default scopes, CW-20261114-0038).
 	s.applyCatalogIdentity(plan)
 	plan.NativeResumeOnly = opts.NativeOnly
+	plan.WorkerSourceGeneration, plan.WorkerPolicyDigest = opts.WorkerSourceGeneration, opts.WorkerPolicyDigest
 	if !opts.NativeOnly {
 		plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
 	}
@@ -232,18 +239,38 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 			}
 		}
 	}
+	if workerID == "" && (opts.WorkerPolicyDigest != "" || opts.WorkerSourceGeneration != "") {
+		return api.LaunchResult{}, nativeOnlyError("worker continuation options require a worker source")
+	}
+	if workerID != "" && opts.NativeOnly {
+		if err := s.workerNativeAuthority(ctx, plan); err != nil {
+			return api.LaunchResult{}, err
+		}
+		if err := s.workerNativeSource(ctx, parent, plan); err != nil {
+			return api.LaunchResult{}, err
+		}
+	}
 	if workerID != "" && plan.ResumeProviderSessionID == "" {
 		return api.LaunchResult{}, fmt.Errorf("%w: worker resume of %s needs a native provider session id and none is recorded", session.ErrRecoveryConflict, sourceID)
 	}
 	if opts.NativeOnly {
-		if opts.ResumeWorkRoot != "" {
-			plan.NativeResumeWorkRoot, plan.WorkRoot = opts.ResumeWorkRoot, opts.ResumeWorkRoot
-		}
-		if err := s.validateNativeOnlySource(ctx, parent, plan); err != nil {
-			return api.LaunchResult{}, err
-		}
-		if err := s.nativeOnlyLaunchAuthority(ctx, plan); err != nil {
-			return api.LaunchResult{}, err
+		if workerID != "" {
+			if opts.ResumeWorkRoot != "" {
+				return api.LaunchResult{}, nativeOnlyError("worker workroot cannot be overridden")
+			}
+			if err := s.workerNativeAuthority(ctx, plan); err != nil {
+				return api.LaunchResult{}, err
+			}
+		} else {
+			if opts.ResumeWorkRoot != "" {
+				plan.NativeResumeWorkRoot, plan.WorkRoot = opts.ResumeWorkRoot, opts.ResumeWorkRoot
+			}
+			if err := s.validateNativeOnlySource(ctx, parent, plan); err != nil {
+				return api.LaunchResult{}, err
+			}
+			if err := s.nativeOnlyLaunchAuthority(ctx, plan); err != nil {
+				return api.LaunchResult{}, err
+			}
 		}
 		plan.BootPrompt, plan.RecoveryPrompt, plan.RecoveryCursors = "", "", nil
 	} else {
@@ -344,9 +371,7 @@ func (s *Service) checkWorkerResume(parent *store.SessionRow, opts api.ResumeOpt
 	if !s.workerResumeEnabled() {
 		return fmt.Errorf("%w: resume source %s is placed on worker %s; resume on a worker is not enabled (catalog.defaults.worker_resume)", session.ErrRecoveryConflict, parent.ID, parent.WorkerID)
 	}
-	if opts.NativeOnly {
-		return fmt.Errorf("%w: native-only resume is not supported for worker-placed source %s", session.ErrRecoveryConflict, parent.ID)
-	}
+
 	if s.Workers == nil {
 		return fmt.Errorf("%w: resume source %s needs worker %s: %w", session.ErrRecoveryConflict, parent.ID, parent.WorkerID, workerhub.ErrChannelUnavailable)
 	}
@@ -355,6 +380,12 @@ func (s *Service) checkWorkerResume(parent *store.SessionRow, opts api.ResumeOpt
 	}
 	if !s.Workers.Supports(parent.WorkerID, workerwire.FeatureWorkerResume) {
 		return fmt.Errorf("%w: worker %s does not support resume", session.ErrRecoveryConflict, parent.WorkerID)
+	}
+	if opts.NativeOnly {
+		if !s.Workers.Supports(parent.WorkerID, workerwire.FeatureCodexResume) {
+			return nativeOnlyError("worker lacks codex-native-resume-v1")
+		}
+		return nil // exact provider and source receipt checked after catalog resolution
 	}
 	if parent.ProviderID != "claude" && !strings.Contains(parent.ProviderID, "claude") {
 		return fmt.Errorf("%w: worker resume supports claude only, source %s uses %q", session.ErrRecoveryConflict, parent.ID, parent.ProviderID)

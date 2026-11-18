@@ -306,7 +306,7 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 		return
 	}
 	req.IdempotencyPrincipal = idemPrincipal
-	if req.NativeOnly && req.SourceSessionID == "" || !req.NativeOnly && (req.SourceSessionID != "" || req.ResumeWorkRoot != "") {
+	if req.NativeOnly && req.SourceSessionID == "" || !req.NativeOnly && (req.SourceSessionID != "" || req.ResumeWorkRoot != "" || req.WorkerSourceGeneration != "" || req.WorkerPolicyDigest != "") {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "native_only requires exact source_session_id")
 		return
 	}

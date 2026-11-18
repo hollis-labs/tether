@@ -566,6 +566,15 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	dto = dtos[0]
+	if reader, ok := s.Service.(interface {
+		GetWorkerNativeAdmission(string) (*store.WorkerNativeAdmission, error)
+	}); ok {
+		dto.NativeAdmission, err = reader.GetWorkerNativeAdmission(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "native admission lookup failed")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, sessionResponseFor(r, dto))
 }
 

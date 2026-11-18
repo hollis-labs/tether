@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,7 +89,12 @@ func Open(path string) (*Store, error) {
 // and the optional test template in front of it.
 func openDB(path string) (*Store, error) {
 	// DSN parameters are supported by modernc.org/sqlite.
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	// journal_size_limit: SQLite reuses the -wal file from its start after a
+	// checkpoint but never shrinks it, so one spike (the 3.4 GB WAL of
+	// 2026-11-14, CW-20261114-0166) stays on disk for good. With a limit, the
+	// writer truncates the file to it whenever the log restarts
+	// (CW-20261113-0009).
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=journal_size_limit(" + strconv.FormatInt(walSizeLimit, 10) + ")"
 	syncMode, err := synchronousFromEnv()
 	if err != nil {
 		return nil, err
@@ -345,6 +351,15 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 		if err := insertSessionIdempotency(tx, row.ID, *key); err != nil {
 			return err
 		}
+	}
+	// The seat's conversation follows this session in the same transaction:
+	// created at generation 1 for a first session, moved (+1) otherwise.
+	catalogAgentID := ""
+	if plan != nil {
+		catalogAgentID = plan.CatalogAgentID
+	}
+	if err := recordConversationTx(context.Background(), tx, row.ID, catalogAgentID, sessionConversationReason(row.Intent)); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

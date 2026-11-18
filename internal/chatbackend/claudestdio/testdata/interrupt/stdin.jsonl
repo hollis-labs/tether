@@ -1,0 +1,3 @@
+{"after_line":0,"note":"submit","frame":{"type":"user","message":{"role":"user","content":"Write a 600-word essay about rivers."}}}
+{"after_line":9,"note":"cancel","frame":{"type":"control_request","request_id":"req_1","request":{"subtype":"interrupt"}}}
+{"after_line":16,"note":"submit","frame":{"type":"user","message":{"role":"user","content":"Reply with only the word: done"}}}

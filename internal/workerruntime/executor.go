@@ -36,19 +36,20 @@ import (
 )
 
 type execution struct {
-	mu         sync.Mutex
-	ID         string `json:"id"`
-	Descriptor string `json:"descriptor"`
-	Workspace  string `json:"workspace"`
-	PID        int    `json:"pid"`
-	HostPID    int    `json:"host_pid,omitempty"`
-	State      string `json:"state"`
-	Sandboxed  bool   `json:"sandboxed"`
-	LastSeq    int64  `json:"last_seq"`
-	Cursor     string `json:"cursor"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
-	Provider   string `json:"provider"`
-	Carry      []byte `json:"carry,omitempty"`
+	NativeContext *workerwire.NativeContext `json:"native_context,omitempty"`
+	mu            sync.Mutex
+	ID            string `json:"id"`
+	Descriptor    string `json:"descriptor"`
+	Workspace     string `json:"workspace"`
+	PID           int    `json:"pid"`
+	HostPID       int    `json:"host_pid,omitempty"`
+	State         string `json:"state"`
+	Sandboxed     bool   `json:"sandboxed"`
+	LastSeq       int64  `json:"last_seq"`
+	Cursor        string `json:"cursor"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
+	Provider      string `json:"provider"`
+	Carry         []byte `json:"carry,omitempty"`
 	// AgentTokens/AuthDir persist what a restarted outpost needs to resume
 	// refreshing the session's token files.
 	AgentTokens []workerwire.AgentTokenSpec `json:"agent_tokens,omitempty"`
@@ -101,6 +102,12 @@ func (e *Executor) Inventory() []workerwire.Session {
 func (e *Executor) get(id string) *execution { e.mu.Lock(); defer e.mu.Unlock(); return e.sessions[id] }
 func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 	switch f.T {
+	case "resume_probe":
+		source, err := e.codexSource(f.Session)
+		if err != nil {
+			return err
+		}
+		return e.Send(workerwire.Frame{T: "resume_probed", CmdID: f.CmdID, Session: f.Session, NativeContext: &source.NativeContext})
 	case "launch":
 		var spec workerwire.LaunchSpec
 		if err := json.Unmarshal(f.Spec, &spec); err != nil {
@@ -117,7 +124,7 @@ func (e *Executor) Command(ctx context.Context, f workerwire.Frame) error {
 		s.mu.Lock()
 		pid := s.PID
 		s.mu.Unlock()
-		return e.Send(workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: pid, Workspace: s.Workspace, Sandboxed: s.Sandboxed})
+		return e.Send(workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: pid, Workspace: s.Workspace, Sandboxed: s.Sandboxed, NativeContext: s.NativeContext})
 	case "stop":
 		s := e.get(f.Session)
 		if s == nil {
@@ -177,6 +184,9 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if spec.Session == "" || filepath.Base(spec.Session) != spec.Session {
 		return nil, fmt.Errorf("invalid session")
 	}
+	if (spec.ResumeSourceSessionID != "" || spec.ResumeGeneration != "") && (spec.ResumeSessionID == "" || spec.Provider != "codex" || spec.RuntimeKind != "jsonrpc-stdio") {
+		return nil, resumeUnavailable("incomplete native continuation request")
+	}
 	if spec.Provider == "" || strings.ContainsAny(spec.Provider, "/\\") {
 		return nil, fmt.Errorf("provider must be a bare command name, got %q", spec.Provider)
 	}
@@ -219,11 +229,24 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	// A resume continues the provider's own conversation in the directory it ran in. Resolve and refuse
 	// before anything is created, so a failed resume leaves no workspace behind.
 	var resumeCwd string
-	if spec.ResumeSessionID != "" {
-		if spec.Provider != "claude" {
-			return nil, resumeUnavailable("resume is supported for claude only, not %q", spec.Provider)
+	var nativeSource codexSource
+	var releaseSource func()
+	keepReservation := false
+	defer func() {
+		if releaseSource != nil && !keepReservation {
+			releaseSource()
 		}
-		resumeCwd, err = e.resolveResumeCwd(spec.Env, spec.ResumeSessionID)
+	}()
+	if spec.ResumeSessionID != "" {
+		switch spec.Provider {
+		case "codex":
+			nativeSource, releaseSource, err = e.reserveCodexSource(spec)
+			resumeCwd = nativeSource.Workroot
+		case "claude":
+			resumeCwd, err = e.resolveResumeCwd(spec.Env, spec.ResumeSessionID)
+		default:
+			return nil, resumeUnavailable("unsupported native provider")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -266,12 +289,21 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		cwd = filepath.Join(cwd, clean)
 	}
+	if spec.Provider == "codex" && spec.ResumeSessionID != "" && spec.BootPrompt != "" {
+		return nil, resumeUnavailable("native continuation cannot inject a boot turn")
+	}
 	for path, content := range spec.BootFiles {
+		if spec.Provider == "codex" && spec.ResumeSessionID != "" {
+			break
+		}
 		if err := plant(cwd, path, []byte(content)); err != nil {
 			return nil, err
 		}
 	}
 	for _, f := range spec.NativeFiles {
+		if spec.Provider == "codex" && spec.ResumeSessionID != "" {
+			break
+		}
 		rel, err := nativeFilePath(spec.Provider, spec.RuntimeKind, f)
 		if err != nil {
 			return nil, err
@@ -281,7 +313,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}
 	args := append([]string(nil), spec.Args...)
-	if spec.ResumeSessionID != "" {
+	if spec.Provider == "claude" && spec.ResumeSessionID != "" {
 		args = withResume(args, spec.ResumeSessionID)
 	}
 	if spec.Provider == "claude" {
@@ -298,6 +330,11 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		prepared, err := e.prepareProvider(ctx, spec, binary, cwd, ws.Root)
 		if err != nil {
 			return nil, err
+		}
+		if spec.Provider == "codex" && spec.ResumeSessionID != "" {
+			if err := workspace.CopyNativeState(nativeSource.Home, prepared.Env["CODEX_HOME"], "codex"); err != nil {
+				return nil, resumeUnavailable("native state copy: %v", err)
+			}
 		}
 		args, err := providerProcessArgs(ws.Root, spec, prepared)
 		if err != nil {
@@ -359,6 +396,10 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if err := shimhost.WritePrivateJSON(descriptor, launchSpec); err != nil {
 		return nil, err
 	}
+	// After spawn, uncertain teardown must retain the durable source claim.
+	if releaseSource != nil {
+		keepReservation = true
+	}
 	var child *exec.Cmd
 	if e.Spawn != nil {
 		child, err = e.Spawn(descriptor)
@@ -406,6 +447,29 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	e.mu.Unlock()
 	go e.follow(s)
 	_ = client.Replay(spec.Session, "")
+	if spec.Provider == "codex" && spec.ResumeSessionID != "" {
+		if err := waitNativeReady(ctx, filepath.Join(ws.Root, "native-readiness", "ready.json"), spec.ResumeSessionID, cwd); err != nil {
+			_ = client.Send(spec.Session, "control", map[string]any{"action": "kill", "expected_generation": "1"})
+			if e.awaitNativeRetirement(s) {
+				keepReservation = false
+			}
+			return nil, err // only confirmed retirement releases the source; uncertain attempts stay fenced
+		}
+		receipt := nativeSource.NativeContext
+		s.mu.Lock()
+		if s.State != "running" {
+			s.mu.Unlock()
+			return nil, resumeUnavailable("native provider exited before admission")
+		}
+		receipt.Session = spec.Session
+		receipt.Generation = launchSpec.BootGeneration
+		s.NativeContext = &receipt
+		err = e.persist(s)
+		s.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+	}
 	if spec.BootPrompt != "" {
 		if spec.Provider == "claude" {
 			spec.BootPrompt += "\n\nYou run on a Tether execution outpost. Your canonical hub session is " + spec.Session + " and hub agent address is " + spec.Actor + ". The planted torque, tesseract and tether MCP clients go to the hub. For self-discovery call tether_whoami with as set to that hub agent address. Do not start a local Tether daemon or create a local authority."

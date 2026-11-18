@@ -217,10 +217,12 @@ type LaunchRequest struct {
 // ResumeOptions carries the optional arguments of a resume.
 type ResumeOptions struct {
 	// IdempotencyKey makes the resume idempotent (CW-20260930-0229).
-	IdempotencyKey  string
-	NativeOnly      bool
-	SourceSessionID string
-	ResumeWorkRoot  string
+	IdempotencyKey         string
+	NativeOnly             bool
+	SourceSessionID        string
+	ResumeWorkRoot         string
+	WorkerSourceGeneration string
+	WorkerPolicyDigest     string
 	// IdempotencyPrincipal is server-set from the authenticated caller; it is
 	// never read from a client (CW-20261010-0263).
 	IdempotencyPrincipal string
@@ -228,10 +230,12 @@ type ResumeOptions struct {
 
 // ResumeRequest is the optional body of POST /logical-agents/{id}/resume.
 type ResumeRequest struct {
-	IdempotencyKey  string `json:"idempotency_key,omitempty"`
-	NativeOnly      bool   `json:"native_only,omitempty"`
-	SourceSessionID string `json:"source_session_id,omitempty"`
-	ResumeWorkRoot  string `json:"resume_workroot,omitempty"`
+	IdempotencyKey         string `json:"idempotency_key,omitempty"`
+	NativeOnly             bool   `json:"native_only,omitempty"`
+	SourceSessionID        string `json:"source_session_id,omitempty"`
+	ResumeWorkRoot         string `json:"resume_workroot,omitempty"`
+	WorkerSourceGeneration string `json:"worker_source_generation,omitempty"`
+	WorkerPolicyDigest     string `json:"worker_policy_digest,omitempty"`
 	// IdempotencyPrincipal is set by the server, never decoded from a body.
 	IdempotencyPrincipal string `json:"-"`
 }
@@ -392,11 +396,13 @@ type ListSessionsResponse struct {
 }
 
 type SessionDTO struct {
-	ID             string `json:"id"`
-	LaunchID       string `json:"launch_id"`
-	ProjectID      string `json:"project_id"`
-	LogicalAgentID string `json:"logical_agent_id"`
-	ProviderID     string `json:"provider_id"`
+	// NativeAdmission is null unless the hub durably confirmed native readiness.
+	NativeAdmission *store.WorkerNativeAdmission `json:"native_admission"`
+	ID              string                       `json:"id"`
+	LaunchID        string                       `json:"launch_id"`
+	ProjectID       string                       `json:"project_id"`
+	LogicalAgentID  string                       `json:"logical_agent_id"`
+	ProviderID      string                       `json:"provider_id"`
 	// ProviderKind is the runtime family ("cli" | "api"). Consumers branch
 	// on this to select PTY-specific affordances vs. API-mode affordances.
 	// Empty for sessions created before this field was added (pre-v0.0.3).

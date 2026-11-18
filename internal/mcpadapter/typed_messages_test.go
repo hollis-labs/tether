@@ -125,3 +125,99 @@ func TestRawSendErrorsPointAtTheTypedTool(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261117-0003: tether_ask / tether_reply build, validate and address the
+// typed envelope; the reply goes back to the asker and awaits them, without
+// holding either side's Stop gate.
+func TestAskReplyRoundTrip(t *testing.T) {
+	a := newTypedAdapter(t)
+	ctx := context.Background()
+	const me, archie = "msg://agent/agent-mux/agt_me", "msg://agent/agent-mux/agt_archie"
+
+	// A request needs a deliverable; the refusal names the field.
+	if _, err := a.handleAsk(ctx, map[string]any{"as": me, "kind": "request", "to": []any{"@archie"}, "subject": "Land 0002", "body": "please"}); err == nil || !strings.Contains(err.Error(), "deliverable") {
+		t.Fatalf("request without deliverable: %v", err)
+	}
+	res, err := a.handleAsk(ctx, map[string]any{"as": me, "kind": "request", "to": []any{"@archie"}, "subject": "Land 0002", "body": "please", "deliverable": "Merged PR and deploy event", "re": "task:CW-20261117-0002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := toolOut(t, res)
+	askID := ask["ids"].([]any)[0].(string)
+	if env, _ := ask["envelope"].(map[string]any); env["kind"] != "request" || env["deliverable"] != "Merged PR and deploy event" || env["from"] != "@photon-tether" {
+		t.Fatalf("ask envelope = %v", ask["envelope"])
+	}
+	res, _ = a.handlePendingReplies(ctx, map[string]any{"as": archie})
+	if pending, _ := toolOut(t, res)["pending"].([]any); len(pending) != 1 {
+		t.Fatalf("archie pending = %v", toolOut(t, res))
+	}
+
+	// The reply needs no to: it goes to the asker and awaits them.
+	res, err = a.handleReply(ctx, map[string]any{"as": archie, "in_reply_to": askID, "body": "Landed.", "status": "done", "evidence": []any{"https://github.com/hollis-labs/tether/pull/606"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, _ := toolOut(t, res)["envelope"].(map[string]any)
+	to, _ := reply["to"].([]any)
+	if len(to) != 1 || to[0] != "@photon-tether" || reply["awaiting"] != "@photon-tether" || reply["in_reply_to"] != askID || reply["status"] != "done" {
+		t.Fatalf("reply envelope = %v", reply)
+	}
+	// Answered: archie owes nothing; the reply does not hold the asker's gate either.
+	for _, as := range []string{archie, me} {
+		res, _ = a.handlePendingReplies(ctx, map[string]any{"as": as})
+		if pending, _ := toolOut(t, res)["pending"].([]any); len(pending) != 0 {
+			t.Fatalf("%s pending after the reply = %v", as, pending)
+		}
+	}
+
+	// An answer must be one of the ask's options.
+	res, err = a.handleAsk(ctx, map[string]any{"as": me, "kind": "decision", "to": []any{"@archie"}, "subject": "Split?", "body": "One PR or two?",
+		"options": []any{map[string]any{"id": "one", "label": "One"}, map[string]any{"id": "two", "label": "Two"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decID := toolOut(t, res)["ids"].([]any)[0].(string)
+	if _, err := a.handleReply(ctx, map[string]any{"as": archie, "in_reply_to": decID, "body": "three", "answer": "three"}); err == nil || !strings.Contains(err.Error(), "answer.option") {
+		t.Fatalf("answer outside the options: %v", err)
+	}
+	if _, err := a.handleReply(ctx, map[string]any{"as": archie, "in_reply_to": decID, "body": "two", "answer": "two", "note": "smaller diffs"}); err != nil {
+		t.Fatalf("valid answer refused: %v", err)
+	}
+	// status without in_reply_to cannot be built by tether_reply, but a post is refused.
+	if _, err := a.handleMessagePost(ctx, map[string]any{"as": me, "kind": "message", "to": "@archie", "body": "x", "status": "done"}); err == nil || !strings.Contains(err.Error(), "status") {
+		t.Fatalf("status without in_reply_to: %v", err)
+	}
+}
+
+// TestMessagePostSchemaDeclaresEveryEnvelopeField pins CW-20261118-0024:
+// strictArgs refuses undeclared arguments, so every field the handler forwards
+// must be in the schema. deliverable was missing, which made kind request
+// impossible to send through tether_message_post.
+func TestMessagePostSchemaDeclaresEveryEnvelopeField(t *testing.T) {
+	declared := declaredArgNames(messagePostInputSchema())
+	for _, f := range append([]string{"as", "urgency", "idempotency_key"}, envelopeFields...) {
+		if _, ok := declared[f]; !ok {
+			t.Errorf("tether_message_post schema does not declare %q", f)
+		}
+	}
+}
+
+func TestMessagePostSendsRequestWithDeliverable(t *testing.T) {
+	a := newTypedAdapter(t)
+	ctx := context.Background()
+	post := strictArgs(gomcp.Tool{Name: "tether_message_post", InputSchema: messagePostInputSchema(), Handler: a.handleMessagePost})
+	res, err := post.Handler(ctx, map[string]any{
+		"as": "msg://agent/agent-mux/agt_me", "kind": "request", "to": []any{"@archie"}, "re": "task:CW-20261118-0024",
+		"attention": "agent", "subject": "Lead idle", "body": "You have been idle for 30 minutes.", "deliverable": "A reply with status done, declined or blocked",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ := toolOut(t, res)["envelope"].(map[string]any)
+	if env["deliverable"] != "A reply with status done, declined or blocked" || env["kind"] != "request" {
+		t.Fatalf("envelope = %v", env)
+	}
+	if _, err := post.Handler(ctx, map[string]any{"as": "msg://agent/agent-mux/agt_me", "kind": "request", "to": []any{"@archie"}, "subject": "x", "body": "x"}); err == nil || !strings.Contains(err.Error(), "deliverable") {
+		t.Fatalf("request without deliverable: %v", err)
+	}
+}

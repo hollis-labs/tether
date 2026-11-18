@@ -64,8 +64,10 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePC
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
-github.com/hollis-labs/libs/agent/core v0.4.0 h1:4cQovQwGvkPkeIPieoP3mZ3IATCzx1O/fOoWuv9yo1Y=
-github.com/hollis-labs/libs/agent/core v0.4.0/go.mod h1:Pk4Etne7xARd9VeX3HNgZIDWLfKXy3yjvv6dfWnPbT8=
+github.com/hollis-labs/libs/agent/core v0.5.0 h1:bk2GAHef+lH5ihYKBnQpir5SZoeRNTp7AyY8iYCLkr0=
+github.com/hollis-labs/libs/agent/core v0.5.0/go.mod h1:AHtYM1ZFiaAVnPQYaZjJrI8trpmwomFMPknACIUe+4Y=
+github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000959-bc1013d0655e h1:P1jcipN8cmwQFwLoszmt3odFi63+xJH+/ohr7uN+1TM=
+github.com/hollis-labs/libs/agent/sdk v0.0.0-20261117000959-bc1013d0655e/go.mod h1:b7QGBnGBRNFn0pLaNuWxImiPYWnYjimbYiiPqZ+aleU=
 github.com/hollis-labs/libs/core/forums v0.3.0 h1:W3KbOgj88z1wvC1NzmwX6s95EHCseY4NTAnH5pC2xW4=
 github.com/hollis-labs/libs/core/forums v0.3.0/go.mod h1:tGNoAkvkUhIwkrPVpQO+LYSH94hYorHT8adUYC0znto=
 github.com/hollis-labs/libs/core/panics v0.1.0 h1:mWJ9yPTRCBsLFprCNGIJrroehfh/g3UaDmLEH6gncB8=
@@ -78,8 +80,8 @@ github.com/hollis-labs/libs/llm/core v0.2.0 h1:jYjfC4gsLbxsUG5mQ4ougbmUB0b9rQpqb
 github.com/hollis-labs/libs/llm/core v0.2.0/go.mod h1:Hl8R2j3sR/mxfX8S/XBSxqcm7VM+RSVzH924gYXTyGw=
 github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0 h1:wS9KsD0Jk4QD+SEepirMGZJwUtXpL5hMjPL/wYdEk20=
 github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0/go.mod h1:jf0jxxm5UOa5YBETO4u8WTD6JY87VAhxkBZgCnFd+UA=
-github.com/hollis-labs/libs/mesh/core v0.10.0 h1:PDtFkea2SA/Y750/eDQHzWHRSV/TNyufBaYMra5Xfsg=
-github.com/hollis-labs/libs/mesh/core v0.10.0/go.mod h1:4MIXuPovKfdlaHGpI2Va9nINuNKmfsed4XX53UxeoSk=
+github.com/hollis-labs/libs/mesh/core v0.11.0 h1:hBl6Kxt2zoNBWJmeOypp+kD02VhKkIQ5hBwjg8wY0ds=
+github.com/hollis-labs/libs/mesh/core v0.11.0/go.mod h1:yZA6PdWpjZN5Pxoxw00NfYKc4e3WAZFd6JucRkofs8Q=
 github.com/hollis-labs/libs/mesh/eventbus v0.2.0 h1:9mstpH3GWQWRqnNkgzFiNo2e1/sg20enIs/gHePLcRw=
 github.com/hollis-labs/libs/mesh/eventbus v0.2.0/go.mod h1:KKQBH8hpxgkuoMlowUnqn809z3BDMQqkLHteAIcpkZU=
 github.com/hollis-labs/libs/security/auth v0.1.0 h1:Bq4pmTr4bnRY7a1bQq2ycuutRlCD4RCh44xPdb0PnBw=
@@ -92,6 +94,8 @@ github.com/hollis-labs/libs/security/secrets v0.1.0 h1:/wrYAM5viUnYMpDhvbQmPlTMe
 github.com/hollis-labs/libs/security/secrets v0.1.0/go.mod h1:Krd1kgmisOVmeN1G/ltaLMva58tIBki9xShsySqd86Y=
 github.com/hollis-labs/libs/ui/ui-go v0.1.0 h1:GFztthzyhlbrKemRItwyNlV+e83pZT+yFr5Y37iXlL4=
 github.com/hollis-labs/libs/ui/ui-go v0.1.0/go.mod h1:MBO41Mrbgo6YfRbm8MI50qQXjDfwhkvA/WxRdtOiL38=
+github.com/hollis-labs/libs/ui/ui-go v0.4.0 h1:3TydDJElqD1ilgfY1FY+ei+joAuRcwMyuorGTDD1qIw=
+github.com/hollis-labs/libs/ui/ui-go v0.4.0/go.mod h1:MBO41Mrbgo6YfRbm8MI50qQXjDfwhkvA/WxRdtOiL38=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/invopop/jsonschema v0.13.0 h1:KvpoAJWEjR3uD9Kbm2HWJmqsEaHt8lBUpd0qHcIi21E=

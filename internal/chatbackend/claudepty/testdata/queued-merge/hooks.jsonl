@@ -1,0 +1,3 @@
+{"after_line":0,"payload":{"hook_event_name":"UserPromptSubmit","session_id":"00000000-0000-4000-8000-000000000002","prompt_id":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","prompt":"<mail wake: content redacted>"}}
+{"after_line":34,"payload":{"hook_event_name":"UserPromptSubmit","session_id":"00000000-0000-4000-8000-000000000002","prompt_id":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","prompt":"Read hello.txt and tell me the launch code in one short sentence."}}
+{"after_line":59,"payload":{"hook_event_name":"Stop","session_id":"00000000-0000-4000-8000-000000000002","prompt_id":"6c9484aa-20c7-44b4-a4d6-65d08df1bced","stop_hook_active":false}}

@@ -21,7 +21,9 @@ type ReaperSession struct {
 // reaperActivityKinds are the only event kinds that count as genuine runtime activity. Noise kinds
 // (session.output, session.shim_status, session.state_changed re-asserts) never do: a dead session whose
 // recovery bookkeeping keeps writing diagnostics must not look alive, and must not be re-scanned for them.
-var reaperActivityKinds = []string{"session.activity", "session.turn_output", "session.turn_routed", "tool_call_start", "tool_call_end", "provider.permission_denied"}
+// Tool calls are logged as tool.call.*; the legacy tool_call_* kinds stay for rows written before
+// CW-20261113-0009.
+var reaperActivityKinds = []string{"session.activity", "session.turn_output", "session.turn_routed", "tool.call.started", "tool.call.finished", "tool_call_start", "tool_call_end", "provider.permission_denied"}
 
 // ReaperCandidates lists hub-local sessions the reaper may act on, without touching the events table.
 // Start and activity times are loaded lazily with ReaperTimes, only for sessions that are actually examined.
