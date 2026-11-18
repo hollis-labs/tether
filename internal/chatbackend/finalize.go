@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"strings"
 
+	chat "github.com/hollis-labs/libs/agent/chat"
 	"github.com/hollis-labs/libs/ui/ui-go/chatstream"
 )
 
 // Finalizer sits between a decoder and the wire and makes every part.end carry the part's complete content in Final
-// (chat-attach-wire.md, Committed-only mode). A decoder does not always do that itself: claudejson sets Final on
-// tool_call (the arguments) and tool_result (the block), but not on text or reasoning. It is an interface so the shared
-// finalizer planned for libs/agent/chat can replace this one without touching the backends.
+// (chat-attach-wire.md, Committed-only mode and As built). It is the shared chat.Finalizer from libs/agent/chat
+// (CW-20261118-0011) plus the two things a Claude decoder needs on top: a part that arrived whole still gets the
+// As-built shape (claudejson's tool_result Final is the vendor block, and a thinking block Claude Code did not display
+// has no text), and a non-streaming backend drops its deltas after they were accumulated.
 type Finalizer interface {
 	// Push takes one decoder event, in order, and returns the events to send in its place: usually the event itself,
 	// part.end with Final filled in, or nothing for a part.delta a non-streaming backend drops.
@@ -24,9 +26,9 @@ type FinalizerOptions struct {
 	DropDeltas bool
 }
 
-// NewFinalizer returns the local Finalizer.
+// NewFinalizer returns the backends' Finalizer.
 //
-// What Final holds after it, by part kind (an object for every kind, so a committed-only client reads one shape):
+// What Final holds after it, by part kind (the As-built shapes; an object for every kind):
 //
 //   - text, refusal: {"text": <the part's text>}.
 //   - reasoning: {"text": <the reasoning text>} merged into what the decoder put there ({"signature": ...} or
@@ -36,73 +38,84 @@ type FinalizerOptions struct {
 //     "is_error" (a bool) added.
 //   - anything else: left as the decoder sent it.
 func NewFinalizer(o FinalizerOptions) Finalizer {
-	return &finalizer{opts: o, parts: map[string]*partAcc{}}
+	return &finalizer{opts: o, parts: map[string]*partInfo{}}
 }
 
 type finalizer struct {
 	opts  FinalizerOptions
-	parts map[string]*partAcc
+	fin   chat.Finalizer
+	parts map[string]*partInfo
 }
 
-type partAcc struct {
+// partInfo is what the shape fix-ups need beyond chat.Finalizer's own accumulation.
+type partInfo struct {
 	kind    chatstream.PartKind
-	text    strings.Builder
-	args    strings.Builder
 	isError bool
+	text    strings.Builder
 }
 
 func (f *finalizer) Push(ev chatstream.Event) []chatstream.Event {
 	switch ev.Verb {
 	case chatstream.VerbPartStart:
-		acc := &partAcc{kind: ev.PartKind()}
-		if raw, ok := ev.Meta[chatstream.MetaIsError]; ok && string(raw) == "true" {
-			acc.isError = true
-		}
-		f.parts[ev.PartID] = acc
+		f.parts[ev.PartID] = &partInfo{kind: ev.PartKind(), isError: ev.MetaBool(chatstream.MetaIsError)}
 	case chatstream.VerbPartDelta:
-		if acc := f.parts[ev.PartID]; acc != nil {
-			acc.text.WriteString(ev.Text)
-			acc.args.WriteString(ev.JSONFragment)
-		}
-		if f.opts.DropDeltas {
-			return nil
+		if p := f.parts[ev.PartID]; p != nil {
+			p.text.WriteString(ev.Text)
 		}
 	case chatstream.VerbPartEnd:
-		if acc := f.parts[ev.PartID]; acc != nil {
-			ev.Final = acc.final(ev.Final)
-			delete(f.parts, ev.PartID)
+		p := f.parts[ev.PartID]
+		delete(f.parts, ev.PartID)
+		ev = f.fin.Apply(ev)
+		if p != nil {
+			ev.Final = p.shape(ev.Final)
 		}
+		return []chatstream.Event{ev}
 	default:
+	}
+	ev = f.fin.Apply(ev)
+	if ev.Verb == chatstream.VerbPartDelta && f.opts.DropDeltas {
+		return nil
 	}
 	return []chatstream.Event{ev}
 }
 
-func (a *partAcc) final(have json.RawMessage) json.RawMessage {
-	switch a.kind {
-	case chatstream.PartText, chatstream.PartRefusal:
-		return mergeObject(have, map[string]any{"text": a.text.String()})
-	case chatstream.PartReasoning:
-		return mergeObject(have, map[string]any{"text": a.text.String()})
+// shape brings a part.end's Final, after chat.Finalizer, to the As-built shape for parts the shared finalizer leaves
+// alone: those that arrived whole, or whose deltas carried no text.
+func (p *partInfo) shape(have json.RawMessage) json.RawMessage {
+	switch p.kind {
+	case chatstream.PartText, chatstream.PartRefusal, chatstream.PartReasoning:
+		if chat.HasFinal(p.kind, have) {
+			return have
+		}
+		return mergeObject(have, map[string]any{"text": p.text.String()})
 	case chatstream.PartToolCall:
 		if len(have) > 0 {
 			return have
-		}
-		if s := strings.TrimSpace(a.args.String()); s != "" && json.Valid([]byte(s)) {
-			return json.RawMessage(s)
 		}
 		return json.RawMessage("{}")
 	case chatstream.PartToolResult:
 		var block struct {
 			Content json.RawMessage `json:"content"`
 			IsError *bool           `json:"is_error"`
+			Text    *string         `json:"text"`
 		}
 		_ = json.Unmarshal(have, &block)
-		isErr := a.isError || (block.IsError != nil && *block.IsError)
-		text := flattenContent(block.Content)
-		if text == "" {
-			text = a.text.String()
+		set := map[string]any{}
+		if block.Text == nil {
+			text := flattenContent(block.Content)
+			if text == "" {
+				text = p.text.String()
+			}
+			set["text"] = text
 		}
-		return mergeObject(have, map[string]any{"text": text, "is_error": isErr})
+		isErr := p.isError || (block.IsError != nil && *block.IsError)
+		if block.IsError == nil || isErr != *block.IsError {
+			set["is_error"] = isErr
+		}
+		if len(set) == 0 {
+			return have
+		}
+		return mergeObject(have, set)
 	default:
 		return have
 	}
@@ -113,6 +126,9 @@ func mergeObject(have json.RawMessage, set map[string]any) json.RawMessage {
 	obj := map[string]json.RawMessage{}
 	if len(have) > 0 && json.Unmarshal(have, &obj) != nil {
 		obj = map[string]json.RawMessage{"value": have}
+	}
+	if obj == nil {
+		obj = map[string]json.RawMessage{}
 	}
 	for k, v := range set {
 		b, err := json.Marshal(v)

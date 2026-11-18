@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,7 +25,9 @@ import (
 // LocalRouteScopes registration. A new mount without one fails here.
 func TestLocalScopeTableCoversLocalMux(t *testing.T) {
 	policy := map[string]bool{}
-	for _, rule := range api.LocalRouteScopes {
+	// The chat wire's policy joins the table only when the daemon mounts it (chat_wire flag).
+	table := append(slices.Clone(api.LocalRouteScopes), api.ChatWireRouteScopes...)
+	for _, rule := range table {
 		policy[rule.Registration] = true
 	}
 	need := func(pattern, from string) {
@@ -60,7 +63,7 @@ func TestLocalScopeTableCoversLocalMux(t *testing.T) {
 	// A subtree mount is covered by entries beneath it (/teams/ -> /teams/form).
 	for _, m := range (&Server{}).apiMounts() {
 		covered := policy[m.path]
-		for _, rule := range api.LocalRouteScopes {
+		for _, rule := range table {
 			covered = covered || strings.HasSuffix(m.path, "/") && strings.HasPrefix(rule.Path, m.path)
 		}
 		if !covered {

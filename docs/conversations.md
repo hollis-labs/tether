@@ -55,10 +55,14 @@ each move raises `generation` by exactly 1. A bump invalidates every
 attachment and writer lease held at the older generation (see the chat attach
 wire); the conversation ID and its history do not change.
 
-The chat host keeps its own binding generation. When `/terminal-attachments`
-is wired to the daemon, the relaunch path that moves the conversation must also
-move the chat host binding, so the two cannot drift. That wiring is not done
-yet.
+The chat host keeps its own binding generation. After the transaction that
+moved a conversation commits, the store calls `Store.OnConversationMoved`
+(a team replacement reports on `EventsCommitted`, after its caller's commit).
+With `daemon.chat_wire.enabled` on, `internal/chatwire` then moves the chat
+host binding to the same generation and attempt and tells the chat Service to
+re-read the generation (CW-20261118-0011); every chat Control call reconciles
+again, so a missed signal heals on the next read. `/terminal-attachments`
+(CW-20261118-0012) must derive its binding with `chatwire.HostBinding`.
 
 ## Resolver
 
@@ -74,5 +78,7 @@ It reads only the Tether store. It must never import or call
 `libs/agent/sdk/chathost`, because terminal attachments call their target
 resolver while the chat host's lease lock is held;
 `internal/conversation/resolver_deps_test.go` enforces that with
-`go list -deps`. Nothing in the daemon calls the resolver yet, and no HTTP
-route reads the mapping.
+`go list -deps`. `BySeat(ctx, seat)` serves the chat wire, which names an
+agent by its seat. The chat wire (`internal/chatwire`, behind
+`daemon.chat_wire.enabled`) is the first reader; see its package doc for how it
+uses the mapping and what chathost cannot express.

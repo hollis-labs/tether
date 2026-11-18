@@ -81,15 +81,19 @@ func seatForSession(logicalAgentID, catalogAgentID string) (conversationSeat, bo
 // first session for a seat creates the row at generation 1; any other session
 // moves it and raises generation by exactly 1. Writing the session that is
 // already current is a no-op, so a retried write never bumps twice.
-func recordConversationTx(ctx context.Context, q ReplacementTx, sessionID, catalogAgentID, reason string) error {
+//
+// moved names the conversation when this write raised its generation (not on a
+// create or a no-op), so the caller can report it once the transaction commits
+// (noteConversationMoved).
+func recordConversationTx(ctx context.Context, q ReplacementTx, sessionID, catalogAgentID, reason string) (moved string, err error) {
 	var logicalAgentID, workerID string
-	err := q.QueryRowContext(ctx, `SELECT COALESCE(logical_agent_id,''), COALESCE(worker_id,'') FROM sessions WHERE id=?`, sessionID).Scan(&logicalAgentID, &workerID)
+	err = q.QueryRowContext(ctx, `SELECT COALESCE(logical_agent_id,''), COALESCE(worker_id,'') FROM sessions WHERE id=?`, sessionID).Scan(&logicalAgentID, &workerID)
 	if err != nil {
-		return fmt.Errorf("conversation: read session %s: %w", sessionID, err)
+		return "", fmt.Errorf("conversation: read session %s: %w", sessionID, err)
 	}
 	seat, ok := seatForSession(logicalAgentID, catalogAgentID)
 	if !ok {
-		return nil
+		return "", nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	attempt := newULID(time.Now())
@@ -102,34 +106,35 @@ func recordConversationTx(ctx context.Context, q ReplacementTx, sessionID, catal
 		id, generation = newULID(time.Now()), 1
 		if _, err = q.ExecContext(ctx, `INSERT INTO conversations(conversation_id,owner,agent,seat,kind,generation,session_id,attempt_id,worker_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 			id, seat.owner, seat.agent, seat.seat, ConversationKindStable, generation, sessionID, attempt, workerID, now, now); err != nil {
-			return fmt.Errorf("conversation: create: %w", err)
+			return "", fmt.Errorf("conversation: create: %w", err)
 		}
 		reason = ConversationReasonCreate
 	case err != nil:
-		return fmt.Errorf("conversation: read seat: %w", err)
+		return "", fmt.Errorf("conversation: read seat: %w", err)
 	case current == sessionID:
-		return nil
+		return "", nil
 	default:
 		// Compare-and-set on the generation read above: the bump is exactly 1.
 		res, err := q.ExecContext(ctx, `UPDATE conversations SET generation=generation+1, session_id=?, attempt_id=?, worker_id=?, updated_at=? WHERE conversation_id=? AND generation=?`,
 			sessionID, attempt, workerID, now, id, generation)
 		if err != nil {
-			return fmt.Errorf("conversation: move: %w", err)
+			return "", fmt.Errorf("conversation: move: %w", err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("conversation: move: %w", err)
+			return "", fmt.Errorf("conversation: move: %w", err)
 		}
 		if n != 1 {
-			return fmt.Errorf("conversation: move %s: generation %d changed underneath", id, generation)
+			return "", fmt.Errorf("conversation: move %s: generation %d changed underneath", id, generation)
 		}
 		generation++
+		moved = id
 	}
 	if _, err = q.ExecContext(ctx, `INSERT INTO conversation_generations(conversation_id,generation,session_id,attempt_id,worker_id,reason,created_at) VALUES(?,?,?,?,?,?,?)`,
 		id, generation, sessionID, attempt, workerID, reason, now); err != nil {
-		return fmt.Errorf("conversation: record generation: %w", err)
+		return "", fmt.Errorf("conversation: record generation: %w", err)
 	}
-	return nil
+	return moved, nil
 }
 
 // sessionConversationReason classifies a freshly inserted session row.
@@ -177,6 +182,61 @@ func (s *Store) ConversationForSession(ctx context.Context, sessionID string) (C
 // SeatConversation returns the stable conversation for a seat, if one exists.
 func (s *Store) SeatConversation(ctx context.Context, owner, agent, seat string) (Conversation, error) {
 	return scanConversation(s.db.QueryRowContext(ctx, `SELECT `+conversationColumns+` FROM conversations WHERE owner=? AND agent=? AND seat=? AND kind=?`, owner, agent, seat, ConversationKindStable))
+}
+
+// ConversationForSeat returns the stable conversation of a seat, whatever its
+// owner and agent (the most recently moved one, should a seat ever have two).
+// The chat wire names an agent by its seat.
+func (s *Store) ConversationForSeat(ctx context.Context, seat string) (Conversation, error) {
+	return scanConversation(s.db.QueryRowContext(ctx, `SELECT `+conversationColumns+` FROM conversations WHERE seat=? AND kind=? ORDER BY updated_at DESC LIMIT 1`, seat, ConversationKindStable))
+}
+
+// OnConversationMoved installs fn, called with a conversation's ID after a
+// committed write moved it to another session and raised its generation (a
+// relaunch, a resume, a fresh launch for the seat, a team replacement). It runs
+// on the committing goroutine and must not block or call back into the store
+// synchronously. A rolled-back replacement can still report its conversation
+// (the replacement path reports on EventsCommitted, after its caller's commit,
+// and a failed attempt's report waits for the next one); a report is a signal
+// to re-read the generation, so an extra one is harmless. Nil removes it.
+func (s *Store) OnConversationMoved(fn func(conversationID string)) {
+	if fn == nil {
+		s.conversationMoved.Store(nil)
+		return
+	}
+	s.conversationMoved.Store(&fn)
+}
+
+// noteConversationMoved reports a moved conversation now (after a commit).
+func (s *Store) noteConversationMoved(id string) {
+	if id == "" {
+		return
+	}
+	if fn := s.conversationMoved.Load(); fn != nil {
+		(*fn)(id)
+	}
+}
+
+// queueConversationMoved holds a move written on a caller's transaction until
+// the caller reports the commit (EventsCommitted).
+func (s *Store) queueConversationMoved(id string) {
+	if id == "" {
+		return
+	}
+	s.movedMu.Lock()
+	s.movedPending = append(s.movedPending, id)
+	s.movedMu.Unlock()
+}
+
+// flushConversationMoved reports the queued moves.
+func (s *Store) flushConversationMoved() {
+	s.movedMu.Lock()
+	pending := s.movedPending
+	s.movedPending = nil
+	s.movedMu.Unlock()
+	for _, id := range pending {
+		s.noteConversationMoved(id)
+	}
 }
 
 // crockford is the ULID alphabet (Crockford base32).

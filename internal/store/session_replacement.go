@@ -382,9 +382,11 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	}
 	// The seat's conversation moves to the replacement (+1 generation) on
 	// this same transaction, beside session_replacements.binding_generation.
-	if err = recordConversationTx(ctx, q, in.DestinationID, in.Plan.CatalogAgentID, ConversationReasonReplace); err != nil {
+	moved, err := recordConversationTx(ctx, q, in.DestinationID, in.Plan.CatalogAgentID, ConversationReasonReplace)
+	if err != nil {
 		return result, err
 	}
+	s.queueConversationMoved(moved)
 	lineage, _ := json.Marshal(struct {
 		ReplacedBy string `json:"replaced_by"`
 		Replaces   string `json:"replaces"`
