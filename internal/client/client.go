@@ -1272,6 +1272,7 @@ type MessageTraceReceipt struct {
 type MessageTraceAttempt struct {
 	AttemptID         string `json:"attempt_id"`
 	Holder            string `json:"holder"`
+	HolderKind        string `json:"holder_kind,omitempty"`
 	BindingGeneration int64  `json:"binding_generation,omitempty"`
 	HostID            string `json:"host_id,omitempty"`
 	BindingVisibility string `json:"binding_visibility,omitempty"`
@@ -1300,6 +1301,20 @@ type MessageTraceResult struct {
 	DeadLetterReason string                `json:"dead_letter_reason,omitempty"`
 	Attempts         []MessageTraceAttempt `json:"attempts,omitempty"`
 	Receipts         []MessageTraceReceipt `json:"receipts,omitempty"`
+	// WakeOutcome is the recorded wake outcome (CW-20261118-0024); nil when
+	// no wake was admitted. ReadAt/ConsumedAt are the recipient's own acts.
+	WakeOutcome *MessageTraceWakeOutcome `json:"wake_outcome,omitempty"`
+	ReadAt      string                   `json:"read_at,omitempty"`
+	ConsumedAt  string                   `json:"consumed_at,omitempty"`
+}
+
+// MessageTraceWakeOutcome mirrors internal/api's WakeOutcome.
+type MessageTraceWakeOutcome struct {
+	Attempted bool   `json:"attempted"`
+	Delivered bool   `json:"delivered"`
+	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 // MessageTrace GETs /messages/{id}/trace (T09, messaging vNext): the
