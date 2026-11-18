@@ -11,7 +11,6 @@ import (
 
 	chat "github.com/hollis-labs/libs/agent/chat"
 	"github.com/hollis-labs/libs/agent/sdk/chathost"
-	"github.com/hollis-labs/libs/mesh/core/runtimecontract"
 
 	"github.com/hollis-labs/tether/internal/conversation"
 	tstore "github.com/hollis-labs/tether/internal/store"
@@ -25,6 +24,9 @@ type Config struct {
 	// StateDir is the daemon's state directory. The chat database is StateDir/chat/chat.db and the chat host's
 	// state StateDir/chat/host.
 	StateDir string
+	// Host is the chat host (OpenHost). Optional: Open opens StateDir/chat/host when nil. The daemon passes the one it
+	// also gives terminal attachments, so the two share a writer lease.
+	Host *chathost.Host
 	// Store is the Tether store: the conversations the wire serves, and the relaunch path's moves.
 	Store *tstore.Store
 	// Sessions reaches the sessions that run them (*app.Service).
@@ -76,9 +78,10 @@ func Open(ctx context.Context, cfg Config) (*Wire, error) {
 		return nil, err
 	}
 	// The Control is daemon-internal: the handler has authorized the caller before any Control call.
-	allow := func(context.Context, runtimecontract.OwnerID, chathost.Permission) error { return nil }
-	if w.host, err = chathost.Open(filepath.Join(cfg.StateDir, "chat", "host"), allow); err != nil {
-		return fail(fmt.Errorf("chatwire: chat host: %w", err))
+	if w.host = cfg.Host; w.host == nil {
+		if w.host, err = OpenHost(cfg.StateDir); err != nil {
+			return fail(err)
+		}
 	}
 	w.ctl, err = NewControl(ControlConfig{
 		DB: w.db.Store, Host: w.host,

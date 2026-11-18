@@ -108,3 +108,16 @@ func (s *Service) claudeNativeSession(id string) string {
 	}
 	return ""
 }
+
+// Terminal attachments (CW-20261118-0012): *Service is chatwire.TerminalSessions.
+var _ chatwire.TerminalSessions = (*Service)(nil)
+
+// HasTerminal implements chatwire.TerminalSessions: the Manager runs a live PTY for the session on this host. It reads
+// only the Manager's in-process table; terminal attachments call it under the chat host's lease lock.
+func (s *Service) HasTerminal(id string) bool {
+	if s == nil || s.Manager == nil {
+		return false
+	}
+	info, ok := s.Manager.Get(id)
+	return ok && info.Caps.PTY
+}

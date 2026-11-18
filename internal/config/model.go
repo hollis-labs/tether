@@ -272,6 +272,10 @@ type DaemonConfig struct {
 	// ChatWire serves the chat wire (libs/agent/chat) for this daemon's seats
 	// at /chat/v1 (CW-20261118-0011). Off unless enabled.
 	ChatWire ChatWireConfig `yaml:"chat_wire,omitempty"`
+	// TerminalAttachments serves /terminal-attachments over the chat wire's
+	// chat host, so a terminal writer and a chat writer share one input lease
+	// (CW-20261118-0012). Independent of ChatWire. Off unless enabled.
+	TerminalAttachments TerminalAttachmentsConfig `yaml:"terminal_attachments,omitempty"`
 	// RemoteListener adds an enforce-only loopback TCP listener beside listen_addr.
 	RemoteListener RemoteListenerConfig `yaml:"remote_listener,omitempty"`
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
@@ -297,6 +301,11 @@ type DaemonConfig struct {
 
 // ChatWireConfig is daemon.chat_wire.
 type ChatWireConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+}
+
+// TerminalAttachmentsConfig is daemon.terminal_attachments.
+type TerminalAttachmentsConfig struct {
 	Enabled bool `yaml:"enabled,omitempty"`
 }
 

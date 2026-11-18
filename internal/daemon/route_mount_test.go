@@ -66,6 +66,7 @@ var apiTopLevelPaths = []string{
 	"/execution/policy", "/capacity",
 	"/settings/mcp", "/settings/onboarding", "/settings/onboarding/",
 	"/teams/",
+	"/terminal-attachments", "/terminal-attachments/",
 	"/whoami",
 	"/workstreams", "/workstreams/",
 }
