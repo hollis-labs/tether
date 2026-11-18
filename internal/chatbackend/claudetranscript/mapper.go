@@ -81,11 +81,11 @@ func (m *Mapper) Push(raw []byte) []Signal {
 		switch {
 		case l.Interrupted():
 			if m.open != "" && (l.PromptID == "" || l.PromptID == m.open) {
-				out = m.end(out, EndInterrupted)
+				out = append(out, m.end(EndInterrupted)...)
 			}
 		case l.PromptID != "" && l.PromptID != m.open && l.PromptID != m.lastClosed:
 			if m.open != "" {
-				out = m.end(out, EndSuperseded)
+				out = append(out, m.end(EndSuperseded)...)
 			}
 			m.reset(l.PromptID)
 			out = append(out, Signal{Kind: TurnStart, PromptID: l.PromptID, Prompt: Prompt{Text: l.Text, Source: l.Source, Origin: l.Origin}})
@@ -121,7 +121,7 @@ func (m *Mapper) Push(raw []byte) []Signal {
 		out = append(out, m.frame(l.Raw))
 	case LineTurnEnd:
 		if m.open != "" {
-			out = m.end(out, EndCompleted)
+			out = append(out, m.end(EndCompleted)...)
 		}
 	case LineQueued:
 		if m.open != "" && l.Text != "" {
@@ -138,7 +138,7 @@ func (m *Mapper) End(reason EndReason) []Signal {
 	if m.open == "" {
 		return nil
 	}
-	return m.end(nil, reason)
+	return m.end(reason)
 }
 
 func (m *Mapper) reset(prompt string) {
@@ -158,8 +158,8 @@ func (m *Mapper) release(out []Signal) []Signal {
 	return out
 }
 
-func (m *Mapper) end(out []Signal, reason EndReason) []Signal {
-	out = m.release(out)
+func (m *Mapper) end(reason EndReason) []Signal {
+	out := m.release(nil)
 	out = append(out, Signal{Kind: TurnEnd, PromptID: m.open, End: reason, Frame: m.resultFrame(reason)})
 	m.lastClosed, m.open, m.curMsg = m.open, "", ""
 	return out

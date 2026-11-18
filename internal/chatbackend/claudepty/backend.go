@@ -126,9 +126,9 @@ type turn struct {
 }
 
 type pending struct {
-	text      string
-	run       *run
-	deadline  time.Time
+	text     string
+	run      *run
+	deadline time.Time
 	canceled bool
 }
 
