@@ -62,6 +62,9 @@ func (s *Service) codexChatBackend(id string) (chatwire.Backend, error) {
 	return codexappserver.New(codexappserver.Config{
 		Tap: tap,
 		Send: func(ctx context.Context, text string) error {
+			if err := s.refuseWidenedCodex(id); err != nil {
+				return err
+			}
 			settle := s.beginTurnInput(ctx, id)
 			err := s.trackTurnSubmissionContext(ctx, id, func() error { return s.sendTurnJSONRPCRaw(ctx, id, text) })
 			settle(err)

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -196,5 +198,30 @@ func TestCodexChatCancelExistingSession(t *testing.T) {
 	_ = svc.Manager.Shutdown(ctx)
 	if len(fake.Calls()) != 1 {
 		t.Fatal("Cancel restarted Codex")
+	}
+}
+
+// Chat must preserve the same per-turn sandbox recheck as SendTurn/SendInput.
+func TestCodexChatRefusesWidenedSandbox(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fake := providertest.New(t, runtimes.Codex, providertest.Script(providertest.AwaitEOF()))
+	svc, be, ctx := codexChatHarness(t, fake, nil)
+	work := t.TempDir()
+	dir := filepath.Join(work, ".codex")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[sandbox_workspace_write]\nwritable_roots=[\"/extra\"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	svc.codexExempt.Store("s1", &codexExemption{workDirs: []string{work}})
+	if _, err := be.Submit(ctx, chatbackend.Turn{Text: "must not be sent"}); !errors.Is(err, launch.ErrCodexSandboxWidened) {
+		t.Fatalf("sandbox recheck: %v", err)
+	}
+	_ = svc.Manager.Stop(ctx, "s1")
+	_ = svc.Manager.Shutdown(ctx)
+	calls := fake.Calls()
+	if len(calls) != 1 || len(calls[0].Stdin) != 0 {
+		t.Fatal("refused chat input reached the provider")
 	}
 }
