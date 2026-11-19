@@ -221,7 +221,9 @@ func (s *Store) DB() *sql.DB { return s.db }
 type SessionRow struct {
 	// RequestingPrincipal is server-set creator provenance, not a credential or grant.
 	// NULL on historical rows. Never inherited from the source on continuation.
-	RequestingPrincipal sql.NullString
+	// Omit unknown provenance from JSON so historical workspace receipt hashes
+	// retain their pre-column byte layout; known creators remain in new hashes.
+	RequestingPrincipal sql.NullString `json:",omitzero"`
 	ID                  string
 	LaunchID            string
 	ProjectID           string

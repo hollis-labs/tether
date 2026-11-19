@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"testing"
@@ -41,5 +43,21 @@ func TestRequestingPrincipalMigration(t *testing.T) {
 	var principal sql.NullString
 	if err := db.QueryRow(`SELECT requesting_principal FROM sessions WHERE id='old'`).Scan(&principal); err != nil || principal.Valid {
 		t.Fatalf("historical creator=%+v %v", principal, err)
+	}
+}
+
+func TestUnknownCreatorPreservesHistoricalSessionJSON(t *testing.T) {
+	// Workspace receipts hash SessionRow JSON. A migrated NULL creator must
+	// retain the old layout; known creators must remain in newly earned receipts.
+	historical := SessionRow{ID: "legacy", State: "created"}
+	raw, err := json.Marshal(historical)
+	if err != nil || bytes.Contains(raw, []byte("RequestingPrincipal")) {
+		t.Fatalf("NULL creator changed historical JSON: %s %v", raw, err)
+	}
+	known := historical
+	known.RequestingPrincipal = sql.NullString{String: "verified-creator", Valid: true}
+	stamped, err := json.Marshal(known)
+	if err != nil || !bytes.Contains(stamped, []byte(`"RequestingPrincipal":{"String":"verified-creator","Valid":true}`)) {
+		t.Fatalf("known creator absent from receipt predicate: %s %v", stamped, err)
 	}
 }

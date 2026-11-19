@@ -78,6 +78,9 @@ internal origin. This is audit provenance, never a permission grant and never
 copied from the source row. Historical rows stay NULL. The HTTP request cannot
 choose it. The exact-row workspace/replacement snapshots include it so the new
 column does not invalidate correctly admitted launches or weaken comparison.
+Unknown creators are omitted from SessionRow JSON so migrated historical NULL
+rows retain the byte layout used by existing workspace receipt hashes; known
+creators remain included in newly earned receipt predicates.
 
 `TestRequestingPrincipalMigration` applies all earlier migrations, inserts an
 old session, upgrades twice, and verifies its unknown creator remains NULL.
