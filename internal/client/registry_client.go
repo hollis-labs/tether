@@ -388,6 +388,40 @@ func (rc *RegistryClient) UpdateSelf(ctx context.Context, urn string, patch regi
 	return out, nil
 }
 
+// AttachExternalID attaches a substrate-local key without changing profile fields.
+func (rc *RegistryClient) AttachExternalID(ctx context.Context, urn, substrate, externalID string) (registry.Profile, error) {
+	seg, err := kindSegmentFromURN(urn)
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	body, err := json.Marshal(map[string]string{"substrate": substrate, "external_id": externalID})
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	path := "/registry/" + seg + "/" + url.PathEscape(urn) + "/external-id?include=external_ids"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.Profile{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusConflict {
+			return registry.Profile{}, fmt.Errorf("%w: %w", registry.ErrExternalIDConflict, readRegistryError(resp))
+		}
+		return registry.Profile{}, readRegistryError(resp)
+	}
+	var out registry.Profile
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.Profile{}, err
+	}
+	return out, nil
+}
+
 // Deregister DELETEs /registry/{kind}/{urn}. Returns the soft-deleted
 // Profile (status='deprecated') so callers can read the bumped
 // updated_at without a follow-up GET.
