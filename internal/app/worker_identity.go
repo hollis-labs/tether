@@ -27,11 +27,19 @@ var ErrIdentityInUse = errors.New("stable agent identity is already bound to ano
 // override, and a team member (derived "<agent>#<slot>" id) never takes the
 // base agent's URN.
 func (s *Service) applyCatalogIdentity(plan *launch.Plan) {
-	if s.cat() == nil || plan.TeamMember {
+	if s.cat() == nil {
 		return
 	}
 	agent, ok := s.cat().Agents[plan.CatalogAgent()]
 	if !ok {
+		return
+	}
+	if plan.TeamMember {
+		// A team member never takes the base agent's URN or editable agents, but
+		// it does get the credential scopes its catalog agent declares (for
+		// example team.write, without which a member cannot call any
+		// tether_team_* verb). They are still bounded by the launch ceiling.
+		plan.MCPScopes = slices.Clone(agent.MCPScopes)
 		return
 	}
 	plan.IdentityURN = agent.URN
