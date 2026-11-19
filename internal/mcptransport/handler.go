@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	mcpauth "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/auth"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
@@ -107,6 +108,30 @@ type Handler struct {
 	requests         sync.WaitGroup
 }
 
+// admittedProvider exposes only identity that the transport has already verified.
+// Admission, policy binding and revalidation stay owned by this transport.
+type admittedProvider struct{}
+
+var _ mcpauth.Provider = admittedProvider{}
+
+func (admittedProvider) Verifier() auth.TokenVerifier {
+	return func(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
+		a, ok := ctx.Value(admissionKey{}).(admission)
+		if !ok {
+			return nil, auth.ErrInvalidToken
+		}
+		token := &auth.TokenInfo{UserID: a.fingerprint, Scopes: a.caller.Principal.Scopes}
+		if a.caller.Principal.ExpiresAt != nil {
+			token.Expiration = *a.caller.Principal.ExpiresAt
+		}
+		return token, nil
+	}
+}
+
+func (admittedProvider) Options() *auth.RequireBearerTokenOptions {
+	return &auth.RequireBearerTokenOptions{AllowMissingExpiration: true}
+}
+
 func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 	if err := identity.ValidateBind(cfg.ListenAddr, cfg.IdentityMode); err != nil {
 		return nil, err
@@ -168,17 +193,7 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 		// Cross-origin protection stays on (http.NewCrossOriginProtection wraps the SDK handler below).
 		DisableLocalhostProtection: true,
 	})
-	h.sdk = auth.RequireBearerToken(func(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
-		a, ok := ctx.Value(admissionKey{}).(admission)
-		if !ok {
-			return nil, auth.ErrInvalidToken
-		}
-		token := &auth.TokenInfo{UserID: a.fingerprint, Scopes: a.caller.Principal.Scopes}
-		if a.caller.Principal.ExpiresAt != nil {
-			token.Expiration = *a.caller.Principal.ExpiresAt
-		}
-		return token, nil
-	}, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(http.NewCrossOriginProtection().Handler(sdk))
+	h.sdk = mcpauth.HTTPMiddleware(admittedProvider{})(http.NewCrossOriginProtection().Handler(sdk))
 	go h.monitor()
 	return h, nil
 }

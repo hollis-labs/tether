@@ -1,0 +1,1 @@
+- Use the shared go-mcp server constructor for the stdio relay and auth provider seam for daemon MCP admission, preserving session and policy behavior (CW-20261119-0141).
