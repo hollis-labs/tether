@@ -115,6 +115,12 @@ func (m *mailTriage) gate(ctx context.Context, env messaging.Envelope) triageDec
 	}
 	pol := m.policy(env.To)
 	if !pol.enabled {
+		// attention:none never wakes a seat, triaged or not (CW-20261118-0050):
+		// it stays unread and visible, and the next real wake's unread count
+		// carries it. Triaged seats get the same through the Read class below.
+		if pol.seat != "" && m.quietNone(ctx, env, pol) {
+			return triageDecision{class: triage.Read, reason: "attention-none"}
+		}
 		return triageDecision{wake: true}
 	}
 	now := m.clock()
@@ -150,6 +156,22 @@ func (m *mailTriage) gate(ctx context.Context, env messaging.Envelope) triageDec
 		return triageDecision{class: class, reason: "deferred-cap", until: until}
 	}
 	return triageDecision{wake: true, class: class}
+}
+
+// quietNone reports whether env is an explicit attention=none typed envelope
+// that no action rule overrides (operator, urgency high, reply to the seat's own
+// mail, on_behalf_of): the same answer triage.Classify gives, for a seat that
+// has no triage record.
+func (m *mailTriage) quietNone(ctx context.Context, env messaging.Envelope, pol seatPolicy) bool {
+	if env.ContentType != envelope.ContentType {
+		return false
+	}
+	urgency := env.Metadata["urgency"]
+	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
+		urgency = intent.Urgency
+	}
+	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, env.From.URN()), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle, ReplyToOwn: m.replyToOwn(ctx, env, pol)})
+	return res.Reason == "attention_none"
 }
 
 // record classifies env the first time it is seen, publishes mail.triaged and

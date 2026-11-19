@@ -11,10 +11,12 @@ import (
 )
 
 // WakeGuidance is the instruction every generated mailbox wake carries
-// (CW-20261117-0002; it replaced CW-20261114-0009's "end the turn silently"
-// default, which left replies unanswered). A wake that needs nothing ends
-// silently; anything that asked something gets a reply.
-const WakeGuidance = "Read and handle these. Reply to anything that asked you something. End silently only if nothing needs action. Marking a message read or consumed settles it."
+// (CW-20261117-0002 removed CW-20261114-0009's "end the turn silently"
+// default, which left replies unanswered; CW-20261118-0050 made the empty case
+// explicit). Anything that asked something gets a reply. When nothing needs
+// action the agent ends the turn without writing any message or acknowledgement:
+// even a one-line "noted" costs the recipient a turn.
+const WakeGuidance = "Read and handle these. Reply to anything that asked you something. If nothing needs action, end the turn without producing any message (no acknowledgement, no \"noted\", no summary): a reply only wakes the sender for another empty turn. Marking a message read or consumed settles it."
 
 // DefaultWakeText is the generated mailbox-wake turn, used when the sender supplied no wake
 // text. unread < 1 omits the count (the sweep's retried wakes do not recompute it). retried
