@@ -16,6 +16,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/chatbackend/claudepty"
 	"github.com/hollis-labs/tether/internal/chatbackend/claudestdio"
+	"github.com/hollis-labs/tether/internal/chatbackend/codexappserver"
 )
 
 // The fake sessions below drive the real Claude backends (claudepty, claudestdio) with the lines the recorded fixtures
@@ -245,7 +246,31 @@ func (s *fakeSessions) ChatBackend(session string, rt Runtime) (Backend, error) 
 		f := newFakeStdio(s.t)
 		f.capture = s.inputs
 		return f.backend(), nil
-	case RuntimeCodexAppServer, RuntimeAgyStdio:
+	case RuntimeCodexAppServer:
+		tap := codexappserver.NewTap()
+		return codexappserver.New(codexappserver.Config{Tap: tap, Interrupt: func(_ context.Context, _, _ string) error {
+			_, _ = tap.Write([]byte(`{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"interrupted"}}}` + "\n"))
+			return nil
+		}, Send: func(_ context.Context, text string) error {
+			s.inputs <- text
+			echo, _ := json.Marshal(map[string]any{"method": "item/started", "params": map[string]any{"threadId": "thread", "turnId": "turn", "item": map[string]any{"type": "userMessage", "content": []map[string]string{{"type": "text", "text": text}}}}})
+			frames := []string{
+				`{"method":"turn/started","params":{"threadId":"thread","turn":{"id":"turn","status":"inProgress"}}}`,
+				string(echo),
+				`{"method":"item/agentMessage/delta","params":{"threadId":"thread","turnId":"turn","itemId":"a","delta":"done"}}`,
+				`{"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"id":"a","type":"agentMessage","text":"done"}}}`,
+				`{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}`,
+			}
+			for i, f := range frames {
+				if strings.Contains(text, longText) && i == len(frames)-1 {
+					break
+				}
+				_, _ = tap.Write([]byte(f + "\n"))
+			}
+			return nil
+		}}), nil
+	case RuntimeAgyStdio:
+		// Agy uses the dedicated executor fixture in its integration tests.
 	}
 	return nil, &UnsupportedRuntimeError{SessionID: session, Runtime: rt, Reason: "no fake"}
 }
