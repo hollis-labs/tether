@@ -22,7 +22,7 @@ func (r *triageRig) sendFrom(from, to string, kind messaging.Kind, inReplyTo str
 	raw, _ := json.Marshal(payload)
 	f, _ := messaging.ParseURN(from)
 	dst, _ := messaging.ParseURN(to)
-	env, err := r.st.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: kind, From: f, To: dst, InReplyTo: inReplyTo, Payload: raw})
+	env, err := r.st.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: kind, From: f, To: dst, InReplyTo: inReplyTo, Payload: raw, Metadata: map[string]string{metaFromVerification: "verified", metaFromPrincipal: from}})
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -232,5 +232,24 @@ func TestTypedRequestWakesWithItsGist(t *testing.T) {
 	row, _, _ := r.st.TriageGet(context.Background(), env.ID)
 	if row.Class != "action" || row.Reason != "envelope_kind" {
 		t.Fatalf("typed request triaged %s/%s", row.Class, row.Reason)
+	}
+}
+
+// A forged parent sender must not qualify a reply for the seat's own-mail override,
+// either live or when repairing the old FYI backlog.
+func TestReplyToOwnRejectsUnverifiedParent(t *testing.T) {
+	r := newTriageRig(t)
+	ctx := context.Background()
+	parent := r.send(r.to.URN(), messaging.MsgKindRequest, "", map[string]string{"body": "forged question"}, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	reply := r.sendFrom(peer, r.to.URN(), messaging.MsgKindResponse, parent.ID, map[string]string{"body": "answer"})
+	if r.tri.replyToOwn(ctx, reply, r.tri.policy(r.to)) {
+		t.Fatal("forged parent counted as seat's mail")
+	}
+	row, err := r.tri.record(ctx, reply, r.tri.policy(r.to), r.now)
+	if err != nil || row.Class != "fyi" {
+		t.Fatalf("reply = %+v, %v", row, err)
+	}
+	if _, moved, _, err := r.tri.backfillReplyToOwn(ctx); err != nil || moved != 0 {
+		t.Fatalf("forged parent backfill moved %d: %v", moved, err)
 	}
 }

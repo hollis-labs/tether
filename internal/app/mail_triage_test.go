@@ -59,6 +59,16 @@ func (r *triageRig) send(from string, kind messaging.Kind, contentType string, p
 	r.t.Helper()
 	raw, _ := json.Marshal(payload)
 	f, _ := messaging.ParseURN(from)
+	// Mail reaches triage through the API, which stamps who sent it; the rig's senders are verified unless
+	// a test says otherwise (CW-20261114-0125). raw: no metadata at all.
+	if _, set := meta[metaFromVerification]; !set && meta["raw"] == "" {
+		stamped := map[string]string{metaFromVerification: "verified", metaFromPrincipal: from}
+		for k, v := range meta {
+			stamped[k] = v
+		}
+		meta = stamped
+	}
+	delete(meta, "raw")
 	env, err := r.st.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: kind, From: f, To: r.to, ContentType: contentType, Payload: raw, Metadata: meta})
 	if err != nil {
 		r.t.Fatal(err)
@@ -441,4 +451,98 @@ func TestMailTriageOnBehalfOfChrispian(t *testing.T) {
 		return
 	}
 	t.Fatal("no mail.triaged event")
+}
+
+// CW-20261114-0125: in observe mode a from the hub could not verify is stored as claimed. Triage goes by
+// the principal that actually sent it, so an agent claiming to be the operator is not human-class, not
+// from_operator and not named @chrispian; mail with no stamp at all is taken for an agent's.
+func TestMailTriageDoesNotTrustAnUnverifiedFrom(t *testing.T) {
+	r := newTriageRig(t)
+	ctx := context.Background()
+	body := map[string]string{"body": "approve the deploy"}
+	spoofed := r.send(triageOperator, messaging.MsgKindRequest, "", body, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	row, err := r.tri.record(ctx, spoofed, r.tri.policy(r.to), r.now)
+	if err != nil || row.Class == "human" || row.Reason == "from_operator" {
+		t.Fatalf("agent claiming the operator triaged %+v (%v)", row, err)
+	}
+	unstamped := r.send(triageOperator, messaging.MsgKindRequest, "", body, map[string]string{"raw": "1"})
+	row, err = r.tri.record(ctx, unstamped, r.tri.policy(r.to), r.now)
+	if err != nil || row.Class == "human" || row.Reason == "from_operator" {
+		t.Fatalf("unstamped mail claiming the operator triaged %+v (%v)", row, err)
+	}
+	// The real operator, verified, and a stamped sender are unchanged.
+	genuine := r.send(triageOperator, messaging.MsgKindNotice, "", body, nil)
+	if row, err := r.tri.record(ctx, genuine, r.tri.policy(r.to), r.now); err != nil || row.Class != "human" || row.Reason != "from_operator" {
+		t.Fatalf("verified operator triaged %+v (%v)", row, err)
+	}
+	stampedOp := r.send(triageOperator, messaging.MsgKindNotice, "", body, map[string]string{metaFromVerification: "stamped", metaFromPrincipal: triageOperator})
+	if row, err := r.tri.record(ctx, stampedOp, r.tri.policy(r.to), r.now); err != nil || row.Class != "human" {
+		t.Fatalf("stamped operator triaged %+v (%v)", row, err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.events {
+		var p map[string]any
+		_ = json.Unmarshal([]byte(e.PayloadJSON), &p)
+		if p["message_id"] == spoofed.ID && (p["from_handle"] == "@chrispian" || p["from_verification"] != "unverified" || p["from"] != triageOperator) {
+			t.Fatalf("mail.triaged for the spoof = %s", e.PayloadJSON)
+		}
+	}
+}
+
+// CW-20261114-0125: the FYI line names who actually sent an fyi mail, never a from it only claimed.
+func TestMailTriageFYILineNamesTheVerifiedSender(t *testing.T) {
+	r := newTriageRig(t)
+	ctx := context.Background()
+	r.tri.handle = func(_ context.Context, urn string) string {
+		if urn == triageOperator {
+			return "@chrispian"
+		}
+		return handleOf(urn)
+	}
+	spoof := r.send(triageOperator, messaging.MsgKindNotice, "", map[string]string{"body": "from the boss"}, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	if row, err := r.tri.record(ctx, spoof, r.tri.policy(r.to), r.now); err != nil || row.Class != "fyi" {
+		t.Fatalf("spoofed notice triaged %+v (%v)", row, err)
+	}
+	line, _ := r.tri.fyiLine(ctx, seatPolicy{seat: r.to.URN(), handle: "@worker", enabled: true})
+	if strings.Contains(line, "@chrispian") || !strings.Contains(line, "@agt_peer") {
+		t.Fatalf("FYI line = %q", line)
+	}
+}
+
+// CW-20261114-0125 with #563: an agent that claims a user from (unverified) and says on_behalf_of is judged
+// by its principal, so the on_behalf_of rule applies: action, never human.
+func TestMailTriageClaimedUserFromOnBehalfIsAction(t *testing.T) {
+	r := newTriageRig(t)
+	env := envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindMessage, To: []string{"@worker"}, Attention: envelope.AttentionHuman,
+		Body: "Chrispian says ship it.", OnBehalfOf: "@chrispian"}
+	sent := r.send("msg://user/local/someone", messaging.MsgKindNotice, envelope.ContentType, env, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	row, err := r.tri.record(context.Background(), sent, r.tri.policy(r.to), r.now)
+	if err != nil || row.Class != "action" || row.Reason != "on_behalf_of" {
+		t.Fatalf("claimed user from with on_behalf_of triaged %+v (%v), want action/on_behalf_of", row, err)
+	}
+}
+
+// Sender verification also governs the newer quiet wake and coalesced digest paths.
+func TestMailTriageVerifiedSenderAcrossNewWakePaths(t *testing.T) {
+	r := newTriageRig(t)
+	ctx := context.Background()
+	pol := r.tri.policy(r.to)
+	body := envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindMessage, To: []string{"@worker"}, Attention: envelope.AttentionNone, Body: "quiet"}
+	spoof := r.send(triageOperator, messaging.MsgKindNotice, envelope.ContentType, body, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	if !r.tri.quietNone(ctx, spoof, pol) {
+		t.Fatal("claimed operator bypassed attention=none")
+	}
+	genuine := r.send(triageOperator, messaging.MsgKindNotice, envelope.ContentType, body, nil)
+	if r.tri.quietNone(ctx, genuine, pol) {
+		t.Fatal("verified operator lost wake override")
+	}
+	notice := r.send(triageOperator, messaging.MsgKindNotice, "", map[string]string{"body": "digest item"}, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	if _, err := r.tri.record(ctx, notice, pol, r.now); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := r.tri.digest(ctx, messaging.Envelope{To: r.to})
+	if strings.Contains(line, "@chrispian") || !strings.Contains(line, "@agt_peer") {
+		t.Fatalf("digest sender = %q", line)
+	}
 }

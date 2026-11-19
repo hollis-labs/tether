@@ -64,7 +64,7 @@ func pipelinePolicies() map[string]admissionPolicy {
 	// Declared seat status (CW-20261114-0013).
 	add(Metadata, "session.scopes_narrowed", "/requested/*", "/granted/*", "/dropped/*", "/basis", "/launcher")
 	add(Metadata, "mail.triage_backfill", "/examined", "/moved", "/seat_count") // CW-20261117-0002
-	add(Metadata, "mail.triaged", "/message_id", "/recipient", "/seat", "/handle", "/class", "/reason", "/typed", "/from", "/from_handle", "/on_behalf_of", "/drafted_by")
+	add(Metadata, "mail.triaged", "/message_id", "/recipient", "/seat", "/handle", "/class", "/reason", "/typed", "/from", "/from_handle", "/on_behalf_of", "/drafted_by", "/from_verification")
 	add(Metadata, "worker.delivery_degraded", "/worker_id", "/consecutive_timeouts", "/ingest_backlog", "/dropped_frames", "/action")
 	add(Metadata, "mcp.upstream_state_changed", "/server_id", "/from", "/to", "/next_retry_at", "/attempt", "/error")
 	add(Metadata, "seat.gate_blocked", "/agent_urn", "/handle", "/message_ids/*", "/count")
