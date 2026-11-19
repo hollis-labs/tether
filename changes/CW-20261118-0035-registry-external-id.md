@@ -1,0 +1,2 @@
+- Allow registry.write callers to attach an external ID to an existing URN through tether_registry_update_self or the registry item API, with idempotent repeats and conflicts that preserve existing mappings (CW-20261118-0035).
+- Correct the deregister tool warning: deprecation retains external IDs and bindings (CW-20261118-0035).

@@ -84,6 +84,7 @@ func TestRegistryOnlyServicePrincipalIsLimitedToTheRegistry(t *testing.T) {
 		{"registry-only", registryOnly, "GET", urn, true},
 		{"registry-only", registryOnly, "POST", "/registry/agents", true},
 		{"registry-only", registryOnly, "PATCH", urn, true},
+		{"registry-only", registryOnly, "POST", urn + "/external-id", true},
 		{"registry-only", registryOnly, "DELETE", urn, true},
 		{"registry-only", registryOnly, "GET", "/messages/list", false},
 		{"registry-only", registryOnly, "GET", "/messages/inbox", false},
@@ -98,6 +99,7 @@ func TestRegistryOnlyServicePrincipalIsLimitedToTheRegistry(t *testing.T) {
 		{"read-only", readOnly, "GET", urn, true},
 		{"read-only", readOnly, "POST", "/registry/agents", false},
 		{"read-only", readOnly, "DELETE", urn, false},
+		{"read-only", readOnly, "POST", urn + "/external-id", false},
 		{"messages-only", messagesOnly, "GET", "/registry/agents", false},
 		{"messages-only", messagesOnly, "POST", "/registry/agents", false},
 	} {

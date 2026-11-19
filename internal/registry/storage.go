@@ -399,14 +399,37 @@ func (s *Storage) AttachExternalID(ctx context.Context, urn, substrate, external
 	if externalID == "" {
 		return errors.New("registry: attach external id: external_id required")
 	}
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	// Check both the external pair and the existing per-substrate slot in the
+	// same transaction as the insert. Never replace or steal a mapping.
+	// Legacy rows can duplicate a pair, so prioritize every conflicting row
+	// over the requested mapping before deciding a repeat is a no-op.
+	var existingURN, existingID string
+	err = tx.QueryRowContext(ctx, `SELECT urn, external_id FROM registry_external_ids
+		WHERE (substrate = ? AND external_id = ?) OR (urn = ? AND substrate = ?)
+		ORDER BY CASE WHEN urn = ? AND external_id = ? THEN 1 ELSE 0 END
+		LIMIT 1`, substrate, externalID, urn, substrate, urn, externalID).Scan(&existingURN, &existingID)
+	switch {
+	case err == nil:
+		if existingURN != urn || existingID != externalID {
+			return fmt.Errorf("%w: substrate %q external_id %q is already mapped", ErrExternalIDConflict, substrate, externalID)
+		}
+		return tx.Commit()
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("registry: attach external id: lookup: %w", err)
+	}
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO registry_external_ids (urn, substrate, external_id, attached_at)
 		 VALUES (?, ?, ?, ?)`,
 		urn, substrate, externalID, formatTime(time.Now().UTC()))
 	if err != nil {
 		return fmt.Errorf("registry: attach external id: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // DetachExternalID removes the substrate attachment for urn. Missing rows are a
