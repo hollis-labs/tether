@@ -185,7 +185,7 @@ func TestWorkerLineageAckEligibilityIsSeparateFromReadSettlement(t *testing.T) {
 		if err := db.UpdateSessionState("child", "running", 7, nil); err != nil {
 			t.Fatal(err)
 		}
-		for _, state := range []string{"running", "detached", "orphaned"} {
+		for _, state := range []string{"running", "detached", "unknown"} {
 			if err := db.UpdateSessionState("source", state, 4, nil); err != nil {
 				t.Fatal(err)
 			}
@@ -207,5 +207,21 @@ func TestWorkerLineageAckEligibilityIsSeparateFromReadSettlement(t *testing.T) {
 		} else if r != nil {
 			t.Fatalf("settlement invented ack: %+v", r)
 		}
+	}
+}
+
+func TestWorkerOrphanGenericResumeCannotEarnLineage(t *testing.T) {
+	db, _, ack := workerLineageFixture(t, false)
+	if err := db.UpdateSessionState("source", "orphaned", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordWorkerLineageAck(context.Background(), ack); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSessionState("child", "running", 7, nil); err != nil {
+		t.Fatal(err)
+	}
+	if proof, err := db.GetWorkerLineage(context.Background(), "child"); err != nil || proof != nil {
+		t.Fatalf("generic orphan resume proof=%+v %v", proof, err)
 	}
 }

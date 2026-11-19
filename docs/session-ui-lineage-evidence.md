@@ -81,8 +81,11 @@ cannot create it. A retry preserves the original acknowledgement timestamp;
 receipt identity cannot be updated or copied to another attempt. The getter
 rechecks the immutable provenance against current canonical row identities and
 placements, plus parent/resume. Only settled sources and running or settled
-historical destinations are projected; orphaned does not count as settled for
-ordinary worker lineage. Missing historical acknowledgements stay null.
+historical destinations are projected. Orphaned sources and historical
+intermediates qualify only with this exact immutable provenance and authenticated
+acknowledgement; active, detached and unknown states remain unprojected. Missing
+historical acknowledgements stay null. This changes UI eligibility only, never
+launch or native-resume admission.
 
 There is deliberately no provider thread, generation, workroot, token, raw
 command result, custody, protocol payload or binding secret in this receipt.
@@ -99,7 +102,8 @@ immutable replay, copied receipts and no native promotion.
 `internal/app/ui_lineage_test.go` uses actual retained replacement transactions
 for A→B→C, independent actor checks and orphaned-source qualification, plus fake
 authenticated worker command replies for ordinary success, wrong verdicts, rejection and unknown-outcome followed by a
-late state frame.
+late state frame. Authenticated HTTP explicit orphan create/start tests cover
+reload, A→B→C and state-only rejection.
 `cmd/tether/ui_lineage_test.go` verifies the production authenticated item route,
 remote reads, null historical/collection detail and native separation.
 `internal/api/ui_lineage_test.go` covers replacement projection and explicit

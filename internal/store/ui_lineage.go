@@ -194,7 +194,7 @@ func (s *Store) GetWorkerLineage(ctx context.Context, id string) (*WorkerLineage
 	if err != nil {
 		return nil, err
 	}
-	if !lineageSettled(sourceState, false) || destState != "running" && !lineageSettled(destState, false) {
+	if !lineageSettled(sourceState, true) || destState != "running" && !lineageSettled(destState, true) {
 		return nil, nil
 	}
 	return &r, nil

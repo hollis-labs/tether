@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/daemon"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -293,6 +296,123 @@ func TestOptInClaudeWorkerResumeLineageRequiresExactAck(t *testing.T) {
 			native, err := r.db.GetWorkerNativeAdmission(o.id)
 			if err != nil || native != nil {
 				t.Fatalf("ordinary became native %+v %v", native, err)
+			}
+		})
+	}
+}
+
+// Exercise the real authenticated HTTP create/start handlers and real service/store;
+// only the command-executing worker is fake.
+type lineageHTTPService struct{ identityTestService }
+
+func (s lineageHTTPService) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
+	l, err := s.svc.CreateSessionWithInput(CreateSessionInput{LaunchID: in.LaunchID, Worker: in.Worker, Continuity: in.Continuity, IdempotencyKey: in.IdempotencyKey, IdempotencyPrincipal: in.IdempotencyPrincipal})
+	if err != nil {
+		return api.LaunchResult{}, err
+	}
+	return api.LaunchResult{SessionID: l.SessionID, Workspace: l.Workspace.Root}, nil
+}
+func (s lineageHTTPService) LaunchSessionWithContext(ctx context.Context, id string) (api.LaunchResult, error) {
+	l, err := s.svc.LaunchSessionWithContext(ctx, id)
+	if err != nil {
+		return api.LaunchResult{}, err
+	}
+	return api.LaunchResult{SessionID: l.SessionID, Workspace: l.Workspace.Root}, nil
+}
+func TestHTTPExplicitWorkerOrphanRelaunchLineage(t *testing.T) {
+	for _, acknowledged := range []bool{true, false} {
+		t.Run(map[bool]string{true: "ack-chain", false: "state-only"}[acknowledged], func(t *testing.T) {
+			r, _, source, _, _ := claudeContinuationRig(t)
+			r.handle = (&daemon.Server{Config: daemon.Config{IdentityMode: identity.Observe}, Identity: r.ids, Service: lineageHTTPService{identityTestService{svc: r.svc}}}).Handler()
+			if err := r.db.UpdateSessionState(source.ID, "orphaned", 0, nil); err != nil {
+				t.Fatal(err)
+			}
+			hook := func(ws *websocket.Conn, f workerwire.Frame) bool {
+				if f.T != "launch" {
+					return false
+				}
+				kind := "launched"
+				if !acknowledged {
+					kind = "state"
+				}
+				_ = ws.WriteJSON(workerwire.Frame{T: kind, CmdID: f.CmdID, Session: f.Session, State: "running", PID: 7})
+				return true
+			}
+			r.frameHook.Store(&hook)
+			parent := source.ID
+			for generation := 0; generation < 2; generation++ {
+				if generation > 0 {
+					r.reconnect()
+				}
+				code, out := r.call(http.MethodPost, "/sessions", `{"launch":"seat","worker":"fake-worker","continuity":"relaunch"}`, r.op)
+				if code != http.StatusCreated {
+					t.Fatalf("create %d %+v", code, out)
+				}
+				id, _ := out["id"].(string)
+				if id == "" {
+					t.Fatalf("id %+v", out)
+				}
+				proof, err := r.db.GetWorkerLineage(context.Background(), id)
+				if err != nil || proof != nil {
+					t.Fatalf("prelaunch %+v %v", proof, err)
+				}
+				code, out = r.call(http.MethodPost, "/sessions/"+id+"/launch", `{}`, r.op)
+				if acknowledged && code != http.StatusOK {
+					t.Fatalf("start %d %+v", code, out)
+				}
+				if !acknowledged {
+					if code == http.StatusOK {
+						t.Fatal("state accepted as command ack")
+					}
+					if err := r.svc.ingestWorkerFrame(source.WorkerID, workerwire.Frame{T: "state", Session: id, State: "running", PID: 7}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var seq int
+				var name, path string
+				if err := r.db.DB().QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &path); err != nil {
+					t.Fatal(err)
+				}
+				reopened, err := store.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof, err = reopened.GetWorkerLineage(context.Background(), id)
+				_ = reopened.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !acknowledged {
+					if proof != nil {
+						t.Fatalf("state minted proof %+v", proof)
+					}
+					break
+				}
+				if proof == nil || proof.SourceSessionID != parent {
+					t.Fatalf("persisted edge %+v", proof)
+				}
+				native, err := r.db.GetWorkerNativeAdmission(id)
+				if err != nil || native != nil {
+					t.Fatalf("orphan became native %+v %v", native, err)
+				}
+				if generation == 1 {
+					old, err := r.db.GetWorkerLineage(context.Background(), parent)
+					if err != nil || old == nil || old.SourceSessionID != source.ID {
+						t.Fatalf("historical orphan edge %+v %v", old, err)
+					}
+				}
+				if err := r.db.UpdateSessionState(id, "orphaned", 0, nil); err != nil {
+					t.Fatal(err)
+				}
+				// Simulate the owning retirement path after positive execution loss;
+				// a live actor lease must still refuse another execution.
+				if _, err := r.svc.Registry.RevokeSessionBindings(context.Background(), id); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.ids.RevokeSession(context.Background(), id); err != nil {
+					t.Fatal(err)
+				}
+				parent = id
 			}
 		})
 	}
