@@ -52,7 +52,12 @@ func (p Principals) ResolvePrincipal(ctx context.Context) (teamsvc.Principal, er
 		}
 		out.Kind = mesh.ActorUser
 		out.LocalOperator = true
-	case "session":
+	case "session", "agent":
+		// "agent" is the kind of an issued session-bound token (authissuer); only a
+		// well-formed one is a session, never Kind alone.
+		if caller.Kind == "agent" && !identity.IsBoundAgentToken(caller) {
+			return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
+		}
 		if caller.SessionID == "" || p.Sessions == nil {
 			return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
 		}

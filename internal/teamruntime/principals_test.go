@@ -156,6 +156,29 @@ func TestVerifiedSessionUsesOnlyItsRetainedActorAndBinding(t *testing.T) {
 		t.Fatal("session selector trusted", err)
 	}
 }
+func TestIssuedAgentTokenResolvesAsItsSessionActor(t *testing.T) {
+	db, s, reg := dbFixture(t, filepath.Join(t.TempDir(), "db"))
+	port, e, _, req := sessionFixture(t, db, s, reg, "principal-agent")
+	id, err := port.Launch(ctx, req)
+	check(t, err)
+	resolver := Principals{Mode: identity.Enforce, Sessions: e}
+	token := identity.Principal{Verified: true, ID: identity.SessionPrincipalIDPrefix + id, Kind: "agent", SessionID: id, TokenID: "tok"}
+	out, err := resolver.ResolvePrincipal(identity.WithPrincipal(ctx, token))
+	check(t, err)
+	if out.ID != req.Actor || !out.Verified {
+		t.Fatal("issued agent token misattributed", out)
+	}
+	for name, bad := range map[string]identity.Principal{
+		"no token id":   {Verified: true, ID: token.ID, Kind: "agent", SessionID: id},
+		"wrong subject": {Verified: true, ID: "msg://session/local/other", Kind: "agent", SessionID: id, TokenID: "tok"},
+		"no session id": {Verified: true, ID: token.ID, Kind: "agent", TokenID: "tok"},
+		"unverified":    {ID: token.ID, Kind: "agent", SessionID: id, TokenID: "tok"},
+	} {
+		if _, err := resolver.ResolvePrincipal(identity.WithPrincipal(ctx, bad)); !errors.Is(err, teamsvc.ErrUnauthenticated) {
+			t.Fatal(name, "admitted", err)
+		}
+	}
+}
 func TestDevModeAdmitsOnlyVerifiedLocalOperator(t *testing.T) {
 	socketRoot, err := os.MkdirTemp("/var/tmp", "team-dev.")
 	check(t, err)
