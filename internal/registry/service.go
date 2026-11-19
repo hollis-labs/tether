@@ -50,6 +50,9 @@ import (
 // malformed skill, etc.). Callers use errors.Is.
 var ErrInvalidRequest = errors.New("registry: invalid request")
 
+// ErrExternalIDConflict means an attachment would replace an existing mapping.
+var ErrExternalIDConflict = fmt.Errorf("%w: external id conflict", ErrInvalidRequest)
+
 // ErrForbidden is returned when a caller lacks the role required for the
 // requested operation (v060-05: archive a group, invite/kick members,
 // post to a group as a non-member). Callers use errors.Is and the HTTP
@@ -875,17 +878,8 @@ func (s *Service) AttachExternalID(ctx context.Context, urn, substrate, external
 	if urn == "" || substrate == "" || externalID == "" {
 		return fmt.Errorf("registry: attach external id: %w: urn + substrate + external_id required", ErrInvalidRequest)
 	}
-	profile, err := s.storage.GetProfile(ctx, urn)
-	if err != nil {
+	if _, err := s.storage.GetProfile(ctx, urn); err != nil {
 		return err
-	}
-	if existing, ok, err := s.storage.LookupURNByExternalID(ctx, profile.Kind, externalID, substrate); err != nil {
-		return err
-	} else if ok {
-		if existing == urn {
-			return nil
-		}
-		return fmt.Errorf("registry: attach external id: %w: substrate %q external_id %q already attached to %s", ErrInvalidRequest, substrate, externalID, existing)
 	}
 	return s.storage.AttachExternalID(ctx, urn, substrate, externalID)
 }

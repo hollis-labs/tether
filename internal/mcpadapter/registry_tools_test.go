@@ -30,6 +30,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -920,5 +921,99 @@ func TestRegistryTools_Search_QueryLimitCursorBrief(t *testing.T) {
 	}
 	if res := callRegistryTool(t, a, "tether_registry_search", map[string]any{"kind": "agent", "limit": float64(0)}); !res.IsError {
 		t.Fatal("limit=0 was accepted")
+	}
+}
+
+// Exercises the public MCP tool through the real daemon HTTP surface and storage.
+func TestRegistryTools_AttachExternalID(t *testing.T) {
+	a, svc := newRegistryAdapter(t)
+	urn := registerAgentForTest(t, a, "Existing catalog agent")
+	other := registerAgentForTest(t, a, "Other agent")
+	args := map[string]any{"urn": urn, "substrate": "registry", "external_id": "record-35"}
+	first := callRegistryTool(t, a, "tether_registry_update_self", args)
+	if first.IsError {
+		t.Fatal(textOf(first))
+	}
+	repeat := callRegistryTool(t, a, "tether_registry_update_self", args)
+	if repeat.IsError || !reflect.DeepEqual(parseToolJSON(t, first), parseToolJSON(t, repeat)) {
+		t.Fatalf("repeat changed result: %s / %s", textOf(first), textOf(repeat))
+	}
+	before, err := svc.Lookup(context.Background(), urn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherBefore, err := svc.Lookup(context.Background(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args["urn"] = other
+	conflict := callRegistryTool(t, a, "tether_registry_update_self", args)
+	if !conflict.IsError || parseToolJSON(t, conflict)["code"] != "conflict" {
+		t.Fatalf("want conflict: %s", textOf(conflict))
+	}
+	after, err := svc.Lookup(context.Background(), urn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAfter, err := svc.Lookup(context.Background(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(otherBefore, otherAfter) {
+		t.Fatal("conflict mutated profiles or mappings")
+	}
+	registered := callRegistryTool(t, a, "tether_registry_register", map[string]any{
+		"kind": "agent", "profile": map[string]any{"display_name": "Must not create"},
+		"substrate": "registry", "external_id": "record-35",
+	})
+	if registered.IsError {
+		t.Fatal(textOf(registered))
+	}
+	body := parseToolJSON(t, registered)
+	if body["created"] != false || body["profile"].(map[string]any)["urn"] != urn {
+		t.Fatalf("register duplicated: %v", body)
+	}
+	lookup := callRegistryTool(t, a, "tether_registry_lookup_by", map[string]any{
+		"kind": "agent", "substrate": "registry", "external_id": "record-35", "include": "external_ids",
+	})
+	if lookup.IsError || parseToolJSON(t, lookup)["profile"].(map[string]any)["urn"] != urn {
+		t.Fatalf("lookup: %s", textOf(lookup))
+	}
+}
+
+func TestRegistryTools_AttachExternalID_RefusesWithoutWriteScope(t *testing.T) {
+	a, svc := newRegistryAdapterWithScopes(t, []string{"read"})
+	p, err := svc.Register(context.Background(), registry.KindAgent, registry.Profile{DisplayName: "Existing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := callRegistryTool(t, a, "tether_registry_update_self", map[string]any{
+		"urn": p.URN, "substrate": "registry", "external_id": "forbidden",
+	})
+	if !res.IsError || parseToolJSON(t, res)["code"] != "insufficient_scope" {
+		t.Fatalf("expected scope refusal: %s", textOf(res))
+	}
+	after, err := svc.Lookup(context.Background(), p.URN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(p, after) {
+		t.Fatal("refused call changed profile")
+	}
+}
+
+func TestRegistryTools_AttachExternalID_InvalidArguments(t *testing.T) {
+	a, _ := newRegistryAdapter(t)
+	urn := registerAgentForTest(t, a, "Existing")
+	for _, args := range []map[string]any{
+		{"urn": urn, "substrate": "registry"},
+		{"urn": urn, "external_id": "x"},
+		{"urn": urn, "substrate": "", "external_id": "x"},
+		{"urn": urn, "substrate": "registry", "external_id": "x", "patch": map[string]any{"last_updated_by": "test", "display_name": "Changed"}},
+	} {
+		res := callRegistryTool(t, a, "tether_registry_update_self", args)
+		if !res.IsError || parseToolJSON(t, res)["code"] != "invalid_request" {
+			t.Fatalf("args %v: %s", args, textOf(res))
+		}
 	}
 }

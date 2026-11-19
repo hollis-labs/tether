@@ -33,12 +33,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/testutil/migrateddb"
 
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/registry"
 )
 
@@ -1819,5 +1821,125 @@ func TestRegistry_RegisterIdempotent_ConcurrentCallsAgreeOnOneURN(t *testing.T) 
 	}
 	if created != 1 || len(urns) != 1 {
 		t.Fatalf("want exactly one 201 and one URN, got %d created, %d URNs", created, len(urns))
+	}
+}
+
+func TestRegistry_AttachExternalID_ValidationAndConflicts(t *testing.T) {
+	r := newRegServer(t)
+	ctx := context.Background()
+	first, err := r.svc.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Existing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := r.svc.Register(ctx, registry.KindProject, registry.Profile{DisplayName: "Project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := itemURL("agents", first.URN) + "/external-id"
+	for _, tc := range []struct {
+		name, method, path string
+		body               any
+		status             int
+	}{
+		{"attach", http.MethodPost, path, map[string]string{"substrate": "registry", "external_id": "record-35"}, http.StatusOK},
+		{"repeat", http.MethodPost, path, map[string]string{"substrate": "registry", "external_id": "record-35"}, http.StatusOK},
+		{"occupied slot", http.MethodPost, path, map[string]string{"substrate": "registry", "external_id": "replacement"}, http.StatusConflict},
+		{"pair claimed by another kind", http.MethodPost, itemURL("projects", project.URN) + "/external-id", map[string]string{"substrate": "registry", "external_id": "record-35"}, http.StatusConflict},
+		{"missing key", http.MethodPost, path, map[string]string{}, http.StatusBadRequest},
+		{"half key", http.MethodPost, path, map[string]string{"substrate": "registry"}, http.StatusBadRequest},
+		{"malformed body", http.MethodPost, path, "bad", http.StatusBadRequest},
+		{"missing urn", http.MethodPost, itemURL("agents", "msg://agent/agent-mux/agt_missing000") + "/external-id", map[string]string{"substrate": "registry", "external_id": "missing"}, http.StatusNotFound},
+		{"wrong method", http.MethodPatch, path, nil, http.StatusMethodNotAllowed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := r.do(tc.method, tc.path, tc.body)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, tc.status, body)
+			}
+			if tc.status == http.StatusConflict && !bytes.Contains(body, []byte(`"code":"conflict"`)) {
+				t.Fatalf("conflict envelope: %s", body)
+			}
+		})
+	}
+	got, err := r.svc.Lookup(ctx, first.URN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ExternalIDs) != 1 || got.ExternalIDs[0].ExternalID != "record-35" {
+		t.Fatalf("mapping changed: %+v", got.ExternalIDs)
+	}
+	got, err = r.svc.Lookup(ctx, project.URN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ExternalIDs) != 0 {
+		t.Fatalf("conflict attached to project: %+v", got.ExternalIDs)
+	}
+}
+
+// Register historically allowed duplicate external pairs (including across
+// kinds). A matching row must never hide another owner's conflicting row.
+func TestRegistry_AttachExternalID_RejectsLegacyDuplicatePair(t *testing.T) {
+	r := newRegServer(t)
+	ctx := context.Background()
+	var profiles []registry.Profile
+	for _, kind := range []registry.Kind{registry.KindAgent, registry.KindProject} {
+		p, err := r.svc.Register(ctx, kind, registry.Profile{DisplayName: string(kind), ExternalIDs: []registry.ExternalID{{Substrate: "registry", ExternalID: "legacy-duplicate"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		profiles = append(profiles, p)
+	}
+	for _, target := range profiles {
+		resp, body := r.do(http.MethodPost, itemURL(pluralForKind(target.Kind), target.URN)+"/external-id", map[string]string{"substrate": "registry", "external_id": "legacy-duplicate"})
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("target %s status=%d body=%s", target.URN, resp.StatusCode, body)
+		}
+	}
+	for _, before := range profiles {
+		after, err := r.svc.Lookup(ctx, before.URN)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(before, after) {
+			t.Fatalf("legacy conflict changed %s", before.URN)
+		}
+	}
+}
+
+func TestRegistry_AttachExternalID_ScopedHTTPCallers(t *testing.T) {
+	h, svc := newRegistryHandler(t)
+	p, err := svc.Register(t.Context(), registry.KindAgent, registry.Profile{DisplayName: "Existing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h = RemoteScopeMiddleware(AgentScopeMiddleware(identity.Enforce, h))
+	for _, tc := range []struct {
+		name   string
+		remote bool
+		scopes []string
+		status int
+	}{
+		{"issued registry token", false, []string{"tether.registry"}, http.StatusOK},
+		{"issued read token", false, []string{"tether.read"}, http.StatusForbidden},
+		{"remote registry device", true, []string{"registry"}, http.StatusOK},
+		{"remote read device", true, []string{"read"}, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, itemURL("agents", p.URN)+"/external-id", strings.NewReader(`{"substrate":"registry","external_id":"scoped-key"}`))
+			principal := identity.Principal{Verified: true, ID: "msg://service/registry/test", Kind: "service", TokenID: "issued-test", Scopes: tc.scopes}
+			ctx := req.Context()
+			if tc.remote {
+				principal.Kind = "device"
+				principal.ID = "msg://device/test"
+				ctx = identity.WithRemoteContext(ctx)
+			}
+			ctx = identity.WithPrincipal(ctx, principal)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req.WithContext(ctx))
+			if w.Code != tc.status {
+				t.Fatalf("status=%d want=%d body=%s", w.Code, tc.status, w.Body.String())
+			}
+		})
 	}
 }

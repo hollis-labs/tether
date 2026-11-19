@@ -227,6 +227,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/registry/scoped-bindings/revisions", "/registry/scoped-bindings/revisions", map[string]string{"GET": readScope}),
 	routeScope("/registry/", "/registry/{kind}", map[string]string{"GET": registryReadScope, "POST": registryScope}, "registry-kind"),
 	routeScope("/registry/", "/registry/{kind}/{id}", map[string]string{"GET": registryReadScope, "PATCH": registryScope, "DELETE": registryScope}, "registry-kind"),
+	routeScope("/registry/", "/registry/{kind}/{id}/external-id", map[string]string{"POST": registryScope}, "registry-kind"),
 	routeScope("/registry/", "/registry/{kind}/{id}/sync", map[string]string{"POST": registryScope}, "registry-kind"),
 	routeScope("/registry/", "/registry/{kind}/{id}/merge", map[string]string{"POST": registryScope}, "registry-kind"),
 	routeScope("/whoami", "/whoami", map[string]string{"GET": readScope}),
