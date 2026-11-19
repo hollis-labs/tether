@@ -15,7 +15,9 @@ exit and native conversation verification; a replacement ID is reported as
 
 The agy chatstream decoder provides text deltas, whole tool arguments/results,
 usage, and permission-denied activities. There is no approval bridge. App context
-uses the input-only `<app-context>` block; it is not published as a user event.
+uses the input-only `<app-context>` block. Provider input echoes are filtered;
+rendered context blocks are redacted from output, and opaque provider diagnostics
+are withheld on context-bearing turns.
 Cancellation cancels the subprocess context, waits for the process to exit and
 closes the run with `run.abort`. A reservation shared with ordinary seat input
 rejects overlapping turns. Every run ends with exactly one terminal event.
@@ -23,11 +25,15 @@ rejects overlapping turns. Every run ends with exactly one terminal event.
 `Observed()` stays empty and closes when the backend stops: turns submitted by
 mail, CLI or other seat writers are not imported into the chat conversation.
 Local shim-hosted seats, including reattached seats, use the same decoder on
-raw bridge output. The internal shim worker reads an interrupt control while
+raw bridge output. A status barrier reserves/drains boot and active reattached work before chat
+admission. Every chat turn carries a private correlation token; interrupts target
+that token so a late request cannot cancel an ordinary successor. The shim worker
+reads an interrupt control while
 agy runs, cancels and reaps that child, then emits an interrupted result while
 retaining its conversation ID and the shim. Ordinary queued inputs remain ordered.
 
-Worker-hosted seats currently return an explicit unsupported runtime error,
+Retained hosts created before control protocol v1 are refused without sending
+new controls; start a new seat to use chat. Worker-hosted seats currently return an explicit unsupported runtime error,
 because their reduced output does not carry the raw agy frames needed by this
 decoder. No subprocess is started on the hub for those seats.
 

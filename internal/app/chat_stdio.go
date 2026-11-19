@@ -52,7 +52,14 @@ func (s *Service) installStdioTap(id, brand string, rt agentsessions.Runtime, op
 		old.(*claudestdio.Tap).Close()
 	}
 	if brand == "antigravity" {
-		s.agyExecutors.Store(id, agystdio.NewHostedExecutor(agystdio.HostedConfig{Tap: tap, Send: stdioWriter{s: s, id: id}.Write, Interrupt: func(ctx context.Context) error { return s.Manager.InterruptTurn(ctx, id) }, Busy: func() bool { _, ok := s.Manager.Get(id); return !ok }}))
+		pending := 0
+		if opts.BootMode == "stdin" && opts.BootPrompt != "" {
+			pending++
+		}
+		if opts.AutoFireFirstTurn && len(opts.FirstTurnPayload) > 0 {
+			pending++
+		}
+		s.agyExecutors.Store(id, agystdio.NewHostedExecutor(agystdio.HostedConfig{Tap: tap, Send: stdioWriter{s: s, id: id}.Write, Busy: func() bool { _, ok := s.Manager.Get(id); return !ok }, InitialPending: pending, Probe: true}))
 	}
 	return tap
 }

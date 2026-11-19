@@ -6,6 +6,7 @@ package agystdio
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -95,11 +96,24 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 	// The runtime invokes line synchronously on its reader, and wait joins it.
 	// Keep the terminal until wait verifies actual exit and native continuity:
 	// agy may print SUCCESS before a nonzero exit or a replaced conversation is detected.
+	block := ""
+	if len(t.Context) > 0 {
+		block = strings.TrimSuffix(input[:len(input)-len(t.Text)], "\n")
+	}
 	var terminal *chatstream.Event
 	line := func(raw []byte) {
+		raw = outputFrame(raw, block)
+		if len(raw) == 0 {
+			return
+		}
 		evs, e := dec.Decode(chatstream.Frame{Data: raw})
 		if e == nil {
 			for _, ev := range evs {
+				// Opaque provider diagnostics can echo structured input as well as text.
+				// They are not conversation content when a private context was supplied.
+				if len(t.Context) > 0 && (ev.Raw != nil || (ev.Verb == chatstream.VerbActivity && ev.Kind != "agy.permission_denied")) {
+					continue
+				}
 				if ev.IsTerminal() {
 					saved := ev
 					terminal = &saved

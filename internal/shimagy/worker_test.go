@@ -139,3 +139,71 @@ func TestWorkerCancellationAtInputBoundary(t *testing.T) {
 		cancel()
 	}
 }
+
+type frameSink struct {
+	frames chan map[string]json.RawMessage
+}
+
+func (w frameSink) Write(p []byte) (int, error) {
+	var frame map[string]json.RawMessage
+	if err := json.Unmarshal(p, &frame); err != nil {
+		return 0, err
+	}
+	w.frames <- frame
+	return len(p), nil
+}
+func TestLateTargetedInterruptDoesNotCancelSuccessor(t *testing.T) {
+	cfg := workerFixture(t, `printf '%s\n' '{"event":"init","conversation_id":"native-late"}'
+case "$*" in *slow*) exec sleep 60;; esac
+printf '%s\n' '{"event":"result","result":{"status":"SUCCESS"}}'
+`)
+	input, writer := io.Pipe()
+	frames := make(chan map[string]json.RawMessage, 32)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = Run(ctx, cfg, input, frameSink{frames}, io.Discard) }()
+	defer func() {
+		cancel()
+		_ = writer.Close()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("worker did not stop")
+		}
+		_ = input.Close()
+	}()
+	receive := func(event string) map[string]json.RawMessage {
+		t.Helper()
+		for {
+			select {
+			case frame := <-frames:
+				if string(frame["event"]) == `"result"` && event != "result" {
+					t.Fatalf("successor was interrupted: %v", frame)
+				}
+				if string(frame["event"]) == `"`+event+`"` || (event == "control_response" && string(frame["type"]) == `"control_response"`) {
+					return frame
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("missing worker event " + event)
+				return nil
+			}
+		}
+	}
+	first := map[string]any{"type": "user", "tether_turn_id": "chat-first", "message": map[string]string{"role": "user", "content": "first"}}
+	if err := json.NewEncoder(writer).Encode(first); err != nil {
+		t.Fatal(err)
+	}
+	_ = receive("result")
+	_, _ = io.WriteString(writer, userFrame("slow successor"))
+	_ = receive("init")
+	interrupt := `{"type":"control_request","request_id":"late","request":{"subtype":"interrupt","target_turn_id":"chat-first"}}` + "\n"
+	_, _ = io.WriteString(writer, interrupt)
+	_ = receive("control_response")
+	select {
+	case frame := <-frames:
+		if string(frame["event"]) == `"result"` {
+			t.Fatalf("late interrupt canceled successor: %v", frame)
+		}
+	case <-time.After(150 * time.Millisecond):
+	}
+}

@@ -60,6 +60,9 @@ func (s *Service) ChatBackend(id string, rt chatwire.Runtime) (chatwire.Backend,
 	switch rt {
 	case chatwire.RuntimeAgyStdio:
 		if v, ok := s.agyExecutors.Load(id); ok {
+			if s.stdioTap(id) != nil && !s.agyChatControlSupported(id) {
+				return nil, &chatwire.UnsupportedRuntimeError{SessionID: id, Runtime: rt, Reason: "retained agy host lacks correlated chat controls; start a new seat"}
+			}
 			return agystdio.New(agystdio.Config{Executor: v.(agystdio.Executor)}), nil
 		}
 		return nil, &chatwire.UnsupportedRuntimeError{SessionID: id, Runtime: rt, Reason: "agy chat requires a local per-turn runtime launched by this daemon; worker seats are not supported"}
