@@ -1,7 +1,17 @@
 # Terminal attachment API
 
-When the authoritative conversation host supplies `TerminalHost`, Tether also
-registers `/terminal-attachments`. A new attachment observes by default; it
+With `daemon.terminal_attachments.enabled: true` (default off, CW-20261118-0012)
+the daemon supplies `TerminalHost` and registers `/terminal-attachments`. It is
+separate from `daemon.chat_wire.enabled`; either can be on alone, and with both
+on they use one chat host, so a terminal controller and a chat controller
+contend for one writer lease: a terminal takeover makes chat submits 403
+`lease_required`, a chat takeover makes terminal input 409. A target is a
+conversation ID or a session ID; a session that a relaunch superseded is 409
+stale, and so is every attachment opened at the older generation. Only a PTY this
+daemon runs is attachable (a worker session is 409 "runtime has no terminal").
+Without the flag, the routes are not registered.
+
+A new attachment observes by default; it
 cannot send input or resize until it explicitly acquires a writer lease. The
 host must resolve the complete current owner/operative/conversation/attempt/
 generation binding and check it again at the PTY operation boundary. API agents
@@ -35,6 +45,7 @@ resolver that maps both conversation IDs and explicit session targets to the
 current binding and exact PTY session. The resolver reads the live PTY mapping
 independently of the SDK host, because input and resize call it under the SDK
 host's lease lock. The PTY interface must deliver input and resize synchronously;
-queued transports must check the same lease again at delivery. This dependency
-remains opt-in until the daemon has an authoritative conversation-to-PTY
-mapping and direct input policy for managed sessions.
+queued transports must check the same lease again at delivery. The daemon's resolver
+is `chatwire.TerminalTargets` over `conversation.Resolver`. The surface stays
+opt-in until the direct input policy for managed sessions lands
+(CW-20261116-0019).
