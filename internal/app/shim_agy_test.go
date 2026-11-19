@@ -5,6 +5,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/hollis-labs/libs/ui/ui-go/chatstream"
+	"github.com/hollis-labs/tether/internal/chatbackend"
+	"github.com/hollis-labs/tether/internal/chatwire"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,5 +181,114 @@ func TestShimAGYBootInputFramingAndBoundedLaunch(t *testing.T) {
 	opts.Launch.Convention.Mode = runtimes.ModeSubprocessPerTurn
 	if _, err = agyWorkerArgv("/bin/agy", opts, strings.Repeat("x", shimagy.MaxConfig), nil); err == nil {
 		t.Fatal("oversized worker argument admitted")
+	}
+}
+
+func TestShimAGYChatCancelAndContinue(t *testing.T) {
+	f := shimFixture(t)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.shimHosting.agyWorker = []string{exe, "-test.run=^TestShimAGYWorkerProcess$", "--"}
+	binary := filepath.Join(f.root, "agy")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$AGY_ARGS"
+printf '%s\n' '{"event":"init","conversation_id":"native-chat"}'
+case "$*" in *slow*) exec sleep 60;; esac
+printf '%s\n' '{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"agent_response","text_delta":"hello"}}'
+printf '%s\n' '{"event":"result","result":{"conversation_id":"native-chat","status":"SUCCESS","response":"hello"}}'
+`
+	if err = os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f.plan.Command, f.plan.ProviderBrand, f.plan.ProviderID, f.plan.RuntimeKind = binary, "antigravity", "antigravity", "subprocess"
+	f.req.Runtime, err = antigravity.New(f.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.req.Options.Env = append(f.req.Options.Env, "AGY_ARGS="+filepath.Join(f.root, "argv.log"))
+	f.req.Options.Launch = &agentlaunch.TurnTemplate{Convention: gop.LaunchConvention{Executable: binary, Mode: runtimes.ModeSubprocessPerTurn, Argv: []gop.ArgTemplate{{Kind: gop.ArgResume, Value: "--conversation"}, {Kind: gop.ArgPromptInline, Value: "-p="}}}}
+	encoded, _ := json.Marshal(f.plan)
+	if _, err = f.svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=? WHERE session_id=?`, string(encoded), f.req.ID); err != nil {
+		t.Fatal(err)
+	}
+	req, err := f.svc.prepareShimStart(context.Background(), f.plan, f.req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tap := f.svc.installStdioTap(req.ID, "antigravity", req.Runtime, &req.Options)
+	if tap == nil {
+		t.Fatal("missing hosted agy tap")
+	}
+	if err = f.svc.Manager.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.leaseActorBinding(req.ID, "worker")
+	f.svc.watchSessionBindings(req.ID)
+	rt, err := f.svc.ChatRuntime(req.ID)
+	if err != nil || rt != chatwire.RuntimeAgyStdio {
+		t.Fatalf("runtime %s: %v", rt, err)
+	}
+	b, err := f.svc.ChatBackend(req.ID, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); _ = b.Run(ctx) }()
+	defer func() { cancel(); <-stopped }()
+	read := func(r chatbackend.Run) []chatstream.Event {
+		t.Helper()
+		done := make(chan []chatstream.Event, 1)
+		go func() {
+			var evs []chatstream.Event
+			for ev := range r.Events() {
+				evs = append(evs, ev)
+			}
+			done <- evs
+		}()
+		select {
+		case evs := <-done:
+			return evs
+		case <-time.After(15 * time.Second):
+			t.Fatal("chat run stuck")
+			return nil
+		}
+	}
+	r, err := b.Submit(ctx, chatbackend.Turn{Text: "slow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimAwait(t, "agy child init", func() bool { data, _ := os.ReadFile(filepath.Join(f.root, "argv.log")); return len(data) > 0 })
+	if _, err = b.Submit(ctx, chatbackend.Turn{Text: "busy"}); !errors.Is(err, chatbackend.ErrBusy) {
+		t.Fatalf("busy %v", err)
+	}
+	r.Cancel()
+	evs := read(r)
+	if evs[len(evs)-1].Verb != chatstream.VerbRunAbort {
+		t.Fatalf("terminal %+v", evs)
+	}
+	// The hosted result is emitted only after the child exits; the next turn must
+	// use its native conversation while retaining the same shim process.
+	var next chatbackend.Run
+	shimAwait(t, "backend releases canceled run", func() bool {
+		next, err = b.Submit(ctx, chatbackend.Turn{Text: "next", Context: json.RawMessage(`{"private":"only-input"}`)})
+		return err == nil
+	})
+	evs = read(next)
+	terminals := 0
+	for _, ev := range evs {
+		if ev.IsTerminal() {
+			terminals++
+		}
+	}
+	data, _ := json.Marshal(evs)
+	if terminals != 1 || evs[len(evs)-1].Verb != chatstream.VerbRunFinish || strings.Contains(string(data), "only-input") {
+		t.Fatalf("events %s", data)
+	}
+	args, _ := os.ReadFile(filepath.Join(f.root, "argv.log"))
+	if !strings.Contains(string(args), "--conversation native-chat") || !strings.Contains(string(args), "app-context") {
+		t.Fatalf("argv %s", args)
 	}
 }

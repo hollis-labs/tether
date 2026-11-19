@@ -245,7 +245,7 @@ func (s *fakeSessions) ChatBackend(session string, rt Runtime) (Backend, error) 
 		f := newFakeStdio(s.t)
 		f.capture = s.inputs
 		return f.backend(), nil
-	case RuntimeCodexAppServer:
+	case RuntimeCodexAppServer, RuntimeAgyStdio:
 	}
 	return nil, &UnsupportedRuntimeError{SessionID: session, Runtime: rt, Reason: "no fake"}
 }

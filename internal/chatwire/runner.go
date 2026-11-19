@@ -27,13 +27,15 @@ const (
 	RuntimeClaudePTY Runtime = "claude-pty"
 	// RuntimeClaudeStdio is Claude Code in streaming-stdio mode: internal/chatbackend/claudestdio. Deltas.
 	RuntimeClaudeStdio Runtime = "claude-stdio"
+	// RuntimeAgyStdio is agy, one stream-json subprocess per turn.
+	RuntimeAgyStdio Runtime = "agy-stdio"
 	// RuntimeCodexAppServer is the Codex app-server (JSON-RPC over stdio). Not served yet: the decoder is libs PR #154,
 	// not tagged. TODO(CW-20261118-0009): add the codex app-server backend and route this runtime to it.
 	RuntimeCodexAppServer Runtime = "codex-app-server"
 )
 
 // Deltas reports whether runs of this runtime carry part.delta.
-func (r Runtime) Deltas() bool { return r == RuntimeClaudeStdio }
+func (r Runtime) Deltas() bool { return r == RuntimeClaudeStdio || r == RuntimeAgyStdio }
 
 // ErrUnsupportedRuntime is what the runner answers for a session whose runtime has no chat backend.
 var ErrUnsupportedRuntime = errors.New("chatwire: the session's runtime has no chat backend")

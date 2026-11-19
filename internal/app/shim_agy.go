@@ -139,3 +139,11 @@ func (a *shimAGYAdapter) ParseLineEvents(line []byte) ([]pevents.Event, error) {
 	}
 	return a.AntigravityAdapter.ParseLineEvents(line)
 }
+
+// Internal shim-agy controls use the same interrupt envelope as the bridge.
+func (a *shimAGYAdapter) InterruptRequest(id string) []byte {
+	return gop.NewClaudeAdapter().InterruptRequest(id)
+}
+func (a *shimAGYAdapter) InterruptResponse(line []byte) (string, bool, error) {
+	return gop.NewClaudeAdapter().InterruptResponse(line)
+}
