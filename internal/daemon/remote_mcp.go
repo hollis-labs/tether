@@ -157,7 +157,7 @@ func jwtBearer(r *http.Request) (string, bool) {
 
 func (g *remoteMCP) deny(w http.ResponseWriter, r *http.Request, reason, session string, status int, code string) {
 	// ids only, never the token or the Authorization header.
-	slog.Info("remote MCP denied", "reason", reason, "status", status, "method", r.Method, "session", cleanAuditField(session), "node", cleanAuditField(r.Header.Get("Tailscale-User-Login")))
+	slog.Info("remote MCP denied", "reason", reason, "status", status, "method", r.Method, "session", cleanAuditField(session), "node", cleanAuditField(r.Header.Get("Tailscale-User-Login"))) //nolint:gosec // G706 false positive: structured slog attrs are quoted/encoded by the handler; session and node pass cleanAuditField
 	g.mu.Lock()
 	g.denials[reason]++
 	g.mu.Unlock()

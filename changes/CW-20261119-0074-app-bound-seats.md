@@ -1,0 +1,1 @@
+- CW-20261119-0074: Pass app-owned turn context to Claude streaming-stdio and PTY as a compact app-context block, with event-log exclusion coverage; document and test static app-bound seat MCP configuration.

@@ -2,6 +2,7 @@ package claudestdio
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -363,5 +364,16 @@ func waitFor(t *testing.T, ok func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestInvalidContextDoesNotWriteInput(t *testing.T) {
+	h := newHarness(t, nil)
+	_, err := h.b.Submit(context.Background(), chatbackend.Turn{Text: "hello", Context: json.RawMessage(`{`)})
+	if err == nil {
+		t.Fatal("invalid context accepted")
+	}
+	if got := h.in.all(); len(got) != 0 {
+		t.Fatalf("invalid context wrote input: %q", got)
 	}
 }

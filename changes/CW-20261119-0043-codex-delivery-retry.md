@@ -1,0 +1,1 @@
+- CW-20261119-0043: Retry a hosted Codex delivery candidate when the protocol reader advances before validation, preserving its inbox for recovery.
