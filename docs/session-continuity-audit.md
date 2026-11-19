@@ -100,7 +100,7 @@ Tether now exposes the narrow authenticated item-only `replacement_lineage` and
 [session-ui-lineage-evidence.md](session-ui-lineage-evidence.md). The first
 projects a committed retained local-team replacement and independently checks
 stored actors; the second requires explicit relaunch provenance plus an exact
-authenticated worker launch acknowledgement. None is native proof. Ordinary hub orphan recovery uses exact persisted non-team resume plans and refuses retained source shim custody.
+authenticated worker launch acknowledgement. None is native proof. Ordinary hub orphan recovery uses exact persisted non-team resume plans or immutable explicit-create provenance and refuses retained source shim custody.
 
 The Tachyon orchestrator owns canonical explicit-resume discovery, complete-chain
 validation and atomic association before plan/history/thread reads (#806 draft,

@@ -104,7 +104,7 @@ native-POST rejection after a UI receipt are consumer-owned tests.
 
 ## Ordinary hub orphan recovery
 
-`hub_resume_lineage` is null unless persisted ordinary hub resume plans establish
+`hub_resume_lineage` is null unless persisted ordinary hub resume evidence establishes
 this exact UI ancestry:
 
 ```json
@@ -114,9 +114,14 @@ this exact UI ancestry:
 Both canonical rows must be local and name the same nonempty logical agent; the
 replacement has explicit resume intent and its exact source parent. Both stored
 plans must name that agent, neither can be a team plan, and the replacement plan
-must explicitly name `ResumeSourceSessionID`. Retained source shim custody or an
-uncertain custody read refuses evidence. A lineage-only create with no stored
-resume source does not gain this proof.
+must explicitly name `ResumeSourceSessionID` or have the exact immutable
+`hub_relaunch_provenance` record written by an explicit `continuity=relaunch`
+create (migration 0111). That record binds both sessions, agent and local
+placements in the session creation transaction. `Continuity` remains excluded
+from plan JSON. A nonempty stored resume source must always match. Retained
+source shim custody or an uncertain custody read refuses evidence. Generic
+parent/resume rows and pre-migration explicit creates cannot earn this proof
+retroactively; no historical backfill occurs.
 
 This covers existing successful ordinary hub recovery from a positively gone
 orphan, whose source row deliberately remains orphaned. Historical destinations
