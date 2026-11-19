@@ -173,7 +173,7 @@ func TestWireIntegration(t *testing.T) {
 	sa, _ := c.stream(convID, ctl, "0")
 	sb, _ := c.stream(convID, viewer, "0")
 
-	status, receipt := c.do(http.MethodPost, "/chat/v1/conversations/"+convID+"/turns", map[string]string{"attachment": ctl, "text": "hello", "request_id": "r1"})
+	status, receipt := c.do(http.MethodPost, "/chat/v1/conversations/"+convID+"/turns", map[string]any{"attachment": ctl, "text": "hello", "request_id": "r1", "context": json.RawMessage(`{ "view": "private-app-view", "selected": [1, 2] }`)})
 	if status != http.StatusAccepted {
 		t.Fatalf("submit = %d %v", status, receipt)
 	}
@@ -195,6 +195,27 @@ func TestWireIntegration(t *testing.T) {
 	}
 	if !strings.Contains(text, "done") {
 		t.Fatalf("the run's assistant text = %q, want the fake's answer", text)
+	}
+	select {
+	case input := <-sessions.inputs:
+		if input != "<app-context>{\"view\":\"private-app-view\",\"selected\":[1,2]}</app-context>\nhello" {
+			t.Fatalf("Claude stdin text = %q", input)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Claude received no input")
+	}
+	records := 0
+	for rec, err := range w.db.Log.After(ctx, convID, 0) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		records++
+		if bytes.Contains(rec.Data, []byte("private-app-view")) || bytes.Contains(rec.Data, []byte("app-context")) {
+			t.Fatalf("app context leaked into event log: %s", rec.Data)
+		}
+	}
+	if records == 0 {
+		t.Fatal("empty conversation event log")
 	}
 	t.Logf("both clients received the same %d events, ids %d..%d", len(ea), ea[0].ID, ea[len(ea)-1].ID)
 
