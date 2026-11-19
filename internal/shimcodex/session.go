@@ -52,7 +52,7 @@ func NewSession(engine *Engine, transport Transport, providerPID int) (*Session,
 	if engine == nil || transport == nil || providerPID <= 0 {
 		return nil, fail("identity_mismatch")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is kept in s.cancel and called when the session closes
 	return &Session{engine: engine, transport: transport, ctx: ctx, cancel: cancel, changed: make(chan struct{}), done: make(chan struct{}), providerPID: providerPID, writeGate: make(chan struct{}, 1)}, nil
 }
 
