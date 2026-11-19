@@ -239,7 +239,9 @@ Session creation persists the server-selected creator in
 `sessions.requesting_principal` (migration 0109). HTTP create and bootstrap use
 the verified caller, including requests without an idempotency key; resume uses
 the server-set caller from ResumeOptions. Unauthenticated local/in-process
-creates record `anonymous`. Boot recovery records `daemon:boot-recovery`, and
+creates record `anonymous`. Native MCP daemon views carry their middleware-verified
+principal directly into create/resume, including unkeyed requests; client-supplied
+identity/session labels cannot choose this value. Boot recovery records `daemon:boot-recovery`, and
 retained team replacement records `team-runtime`. Historical rows remain NULL;
 creator provenance is never inherited from a parent or treated as execution
 authority. A keyed replay keeps the original row and creator. Create logging
