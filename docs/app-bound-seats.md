@@ -89,3 +89,25 @@ host. Use the service-start workflow before starting development services;
 never use the production agent-os daemon for this check. Verify streamed
 deltas, detach/reattach with a cursor, and a Surface read tool call with a
 `tool_result` part. These runtime checks are separate from the fixture tests.
+
+## Codex app-server seats
+
+The chat wire also serves local `codex-app-server` (`jsonrpc-stdio`) seats,
+including shim-hosted sessions. It copies the existing session's stdout and sends
+`turn/start` through its existing thread cache; attaching chat never starts a
+second Codex process. Launch or reattach the seat with a daemon that includes
+this backend so its stdout tap is installed. `codex exec --json`, PTY Codex and
+remote worker seats are not served by this backend. The remote worker provider
+protocol currently accepts user frames only and has no `turn/interrupt` route.
+
+Text and reasoning deltas, command execution and MCP tool calls use the shared
+`codexappserver` chatstream decoder. Per-turn `context` uses the same private
+`<app-context>` block as Claude; echoed user items and RPC responses are excluded
+from chat events. Another submission while a turn runs returns busy without
+sending input. Cancellation targets that thread and turn with `turn/interrupt`
+and ends the chat run with `run.abort`; if the provider does not confirm within
+ten seconds, the run aborts locally and further submissions remain busy until the
+provider reports the turn completed. Non-chat turns (such as mail wakes) appear
+as observed runs. Approval requests appear as activity only; the existing Codex
+approval handler remains responsible for answering them. No chat approval bridge
+is enabled. `daemon.chat_wire.enabled` still defaults to false.

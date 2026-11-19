@@ -706,6 +706,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	turnOutput := s.newSessionTurnOutput(*row, plan)
 	turnOutput.wire(rt, &startOpts)
 	stdioTap := s.installStdioTap(sessionID, plan.ProviderBrand, rt, &startOpts)
+	codexTap := s.installCodexTap(sessionID, plan.ProviderBrand, rt, &startOpts)
 	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
 	startOpts.AutoPlantBootDir = false
@@ -816,6 +817,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), sessionID, launchEvidence)
 	s.watchStdioTap(sessionID, stdioTap)
+	s.watchCodexTap(sessionID, codexTap)
 	launched = true
 	if scratch != nil {
 		go s.releaseScratchAfterCompletion(context.WithoutCancel(ctx), scratch)

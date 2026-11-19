@@ -100,6 +100,7 @@ func (r *Runtime) Start(ctx context.Context, opts agentsessions.StartOptions) (a
 		return nil, err
 	}
 	s.onSessionID = opts.OnSessionID
+	s.outputFanout = opts.Fanout
 	s.deliveryChecker = r.Config.DeliveryChecker
 	s.deliver = r.Config.Deliver
 	defer func() {

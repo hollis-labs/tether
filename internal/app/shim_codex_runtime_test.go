@@ -20,6 +20,9 @@ import (
 	"github.com/hollis-labs/libs/harness/core/sandbox"
 	"github.com/hollis-labs/libs/harness/core/shim"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	"github.com/hollis-labs/libs/ui/ui-go/chatstream"
+	"github.com/hollis-labs/tether/internal/chatbackend"
+	"github.com/hollis-labs/tether/internal/chatwire"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
@@ -105,6 +108,10 @@ func TestHostedCodexActualRetainedTurnDeliveryAndRecovery(t *testing.T) {
 	runHostedCodexDeliveryFixture(t, true, true)
 }
 
+func TestHostedCodexChatBackend(t *testing.T) {
+	runHostedCodexDeliveryFixture(t, true, false, true)
+}
+
 func runHostedCodexDeliveryFixture(t *testing.T, complete bool, retained ...bool) {
 	retain := len(retained) != 0 && retained[0]
 	t.Setenv(EnvLaunchHost, "shim")
@@ -179,11 +186,50 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool, retained ...bool
 		// and provider run normally, but public delivery is connected at boot.
 		runtime.Config.Deliver = nil
 	}
+	chatEnabled := len(retained) > 1 && retained[1]
+	if chatEnabled {
+		s.installCodexTap("codex-app", "codex", req.Runtime, &req.Options)
+	}
 	if err = s.Manager.Start(ctx, req); err != nil {
 		t.Fatal(err)
 	}
 	s.watchSessionBindings("codex-app")
-	if err = s.sendTurnJSONRPC(ctx, "codex-app", "fixture"); err != nil {
+	if chatEnabled {
+		be, err := s.ChatBackend("codex-app", chatwire.RuntimeCodexAppServer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chatCtx, stopChat := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- be.Run(chatCtx) }()
+		<-be.(interface{ Ready() <-chan struct{} }).Ready()
+		run, err := be.Submit(ctx, chatbackend.Turn{Text: "fixture", Context: json.RawMessage(`{"secret":"hosted-private-context"}`)})
+		if err != nil {
+			stopChat()
+			<-done
+			t.Fatal(err)
+		}
+		terminals, deltas := 0, 0
+		for ev, err := range run.Events() {
+			if err != nil {
+				t.Error(err)
+			}
+			if ev.IsTerminal() {
+				terminals++
+				if ev.Verb != chatstream.VerbRunFinish {
+					t.Errorf("hosted chat terminal: %s", ev.Verb)
+				}
+			}
+			if ev.Verb == chatstream.VerbPartDelta {
+				deltas++
+			}
+		}
+		stopChat()
+		<-done
+		if terminals != 1 || deltas == 0 {
+			t.Fatal("hosted stdout did not reach the chat backend")
+		}
+	} else if err = s.sendTurnJSONRPC(ctx, "codex-app", "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	shimRow, err := s.Store.SessionShim(ctx, "codex-app")
