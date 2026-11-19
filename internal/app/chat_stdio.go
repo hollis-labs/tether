@@ -55,8 +55,8 @@ func (s *Service) installStdioTap(id, brand string, rt agentsessions.Runtime, op
 		pending := 0
 		if opts.BootMode == "stdin" && opts.BootPrompt != "" {
 			pending++
-		}
-		if opts.AutoFireFirstTurn && len(opts.FirstTurnPayload) > 0 {
+		} else if opts.AutoFireFirstTurn && len(opts.FirstTurnPayload) > 0 {
+			// The streaming runtime skips auto-fire when stdin already sent boot.
 			pending++
 		}
 		s.agyExecutors.Store(id, agystdio.NewHostedExecutor(agystdio.HostedConfig{Tap: tap, Send: stdioWriter{s: s, id: id}.Write, Busy: func() bool { _, ok := s.Manager.Get(id); return !ok }, InitialPending: pending, Probe: true}))

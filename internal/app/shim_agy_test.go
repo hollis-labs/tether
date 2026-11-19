@@ -184,7 +184,7 @@ func TestShimAGYBootInputFramingAndBoundedLaunch(t *testing.T) {
 	}
 }
 
-func shimAGYChatFixture(t *testing.T, boot string) (*shimAppFixture, chatwire.Backend, context.Context) {
+func shimAGYChatFixture(t *testing.T, boot string, firstTurn ...string) (*shimAppFixture, chatwire.Backend, context.Context) {
 	t.Helper()
 	f := shimFixture(t)
 	exe, err := os.Executable()
@@ -212,6 +212,10 @@ printf '%s\n' '{"event":"result","result":{"conversation_id":"native-chat","stat
 	if boot != "" {
 		f.req.Options.BootMode = "stdin"
 		f.req.Options.BootPrompt = boot
+	}
+	if len(firstTurn) > 0 {
+		f.req.Options.AutoFireFirstTurn = true
+		f.req.Options.FirstTurnPayload = []byte(firstTurn[0])
 	}
 	f.svc.turnFeeds = map[string]turnFeedRegistration{"antigravity": {}}
 	f.req.Options.OnSessionID = func(id string) { _ = f.svc.Store.UpsertSessionProviderMapping(f.req.ID, "tether", "antigravity", id) }
@@ -332,19 +336,32 @@ func readAGYChat(t *testing.T, r chatbackend.Run) []chatstream.Event {
 	}
 }
 func TestShimAGYChatRefusesDelayedBoot(t *testing.T) {
-	f, b, ctx := shimAGYChatFixture(t, "boot")
-	if _, err := b.Submit(ctx, chatbackend.Turn{Text: "slow"}); !errors.Is(err, chatbackend.ErrBusy) {
-		t.Fatalf("boot accepted chat input: %v", err)
-	}
-	var r chatbackend.Run
-	shimAwait(t, "boot completion before chat admission", func() bool { var err error; r, err = b.Submit(ctx, chatbackend.Turn{Text: "next"}); return err == nil })
-	evs := readAGYChat(t, r)
-	if evs[len(evs)-1].Verb != chatstream.VerbRunFinish {
-		t.Fatalf("next turn failed: %+v", evs)
-	}
-	args, _ := os.ReadFile(filepath.Join(f.root, "argv.log"))
-	if strings.Contains(string(args), "slow") {
-		t.Fatalf("busy chat was delivered: %s", args)
+	for _, combined := range []bool{false, true} {
+		name := "stdin_boot"
+		var firstTurn []string
+		if combined {
+			name = "stdin_boot_with_autofire"
+			firstTurn = []string{"kickoff"}
+		}
+		t.Run(name, func(t *testing.T) {
+			f, b, ctx := shimAGYChatFixture(t, "boot", firstTurn...)
+			if _, err := b.Submit(ctx, chatbackend.Turn{Text: "slow"}); !errors.Is(err, chatbackend.ErrBusy) {
+				t.Fatalf("boot accepted chat input: %v", err)
+			}
+			var r chatbackend.Run
+			shimAwait(t, "boot completion before chat admission", func() bool { var err error; r, err = b.Submit(ctx, chatbackend.Turn{Text: "next"}); return err == nil })
+			evs := readAGYChat(t, r)
+			if evs[len(evs)-1].Verb != chatstream.VerbRunFinish {
+				t.Fatalf("next turn failed: %+v", evs)
+			}
+			args, _ := os.ReadFile(filepath.Join(f.root, "argv.log"))
+			if strings.Contains(string(args), "slow") {
+				t.Fatalf("busy chat was delivered: %s", args)
+			}
+			if strings.Contains(string(args), "kickoff") {
+				t.Fatalf("auto-fire must be suppressed by stdin boot: %s", args)
+			}
+		})
 	}
 }
 func TestShimAGYChatRefusesActiveReattach(t *testing.T) {
