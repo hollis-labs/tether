@@ -2,6 +2,7 @@ package antigravity
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
@@ -46,11 +47,16 @@ func (r *chatRuntime) StartTurn(ctx context.Context, text string, line func([]by
 		return nil, chatbackend.ErrBusy
 	}
 	r.line = line
+	expected := s.ProviderSessionID()
 	r.mu.Unlock()
 	return func() error {
 		defer s.input.Unlock()
 		defer func() { r.mu.Lock(); r.line = nil; r.mu.Unlock() }()
-		return s.Session.SendInput(ctx, []byte(text))
+		err := s.Session.SendInput(ctx, []byte(text))
+		if err == nil && expected != "" && s.ProviderSessionID() != expected {
+			return errors.New("agy native conversation replaced")
+		}
+		return err
 	}, nil
 }
 

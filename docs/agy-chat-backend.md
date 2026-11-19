@@ -9,8 +9,9 @@ The backend borrows the launched runtime's session. Each turn runs the normal
 retaining the launch's command, args, environment, sandbox and permission posture:
 `bypass` uses `--dangerously-skip-permissions`; other postures use `accept-edits`.
 The runtime records the provider conversation ID and resumes it on subsequent
-turns, including turns sent outside chat. It retains its existing lost-session
-and authentication handling.
+turns, including turns sent outside chat. Terminal success waits for process
+exit and native conversation verification; a replacement ID is reported as
+`run.error`. The runtime retains its authentication handling.
 
 The agy chatstream decoder provides text deltas, whole tool arguments/results,
 usage, and permission-denied activities. There is no approval bridge. App context

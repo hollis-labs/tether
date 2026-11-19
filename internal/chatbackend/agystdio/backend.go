@@ -93,12 +93,23 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 	stream := chatbackend.NewStream(id, cancel)
 	dec := agy.New().NewDecoder(chatstream.DecodeOptions{RunID: id, Provider: "antigravity", Model: b.cfg.Model})
 	// The runtime invokes line synchronously on its reader, and wait joins it.
+	// Keep the terminal until wait verifies actual exit and native continuity:
+	// agy may print SUCCESS before a nonzero exit or a replaced conversation is detected.
+	var terminal *chatstream.Event
 	line := func(raw []byte) {
 		evs, e := dec.Decode(chatstream.Frame{Data: raw})
 		if e == nil {
-			stream.Emit(evs...)
+			for _, ev := range evs {
+				if ev.IsTerminal() {
+					saved := ev
+					terminal = &saved
+				} else {
+					stream.Emit(ev)
+				}
+			}
 		}
 	}
+
 	wait, err := b.cfg.Executor.StartTurn(runCtx, input, line)
 	if err != nil {
 		cancel()
@@ -108,11 +119,44 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 	done := b.done
 	go func() {
 		err := wait()
-		// A cancel always closes open parts through the decoder and yields abort,
-		// including when the CLI exits without writing an interrupted result.
-		if runCtx.Err() != nil && !stream.Done() {
-			for _, ev := range dec.Close(runCtx.Err()) {
-				if ev.IsTerminal() {
+		// Release the active slot under the same lock that publishes the terminal,
+		// so a consumer can immediately submit the next turn.
+		b.mu.Lock()
+		// A cancel closes open parts and aborts, including when the CLI exits
+		// without an interrupted result. Runtime failures cannot become success.
+		if terminal != nil {
+			ev := *terminal
+			converted := runCtx.Err() != nil || (err != nil && ev.Verb == chatstream.VerbRunFinish)
+			switch {
+			case runCtx.Err() != nil:
+				ev.Verb = chatstream.VerbRunAbort
+				ev.Code = ""
+				ev.Message = ""
+				ev.Reason = "interrupted"
+			case err != nil && ev.Verb == chatstream.VerbRunFinish:
+				ev.Verb = chatstream.VerbRunError
+				ev.Code = "process_error"
+				ev.Message = "agy process failed or lost its native conversation"
+				ev.Reason = ""
+			}
+			if converted {
+				if ev.Usage != nil {
+					stream.Emit(chatstream.Event{V: chatstream.SchemaVersion, Verb: chatstream.VerbUsage, Time: ev.Time, Usage: ev.Usage})
+				}
+				ev.RawReason = ""
+				ev.Usage = nil
+			}
+			stream.Emit(ev)
+		} else {
+			cause := err
+			if cause != nil {
+				cause = errors.New("agy process failed")
+			}
+			if runCtx.Err() != nil {
+				cause = runCtx.Err()
+			}
+			for _, ev := range dec.Close(cause) {
+				if runCtx.Err() != nil && ev.IsTerminal() {
 					ev.Verb = chatstream.VerbRunAbort
 					ev.Code = ""
 					ev.Message = ""
@@ -120,11 +164,9 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 				}
 				stream.Emit(ev)
 			}
-		} else {
-			stream.Emit(dec.Close(err)...)
 		}
+
 		cancel()
-		b.mu.Lock()
 		b.active = false
 		b.cancel = nil
 		close(done)

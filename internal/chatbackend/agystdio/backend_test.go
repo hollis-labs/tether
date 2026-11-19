@@ -29,6 +29,7 @@ while [ $# -gt 0 ]; do
  case "$1" in --conversation) conv=$2; shift;; -p=*) prompt=${1#-p=};; esac
  shift
 done
+case "$prompt" in replacement) conv=conversation-replaced;; esac
 printf '{"event":"init","conversation_id":"%s"}\n' "$conv"
 case "$prompt" in
  slow) exec sleep 60;;
@@ -39,6 +40,7 @@ case "$prompt" in
 esac
 printf '%s\n' '{"event":"step_update","step_update":{"step_index":1,"step_type":"agent_response","state":"DONE","text_delta":"hello"}}'
 printf '{"event":"result","result":{"conversation_id":"%s","status":"SUCCESS","response":"hello"}}\n' "$conv"
+case "$prompt" in badexit) exit 9;; esac
 `
 
 type harness struct {
@@ -108,25 +110,14 @@ func collect(t *testing.T, r chatbackend.Run) []chatstream.Event {
 		return nil
 	}
 }
-func idle(t *testing.T, h harness) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for h.s.Health().State == agentsessions.LiveStateProcessing {
-		if time.Now().After(deadline) {
-			t.Fatal("process did not exit")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	// The backend closes its bookkeeping just after the executor releases the seat.
-	time.Sleep(5 * time.Millisecond)
-}
+
 func TestFakeAgyCases(t *testing.T) {
 	for _, tc := range []struct {
 		text string
 		verb chatstream.Verb
 		kind string
 	}{
-		{"text", chatstream.VerbRunFinish, ""}, {"tool", chatstream.VerbRunFinish, "tool_call"}, {"denied", chatstream.VerbRunFinish, "agy.permission_denied"}, {"failed", chatstream.VerbRunError, ""}, {"crash", chatstream.VerbRunError, ""},
+		{"text", chatstream.VerbRunFinish, ""}, {"tool", chatstream.VerbRunFinish, "tool_call"}, {"denied", chatstream.VerbRunFinish, "agy.permission_denied"}, {"failed", chatstream.VerbRunError, ""}, {"crash", chatstream.VerbRunError, ""}, {"badexit", chatstream.VerbRunError, ""},
 	} {
 		t.Run(tc.text, func(t *testing.T) {
 			h := start(t, "", config.PermissionModeDefault)
@@ -195,7 +186,6 @@ func TestCancelBusyContinuityContext(t *testing.T) {
 	if evs[len(evs)-1].Verb != chatstream.VerbRunAbort {
 		t.Fatalf("cancel: %+v", evs)
 	}
-	idle(t, h)
 	for _, text := range []string{"one", "two"} {
 		r, err = h.b.Submit(context.Background(), chatbackend.Turn{Text: text, Context: json.RawMessage(`{"private":"context-only"}`)})
 		if err != nil {
@@ -206,7 +196,6 @@ func TestCancelBusyContinuityContext(t *testing.T) {
 		if strings.Contains(string(data), "context-only") || strings.Contains(string(data), "app-context") {
 			t.Fatal("context leaked")
 		}
-		idle(t, h)
 	}
 	args, err := os.ReadFile(filepath.Join(h.dir, "argv.log"))
 	if err != nil {
@@ -273,5 +262,23 @@ func TestRealAgy(t *testing.T) {
 	t.Logf("terminal=%s code=%s events=%d", last.Verb, last.Code, len(evs))
 	if last.Verb != chatstream.VerbRunFinish {
 		t.Fatalf("real backend turn failed: %s", last.Message)
+	}
+}
+
+func TestReplacedNativeConversationIsNotSuccess(t *testing.T) {
+	h := start(t, "", config.PermissionModeDefault)
+	r, err := h.b.Submit(context.Background(), chatbackend.Turn{Text: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = collect(t, r)
+	r, err = h.b.Submit(context.Background(), chatbackend.Turn{Text: "replacement"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs := collect(t, r)
+	last := evs[len(evs)-1]
+	if last.Verb != chatstream.VerbRunError || last.Code != "process_error" {
+		t.Fatalf("replaced conversation reported as success: %+v", evs)
 	}
 }
