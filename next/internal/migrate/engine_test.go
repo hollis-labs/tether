@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	gostore "github.com/hollis-labs/libs/core/store"
+	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 
 	"github.com/hollis-labs/tether/next/internal/store/storetest"
 )
@@ -115,10 +117,92 @@ func buildOldFixture(t *testing.T, path string) (err error) {
 	// A blob in a TEXT column of a ranged table (principals, keyed by its integer id): the Postgres target
 	// converts it, counted by parallel workers.
 	exec(`UPDATE principals SET display = X'64697370' WHERE id = 1`)
+	// Class C (S12c): go-messaging's tables, created by the library as the old store did at open, with a
+	// transition id gap, the delivery checkpoint at its position, and an idempotency scope with its NUL
+	// separator; sessions and satellites, including one launch stuck between admission and placement.
+	if err := delivery.ApplySQLiteSchema(context.Background(), db); err != nil {
+		return err
+	}
+	exec(`INSERT INTO messaging_messages (id, digest, idempotency_key, from_urn, group_urn, kind, channel, thread_id, in_reply_to, payload, content_type, metadata_json, created_at)
+		VALUES ('lm-1', 'd', 'k', 'f', '', 'notice', '', '', '', X'00ff', 'application/octet-stream', '{}', 't')`)
+	exec(`INSERT INTO messaging_deliveries (id, message_id, recipient_urn, binding_json, status, attempt_count, active_attempt_id, active_lease_token, lease_holder, dead_letter_reason, created_at, updated_at)
+		VALUES ('ld-1', 'lm-1', 'msg://agent/a', '{}', 'delivered', 1, '', '', '', '', 't', 't')`)
+	for i := 1; i <= 5; i++ {
+		exec(`INSERT INTO messaging_transitions (delivery_id, message_id, attempt_id, from_status, to_status, reason, at) VALUES ('ld-1', 'lm-1', ?, 'a', 'b', '', 't')`, fmt.Sprintf("at-%d", i))
+	}
+	exec(`DELETE FROM messaging_transitions WHERE id = 3`)
+	exec(`UPDATE message_event_checkpoints SET position = 4 WHERE source = 'delivery'`)
+	exec("INSERT INTO messaging_idempotency (scope, sender_urn, idempotency_key, message_id, digest) VALUES (?, 'msg://agent/a', 'key-1', 'lm-1', 'd')", "msg://agent/a\x00key-1")
+	exec(`INSERT INTO session_groups (id, created_at, updated_at) VALUES ('g1', 't', 't')`)
+	for _, s := range [][2]string{{"s-run", "running"}, {"s-stuck", "created"}, {"s-done", "completed"}} {
+		exec(`INSERT INTO sessions (id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at, session_group_id)
+			VALUES (?, 'l', 'p', 'agent-00', 'claude', '/w', ?, 't', 't', 'g1')`, s[0], s[1])
+	}
+	exec(`INSERT INTO workspace_scratch_allocations (session_id, operation_id, session_digest, plan_digest, root, status) VALUES ('s-stuck', 'op', 'sd', 'pd', '/r', 'admitted')`)
+	exec(`INSERT INTO workspace_scratch_allocations (session_id, operation_id, session_digest, plan_digest, root, status) VALUES ('s-run', 'op2', 'sd', 'pd', '/r2', 'admitted')`)
+	exec(`INSERT INTO session_refs (session_id, kind, ref_id, relation, source, at) VALUES ('s-run', 'task', 'T-1', 'created', 'api', 't')`)
+	exec(`INSERT INTO runtime_bindings (id, target_urn, session_id, host_id, attempt_id, generation, leased_at, created_at, updated_at) VALUES ('rb', 'u', 's-run', 'h', 'a', 1, 't', 't', 't')`)
+	exec(`INSERT INTO seat_status (agent_urn, state, since, set_by, updated_at) VALUES ('msg://agent/a', 'working', 't', 'msg://agent/a', 't')`)
+	exec(`INSERT INTO wake_triage (message_id, recipient, seat, class, reason, created_at, updated_at) VALUES ('m-002', 'r', 's', 'action', 'r', 't', 't')`)
+	exec(`INSERT INTO broker_envelopes (id, created_at) VALUES ('be-1', 't')`)
+	exec(`INSERT INTO address_aliases (alias_urn, canonical_urn, created_at) VALUES ('msg://agent/old', 'msg://agent/a', 't')`)
 	// A group message: its parent (registry_entries) is in a later family, so in the target its foreign
 	// key is unresolved until that family lands. Deferred, not a problem.
 	exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at) VALUES ('grp', 'group', 'g', 't', 't')`)
 	exec(`INSERT INTO messages (id, kind, from_urn, to_urn, created_at, group_urn, group_seq) VALUES ('m-grp', 'notice', 'f', 'grp', 'c', 'grp', 1)`)
+	// The families not ported yet (registry, teams, fabric, forums, workers...) are dropped from the
+	// fixture, so a final run covers every remaining table and final-phase behavior can be tested.
+	// TestFinalRefusesUncoveredTables checks the refusal on a source that still has one.
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		names = append(names, n)
+	}
+	_ = rows.Close()
+	inFamily := map[string]bool{}
+	for _, t := range Families["all"] {
+		inFamily[t] = true
+	}
+	var dropped []string
+	for _, n := range names {
+		if _, excluded := exclusions[n]; !excluded && !inFamily[n] {
+			dropped = append(dropped, n)
+		}
+	}
+	// Old triggers that reference a dropped table (the message journal triggers read team_runs) go too.
+	trows, err := db.Query(`SELECT name, sql FROM sqlite_master WHERE type = 'trigger'`)
+	if err != nil {
+		return err
+	}
+	var trigs [][2]string
+	for trows.Next() {
+		var n, q string
+		if err := trows.Scan(&n, &q); err != nil {
+			_ = trows.Close()
+			return err
+		}
+		trigs = append(trigs, [2]string{n, q})
+	}
+	_ = trows.Close()
+	for _, tg := range trigs {
+		for _, d := range dropped {
+			if strings.Contains(tg[1], d) {
+				exec(`DROP TRIGGER "` + tg[0] + `"`)
+				break
+			}
+		}
+	}
+	for _, n := range dropped {
+		exec(`DROP TABLE "` + n + `"`)
+	}
 	return nil
 }
 
@@ -211,9 +295,10 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 		if got := queryInt(t, tgt, `SELECT count(*) FROM principals WHERE id IN (1, 3, 4)`); got != 3 {
 			t.Errorf("principal ids not carried")
 		}
-		// The copy fired no trigger: no journal rows, and the triggers are back afterwards.
-		if got := queryInt(t, tgt, `SELECT count(*) FROM message_event_journal`); got != 0 {
-			t.Errorf("the copy wrote %d journal rows", got)
+		// The copy fired no trigger: the journal holds exactly the source's rows (copied, family C), none
+		// added by the target's message triggers; and the triggers are back afterwards.
+		if got, want := queryInt(t, tgt, `SELECT count(*) FROM message_event_journal`), rep.Counts["message_event_journal"][0]; got != want {
+			t.Errorf("the target's journal holds %d rows, the source's %d", got, want)
 		}
 		if d == gostore.DriverSQLite {
 			if got := queryInt(t, tgt, `SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'messages'`); got < 8 {
@@ -239,17 +324,25 @@ func TestMigrateFromCopiesAndVerifies(t *testing.T) {
 			}
 		}
 
-		final := mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 7}))
+		final := mustOK(t)(e.Run(ctx, Options{Phase: phaseFor(d, PhaseFinal), Batch: 7}))
 		for _, c := range final.Copy {
 			if c.Written != 0 {
 				t.Errorf("final over an unchanged copy wrote %d ranges of %s", c.Written, c.Table)
 			}
 		}
-		var state string
-		if err := tgt.Reader().QueryRowContext(ctx, `SELECT state FROM tether_migration_mark WHERE id = 1`).Scan(&state); err != nil || state != MarkComplete {
-			t.Fatalf("mark = %q, %v", state, err)
+		want := MarkComplete
+		if d == gostore.DriverPostgres {
+			// A final run is refused on Postgres, with its reason, and nothing is marked complete.
+			if _, err := e.Run(ctx, Options{Phase: PhaseFinal, Batch: 7}); !errors.Is(err, ErrIncomplete) {
+				t.Fatalf("final on Postgres: %v, want ErrIncomplete", err)
+			}
+			want = MarkBulk
 		}
-		if got := queryInt(t, tgt, `SELECT count(*) FROM tether_migration_tables`); got != int64(len(Families["all"])) {
+		var state string
+		if err := tgt.Reader().QueryRowContext(ctx, `SELECT state FROM tether_migration_mark WHERE id = 1`).Scan(&state); err != nil || state != want {
+			t.Fatalf("mark = %q, %v, want %q", state, err, want)
+		}
+		if got := queryInt(t, tgt, `SELECT count(*) FROM tether_migration_tables`); got != int64(len(Families["all"])-len(final.Skipped)) {
 			t.Errorf("per-table marks: %d", got)
 		}
 		// After the migration, a new principal continues past the carried mark (5), never reissuing an id.
@@ -306,7 +399,7 @@ func TestMigrateFromFindsAndRepairsDrift(t *testing.T) {
 		if rep.OK() {
 			t.Fatal("verification passed over drift")
 		}
-		final := mustOK(t)(e.Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
+		final := mustOK(t)(e.Run(ctx, Options{Phase: phaseFor(d, PhaseFinal), Batch: 10}))
 		recopied := 0
 		for _, c := range final.Copy {
 			recopied += c.Written
@@ -361,4 +454,13 @@ func TestOpenSourceRefusesANewDatabase(t *testing.T) {
 	if _, err := OpenSource(path); err == nil {
 		t.Fatal("a new-layout database accepted as a source")
 	}
+}
+
+// phaseFor is the phase a test runs to get a full sync: a final run on SQLite, a bulk run on Postgres,
+// where a final run is refused (go-messaging has no Postgres store, so the copy cannot be complete).
+func phaseFor(d gostore.Driver, want Phase) Phase {
+	if d == gostore.DriverPostgres && want == PhaseFinal {
+		return PhaseBulk
+	}
+	return want
 }

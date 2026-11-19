@@ -136,7 +136,7 @@ func (s *Store) TransitionFacts(ctx context.Context, tr delivery.Transition) (Tr
 	if err != nil {
 		return f, err
 	}
-	ds := delivery.NewSQLiteStore(db)
+	ds := delivery.NewSQLiteStore(db, delivery.WithSQLiteClock(storeClock{s}))
 	if f.Message, err = ds.GetMessage(ctx, tr.MessageID); err != nil {
 		return f, err
 	}

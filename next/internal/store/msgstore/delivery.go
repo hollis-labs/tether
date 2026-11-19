@@ -308,7 +308,7 @@ func (s *Store) ReadyDeliveryPage(ctx context.Context, afterID, upToID delivery.
 	if err != nil {
 		return ReadyPage{}, err
 	}
-	if _, err := delivery.NewSQLiteStore(db).ListDeliveries(ctx, delivery.Filter{ReadyOnly: true, Limit: 1}); err != nil {
+	if _, err := delivery.NewSQLiteStore(db, delivery.WithSQLiteClock(storeClock{s})).ListDeliveries(ctx, delivery.Filter{ReadyOnly: true, Limit: 1}); err != nil {
 		return ReadyPage{}, fmt.Errorf("ready delivery page: release expired leases: %w", err)
 	}
 	now := s.now().Format(deliverySQLiteTimeFormat)

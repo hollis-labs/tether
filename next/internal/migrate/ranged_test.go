@@ -58,7 +58,7 @@ func TestRetentionDeleteRewritesOneRange(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = srcB.Close() }()
-		final := mustOK(t)(New(srcB, b, tgt).Run(ctx, Options{Phase: PhaseFinal, Batch: 10}))
+		final := mustOK(t)(New(srcB, b, tgt).Run(ctx, Options{Phase: phaseFor(d, PhaseFinal), Batch: 10}))
 		for _, c := range final.Copy {
 			if c.Table == "events" && c.Written != 1 {
 				t.Fatalf("events: %d ranges rewritten, want 1 (only (0,10])", c.Written)
