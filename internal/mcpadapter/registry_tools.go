@@ -164,7 +164,10 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name: "tether_registry_update_self",
-		Description: "Partial-merge update of a registry row. Returns the refreshed Profile. " +
+		Description: "Update a registry row. Returns the refreshed Profile. " +
+			"To attach an external ID to an existing URN, supply substrate and external_id together and omit patch. " +
+			"The same pair on the same URN is a no-op; a pair owned by another URN or an occupied substrate slot returns conflict without changes. " +
+			"Attachment never mints an identity. Otherwise supply patch for a partial-merge update. " +
 			"Scalar fields (display_name, title, role, description, avatar, project, status, " +
 			"health_status, host_address, last_seen_at, kind_meta, guidelines) update column-wise — only " +
 			"fields present in the patch are touched. " +
@@ -177,7 +180,9 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"Requires the registry.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("urn", "Full URN of the row to update.", true),
-			gomcp.ObjectProp("patch", "UpdatePatch JSON. See tool description for partial-merge semantics.", true),
+			gomcp.ObjectProp("patch", "UpdatePatch JSON; omit when attaching an external ID.", false),
+			gomcp.StringProp("substrate", "With external_id and without patch: substrate of the external ID, e.g. registry.", false),
+			gomcp.StringProp("external_id", "With substrate and without patch: stable external ID to attach to this URN.", false),
 		),
 		Handler: a.handleRegistryUpdateSelf,
 	}, Writes())
@@ -191,7 +196,7 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			gomcp.StringProp("urn", "Full URN of the row to soft-delete.", true),
 		),
 		Handler: a.handleRegistryDeregister,
-	}, Destroys("removes the identity and its bindings; anything addressing it stops resolving"))
+	}, Destroys("marks the profile deprecated; retains external IDs and bindings"))
 
 	a.addTool(s, gomcp.Tool{
 		Name: "tether_registry_merge",
@@ -450,14 +455,26 @@ func (a *Adapter) handleRegistryUpdateSelf(ctx context.Context, args map[string]
 	if urn == "" {
 		return nil, toolError("invalid_request", "urn is required")
 	}
-	patch, err := decodePatchArg(args, "patch")
-	if err != nil {
-		return nil, err
-	}
 	if a.client == nil {
 		return nil, toolError("internal_error", "tether_registry_update_self requires daemon routing; start MCP with tether mcp")
 	}
-	out, err := a.client.Registry().UpdateSelf(ctx, urn, patch)
+	var out registry.Profile
+	var err error
+	substrate, externalID := str(args, "substrate"), str(args, "external_id")
+	_, attachingSubstrate := args["substrate"]
+	_, attachingID := args["external_id"]
+	if attachingSubstrate || attachingID {
+		if _, hasPatch := args["patch"]; hasPatch || substrate == "" || externalID == "" {
+			return nil, toolError("invalid_request", "supply substrate and external_id together, without patch")
+		}
+		out, err = a.client.Registry().AttachExternalID(ctx, urn, substrate, externalID)
+	} else {
+		patch, decodeErr := decodePatchArg(args, "patch")
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		out, err = a.client.Registry().UpdateSelf(ctx, urn, patch)
+	}
 	if err != nil {
 		if isDaemonUnreachable(err) {
 			return nil, daemonUnreachableError(err)
@@ -619,6 +636,8 @@ func mapRegistryErr(err error) error {
 	switch {
 	case errors.Is(err, registry.ErrNotFound):
 		return toolError("not_found", err.Error())
+	case errors.Is(err, registry.ErrExternalIDConflict):
+		return toolError("conflict", err.Error())
 	case errors.Is(err, registry.ErrInvalidRequest):
 		return toolError("invalid_request", err.Error())
 	case errors.Is(err, registry.ErrNoResolver):

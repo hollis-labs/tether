@@ -2576,6 +2576,21 @@ Body: `UpdatePatch` JSON. Partial-merge semantics:
 }
 ```
 
+### `POST /registry/{kind}/{urn}/external-id` — Attach an external ID
+
+Body: `{"substrate":"registry","external_id":"<registry record id>"}`.
+Attaches the pair to an existing URN and returns `200 OK` + Profile. Repeating
+that attachment is a no-op. A pair belonging to another URN, or a different ID
+already occupying this URN's substrate slot, returns `409 conflict` without
+changes. An unknown URN returns `404 not_found`; missing key fields return
+`400 invalid_request`. No URN is minted and profile fields are unchanged.
+Use `?include=external_ids` to include the attachment in the response.
+
+MCP callers use `tether_registry_update_self` with `urn`, `substrate`, and
+`external_id`, omitting `patch`. The existing `registry.write` scope is required.
+After attachment, keyed registration returns this URN with `created=false`,
+and `tether_registry_lookup_by` resolves the pair.
+
 ### `DELETE /registry/{kind}/{urn}` — Deregister
 
 Soft-delete; row's `status` flips to `deprecated`. Child rows

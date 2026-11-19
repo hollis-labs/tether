@@ -1821,3 +1821,56 @@ func TestRegistry_RegisterIdempotent_ConcurrentCallsAgreeOnOneURN(t *testing.T) 
 		t.Fatalf("want exactly one 201 and one URN, got %d created, %d URNs", created, len(urns))
 	}
 }
+
+func TestRegistry_AttachExternalID_ValidationAndConflicts(t *testing.T) {
+	r := newRegServer(t)
+	ctx := context.Background()
+	first, err := r.svc.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Existing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := r.svc.Register(ctx, registry.KindProject, registry.Profile{DisplayName: "Project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := itemURL("agents", first.URN) + "/external-id"
+	for _, tc := range []struct {
+		name, method, path string
+		body               any
+		status             int
+	}{
+		{"attach", http.MethodPost, path, map[string]string{"substrate": "registry", "external_id": "record-35"}, http.StatusOK},
+		{"repeat", http.MethodPost, path, map[string]string{"substrate": "registry", "external_id": "record-35"}, http.StatusOK},
+		{"occupied slot", http.MethodPost, path, map[string]string{"substrate": "registry", "external_id": "replacement"}, http.StatusConflict},
+		{"pair claimed by another kind", http.MethodPost, itemURL("projects", project.URN) + "/external-id", map[string]string{"substrate": "registry", "external_id": "record-35"}, http.StatusConflict},
+		{"missing key", http.MethodPost, path, map[string]string{}, http.StatusBadRequest},
+		{"half key", http.MethodPost, path, map[string]string{"substrate": "registry"}, http.StatusBadRequest},
+		{"malformed body", http.MethodPost, path, "bad", http.StatusBadRequest},
+		{"missing urn", http.MethodPost, itemURL("agents", "msg://agent/agent-mux/agt_missing000") + "/external-id", map[string]string{"substrate": "registry", "external_id": "missing"}, http.StatusNotFound},
+		{"wrong method", http.MethodPatch, path, nil, http.StatusMethodNotAllowed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := r.do(tc.method, tc.path, tc.body)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, tc.status, body)
+			}
+			if tc.status == http.StatusConflict && !bytes.Contains(body, []byte(`"code":"conflict"`)) {
+				t.Fatalf("conflict envelope: %s", body)
+			}
+		})
+	}
+	got, err := r.svc.Lookup(ctx, first.URN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ExternalIDs) != 1 || got.ExternalIDs[0].ExternalID != "record-35" {
+		t.Fatalf("mapping changed: %+v", got.ExternalIDs)
+	}
+	got, err = r.svc.Lookup(ctx, project.URN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ExternalIDs) != 0 {
+		t.Fatalf("conflict attached to project: %+v", got.ExternalIDs)
+	}
+}
