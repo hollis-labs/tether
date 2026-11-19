@@ -54,14 +54,18 @@ func checkHookBinary(path string) error {
 		return errors.New("hook binary is not a regular file")
 	}
 	if fi.Mode().Perm()&0o022 != 0 {
-		return errors.New("hook binary is group- or other-writable")
+		return fmt.Errorf("hook binary %s is group- or other-writable (mode %04o); fix: chmod go-w %s", path, fi.Mode().Perm(), path)
 	}
-	di, err := os.Stat(filepath.Dir(path))
+	dir := filepath.Dir(path)
+	di, err := os.Stat(dir)
 	if err != nil {
 		return err
 	}
+	// A group-writable parent is refused even when the group is the owner's private one: proving that no one
+	// else is in the group means reading every NSS source (files, LDAP, sssd), and membership can change after
+	// the hook is armed, while the binary keeps running in every session.
 	if di.Mode().Perm()&0o022 != 0 && di.Mode()&os.ModeSticky == 0 {
-		return errors.New("hook binary directory is group- or other-writable")
+		return fmt.Errorf("hook binary directory %s is group- or other-writable (mode %04o); fix: chmod 755 %s (install release dirs with install -d -m 0755)", dir, di.Mode().Perm(), dir)
 	}
 	return nil
 }

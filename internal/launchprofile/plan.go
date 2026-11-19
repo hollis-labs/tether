@@ -35,6 +35,9 @@ type Plan struct {
 	// the logical agent's previous one. Never serialized: it is a creation-time
 	// instruction, and the outcome lives on the session row (intent, parent).
 	Continuity string `json:"-"`
+	// RequestingPrincipal is server-set create provenance, consumed by the store.
+	// It is not execution identity and is not sent in the worker launch plan.
+	RequestingPrincipal string `json:"-"`
 	// SeatRelaunch is set by the hub at creation (CW-20261114-0038) when a
 	// continuity "relaunch" create left the seat as the catalog defines it: no
 	// boot-prompt, agent, override or injection payload from the caller. Only such

@@ -231,7 +231,9 @@ agent's `stop_gate: true|false` (overrides the default either way). The hub
 sends it only to workers that advertise `stop-gate`; an older worker launches
 without it. If the session cannot reach the hub's `/mcp` (no agent token or
 hub MCP url), the worker launches without the gate and writes
-`stop-gate.disabled` with the reason in the session workspace.
+`stop-gate.disabled` with the reason in the session workspace. A
+group-writable (0775) release directory is another such reason; see "Hook
+binary permissions" in `docs/worker-service.md`.
 
 ## Seat status
 

@@ -155,6 +155,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	stampTaskID(plan, in.TaskID)
 	plan.App = in.App
 	plan.Continuity = in.Continuity
+	plan.RequestingPrincipal = idempotencyPrincipal(in.IdempotencyPrincipal)
 	stampSeatRelaunch(plan, in)
 	return plan, nil
 }

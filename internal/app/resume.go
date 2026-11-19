@@ -278,6 +278,14 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		plan.BootPrompt = pack.prompt(plan.BootPrompt)
 	}
 
+	// This ordinary worker resume has passed the existing opt-in, exact source,
+	// placement and native-mapping checks above. Stamp creation-time UI lineage
+	// provenance only; it changes neither admission nor the resume grant basis.
+	// Generic resume rows/JSON cannot supply this transient server-owned stamp.
+	if workerID != "" && !opts.NativeOnly {
+		plan.Continuity = "relaunch"
+	}
+
 	providerKind := "cli"
 	if workerID == "" {
 		factory, ok := s.factories[plan.ProviderID]
@@ -315,15 +323,16 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	}
 
 	row := store.SessionRow{
-		ID:             sessID,
-		LaunchID:       plan.LaunchID,
-		ProjectID:      plan.ProjectID,
-		LogicalAgentID: plan.LogicalAgentID,
-		ProviderID:     plan.ProviderID,
-		ProviderKind:   providerKind,
-		WorkerID:       workerID,
-		Workspace:      ws.Root,
-		State:          string(session.StateCreated),
+		ID:                  sessID,
+		RequestingPrincipal: sql.NullString{String: idempotencyPrincipal(opts.IdempotencyPrincipal), Valid: true},
+		LaunchID:            plan.LaunchID,
+		ProjectID:           plan.ProjectID,
+		LogicalAgentID:      plan.LogicalAgentID,
+		ProviderID:          plan.ProviderID,
+		ProviderKind:        providerKind,
+		WorkerID:            workerID,
+		Workspace:           ws.Root,
+		State:               string(session.StateCreated),
 		// Canonical-session lineage (T02, messaging vNext). Before this,
 		// Tether had no session->session lineage at all: the only backward
 		// pointer was checkpoint.SourceSessionID (which session PRODUCED

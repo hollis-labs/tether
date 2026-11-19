@@ -168,6 +168,7 @@ func nativeContinuationRig(t *testing.T) (*identityRig, context.Context, store.S
 
 func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
 	r, ctx, source, options, policy := nativeContinuationRig(t)
+	options.IdempotencyPrincipal = "native-requester"
 	s := r.svc
 	bad := options
 	bad.WorkerSourceGeneration = "stale"
@@ -186,7 +187,7 @@ func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if child.WorkerID != source.WorkerID || child.ParentSessionID.String != source.ID || child.Intent != "resume" || child.State != "running" {
+	if child.RequestingPrincipal.String != "native-requester" || child.WorkerID != source.WorkerID || child.ParentSessionID.String != source.ID || child.Intent != "resume" || child.State != "running" {
 		t.Fatalf("wrong child %+v", child)
 	}
 	mapping, err := r.db.GetSessionProviderMapping(child.ID, "tether", source.ProviderID)
@@ -402,4 +403,90 @@ func TestWorkerNativeAdmissionRejectsWrongReadiness(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkerCreateRelaunchPersistsCreator(t *testing.T) {
+	r, ctx, source, _, _ := nativeContinuationRig(t)
+	in := CreateSessionInput{LaunchID: "seat", Worker: "fake-worker", Continuity: "relaunch", IdempotencyPrincipal: "worker-creator", IdempotencyKey: "worker-create"}
+	child, err := r.svc.CreateSessionWithInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := r.db.GetSession(child.SessionID)
+	if err != nil || row.WorkerID != source.WorkerID || row.Intent != "resume" || row.ParentSessionID.String != source.ID || row.RequestingPrincipal.String != "worker-creator" {
+		t.Fatalf("worker create=%+v %v", row, err)
+	}
+	before, _, err := r.db.ConversationForSession(ctx, child.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := r.svc.CreateSessionWithInput(in)
+	if err != nil || !replay.Replayed || replay.SessionID != child.SessionID {
+		t.Fatalf("replay=%+v %v", replay, err)
+	}
+	after, _, err := r.db.ConversationForSession(ctx, child.SessionID)
+	if err != nil || after.ID != before.ID || after.Generation != before.Generation {
+		t.Fatalf("replay moved conversation: before=%+v after=%+v %v", before, after, err)
+	}
+}
+
+func claudeContinuationRig(t *testing.T) (*identityRig, context.Context, store.SessionRow, api.ResumeOptions, mcpgateway.SessionPolicy) {
+	t.Helper()
+	r := newIdentityRig(t, workerwire.FeatureWorkerResume, workerwire.FeatureSessionCred)
+	s := r.svc
+	s.WorkerResume = true
+	s.CatalogRoot = t.TempDir()
+	s.Catalog.Projects = map[string]config.Project{"p": {ID: "p", RepoRoot: t.TempDir(), Workspace: config.WorkspaceSpec{SessionRoot: t.TempDir(), DefaultMode: "shared"}}}
+	s.Catalog.Agents = map[string]config.Agent{"portfolio-manager": {ID: "portfolio-manager", URN: r.urn}}
+	s.Catalog.Providers = map[string]config.Provider{"claude": {ID: "claude", Provider: "claude", RuntimeKind: config.RuntimeKindStreamingStdio, Command: "claude"}}
+	s.Catalog.Launches = map[string]config.Launch{"seat": {ID: "seat", Project: "p", Agent: "portfolio-manager", Provider: "claude"}}
+	s.Catalog.Global.Catalog.Defaults.WorkspaceRoot = t.TempDir()
+	plan, err := launch.Resolve(s.Catalog, launch.Input{LaunchID: "seat", CatalogRoot: s.CatalogRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.applyCatalogIdentity(plan)
+	source := store.SessionRow{ID: "claude-source", LaunchID: "seat", ProjectID: "p", LogicalAgentID: "portfolio-manager", ProviderID: "claude", WorkerID: r.worker, State: "created", Workspace: t.TempDir()}
+	if err := r.db.CreateSession(source, plan); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := sessionMCPPolicy(source.ID, source.LogicalAgentID, plan, s.Catalog.Global.MCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.UpstreamOwnership, err = s.mcpOwnership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy = policy.Seal()
+	if err := r.db.SaveSessionMCPPolicy(context.Background(), policy); err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(time.Hour)
+	oldToken, err := r.ids.Mint(context.Background(), identity.Principal{ID: "msg://session/local/" + source.ID, Kind: "session", SessionID: source.ID, Scopes: []string{"*"}, ExpiresAt: &expiry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ids.RevokeToken(context.Background(), oldToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.UpdateSessionState(source.ID, "completed", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.UpsertLogicalAgent(agent.LogicalAgent{ID: source.LogicalAgentID, Name: source.LogicalAgentID}, time.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.SetLogicalAgentLaunchID(source.LogicalAgentID, "seat"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.UpsertSessionProviderMapping(source.ID, "tether", "claude", "claude-thread"); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := r.ids.Verify(context.Background(), r.op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), caller)
+	options := api.ResumeOptions{NativeOnly: false, IdempotencyPrincipal: identity.OperatorID}
+	return r, ctx, source, options, policy
 }
