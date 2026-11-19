@@ -29,7 +29,8 @@ none can satisfy the native continuation API's `native_admission` requirement.
 The projection reads existing immutable `session_replacements`, not user input.
 It verifies source/replacement IDs, same nonempty logical agent, both local
 placements, explicit parent/resume, the source plan's committed digest, both
-plans' team marker, and the destination's saved recovery actor/source. The
+plans' team marker and exact nonempty logical-agent match to their rows, and
+the destination's saved recovery actor/source. The
 source actor comes from the original session-port request, independently checked
 against the enrollment's acquired/payload actor and retained binding actor and
 generation. A nonempty source recovery actor must agree too. An initial source
@@ -64,10 +65,13 @@ authenticated launch-command acknowledgement; otherwise:
 ```
 
 Migration 0110 records explicit `continuity=relaunch` provenance in the same
-transaction as an ordinary worker session create. Source/replacement IDs,
+transaction as an ordinary worker session create. The already-supported
+opt-in Claude logical-resume path stamps the same transient server-owned
+provenance only after its existing admission checks; a generic resume row
+or serialized plan cannot supply it. Source/replacement IDs,
 logical agent and both placements come from daemon rows. An empty source worker
 means the source was local; `worker_id` must be nonempty. Native-only and team
-recovery do not synthesize this ordinary-create provenance.
+recovery do not synthesize this ordinary-worker provenance.
 
 Only the hub's authenticated `launch:<replacement>` result path writes the
 immutable receipt, after checking exact `launched` type, session and command
@@ -77,8 +81,11 @@ cannot create it. A retry preserves the original acknowledgement timestamp;
 receipt identity cannot be updated or copied to another attempt. The getter
 rechecks the immutable provenance against current canonical row identities and
 placements, plus parent/resume. Only settled sources and running or settled
-historical destinations are projected; orphaned does not count as settled for
-ordinary worker lineage. Missing historical acknowledgements stay null.
+historical destinations are projected. Orphaned sources and historical
+intermediates qualify only with this exact immutable provenance and authenticated
+acknowledgement; active, detached and unknown states remain unprojected. Missing
+historical acknowledgements stay null. This changes UI eligibility only, never
+launch or native-resume admission.
 
 There is deliberately no provider thread, generation, workroot, token, raw
 command result, custody, protocol payload or binding secret in this receipt.
@@ -95,7 +102,8 @@ immutable replay, copied receipts and no native promotion.
 `internal/app/ui_lineage_test.go` uses actual retained replacement transactions
 for A→B→C, independent actor checks and orphaned-source qualification, plus fake
 authenticated worker command replies for ordinary success, wrong verdicts, rejection and unknown-outcome followed by a
-late state frame.
+late state frame. Authenticated HTTP explicit orphan create/start tests cover
+reload, A→B→C and state-only rejection.
 `cmd/tether/ui_lineage_test.go` verifies the production authenticated item route,
 remote reads, null historical/collection detail and native separation.
 `internal/api/ui_lineage_test.go` covers replacement projection and explicit
