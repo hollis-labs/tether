@@ -19,6 +19,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
 )
@@ -274,11 +275,15 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request, launchID
 }
 
 // deliverChat sends to the newest running session at a turn boundary, or
-// launches a fresh session with the text as its first prompt.
+// creates a continuation with the text as its first prompt. This carries
+// lineage, not a provider-native conversation guarantee.
 func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatSendRequest, principal string) (resp ChatSendResponse, status int, code, msg string) {
 	row, err := s.newestLaunchSession(launchID)
 	if err != nil {
 		return resp, http.StatusInternalServerError, CodeInternalError, "session lookup failed"
+	}
+	if row != nil && row.State != string(agentsessions.StateRunning) && !session.State(row.State).Terminal() {
+		return resp, http.StatusConflict, CodeAgentWorking, "session recovery must settle before relaunch"
 	}
 	if row != nil && row.State == string(agentsessions.StateRunning) {
 		if h, ok := s.Service.RuntimeHealth(row.ID); ok {
@@ -290,13 +295,15 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 				case errors.Is(err, agentsessions.ErrTurnInFlight):
 					return resp, http.StatusConflict, CodeAgentWorking, "agent is mid-turn"
 				case errors.Is(err, agentsessions.ErrSessionNotRunning):
-					// Raced the session ending: fall through to a fresh launch.
+					// Raced the session ending: fall through to a continuation.
 				default:
 					return resp, http.StatusBadGateway, CodeTurnFailed, "turn not delivered: " + err.Error()
 				}
 			} else {
 				return ChatSendResponse{LaunchID: launchID, SessionID: row.ID, Mode: "turn"}, http.StatusOK, "", ""
 			}
+		} else {
+			return resp, http.StatusBadGateway, CodeWorkerUnavailable, "running session health is unavailable; refusing replacement"
 		}
 	}
 
@@ -310,6 +317,7 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 		PromptInput:          chatPromptInput(r),
 		IdempotencyKey:       "chat:" + launchID + ":" + req.IdempotencyKey,
 		IdempotencyPrincipal: principal,
+		Continuity:           "relaunch",
 	})
 	if err != nil {
 		switch {

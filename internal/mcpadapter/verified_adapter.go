@@ -77,3 +77,19 @@ func (a *Adapter) verifiedCallerContext(ctx context.Context) context.Context {
 	}
 	return callcontext.WithSnapshot(ctx, api.ResolveCallerContext(ctx, sessions, bindings))
 }
+
+// requestingPrincipal records only transport-verified identity, never a claimed
+// session, an MCP argument or a legacy token label. A bound daemon view wins
+// over any identity supplied by the dispatch context.
+func (a *Adapter) requestingPrincipal(ctx context.Context) string {
+	if a.principal != nil {
+		if a.principal.Verified {
+			return a.principal.ID
+		}
+		return ""
+	}
+	if p, ok := identity.FromContext(ctx); ok && p.Verified {
+		return p.ID
+	}
+	return ""
+}

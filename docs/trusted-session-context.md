@@ -209,10 +209,14 @@ to match the daemon row.
 
 `continuity` (`fresh`, default, or `relaunch`) is accepted by `POST /sessions`,
 the MCP tool `tether_session_create` and `tether launch --continuity`. It is
-fixed at create; `tether_session_launch` takes none. `relaunch` records intent
+fixed at create; `tether_session_launch continuity=relaunch` only asserts an
+already-created resume intent and nonempty parent and refuses a fresh session. `relaunch` records intent
 `resume` with `parent_session_id` set to the logical agent's newest earlier
 session; it resumes no provider conversation. Any other value is refused with
 `invalid_request`.
+
+An unreadable parent lookup refuses creation; it never silently turns a requested
+continuation into a fresh start. With no earlier session, creation is fresh.
 
 Who must send it:
 
@@ -223,3 +227,23 @@ Who must send it:
 - Any other bounce/reboot relaunch (a person, Agent Ops, a script) goes through
   create/launch and must pass `continuity: "relaunch"` itself. No component in
   this repository performs those relaunches.
+
+
+The Tether chat-send route also sets `continuity=relaunch` when it needs to
+create a worker session; the first create has no parent, later creates retain
+lineage. This is separate from native provider resume and its admission proof.
+See [the caller inventory](session-continuity-audit.md) for recovery paths and
+history semantics.
+
+Session creation persists the server-selected creator in
+`sessions.requesting_principal` (migration 0109). HTTP create and bootstrap use
+the verified caller, including requests without an idempotency key; resume uses
+the server-set caller from ResumeOptions. Unauthenticated local/in-process
+creates record `anonymous`. Native MCP daemon views carry their middleware-verified
+principal directly into create/resume, including unkeyed requests; client-supplied
+identity/session labels cannot choose this value. Boot recovery records `daemon:boot-recovery`, and
+retained team replacement records `team-runtime`. Historical rows remain NULL;
+creator provenance is never inherited from a parent or treated as execution
+authority. A keyed replay keeps the original row and creator. Create logging
+records principal, intent and parent after commit; no credential is persisted
+or logged here. The API request cannot set this column.

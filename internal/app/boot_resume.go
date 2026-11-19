@@ -121,7 +121,7 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 				s.bootResumeOutcome(agentID, parent.ID, "failed", "native_only_source_changed")
 				return
 			}
-			result, err := s.ResumeLogicalAgentWithContext(ctx, agentID, api.ResumeOptions{NativeOnly: true, SourceSessionID: id, ResumeWorkRoot: option.NativeOnlyWorkRoots[id]})
+			result, err := s.ResumeLogicalAgentWithContext(ctx, agentID, api.ResumeOptions{IdempotencyPrincipal: "daemon:boot-recovery", NativeOnly: true, SourceSessionID: id, ResumeWorkRoot: option.NativeOnlyWorkRoots[id]})
 			if err != nil {
 				s.bootResumeOutcome(agentID, id, "failed", "native_only_resume_refused")
 				return
@@ -159,7 +159,7 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 	if pack.Unread == 0 && !pack.openAssignment && len(pack.Rosters) == 0 {
 		return
 	}
-	result, err := s.ResumeLogicalAgentWithContext(ctx, agentID, api.ResumeOptions{})
+	result, err := s.ResumeLogicalAgentWithContext(ctx, agentID, api.ResumeOptions{IdempotencyPrincipal: "daemon:boot-recovery"})
 	if err != nil {
 		s.bootResumeOutcome(agentID, parent.ID, "failed", "resume_refused")
 		log.Printf("boot recovery: agent %s: %v", agentID, err)

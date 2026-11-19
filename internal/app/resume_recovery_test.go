@@ -35,6 +35,10 @@ func TestResumeRecoveryStates(t *testing.T) {
 			}
 			svc.factories = map[string]RuntimeFactory{"stub": stub.New}
 			runningSession(t, svc, "parent", "fake", 123, "")
+			// The shared fake fixture omits plan identity; real create persists it.
+			if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=json_set(plan_json,'$.logical_agent_id','worker') WHERE session_id='parent'`); err != nil {
+				t.Fatal(err)
+			}
 			if err := svc.Store.SetLogicalAgentLaunchID("worker", "l1"); err != nil {
 				t.Fatal(err)
 			}
@@ -64,6 +68,10 @@ func TestResumeRecoveryStates(t *testing.T) {
 			row, err := svc.Store.GetSession(res.SessionID)
 			if err != nil || row.ParentSessionID.String != "parent" || row.Intent != "resume" || row.State != "running" {
 				t.Fatalf("resumed row = %+v %v", row, err)
+			}
+			proof, err := svc.Store.GetHubResumeLineage(context.Background(), res.SessionID)
+			if err != nil || proof == nil || proof.SourceSessionID != "parent" || proof.ReplacementSessionID != res.SessionID || proof.LogicalAgentID != "worker" {
+				t.Fatalf("hub orphan lineage: %+v %v", proof, err)
 			}
 			parent, _ := svc.Store.GetSession("parent")
 			if parent.State != "orphaned" {

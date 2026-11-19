@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -170,21 +169,20 @@ func (s *Service) stopCascadeMember(id string) error {
 // state, never from the dying session, so a row that never reached completed
 // after a crash or power loss still counts as ended. It is a newest-row
 // heuristic, not proof the parent ended: it can be a still-running duplicate
-// launch or a row from another launch of the same agent. A store error is
-// logged and the launch falls back to fresh.
-func (s *Service) continuation(plan *launch.Plan) (string, sql.NullString) {
+// launch or a row from another launch of the same agent. A store error refuses
+// creation rather than silently losing requested lineage.
+func (s *Service) continuation(plan *launch.Plan) (string, sql.NullString, error) {
 	if plan == nil || plan.Continuity != "relaunch" || plan.LogicalAgentID == "" {
-		return "", sql.NullString{}
+		return "", sql.NullString{}, nil
 	}
 	prev, err := s.Store.LatestSessionForLogicalAgent(plan.LogicalAgentID)
 	if err != nil {
-		log.Printf("app: relaunch parent lookup for %q failed, launching fresh: %v", plan.LogicalAgentID, err)
-		return "", sql.NullString{}
+		return "", sql.NullString{}, fmt.Errorf("relaunch parent lookup for %q: %w", plan.LogicalAgentID, err)
 	}
 	if prev == "" {
-		return "", sql.NullString{}
+		return "", sql.NullString{}, nil
 	}
-	return "resume", sql.NullString{String: prev, Valid: true}
+	return "resume", sql.NullString{String: prev, Valid: true}, nil
 }
 
 // createContinued picks the continuation parent and inserts the row under one
@@ -196,6 +194,18 @@ func (s *Service) createContinued(row store.SessionRow, plan *launch.Plan, key *
 		s.continuationMu.Lock()
 		defer s.continuationMu.Unlock()
 	}
-	row.Intent, row.ParentSessionID = s.continuation(plan)
+	var err error
+	row.Intent, row.ParentSessionID, err = s.continuation(plan)
+	if err != nil {
+		return err
+	}
+	principal := ""
+	if plan != nil {
+		principal = plan.RequestingPrincipal
+	}
+	if key != nil {
+		principal = key.PrincipalID
+	}
+	row.RequestingPrincipal = sql.NullString{String: idempotencyPrincipal(principal), Valid: true}
 	return s.Store.CreateSessionKeyed(row, plan, key)
 }

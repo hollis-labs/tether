@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/sessionpeek"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerhub"
 )
 
 func (a *Adapter) registerSessionTools(s *gomcp.Server) {
@@ -347,28 +348,39 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		}), nil
 	}
 
-	// In-process path (tests, dev with no daemon).
-	var res *app.Launched
-	var err error
-	if withInput {
-		res, err = a.svc.CreateSessionWithInput(app.CreateSessionInput{
-			LaunchID:           launchID,
-			BootPromptOverride: bootPrompt,
-			AgentFile:          agentFile,
-			AgentInline:        agentInline,
-			BootProfileFile:    bootProfile,
-			Override:           override,
-			BootPromptAppend:   promptAppend,
-			Injection:          injection,
-			IdempotencyKey:     idempotencyKey,
-			Continuity:         continuity,
-		})
-	} else if bootPrompt != "" {
-		res, err = a.svc.CreateSessionWithBootPrompt(launchID, bootPrompt)
-	} else {
-		res, err = a.svc.CreateSession(launchID)
+	// Native daemon views bypass HTTP; retain its placement refusal semantics.
+	if a.svc == nil {
+		return nil, toolError("daemon_unavailable", "session creation needs the daemon service")
 	}
+	if worker == "" {
+		var err error
+		worker, err = a.svc.DefaultWorkerForLaunch(launchID)
+		if err != nil {
+			return nil, toolError("internal_error", err.Error())
+		}
+	}
+	if requireWorker && worker == "" {
+		return nil, toolError(api.CodeWorkerNotConfigured, "launch "+launchID+" has no worker and require_worker is set; refusing to run on the hub")
+	}
+	// Native daemon views bypass HTTP, so carry their verified creator too.
+	res, err := a.svc.CreateSessionWithInput(app.CreateSessionInput{
+		Worker:               worker,
+		LaunchID:             launchID,
+		BootPromptOverride:   bootPrompt,
+		AgentFile:            agentFile,
+		AgentInline:          agentInline,
+		BootProfileFile:      bootProfile,
+		Override:             override,
+		BootPromptAppend:     promptAppend,
+		Injection:            injection,
+		IdempotencyKey:       idempotencyKey,
+		IdempotencyPrincipal: a.requestingPrincipal(ctx),
+		Continuity:           continuity,
+	})
 	if err != nil {
+		if errors.Is(err, workerhub.ErrNotEnrolled) || errors.Is(err, workerhub.ErrOffline) || errors.Is(err, workerhub.ErrChannelUnavailable) {
+			return nil, toolError(api.CodeWorkerUnavailable, err.Error())
+		}
 		if errors.Is(err, store.ErrIdempotencyConflict) {
 			return nil, toolError("idempotency_conflict", err.Error())
 		}

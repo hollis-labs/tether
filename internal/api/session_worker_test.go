@@ -37,12 +37,12 @@ func TestHandleCreateSession_DefaultsToLaunchWorker(t *testing.T) {
 		t.Fatalf("inputs = %+v, want worker other", svc.createInputs)
 	}
 
-	// A launch without a worker stays on the plain path.
+	// A launch without a worker still carries creator provenance through input.
 	cat = &fakeCatalogLoader{cat: &config.Catalog{Launches: map[string]config.Launch{"pm": {}}}}
 	svc = &fakeLaunchService{createRes: LaunchResult{SessionID: "s3"}}
 	postSession(t, svc, cat, LaunchRequest{Launch: "pm"})
-	if len(svc.createInputs) != 0 || len(svc.createIDs) != 1 {
-		t.Fatalf("inputs=%+v ids=%v, want plain CreateSession", svc.createInputs, svc.createIDs)
+	if len(svc.createInputs) != 1 || svc.createInputs[0].Worker != "" || len(svc.createIDs) != 1 {
+		t.Fatalf("inputs=%+v ids=%v, want unplaced CreateSessionWithInput", svc.createInputs, svc.createIDs)
 	}
 }
 
