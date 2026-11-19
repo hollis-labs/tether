@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"github.com/hollis-labs/tether/internal/workerhub"
 	"log"
 	"net"
@@ -35,7 +36,10 @@ type Config struct {
 	RemoteListener RemoteListenerConfig
 	Modules        *environment.Profile
 	TeamsEnabled   bool
-	IdentityMode   identity.Mode
+	// ChatWire is daemon.chat_wire.enabled: serve the chat wire for this
+	// daemon's seats at /chat/v1 (CW-20261118-0011). Default off.
+	ChatWire     bool
+	IdentityMode identity.Mode
 	// IdentityPoints overrides IdentityMode per enforcement point (CW-20261010-0268).
 	IdentityPoints map[string]identity.Mode
 	// ServiceTokenRequest is identity.service_request: "auto" issues a session's request
@@ -79,6 +83,9 @@ type Server struct {
 	// SandboxProtect, when set, fills /health's sandbox_protect field. It
 	// runs on each /health request, so it must be cheap or cache.
 	SandboxProtect func() *SandboxProtectHealth
+	// WAL, when set, reports the state database's write-ahead log on /health
+	// (CW-20261114-0166).
+	WAL func() *WALHealth
 	// Service is the LaunchService the HTTP handlers dispatch to. When nil,
 	// only /health is registered — useful for tests that don't need the
 	// session surface.
@@ -118,9 +125,15 @@ type Server struct {
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
 	// Seats backs typed-message pending replies and seat status (CW-20261114-0013).
-	Seats    api.SeatStore
-	Channels api.ChannelService
-	Routing  api.RoutingService
+	Seats api.SeatStore
+	// Aliases is the address alias directory (CW-20261114-0067).
+	Aliases api.AddressAliasStore
+	// OperatorAttestation and OperatorReplies back operator-attested replies
+	// (CW-20261114-0152).
+	OperatorAttestation func() *operatorattest.Config
+	OperatorReplies     api.OperatorReplyStore
+	Channels            api.ChannelService
+	Routing             api.RoutingService
 	// Teams is supplied only by the opt-in daemon composition path.
 	Teams api.TeamOps
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
@@ -130,6 +143,9 @@ type Server struct {
 	DeliveryClaims api.DeliveryClaimer
 	// Attachments is optional; when set, GET /sessions/{id}/attachments works.
 	Attachments api.AttachmentStore
+	// ChatWire is the chat wire's handler (internal/chatwire, CW-20261118-0011),
+	// mounted at /chat/v1. Set only when Config.ChatWire is on.
+	ChatWire http.Handler
 	// Registry is optional; when set, /registry/* federation directory
 	// endpoints are mounted. Populated by app.Service.Registry at daemon
 	// startup.
@@ -201,6 +217,8 @@ type Server struct {
 	// MCP is the injected daemon-owned Streamable HTTP/UDS gateway. Its
 	// lifecycle closes sessions/streams and upstreams before HTTP/store drain.
 	MCP http.Handler
+	// MCPBackend is the co-located gateway admission/native seam, Unix socket only.
+	MCPBackend http.Handler
 	// RemoteMCPSessions looks up a worker session for the remote /mcp gate; it defaults to Service when that
 	// implements GetSession. Without a lookup, an issuer or an MCP handler, /mcp stays unavailable remotely.
 	RemoteMCPSessions sessionLookup
@@ -242,6 +260,11 @@ type Server struct {
 	// app.Service at daemon startup.
 	EventRetention EventRetention
 
+	// GhostReaper, when set, serves POST /ghosts/reap: the ghost session, dead
+	// shim custody and stale worker cleanup (CW-20261114-0007). *app.Service
+	// satisfies it.
+	GhostReaper GhostReaper
+
 	// Hardening is optional; when set, /health reports what it returns. The
 	// composition root points it at the Service's launch-hardening status.
 	Hardening func() *HealthHardening
@@ -254,6 +277,12 @@ type Server struct {
 // is done, as Manager.Shutdown does.
 type SessionDrainer interface {
 	DrainSessions(ctx context.Context) error
+}
+
+// GhostReaper classifies (and, with apply, cleans up) ghost sessions, dead
+// shim custody and stale workers. The report is JSON-encoded as returned.
+type GhostReaper interface {
+	ReapGhostsReport(ctx context.Context, apply bool, backup string) (any, error)
 }
 
 // EventRetention is the narrow seam Run uses to drive the events retention
@@ -567,6 +596,9 @@ func (s *Server) handler(remote bool) http.Handler {
 		router.HandleFunc("POST /workers/grants", s.Workers.GrantsHTTP)
 		router.HandleFunc("POST /workers/reap", s.Workers.ReapHTTP)
 	}
+	if s.GhostReaper != nil {
+		router.HandleFunc("POST /ghosts/reap", s.handleGhostReap)
+	}
 	if remote {
 		router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 			s.handleListenerHealth(w, identity.Enforce, s.Config.RemoteListener.ListenAddr)
@@ -599,6 +631,11 @@ func (s *Server) handler(remote bool) http.Handler {
 		// answers 404 from the mux and never reaches the handler.
 		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.ServiceTokensPath + "/revoke", api.ServiceTokensPath + "/rotate-key", api.ServiceTokenRequestPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
 			router.Handle(path, issuerHandler)
+		}
+	}
+	if s.MCPBackend != nil && !remote && strings.HasPrefix(s.Config.ListenAddr, "unix:") {
+		for _, path := range []string{"/gateway/mcp/admit", "/gateway/mcp/remote/admit", "/gateway/mcp/native", "/gateway/mcp/remote/native"} {
+			router.Handle(path, s.MCPBackend)
 		}
 	}
 	if s.MCP != nil && !remote {
@@ -635,27 +672,31 @@ func (s *Server) handler(remote bool) http.Handler {
 			Digests:             s.Digests,
 			MessageStore:        s.MessageStore,
 			Seats:               s.Seats,
+			Aliases:             s.Aliases,
 			Channels:            s.Channels,
 			Routing:             s.Routing,
 			Teams:               teams,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,
+			ChatWire:            s.ChatWire,
 			ProxyEvents:         s.ProxyEvents,
 			Registry:            s.Registry,
 			Settings:            s.Settings,
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			CatalogReload:       s.CatalogReload,
 
-			CatalogApply:     s.CatalogApply,
-			Groups:           s.Groups,
-			LogsDir:          s.LogsDir,
-			SessionBootstrap: s.SessionBootstrap,
-			DeliveryTrace:    s.DeliveryTrace,
-			DeliveryRepair:   s.DeliveryRepair,
-			Retention:        s.Retention,
-			RoutingReplies:   s.RoutingReplies,
-			IdentityMode:     s.Config.IdentityMode,
-			IdentityAudit:    s.recordIdentityObservation,
+			CatalogApply:        s.CatalogApply,
+			Groups:              s.Groups,
+			LogsDir:             s.LogsDir,
+			SessionBootstrap:    s.SessionBootstrap,
+			DeliveryTrace:       s.DeliveryTrace,
+			DeliveryRepair:      s.DeliveryRepair,
+			Retention:           s.Retention,
+			RoutingReplies:      s.RoutingReplies,
+			IdentityMode:        s.Config.IdentityMode,
+			IdentityAudit:       s.recordIdentityObservation,
+			OperatorAttestation: s.OperatorAttestation,
+			OperatorReplies:     s.OperatorReplies,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -771,6 +812,19 @@ type Health struct {
 	// (CW-20261001-0142): decided from the daemon's environment, which `tether
 	// doctor` cannot see from its shell. Absent from an older daemon.
 	SandboxProtect *SandboxProtectHealth `json:"sandbox_protect,omitempty"`
+
+	// WAL is the state database's write-ahead log: its size and how long its
+	// checkpoint sequence has stood still (CW-20261114-0166). A long-held
+	// reader shows as a growing wal_bytes with a rising checkpoint age.
+	WAL *WALHealth `json:"wal,omitempty"`
+}
+
+// WALHealth is the /health view of the state database's WAL.
+type WALHealth struct {
+	WALBytes               int64  `json:"wal_bytes"`
+	CheckpointSeq          uint32 `json:"checkpoint_seq"`
+	LastCheckpointAgeSec   int64  `json:"last_checkpoint_age_sec"`
+	LastCheckpointObserved bool   `json:"last_checkpoint_observed"`
 }
 
 // HealthHardening is the launch-hardening state in GET /health.
@@ -903,6 +957,9 @@ func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode,
 	}
 	h.RemoteMCPDenials = s.RemoteMCPDenials()
 	h.RemoteMCP = s.RemoteMCPStatus()
+	if s.WAL != nil {
+		h.WAL = s.WAL()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(h)
 }
@@ -1025,6 +1082,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/messages/notify", s.MessageStore != nil},
 		{"/messages/request", s.MessageStore != nil},
 		{"/messages/thread/", s.MessageStore != nil},
+		{"/operator-attestation/challenges/", s.MessageStore != nil},
 		{"/messages/retention/candidates", s.MessageStore != nil},
 
 		// Seat status (CW-20261114-0013). /messages/post and
@@ -1060,6 +1118,8 @@ func (s *Server) apiMounts() []apiMount {
 		// without a mount and 404'd in production.
 		{"/chat/agents", hasService && s.Catalog != nil},
 		{"/chat/agents/", hasService && s.Catalog != nil},
+		// The chat wire (CW-20261118-0011), only when daemon.chat_wire is on.
+		{"/chat/v1/", s.ChatWire != nil},
 
 		// "/registry/" is a subtree pattern -- it already covers
 		// /registry/bindings* and /registry/scoped-bindings* (T07, T08)
@@ -1153,4 +1213,30 @@ func serviceRequestModeLabel(mode string) string {
 		return api.ServiceRequestAuto
 	}
 	return api.ServiceRequestApproval
+}
+
+// handleGhostReap is POST /ghosts/reap {"apply": bool, "backup": "<path>"}: a dry run by default.
+func (s *Server) handleGhostReap(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Apply  bool   `json:"apply"`
+		Backup string `json:"backup"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+	}
+	report, err := s.GhostReaper.ReapGhostsReport(r.Context(), in.Apply, in.Backup)
+	if err != nil {
+		code := http.StatusInternalServerError
+		var bad interface{ BadRequest() bool }
+		if errors.As(err, &bad) && bad.BadRequest() {
+			code = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
 }

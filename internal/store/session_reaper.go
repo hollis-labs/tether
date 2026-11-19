@@ -21,7 +21,9 @@ type ReaperSession struct {
 // reaperActivityKinds are the only event kinds that count as genuine runtime activity. Noise kinds
 // (session.output, session.shim_status, session.state_changed re-asserts) never do: a dead session whose
 // recovery bookkeeping keeps writing diagnostics must not look alive, and must not be re-scanned for them.
-var reaperActivityKinds = []string{"session.activity", "session.turn_output", "session.turn_routed", "tool_call_start", "tool_call_end", "provider.permission_denied"}
+// Tool calls are logged as tool.call.*; the legacy tool_call_* kinds stay for rows written before
+// CW-20261113-0009.
+var reaperActivityKinds = []string{"session.activity", "session.turn_output", "session.turn_routed", "tool.call.started", "tool.call.finished", "tool_call_start", "tool_call_end", "provider.permission_denied"}
 
 // ReaperCandidates lists hub-local sessions the reaper may act on, without touching the events table.
 // Start and activity times are loaded lazily with ReaperTimes, only for sessions that are actually examined.
@@ -235,6 +237,43 @@ func (s *Store) RecordWorkerOutput(ctx context.Context, sessionID string, seq in
 	}
 	if err = s.publishOutboxEvent(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: sessionID, Kind: "session.output", At: at, PayloadJSON: payloadJSON}); err != nil {
 		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.EventsCommitted()
+	return nil
+}
+
+// WorkerOutput is one output frame RecordWorkerOutputs commits.
+type WorkerOutput struct {
+	SessionID   string
+	Seq         int64
+	PayloadJSON string
+	At          time.Time
+}
+
+// RecordWorkerOutputs is RecordWorkerOutput for a batch (CW-20261115-0027):
+// every frame's cursor and session.output event in ONE transaction, so a batch
+// costs one commit (one WAL fsync under synchronous=FULL), not one per frame.
+// All or nothing: on an error none of the batch is recorded, and the worker
+// replays it from the stored cursors.
+func (s *Store) RecordWorkerOutputs(ctx context.Context, outs []WorkerOutput) error {
+	if len(outs) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, o := range outs {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO session_worker_seq(session_id,last_seq) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET last_seq=excluded.last_seq`, o.SessionID, o.Seq); err != nil {
+			return err
+		}
+		if err = s.publishOutboxEvent(ctx, tx, events.Event{Scope: events.ScopeSession, SessionID: o.SessionID, Kind: "session.output", At: o.At, PayloadJSON: o.PayloadJSON}); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err

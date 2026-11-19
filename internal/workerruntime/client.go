@@ -167,6 +167,8 @@ type Worker struct {
 	Caps      func(context.Context) json.RawMessage
 	Inventory func() []workerwire.Session
 	Hosts     func() []workerwire.Host
+	// Restore returns the counts of the executor's start-up restore for the hello.
+	Restore   func() *workerwire.RestoreCounts
 	Command   func(context.Context, workerwire.Frame) error
 	Activity  func(context.Context, time.Time) (*workerwire.Activity, error)
 	OnConnect func()
@@ -312,7 +314,11 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 	if w.Bindings != nil {
 		bindings = w.Bindings()
 	}
-	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents, workerwire.FeatureStopGate}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts}); err != nil {
+	var restored *workerwire.RestoreCounts
+	if w.Restore != nil {
+		restored = w.Restore()
+	}
+	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureCodexResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents, workerwire.FeatureStopGate}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts, Restore: restored}); err != nil {
 		return err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))

@@ -1,0 +1,2 @@
+- `tether_message_post` (CW-20261118-0024) now declares `deliverable`, `status` and `evidence`, so it can send a request and a settling reply; before, strict argument checking refused `deliverable` and every `kind: request` failed.
+- Wake contract doc (CW-20261118-0024): exact typed request body for HTTP and MCP, and reply `awaiting` semantics (an omitted awaiting on a reply always means the asker).

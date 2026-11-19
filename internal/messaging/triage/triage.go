@@ -7,6 +7,7 @@ package triage
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
@@ -38,6 +39,10 @@ type Input struct {
 	Urgency     string // very-low | low | normal | high | ""
 	// RecipientHandle is the seat's @handle, for envelope awaiting.
 	RecipientHandle string
+	// ReplyToOwn is set when the message answers mail this seat sent (its
+	// in_reply_to names a message from the recipient): a reply reaches the
+	// asker whatever its kind (CW-20261117-0002).
+	ReplyToOwn bool
 }
 
 // Result is a classification and why.
@@ -57,12 +62,17 @@ type Result struct {
 // attention=none never overrides an action rule.
 //
 //	human   the operator wrote                                  (from_operator)
-//	        envelope attention=human (as set by the sender, or   (attention_human)
+//	action  envelope on_behalf_of from a sender that is not a    (on_behalf_of)
+//	        user address: an assistant acting for someone is
+//	        never that someone, whatever its attention or
+//	        recipients (CW-20261114-0116)
+//	human   envelope attention=human (as set by the sender, or   (attention_human)
 //	        the default when the operator is to/awaiting)
 //	action  urgency high                                        (urgency_high)
+//	        a reply to mail this seat sent                      (reply_to_own)
 //	        envelope awaiting this seat                         (awaiting_recipient)
 //	        envelope question|decision|approval_request|
-//	                 escalation|handoff                         (envelope_kind)
+//	                 escalation|handoff|request                 (envelope_kind)
 //	        untyped request|escalation|handoff                  (transport_kind)
 //	read    envelope attention=none (explicit), auto-settled    (attention_none)
 //	        untyped urgency very-low, left unread               (urgency_very_low)
@@ -76,6 +86,9 @@ func Classify(in Input) Result {
 	if in.From == OperatorURN {
 		return Result{Class: Human, Reason: "from_operator", Typed: typed}
 	}
+	if typed && env.OnBehalfOf != "" && !strings.HasPrefix(in.From, "msg://user/") {
+		return Result{Class: Action, Reason: "on_behalf_of", Typed: true}
+	}
 	if typed && env.EffectiveAttention() == envelope.AttentionHuman {
 		return Result{Class: Human, Reason: "attention_human", Typed: true}
 	}
@@ -83,12 +96,15 @@ func Classify(in Input) Result {
 	if in.Urgency == "high" {
 		return Result{Class: Action, Reason: "urgency_high", Typed: typed}
 	}
+	if in.ReplyToOwn {
+		return Result{Class: Action, Reason: "reply_to_own", Typed: typed}
+	}
 	if typed {
 		if env.Awaiting != "" && env.Awaiting == in.RecipientHandle {
 			return Result{Class: Action, Reason: "awaiting_recipient", Typed: true}
 		}
 		switch env.Kind {
-		case envelope.KindQuestion, envelope.KindDecision, envelope.KindApprovalRequest, envelope.KindEscalation, envelope.KindHandoff:
+		case envelope.KindQuestion, envelope.KindDecision, envelope.KindApprovalRequest, envelope.KindEscalation, envelope.KindHandoff, envelope.KindRequest:
 			return Result{Class: Action, Reason: "envelope_kind", Typed: true}
 		case envelope.KindUpdate, envelope.KindMessage:
 			// read or fyi below

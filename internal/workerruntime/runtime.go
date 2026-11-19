@@ -51,6 +51,7 @@ func NewRuntime(root, version string) (*Runtime, error) {
 	}
 	w.Inventory = executor.Inventory
 	w.Hosts = executor.ScanHosts
+	w.Restore = executor.RestoreCounts
 	mail := &outpostmail.Server{Socket: cfg.MailSocket, State: filepath.Join(root, "mail.json"), AllowedUIDs: cfg.MailUIDs, GID: -1}
 	if mail.Socket == "" {
 		mail.Socket = filepath.Join(root, "run", "mail.sock")

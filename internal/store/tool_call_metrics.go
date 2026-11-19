@@ -7,6 +7,14 @@ import (
 	"github.com/hollis-labs/tether/internal/telemetry"
 )
 
+// toolCallFinishedRows selects one row per completed call (CW-20261113-0009).
+// A call is logged as tool.call.finished; until then it was logged twice, as
+// tool_call_end and as a tool.call.finished without discovery_mode. Reading the
+// legacy rows plus only the finished rows that carry discovery_mode counts every
+// call once across the cutover, and reads only tool.call.finished once the
+// legacy rows age out. The canonical payload names the tool "tool".
+const toolCallFinishedRows = `(kind='tool_call_end' OR (kind='tool.call.finished' AND json_type(payload_json,'$.discovery_mode') IS NOT NULL))`
+
 // QueryToolCallMetrics aggregates durable completed calls before applying the
 // group limit. It never scans argument/result values or the proxy projection.
 func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQuery) ([]telemetry.MetricGroup, error) {
@@ -14,7 +22,7 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 	if q.ByMode {
 		modeExpr, groupBy = "COALESCE(json_extract(payload_json,'$.discovery_mode'),'')", "1,2,3,4"
 	}
-	sqlText := `SELECT COALESCE(json_extract(payload_json,'$.tool_name'),''),
+	sqlText := `SELECT COALESCE(json_extract(payload_json,'$.tool_name'),json_extract(payload_json,'$.tool'),''),
  COALESCE(json_extract(payload_json,'$.server'),''),
  CASE WHEN json_extract(payload_json,'$.ok')=1 THEN 'ok' ELSE COALESCE(NULLIF(json_extract(payload_json,'$.error_class'),''),'upstream_error') END,
  ` + modeExpr + `,
@@ -32,9 +40,9 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 			sqlText += ", SUM(CASE WHEN " + condition + " THEN 1 ELSE 0 END)"
 		}
 	}
-	sqlText += ` FROM events WHERE kind='tool_call_end' AND json_valid(payload_json)`
+	sqlText += ` FROM events WHERE json_valid(payload_json) AND ` + toolCallFinishedRows
 	var args []any
-	for _, filter := range []struct{ sql, value string }{{" AND json_extract(payload_json,'$.tool_name')=?", q.Tool}, {" AND json_extract(payload_json,'$.server')=?", q.Upstream}, {" AND json_extract(payload_json,'$.discovery_mode')=?", q.Mode}} {
+	for _, filter := range []struct{ sql, value string }{{" AND COALESCE(json_extract(payload_json,'$.tool_name'),json_extract(payload_json,'$.tool'))=?", q.Tool}, {" AND json_extract(payload_json,'$.server')=?", q.Upstream}, {" AND json_extract(payload_json,'$.discovery_mode')=?", q.Mode}} {
 		if filter.value != "" {
 			//nolint:gosec // SQL fragments above are constants; selector values are bound below.
 			sqlText += filter.sql

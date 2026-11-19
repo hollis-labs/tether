@@ -74,7 +74,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 			gomcp.StringProp("worker", "Optional. Place the session on this connected outpost (label or id). Defaults to the launch's `worker:` when it declares one. Fails with worker_unavailable when the worker is not enrolled or offline.", false),
 			gomcp.BooleanProp("require_worker", "Optional. Refuse with worker_not_configured when no worker resolves (none passed and the launch declares no `worker:`) instead of running the session on the hub.", false),
 			gomcp.StringProp("idempotency_key", "Optional. Makes the create idempotent: a retry with the same key and the same request returns the session the first one created (replayed=true); the same key with a different request fails with idempotency_conflict. Keys are scoped to the authenticated caller, so another caller's identical key never collides with yours.", false),
-			gomcp.StringProp("continuity", "Optional: fresh (default) or relaunch. relaunch records this session as a continuation of the logical agent's newest earlier session (intent resume, parent_session_id set); it changes lineage records only and resumes no provider conversation. Any other value fails with invalid_request. Fixed at create; tether_session_launch takes no continuity.", false),
+			gomcp.StringProp("continuity", "Optional: fresh (default) or relaunch. relaunch records this session as a continuation of the logical agent's newest earlier session (intent resume, parent_session_id set); it changes lineage records only and resumes no provider conversation. Any other value fails with invalid_request. Fixed at create; tether_session_launch can only assert it.", false),
 			gomcp.StringProp("injection", "Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.", false),
 		),
 		Handler: a.handleSessionCreate,
@@ -85,6 +85,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 		Description: "Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID returned by tether_session_create", true),
+			gomcp.StringProp("continuity", "Optional: relaunch asserts the created session is a continuation (intent resume with a parent_session_id, set by tether_session_create continuity=relaunch) and refuses to start a fresh one with invalid_request, so a restart cannot silently lose its lineage. It changes nothing on the session. fresh or omitted: no check.", false),
 		),
 		Handler: a.handleSessionLaunch,
 	}, Writes())
@@ -398,6 +399,33 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) 
 	id := str(args, "session_id")
 	if id == "" {
 		return nil, toolError("invalid_request", "session_id required")
+	}
+	if c := str(args, "continuity"); c != "" && c != "fresh" && c != "relaunch" {
+		return nil, toolError("invalid_request", `continuity must be "fresh" or "relaunch"`)
+	} else if c == "relaunch" {
+		intent, parent := "", ""
+		if a.client != nil {
+			dto, err := a.client.GetSession(ctx, id)
+			if err != nil {
+				if isDaemonUnreachable(err) {
+					return nil, daemonUnreachableError(err)
+				}
+				return nil, classifyClientErr(err, id)
+			}
+			intent, parent = dto.Intent, dto.ParentSessionID
+		} else {
+			row, err := a.svc.Store.GetSession(id)
+			if err != nil {
+				if isNotFound(err) {
+					return nil, toolError("not_found", "session not found: "+id)
+				}
+				return nil, toolError("internal_error", err.Error())
+			}
+			intent, parent = row.Intent, row.ParentSessionID.String
+		}
+		if intent != "resume" || parent == "" {
+			return nil, toolError("invalid_request", "session "+id+" was created as a fresh start (intent "+intent+", no parent); create it with continuity=relaunch before launching, or launch without continuity to start fresh")
+		}
 	}
 	if a.client != nil {
 		res, err := a.client.LaunchSession(ctx, id)

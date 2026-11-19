@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,6 +41,10 @@ type runs struct{ run teams.TeamRun }
 
 func (r runs) GetRun(_ context.Context, id string) (teams.TeamRun, error) {
 	if id != r.run.ID {
+		// Runs formed through the fake workflow launcher are live.
+		if strings.HasPrefix(id, "run-") || strings.HasPrefix(id, "workflow") {
+			return teams.TeamRun{ID: id, Status: mesh.TaskWorking}, nil
+		}
 		return teams.TeamRun{}, ErrNotFound
 	}
 	return r.run, nil

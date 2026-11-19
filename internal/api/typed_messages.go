@@ -15,9 +15,11 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/messaging/ackfilter"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/seatstatus"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -55,6 +57,9 @@ func (s *Server) registerTypedMessageRoutes(router *http.ServeMux) {
 		router.HandleFunc("/status", s.guardAs(s.handleStatusSet))
 		router.HandleFunc("/status/", s.handleStatusGet)
 	}
+	if s.MessageStore != nil {
+		router.HandleFunc("/operator-attestation/challenges/", s.handleOperatorAttestationChallenge)
+	}
 }
 
 // handleDirectory resolves @handles for envelope.Check.
@@ -69,6 +74,15 @@ func (d handleDirectory) Resolve(h string) (string, bool) { return d.s.resolveHa
 // registry agent whose handle (or, until backfilled, tether catalog id) is name,
 // else the catalog agent's urn.
 func (s *Server) resolveHandle(ctx context.Context, h string) (string, bool) {
+	urn, ok := s.resolveHandleAddress(ctx, h)
+	if !ok {
+		return "", false
+	}
+	// A handle held by an alias names the canonical address (address_aliases.go).
+	return s.canonicalAlias(ctx, urn), true
+}
+
+func (s *Server) resolveHandleAddress(ctx context.Context, h string) (string, bool) {
 	if !envelope.ValidHandle(h) {
 		return "", false
 	}
@@ -107,8 +121,19 @@ func (s *Server) resolveHandle(ctx context.Context, h string) (string, bool) {
 	return "", false
 }
 
-// handleFor is the @handle of an address, or "" when it has none.
+// handleFor is the @handle of an address, or "" when it has none. An aliased
+// address answers to the handle of any of its forms, the canonical one first;
+// an agent address never answers to Chrispian's (reachableForms).
 func (s *Server) handleFor(ctx context.Context, urn string) string {
+	for _, form := range s.reachableForms(ctx, urn) {
+		if h := s.handleForAddress(ctx, form); h != "" {
+			return h
+		}
+	}
+	return ""
+}
+
+func (s *Server) handleForAddress(ctx context.Context, urn string) string {
 	if urn == identity.OperatorID {
 		return envelope.Operator
 	}
@@ -248,6 +273,17 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 				parent.Envelope = &pe
 			}
 		}
+		// A reply goes back to whoever sent the parent and awaits them
+		// (CW-20261117-0003): to and awaiting default to the parent's sender, so
+		// the asker is woken (triage awaiting_recipient / reply_to_own).
+		if asker := s.replyAsker(ctx, p, from); asker != "" {
+			if len(e.To) == 0 {
+				e.To = []string{asker}
+			}
+			if e.Awaiting == "" {
+				e.Awaiting = asker
+			}
+		}
 	}
 	if strings.HasPrefix(e.Re, "thread:") && threadID == "" {
 		threadID = strings.TrimPrefix(e.Re, "thread:")
@@ -255,6 +291,10 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 	urns, err := envelope.Check(e, handleDirectory{ctx, s}, parent)
 	if err != nil {
 		writeEnvelopeError(w, err)
+		return
+	}
+	if s.refusesAck(e, parent) {
+		writeEnvelopeError(w, &envelope.Error{Field: "body", Reason: ackfilter.Refusal})
 		return
 	}
 	body, err := json.Marshal(e)
@@ -297,6 +337,58 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// refusesAck reports whether e is a pure acknowledgement reply the hub refuses
+// (CW-20261118-0050): a reply of kind update or message that carries no answer,
+// status, evidence or options, whose body is acknowledgement words only, to a
+// parent that is no ask of the replier. The catalog switch
+// defaults.mail_triage.ack_filter: false turns it off.
+func (s *Server) refusesAck(e envelope.Envelope, parent *envelope.Parent) bool {
+	if e.InReplyTo == "" || (e.Kind != envelope.KindUpdate && e.Kind != envelope.KindMessage) {
+		return false
+	}
+	if e.Answer != nil || e.Status != "" || len(e.Evidence) > 0 || len(e.Options) > 0 || e.Deliverable != "" {
+		return false
+	}
+	if !ackfilter.IsAck(e.Body) {
+		return false
+	}
+	if parent == nil || parent.Envelope == nil {
+		return false // untyped or unknown parent: let it through
+	}
+	pe := parent.Envelope
+	switch pe.Kind {
+	case envelope.KindUpdate, envelope.KindMessage:
+	default:
+		return false // the parent asked something: an ack may be the answer
+	}
+	// An answer to a free-text ask is never refused: the parent asks (a '?'),
+	// awaits anyone, or is addressed to the replier with an awaiting.
+	if strings.Contains(pe.Body, "?") || strings.Contains(pe.Subject, "?") || strings.TrimSpace(pe.Awaiting) != "" {
+		return false
+	}
+	if s.Catalog != nil {
+		if cat, err := s.Catalog.Load(); err == nil && cat != nil && !cat.Global.AckFilterEnabled() {
+			return false
+		}
+	}
+	return true
+}
+
+// replyAsker is the @handle of the sender of p, the message a reply from
+// replier answers: "" when it has no valid handle or is the replier itself (a
+// follow-up to one's own message).
+func (s *Server) replyAsker(ctx context.Context, p messaging.Envelope, replier string) string {
+	sender := canonicalAddress(p.From)
+	if sender == replier {
+		return ""
+	}
+	h := s.handleFor(ctx, sender)
+	if !envelope.ValidHandle(h) || h == s.handleFor(ctx, replier) {
+		return ""
+	}
+	return h
 }
 
 // PendingRepliesResponse is the GET /messages/pending-replies body.
@@ -368,18 +460,34 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "cannot tell who is setting: authenticate, or pass ?as=<your address>")
 		return
 	}
+	verification, principal := s.claimVerification(r, caller)
+	// A seat's own live session is the seat (#568 regression): its session
+	// credential, not a claim, binds it to the seat's logical agent. Without
+	// ?as= it sets the seat's status, not the session URN's; with ?as= naming
+	// that seat (any of its forms) the claim verifies.
+	if seat, ok := s.sessionSeat(ctx, r); ok {
+		switch as := r.URL.Query().Get("as"); {
+		case as == "":
+			caller, verification = seat, "stamped"
+		case slices.Contains(s.seatForms(ctx, seat), s.canonicalSeat(ctx, canonicalClaim(as))):
+			caller, verification = seat, "verified"
+		}
+	}
 	target := caller
+	if req.Target == "@self" {
+		req.Target = ""
+	}
 	if req.Target != "" {
 		urn, ok := s.resolveHandle(ctx, req.Target)
 		if !ok {
 			writeEnvelopeError(w, &seatstatus.Error{Field: "target", Reason: "unknown handle " + req.Target})
 			return
 		}
-		if urn != caller && !s.maySetStatusFor(ctx, r, caller) {
-			writeError(w, http.StatusForbidden, CodeForbidden, "only the operator or a manager may set another seat's status")
-			return
-		}
 		target = urn
+	}
+	if !s.maySetStatus(ctx, r, caller, target, verification) {
+		writeError(w, http.StatusForbidden, CodeForbidden, "only the seat itself, the operator or a verified manager may set a seat's status")
+		return
 	}
 	in := seatstatus.Input{State: req.State, Reason: req.Reason, Ref: req.Ref, Owner: req.Owner, TTL: time.Duration(req.TTLSeconds) * time.Second}
 	if req.ExpiresAt != nil {
@@ -397,7 +505,8 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	d := seatstatus.Declared{AgentURN: target, State: in.State, Reason: in.Reason, Ref: in.Ref, Owner: in.Owner, Since: now, ExpiresAt: expires, SetBy: caller, UpdatedAt: now}
+	d := seatstatus.Declared{AgentURN: target, State: in.State, Reason: in.Reason, Ref: in.Ref, Owner: in.Owner, Since: now, ExpiresAt: expires, SetBy: caller,
+		SetByVerification: verification, SetByPrincipal: principal, UpdatedAt: now}
 	stored, changed, err := s.Seats.PutSeatStatus(ctx, d)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -406,7 +515,8 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 	handle := s.handleFor(ctx, target)
 	if changed && s.Bus != nil {
 		payload := map[string]any{"agent_urn": target, "handle": handle, "state": stored.State, "set_by": caller}
-		for k, v := range map[string]string{"reason": stored.Reason, "ref": stored.Ref, "owner": stored.Owner} {
+		for k, v := range map[string]string{"reason": stored.Reason, "ref": stored.Ref, "owner": stored.Owner,
+			"set_by_verification": stored.SetByVerification, "set_by_principal": stored.SetByPrincipal} {
 			if v != "" {
 				payload[k] = v
 			}
@@ -424,17 +534,53 @@ func (s *Server) handleStatusSet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, StatusSetResponse{Handle: handle, Declared: stored, Changed: changed})
 }
 
-// maySetStatusFor: the operator credential, or a caller whose catalog agent has
-// the manager role.
-func (s *Server) maySetStatusFor(ctx context.Context, r *http.Request, caller string) bool {
+// maySetStatus decides who may set target's status (CW-20261114-0130):
+//   - the operator credential, any seat;
+//   - a caller the hub verified (or stamped from its own address), its own seat, or any seat when its
+//     catalog agent is a manager;
+//   - without a verified principal, only with identity off on the local socket, as before: the seat
+//     itself, the local operator, or a catalog manager.
+//
+// A claim that did not verify sets nothing, in every identity mode: it would otherwise let anyone that
+// names a seat (or a manager) set that seat's status.
+func (s *Server) maySetStatus(ctx context.Context, r *http.Request, caller, target, verification string) bool {
 	if p, ok := verifiedPrincipal(r); ok && identity.IsOperatorCredential(p) {
 		return true
 	}
-	if _, ok := verifiedPrincipal(r); !ok && caller == identity.OperatorID {
-		return true // the local operator on an unauthenticated socket
+	switch verification {
+	case "verified", "stamped":
+		if s.actsFor(ctx, caller, target) {
+			return true
+		}
+		a, ok := s.catalogAgentFor(ctx, caller)
+		return ok && a.IsManager()
+	case "":
+		if (s.IdentityMode != "" && s.IdentityMode != identity.Off) || identity.IsRemote(ctx) {
+			return false
+		}
+		if s.actsFor(ctx, caller, target) || s.canonicalAlias(ctx, caller) == s.canonicalAlias(ctx, identity.OperatorID) {
+			return true
+		}
+		a, ok := s.catalogAgentFor(ctx, caller)
+		return ok && a.IsManager()
 	}
-	a, ok := s.catalogAgentFor(ctx, caller)
-	return ok && a.IsManager()
+	return false
+}
+
+// sessionSeat is the seat whose own live session the request's verified
+// principal is: a session credential (verified by its token, never by a
+// claimed address) for a non-terminal session bound to a logical agent. It
+// returns the seat's canonical address.
+func (s *Server) sessionSeat(ctx context.Context, r *http.Request) (string, bool) {
+	p, ok := verifiedPrincipal(r)
+	if !ok || p.Kind != "session" || p.SessionID == "" || s.Service == nil {
+		return "", false
+	}
+	row, err := s.Service.GetSession(p.SessionID)
+	if err != nil || row == nil || row.LogicalAgentID == "" || session.State(row.State).Terminal() {
+		return "", false
+	}
+	return s.canonicalSeat(ctx, logicalAgentPrefix+row.LogicalAgentID), true
 }
 
 // catalogAgentFor is the catalog agent whose identity is urn: by its tether
@@ -659,6 +805,13 @@ func (s *Server) seatAddresses(ctx context.Context, urn, handle string) []string
 					}
 				}
 			}
+		}
+	}
+	// Mail stored under any form of an aliased address is the seat's too, but
+	// never Chrispian's mail through an agent alias (reachableForms).
+	for _, u := range slices.Clone(out) {
+		for _, form := range s.reachableForms(ctx, u) {
+			add(form)
 		}
 	}
 	return out

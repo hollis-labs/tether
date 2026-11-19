@@ -61,6 +61,21 @@ func RunProviderProcess(ctx context.Context, path string, input io.Reader, outpu
 		<-rpc.done
 	}()
 	var session turn.CodexAppServerSession
+	if cfg.ResumeThreadID != "" {
+		admission, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := resumeCodexRPC(admission, rpc, cfg.ResumeThreadID, cfg.ProjectDir)
+		cancel()
+		receipt := nativeReady{Thread: cfg.ResumeThreadID, Workroot: cfg.ProjectDir}
+		if err != nil {
+			receipt.Error = "native resume refused"
+		}
+		if saveErr := SaveJSON(cfg.NativeReadyPath, receipt); saveErr != nil {
+			return saveErr
+		}
+		if err != nil {
+			return err
+		}
+	}
 	lines := make(chan []byte)
 	scanDone := make(chan error, 1)
 	readCtx, stopRead := context.WithCancel(ctx)
@@ -99,7 +114,12 @@ func RunProviderProcess(ctx context.Context, path string, input io.Reader, outpu
 			return fmt.Errorf("invalid provider user frame")
 		}
 		callCtx, cancel := context.WithTimeout(ctx, time.Minute)
-		err := session.SendTurn(callCtx, rpc, frame.Message.Content, turn.CodexAppServerOptions{ClientName: "tether-worker", ClientVersion: "1", CWD: cfg.ProjectDir})
+		var err error
+		if cfg.ResumeThreadID != "" {
+			_, err = rpc.Call(callCtx, "turn/start", turn.CodexTurnStartParams(cfg.ResumeThreadID, frame.Message.Content))
+		} else {
+			err = session.SendTurn(callCtx, rpc, frame.Message.Content, turn.CodexAppServerOptions{ClientName: "tether-worker", ClientVersion: "1", CWD: cfg.ProjectDir})
+		}
 		cancel()
 		if err != nil {
 			return err
@@ -258,4 +278,19 @@ func (r *providerRPC) read(input io.Reader, output io.Writer) {
 			}
 		}
 	}
+}
+
+func resumeCodexRPC(ctx context.Context, rpc turn.JSONRPCSender, id, cwd string) error {
+	if _, err := rpc.Call(ctx, "initialize", map[string]any{"clientInfo": map[string]string{"name": "tether-worker", "version": "1"}}); err != nil {
+		return err
+	}
+	response, err := rpc.Call(ctx, "thread/resume", map[string]any{"threadId": id, "excludeTurns": true, "cwd": cwd})
+	if err != nil {
+		return err
+	}
+	actual, err := turn.DecodeCodexThreadID(response)
+	if err != nil || actual != id {
+		return resumeUnavailable("native thread identity mismatch")
+	}
+	return nil
 }

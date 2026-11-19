@@ -114,7 +114,11 @@ func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f List
 		offset = 0
 	}
 
-	where, args := listWhere(to, f)
+	forms, err := ms.mailboxForms(ctx, to)
+	if err != nil {
+		return ListPage{}, err
+	}
+	where, args := listWhere(forms, f)
 
 	page := ListPage{Limit: limit, Offset: offset}
 
@@ -150,10 +154,11 @@ func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f List
 	return page, nil
 }
 
-// listWhere builds the WHERE clause shared by List and MailboxAfter.
-func listWhere(to messaging.Address, f ListFilter) (string, []any) {
-	where := "routing_staged=0 AND to_urn=?"
-	args := []any{to.URN()}
+// listWhere builds the WHERE clause shared by List and MailboxAfter. forms is
+// the mailbox: the recipient address and its aliases (address_aliases.go).
+func listWhere(forms []string, f ListFilter) (string, []any) {
+	toIn, args := toURNIn(forms)
+	where := "routing_staged=0 AND " + toIn
 	if !f.IncludeArchived {
 		where += " AND archived_at IS NULL"
 	}
@@ -203,50 +208,46 @@ func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, re
 	if err := ms.requireMailbox(ctx, id); err != nil {
 		return err
 	}
-	var (
-		res sql.Result
-		err error
-	)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	switch {
-	case col == "read_at" && !clr:
-		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET read_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NULL`,
-			now, id, recipient.URN())
-	case col == "read_at" && clr:
-		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET read_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NOT NULL`,
-			id, recipient.URN())
-	case col == "archived_at" && !clr:
-		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET archived_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND archived_at IS NULL`,
-			now, id, recipient.URN())
-	case col == "archived_at" && clr:
-		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET archived_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND archived_at IS NOT NULL`,
-			id, recipient.URN())
-	default:
-		return fmt.Errorf("messaging store: stampRecipientField: unknown column %q", col)
-	}
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return nil // updated — success
-	}
-	// 0 rows: not found, wrong recipient, or already in the target state.
+	// The stored to_urn may be any form of the caller's mailbox
+	// (address_aliases.go): check it first, then stamp the row under it.
 	var toURN string
-	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&toURN)
+	err := ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&toURN)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return messaging.ErrNotFound
 		}
 		return err
 	}
-	if toURN != recipient.URN() {
+	mine, err := ms.sameMailbox(ctx, toURN, recipient)
+	if err != nil {
+		return err
+	}
+	if !mine {
 		return ErrWrongRecipient
 	}
-	return nil // row exists, recipient matches — already in target state. Idempotent.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	switch {
+	case col == "read_at" && !clr:
+		_, err = ms.db.ExecContext(ctx,
+			`UPDATE messages SET read_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NULL`,
+			now, id, toURN)
+	case col == "read_at" && clr:
+		_, err = ms.db.ExecContext(ctx,
+			`UPDATE messages SET read_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NOT NULL`,
+			id, toURN)
+	case col == "archived_at" && !clr:
+		_, err = ms.db.ExecContext(ctx,
+			`UPDATE messages SET archived_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND archived_at IS NULL`,
+			now, id, toURN)
+	case col == "archived_at" && clr:
+		_, err = ms.db.ExecContext(ctx,
+			`UPDATE messages SET archived_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND archived_at IS NOT NULL`,
+			id, toURN)
+	default:
+		return fmt.Errorf("messaging store: stampRecipientField: unknown column %q", col)
+	}
+	// 0 rows updated means the row is already in the target state. Idempotent.
+	return err
 }
 
 // ─── Scan + payload projection ──────────────────────────────────────────────

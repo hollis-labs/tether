@@ -39,7 +39,7 @@ func pipelinePolicies() map[string]admissionPolicy {
 	add(Metadata, KindSessionUsage, "/input_tokens", "/output_tokens", "/cache_read_tokens", "/cache_write_tokens", "/reasoning_tokens", "/turns", "/model", "/final", "/source", "/turn_id")
 	add(Metadata, KindSessionHealthChanged, "/from", "/to", "/reasons/*", "/since")
 	add(Metadata, catalog.KindToolCallStarted, "/tool", "/server", "/args_bytes", "/args_schema_fp")
-	add(Metadata, catalog.KindToolCallFinished, "/tool", "/server", "/args_bytes", "/args_schema_fp", "/ok", "/error_class", "/duration_ms", "/gateway_ms", "/forward_ms", "/result_bytes")
+	add(Metadata, catalog.KindToolCallFinished, "/tool", "/server", "/args_bytes", "/args_schema_fp", "/ok", "/error_class", "/duration_ms", "/gateway_ms", "/forward_ms", "/result_bytes", "/discovery_mode")
 	add(Metadata, KindSessionStalled, "/reason", "/denied")
 	add(Metadata, KindSessionWorkStateChanged, "/from", "/to", "/at")
 	add(Metadata, EventTypeMachineAuthorityDecision, "/server", "/tool", "/class", "/mode", "/allowed", "/session_id", "/timestamp")
@@ -63,9 +63,12 @@ func pipelinePolicies() map[string]admissionPolicy {
 	}
 	// Declared seat status (CW-20261114-0013).
 	add(Metadata, "session.scopes_narrowed", "/requested/*", "/granted/*", "/dropped/*", "/basis", "/launcher")
-	add(Metadata, "mail.triaged", "/message_id", "/recipient", "/seat", "/handle", "/class", "/reason", "/typed", "/from", "/from_handle")
+	add(Metadata, "mail.triage_backfill", "/examined", "/moved", "/seat_count") // CW-20261117-0002
+	add(Metadata, "mail.triaged", "/message_id", "/recipient", "/seat", "/handle", "/class", "/reason", "/typed", "/from", "/from_handle", "/on_behalf_of", "/drafted_by")
+	add(Metadata, "worker.delivery_degraded", "/worker_id", "/consecutive_timeouts", "/ingest_backlog", "/dropped_frames", "/action")
+	add(Metadata, "mcp.upstream_state_changed", "/server_id", "/from", "/to", "/next_retry_at", "/attempt", "/error")
 	add(Metadata, "seat.gate_blocked", "/agent_urn", "/handle", "/message_ids/*", "/count")
-	add(Metadata, "seat.status", "/agent_urn", "/handle", "/state", "/reason", "/ref", "/owner", "/expires_at", "/set_by")
+	add(Metadata, "seat.status", "/agent_urn", "/handle", "/state", "/reason", "/ref", "/owner", "/expires_at", "/set_by", "/set_by_verification", "/set_by_principal")
 	// Conservative compatibility entries retain every local-consumer byte. Their
 	// denylist sanitizer runs only on a diagnostic copy, even in enforce mode.
 	for _, kind := range []string{

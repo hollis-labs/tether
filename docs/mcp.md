@@ -197,7 +197,7 @@ Mutating tools require a **token** and the corresponding **scope**:
 | Scope | Grants access to |
 |---|---|
 | `session.write` | `tether_session_create`, `tether_session_launch`, `tether_session_stop`, `tether_session_send_input`, `tether_session_send_turn`, `tether_session_resize`, `tether_logical_agent_resume` |
-| `message.write` | `tether_message_post`, `tether_status_set`, `tether_message_send`, `tether_message_notify`, `tether_message_consume`, `tether_message_cancel`, `tether_message_reply`, `tether_message_interrupt`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive` |
+| `message.write` | `tether_ask`, `tether_reply`, `tether_message_post`, `tether_status_set`, `tether_message_send`, `tether_message_notify`, `tether_message_consume`, `tether_message_cancel`, `tether_message_reply`, `tether_message_interrupt`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive` |
 | `registry.write` | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_scoped_binding_set` |
 | `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
 | `delivery.write` | `tether_message_redrive`, `tether_message_purge` |
@@ -1128,6 +1128,14 @@ are addressed using URNs in the form `msg://<kind>/<authority>/<id>[/<subid>]`.
 `tether_message_notify.urgency` for delivery urgency: `very-low`, `low`,
 `normal`, or `high`.
 
+#### `tether_ask` / `tether_reply` _(message.write)_
+Typed ask and reply (CW-20261117-0003). `tether_ask(kind, to, subject, body, deliverable?, re?, options?,
+default_option?, attention?, urgency?)` sends a `request` (do X and report back; `deliverable` required),
+`question`, `decision`, `approval_request`, `handoff` or `escalation`. `tether_reply(in_reply_to, body, answer?, note?,
+status?, evidence?, subject?, to?)` answers it: it goes to the asker, awaits them and wakes them; `answer` must be one
+of the ask's options; `status` is `done`, `declined` or `blocked`. Use them when someone must act or answer, not for
+status or progress (Torque checkpoints). See [typed-messages.md](typed-messages.md).
+
 #### `tether_message_post` _(message.write)_
 Send a typed envelope to seats or Chrispian by `@handle` (CW-20261114-0013). The daemon stamps the sender, resolves
 every handle (an unknown one is refused) and validates the envelope, refusing a bad one as `invalid_request` with the
@@ -1137,6 +1145,13 @@ field and the reason. Arguments are the envelope fields: `kind`, `to`, `body`, a
 typed messages waiting on you), `tether_status_set` (message.write: declare your seat's status) and
 `tether_status_get` (read: a seat's status card) and `tether_handle_set` (registry.write, operator only: give a
 non-catalog registry agent a `@handle`).
+
+#### `tether_address_alias_add`, `tether_address_alias_list`, `tether_address_alias_remove`
+Address aliases (CW-20261114-0067): an alias is another name for a canonical address's mailbox. `add {alias, canonical}`
+and `remove {alias}` need registry.write and are refused by the daemon for every caller but the operator credential;
+`list {canonical?}` is a read. Mail sent to an alias is stored under the canonical address and reading either returns
+the mail of both; stored messages are never rewritten. Rules and the rename procedure:
+[messaging.md](messaging.md#address-aliases).
 
 #### `tether_message_send` _(message.write)_
 The message body lives inside `payload_json` (for example `{"subject":"...","body":"..."}`). `tether_message_send` and
@@ -1794,7 +1809,8 @@ window (CW-20261016-0138). Their payload schemas are the pinned catalog's
 `urn:hollis-labs:events:tool.call.started@1` and `tool.call.finished@1`.
 Both carry `tool`, `server`, `args_bytes` and `args_schema_fp`. Started has
 no `ok` or outcome fields. Finished adds `ok`, `error_class`, `duration_ms`,
-`gateway_ms`, `forward_ms` and `result_bytes`. Canonical payloads exclude
+`gateway_ms`, `forward_ms`, `result_bytes` and `discovery_mode` (`flat` or
+`search`; always present on rows written since CW-20261113-0009). Canonical payloads exclude
 arguments, results, error text and summaries, including scrubbed error text
 that could echo request content.
 
@@ -1807,14 +1823,22 @@ canonical metadata after the daemon validates them and resolves attribution;
 it preserves the accepted trace/span identifiers as call correlation metadata.
 These identifiers are not evidence of caller identity; scope and actor still
 come exclusively from authenticated daemon resolution.
-The legacy `proxy_events` projection still receives one completed row per call,
-and existing legacy subscribers and metrics retain their contracts. Recording
-remains best effort with bounded queues; this change does not retire legacy
-kinds or change retention.
+The legacy `proxy_events` projection still receives one completed row per call.
+Recording remains best effort with bounded queues.
+
+Since CW-20261113-0009 the daemon writes only the canonical pair to the
+`events` log; the legacy `tool_call_start`/`tool_call_end` pair doubled every
+call there. Both canonical kinds are admitted to retention class `R-activity`
+(main events window). A completed call's full legacy payload, including error
+text and attribution, lives on in `proxy_events`. Older legacy rows stay until
+the events window removes them. An in-process `tether mcp --proxy` that opens
+the state database itself still logs both pairs on its own bus.
 
 #### Tool-call telemetry v2
 
-`tool_call_start` and `tool_call_end` are durable `events` payloads. Calls
+These fields are the `tool_call_start`/`tool_call_end` payload, now recorded
+per completed call in `proxy_events` rather than the `events` log
+(CW-20261113-0009). Calls
 rejected by gateway policy or native scope validation still produce completed
 call observations. Records carry daemon-resolved credential identity and verified
 session/agent/workstream attribution, upstream `server`, `profile`, `discovery_mode`,
@@ -1876,8 +1900,9 @@ bound of the histogram bucket holding that percentile (`null` means above 5,000 
 not exact quantiles. HTTP query parameters and CLI flags mirror these names.
 
 These queries are GLOBAL and unscoped: they aggregate all callers without
-caller identity or session filtering. Each query scans retained `tool_call_end`
-events and groups them; this is suitable at the current roughly 66,000-row
+caller identity or session filtering. Each query scans retained `tool.call.finished`
+events (plus `tool_call_end` rows written before CW-20261113-0009, each call
+counted once) and groups them; this is suitable at the current roughly 66,000-row
 scale. A rollup table is the future option if retained history makes scans
 expensive. Counts survive restart and exclude start rows. The response is `{groups, truncated, window:"retained_events"}`.
 Groups are ordered by call count descending, with tool/upstream/outcome ties,

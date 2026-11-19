@@ -110,6 +110,9 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 	terminal := ToolCallHandler(func(tCtx context.Context, tCall ToolCall) (*mcpsdk.CallToolResult, error) {
 		// Upstream client is nil — server failed during startup or is dead.
 		if rt.Client == nil {
+			if r.pool != nil && rt.ServerID != "" {
+				r.pool.Retry(rt.ServerID) // a call that needs it retries a down remote upstream now
+			}
 			telemetry.SetErrorClass(tCtx, events.ToolErrorUpstreamDown)
 			return errorResult(fmt.Sprintf(
 				"upstream server %q is unavailable; tool %q cannot be called",
@@ -118,6 +121,7 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 		}
 		if r.pool != nil && rt.ServerID != "" {
 			if err := r.pool.unavailableError(rt.ServerID, rt.Client); err != nil {
+				r.pool.Retry(rt.ServerID)
 				telemetry.SetErrorClass(tCtx, events.ToolErrorUpstreamDown)
 				return errorResult(err.Error()), nil
 			}

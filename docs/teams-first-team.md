@@ -103,3 +103,12 @@ existing runtime and resource limits. Forming a team from an already-running
 fleet requires a separate adoption and ownership design. Do not add automatic
 team formation to fleet boot using a roster request; keep it manual until that
 capability and its host policy are explicitly supported.
+
+## Stage B
+
+For an orchestrator-led team (agent orchestrator, one to three workers, a
+reviewer, formed by Torque's dispatcher and dissolved automatically) see
+[teams-activation.md](teams-activation.md#stage-b-orchestrator-led-teams) and
+`examples/teams/team-form-stage-b.json`. Worker pool identities
+(`msg://agent/local/stage-b-worker-*` in the example) must be registered agents
+whose `team_definition` prop is the workers slot's pin before the team is formed.

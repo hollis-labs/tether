@@ -159,3 +159,93 @@ func TestTransportKind(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261114-0116: on_behalf_of names who the sender acts for (a handle that must resolve, or a URN);
+// drafted_by says who wrote it, only beside on_behalf_of, and defaults to assistant.
+func TestOnBehalfOf(t *testing.T) {
+	e := Envelope{Kind: KindMessage, To: []string{"@archie"}, Body: "Chrispian asks for the deploy notes.", OnBehalfOf: " @chrispian "}
+	e.Normalize()
+	if e.OnBehalfOf != "@chrispian" || e.DraftedBy != DraftedByAssistant {
+		t.Fatalf("normalized: %q %q", e.OnBehalfOf, e.DraftedBy)
+	}
+	if _, err := Check(e, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	urn := e
+	urn.OnBehalfOf, urn.DraftedBy = "msg://user/local/operator", DraftedByHuman
+	if _, err := Check(urn, dir, nil); err != nil {
+		t.Fatalf("a principal URN: %v", err)
+	}
+	for name, c := range map[string]struct {
+		edit  func(*Envelope)
+		field string
+	}{
+		"drafted_by alone":       {func(e *Envelope) { e.OnBehalfOf, e.DraftedBy = "", DraftedByHuman }, "drafted_by"},
+		"bad drafted_by":         {func(e *Envelope) { e.DraftedBy = "robot" }, "drafted_by"},
+		"neither handle nor urn": {func(e *Envelope) { e.OnBehalfOf = "chrispian" }, "on_behalf_of"},
+		"unknown handle":         {func(e *Envelope) { e.OnBehalfOf = "@nobody" }, "on_behalf_of"},
+	} {
+		bad := e
+		c.edit(&bad)
+		if _, err := Check(bad, dir, nil); err == nil || fieldOf(t, err) != c.field {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	raw := []byte(`{"kind":"message","to":["@archie"],"body":"x","on_behalf_of":"@chrispian"}`)
+	if who, by := Behalf(ContentType, raw); who != "@chrispian" || by != DraftedByAssistant {
+		t.Fatalf("Behalf = %q %q", who, by)
+	}
+	if who, _ := Behalf("application/json", raw); who != "" {
+		t.Fatal("an untyped payload has no marker")
+	}
+}
+
+// CW-20261117-0003: the request kind, its deliverable, and reply status.
+func TestRequestKind(t *testing.T) {
+	req := func() Envelope {
+		return Envelope{Kind: KindRequest, To: []string{"@archie"}, Subject: "Land 0002", Body: "Please land it.", Deliverable: "Merged PR and deploy event"}
+	}
+	e := req()
+	e.Normalize()
+	if _, err := Check(e, dir, nil); err != nil {
+		t.Fatalf("valid request refused: %v", err)
+	}
+	if TransportKind(KindRequest) != "request" {
+		t.Fatalf("request transport kind %q", TransportKind(KindRequest))
+	}
+	cases := []struct {
+		name  string
+		edit  func(*Envelope)
+		field string
+	}{
+		{"no deliverable", func(e *Envelope) { e.Deliverable = "" }, "deliverable"},
+		{"options", func(e *Envelope) { e.Options = []Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}} }, "options"},
+		{"no subject", func(e *Envelope) { e.Subject = "" }, "subject"},
+		{"status without in_reply_to", func(e *Envelope) { e.Status = StatusDone }, "status"},
+		{"unknown status", func(e *Envelope) { e.InReplyTo = "m1"; e.Status = "finished" }, "status"},
+		{"deliverable on a non-request", func(e *Envelope) { e.Kind = KindUpdate }, "deliverable"},
+		{"multi-line evidence", func(e *Envelope) { e.Evidence = []string{"a\nb"} }, "evidence[0]"},
+	}
+	for _, c := range cases {
+		e := req()
+		c.edit(&e)
+		e.Normalize()
+		if _, err := Check(e, dir, nil); err == nil || fieldOf(t, err) != c.field {
+			t.Fatalf("%s: err %v, want field %s", c.name, err, c.field)
+		}
+	}
+	reply := Envelope{Kind: KindMessage, To: []string{"@archie"}, InReplyTo: "m1", Body: "Done.", Status: StatusDone, Evidence: []string{"https://github.com/hollis-labs/tether/pull/606"}}
+	reply.Normalize()
+	if err := reply.Validate(); err != nil {
+		t.Fatalf("reply with status refused: %v", err)
+	}
+}
+
+// A question without a subject still passes: it defaults to the body's first line.
+func TestLegacyKindsDefaultTheirSubject(t *testing.T) {
+	e := Envelope{Kind: KindQuestion, To: []string{"@archie"}, Body: "Which one?\nmore", Options: []Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}}
+	e.Normalize()
+	if e.Subject != "Which one?" {
+		t.Fatalf("subject %q", e.Subject)
+	}
+}

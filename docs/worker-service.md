@@ -129,6 +129,32 @@ To fix an installed release, `chmod 755 "$rel"` (and `chmod go-w` on the binary
 if it is group- or other-writable), then restart the sessions that should get
 the hooks (CW-20261114-0057).
 
+## Session hosts across a worker restart
+
+Each session leaves a host directory under `<worker root>/hosts/`. On start the
+worker re-adopts the hosts whose shim still answers, before it reports ready.
+A directory with no `meta.json`, no launch descriptor, or a control socket that
+is missing or refuses is dead: it is skipped without reading its output.
+Dead directories idle for 24 hours are moved, never deleted, to
+`<worker root>/hosts-dead/<YYYYMMDD>/` (one whose recorded host pid is still
+alive stays; so does one with an unreadable `meta.json` whose launch descriptor
+a running shim-host still serves, which is counted failed). Move one back into `hosts/` to restore it on the next start, or
+remove `hosts-dead/` when it is no longer wanted. The worker logs
+`restore: live=… dead_skipped=… pruned=… failed=…` and sends the same counts
+in its hello, which the hub logs (CW-20261114-0056).
+
+## Delivery health
+
+The hub reads each worker connection on one goroutine that only routes command
+responses; session output is ingested on another, behind a bounded queue, so a
+slow ingest (disk or database under load) cannot hold up turns, mail wakes or
+stops. `tether workers --json` shows per worker `delivery_timeouts` (commands in
+a row with no answer in time), `ingest_backlog` and `dropped_frames` (output
+dropped on a full queue and replayed from the stored cursor). After 3
+unanswered commands in a row the hub publishes `worker.delivery_degraded`
+(`action: reported`); after 6 it closes the connection so the worker reconnects
+and resumes its sessions (`action: reconnect`) (CW-20261114-0104).
+
 ## Update and switch back
 
 Updates are manual. Transfer the second exact archive and checksums, then:

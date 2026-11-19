@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
+
+	"github.com/hollis-labs/tether/internal/store"
 	"time"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
@@ -55,9 +58,7 @@ func canonicalAddress(a messaging.Address) string { return a.URN() }
 // Without a verified principal nothing changes: the middleware, not this
 // function, decides whether anonymous traffic is admitted.
 func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messaging.Envelope) bool {
-	delete(env.Metadata, MetaFromVerification)
-	delete(env.Metadata, MetaFromUnverified)
-	delete(env.Metadata, MetaFromPrincipal)
+	stripReservedMetadata(env.Metadata)
 	p, ok := verifiedPrincipal(r)
 	if !ok {
 		return true
@@ -81,7 +82,8 @@ func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messag
 		mark("stamped")
 		return true
 	}
-	if p.MayActAs(canonicalAddress(env.From)) {
+	// A principal that owns one form of an aliased address may send as the others.
+	if p.MayActAs(canonicalAddress(env.From)) || s.ownsAliasOf(r.Context(), p, canonicalAddress(env.From)) {
 		mark("verified")
 		return true
 	}
@@ -117,14 +119,8 @@ func canonicalClaim(claimed string) string {
 // middleware. It reports whether the handler may continue.
 func (s *Server) verifyClaim(w http.ResponseWriter, r *http.Request, claimed, unverifiedEvent, refusedEvent, what string) bool {
 	p, ok := verifiedPrincipal(r)
-	if !ok || claimed == "" || p.MayActAs(canonicalClaim(claimed)) {
+	if !ok || claimed == "" || s.claimHolds(r.Context(), p, claimed) {
 		return true
-	}
-	// The same seat under its other address (catalog urn vs agent-mux form).
-	for _, form := range s.seatForms(r.Context(), canonicalClaim(claimed)) {
-		if p.MayActAs(form) {
-			return true
-		}
 	}
 	if s.enforcing() {
 		s.auditIdentity(r, p, refusedEvent)
@@ -169,6 +165,28 @@ func (s *Server) guardAs(next http.HandlerFunc) http.HandlerFunc {
 
 // senderMetadata returns the daemon-stamped sender keys of m, for carrying onto
 // a stored reply. Nil when the request had no verified principal.
+// reservedMetadataKey reports whether a metadata key is set only by the server:
+// the sender stamp (from_verification, from_unverified, from_principal) and the
+// attested-reply proof (operator_attestation and every key under it). A
+// client's value for any of them is dropped at ingress, so a stored value is
+// always the server's (#586 security review).
+func reservedMetadataKey(k string) bool {
+	switch strings.ToLower(k) {
+	case MetaFromVerification, MetaFromUnverified, MetaFromPrincipal:
+		return true
+	}
+	return store.IsOperatorAttestationKey(k)
+}
+
+// stripReservedMetadata deletes every reserved key from m.
+func stripReservedMetadata(m map[string]string) {
+	for k := range m {
+		if reservedMetadataKey(k) {
+			delete(m, k)
+		}
+	}
+}
+
 func senderMetadata(m map[string]string) map[string]string {
 	var out map[string]string
 	for _, k := range []string{MetaFromVerification, MetaFromUnverified, MetaFromPrincipal} {
@@ -180,4 +198,36 @@ func senderMetadata(m map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+// claimHolds reports whether the verified principal p holds the claimed address: as itself, as the same
+// seat under its other address (catalog urn vs agent-mux form), or as another form of an aliased address.
+func (s *Server) claimHolds(ctx context.Context, p identity.Principal, claimed string) bool {
+	if p.MayActAs(canonicalClaim(claimed)) {
+		return true
+	}
+	for _, form := range s.seatForms(ctx, canonicalClaim(claimed)) {
+		if p.MayActAs(form) {
+			return true
+		}
+	}
+	return s.ownsAliasOf(ctx, p, canonicalClaim(claimed))
+}
+
+// claimVerification is what the hub knows about the address a request acts as (CW-20261114-0130), in
+// the vocabulary of from_verification: "stamped" when no ?as= was given and the principal's own address
+// is used, "verified" when the principal holds the claimed address, "unverified" when it does not, and
+// "" with no verified principal. principal is the verified principal's id.
+func (s *Server) claimVerification(r *http.Request, claimed string) (verification, principal string) {
+	p, ok := verifiedPrincipal(r)
+	if !ok {
+		return "", ""
+	}
+	switch {
+	case r.URL.Query().Get("as") == "":
+		return "stamped", p.ID
+	case s.claimHolds(r.Context(), p, claimed):
+		return "verified", p.ID
+	}
+	return "unverified", p.ID
 }

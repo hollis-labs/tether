@@ -118,6 +118,10 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	if _, lost := ev.(gopevents.SessionLost); lost {
 		o.markSessionLost()
 	}
+	switch ev.(type) {
+	case gopevents.Done, gopevents.Error:
+		o.turnEnded()
+	}
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
@@ -129,6 +133,21 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 			o.emptyTerminal(turnoutput.KindFailure, "")
 		}
 	}
+}
+
+// turnEndRearmDelay lets the runtime settle to idle before the re-armed wakes
+// are retried. A var so tests can shorten it.
+var turnEndRearmDelay = 750 * time.Millisecond
+
+// turnEnded re-arms the wakes this session refused while busy
+// (CW-20261117-0002). It runs off the observer goroutine, after a short delay
+// so the next sweep finds the session idle.
+func (o *sessionTurnOutput) turnEnded() {
+	if o.service == nil {
+		return
+	}
+	svc, id := o.service, o.row.ID
+	time.AfterFunc(turnEndRearmDelay, func() { svc.rearmBusyWakes(id) })
 }
 
 func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
@@ -154,6 +173,9 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		return
 	}
 	o.recordEnvironmentRequest(ev, origin)
+	if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
+		o.turnEnded()
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if ev.Kind == runtimeevents.KindSessionLost {
@@ -373,7 +395,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, TaskID: taskID, WorkstreamID: workstream, MessageID: w.messageID,
 		Reason: w.withheldReason, Size: w.withheldSize}
 	if a := w.audience; a != nil {
-		payload.Audience, payload.AudienceBasis, payload.InputIDs, payload.InputClasses, payload.InputSources = a.Audience, a.Basis, a.InputIDs, a.Classes, a.Sources
+		payload.Audience, payload.AudienceBasis, payload.InputIDs, payload.InputClasses, payload.InputSources, payload.InputTriage = a.Audience, a.Basis, a.InputIDs, a.Classes, a.Sources, a.Triage
 	}
 	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
@@ -394,6 +416,9 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 			}
 			if len(a.Sources) > 0 {
 				meta["input_sources"] = strings.Join(a.Sources, ",")
+			}
+			if len(a.Triage) > 0 {
+				meta["input_triage"] = strings.Join(a.Triage, ",")
 			}
 		}
 		env, stageErr := storage.StageTurnOutput(ctx, messaging.Envelope{

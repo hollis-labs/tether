@@ -68,28 +68,37 @@ func TestCanonicalToolEventsThroughDaemonRecorder(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(rows) == 4 {
+				if len(rows) == 2 {
 					break
 				}
 				time.Sleep(time.Millisecond)
 			}
-			if len(rows) != 4 {
-				t.Fatalf("want legacy+canonical pair, got %d", len(rows))
+			// Only the canonical pair reaches the event log (CW-20261113-0009).
+			time.Sleep(50 * time.Millisecond)
+			if all, err := f.db.EventsSince(0); err == nil {
+				for _, row := range all {
+					if row.Kind == events.EventTypeToolCallStart || row.Kind == events.EventTypeToolCallEnd {
+						t.Fatalf("legacy %s logged", row.Kind)
+					}
+				}
 			}
-			wantKinds := []string{events.EventTypeToolCallStart, catalog.KindToolCallStarted, events.EventTypeToolCallEnd, catalog.KindToolCallFinished}
+			if len(rows) != 2 {
+				t.Fatalf("want the canonical pair, got %d", len(rows))
+			}
+			wantKinds := []string{catalog.KindToolCallStarted, catalog.KindToolCallFinished}
 			for i, row := range rows {
 				if row.Kind != wantKinds[i] {
 					t.Fatalf("kind[%d]=%s", i, row.Kind)
 				}
 			}
-			for _, row := range []events.Event{rows[1], rows[3]} {
+			for _, row := range rows {
 				var payload map[string]any
 				if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
 					t.Fatal(err)
 				}
 				for key := range payload {
 					switch key {
-					case "tool", "server", "args_bytes", "args_schema_fp", "ok", "error_class", "duration_ms", "gateway_ms", "forward_ms", "result_bytes":
+					case "tool", "server", "args_bytes", "args_schema_fp", "ok", "error_class", "duration_ms", "gateway_ms", "forward_ms", "result_bytes", "discovery_mode":
 					default:
 						t.Fatalf("unexpected metadata field %s", key)
 					}
@@ -97,7 +106,7 @@ func TestCanonicalToolEventsThroughDaemonRecorder(t *testing.T) {
 				if payload["tool"] != "read" || payload["args_bytes"].(float64) <= 0 {
 					t.Fatal(payload)
 				}
-				if row.Envelope.Corr.TraceID == "" || row.Envelope.Corr.SpanID == "" || row.Envelope.Corr != rows[1].Envelope.Corr {
+				if row.Envelope.Corr.TraceID == "" || row.Envelope.Corr.SpanID == "" || row.Envelope.Corr != rows[0].Envelope.Corr {
 					t.Fatalf("unmatched correlation: %+v", row.Envelope.Corr)
 				}
 				if bound {

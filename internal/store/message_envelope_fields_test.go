@@ -65,3 +65,20 @@ func TestLifecyclePayloadCarriesEffectiveAttention(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261114-0116: message lifecycle events carry the on-behalf marker of mail an assistant sent.
+func TestLifecyclePayloadCarriesOnBehalfOf(t *testing.T) {
+	ctx := context.Background()
+	db := openEventsStore(t)
+	e := envelope.Envelope{Kind: envelope.KindMessage, To: []string{"@archie"}, Body: "b", OnBehalfOf: "@chrispian"}
+	raw, _ := json.Marshal(e)
+	if _, err := db.db.Exec(`INSERT INTO messages(id,kind,from_urn,to_urn,payload,content_type,created_at) VALUES (?,?,?,?,?,?,?)`,
+		"m1", "notice", "msg://agent/agent-mux/agt_hg8p0txi1y", "msg://agent/agent-mux/agt_archie", string(raw), envelope.ContentType, "2026-11-14T04:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	_ = json.Unmarshal([]byte(db.withEnvelopeFields(ctx, `{"message_id":"m1"}`)), &got)
+	if got["on_behalf_of"] != "@chrispian" || got["drafted_by"] != "assistant" {
+		t.Fatalf("payload = %v", got)
+	}
+}

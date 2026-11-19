@@ -3,6 +3,7 @@ package api
 import (
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/identity"
@@ -11,7 +12,8 @@ import (
 // A new registration must get an explicit local policy; this fails otherwise.
 func TestLocalScopesCoverRegisteredRoutes(t *testing.T) {
 	policy := map[string]bool{}
-	for _, rule := range LocalRouteScopes {
+	// The chat wire's policy joins the table only when the daemon mounts it.
+	for _, rule := range append(slices.Clone(LocalRouteScopes), ChatWireRouteScopes...) {
 		policy[rule.Registration] = true
 	}
 	for _, pattern := range registeredRoutePatterns(t) {

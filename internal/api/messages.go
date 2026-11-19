@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
+	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
@@ -52,15 +54,15 @@ func (s *Server) registerMessageRoutes(router *http.ServeMux) {
 	if s.MessageStore == nil {
 		return
 	}
-	router.HandleFunc("/messages", s.guardAs(s.handleMessagesCollection))
-	router.HandleFunc("/messages/notify", s.guardAs(s.handleMessageNotify))
-	router.HandleFunc("/messages/request", s.guardAs(s.handleMessageRequest))
-	router.HandleFunc("/messages/subscribe", s.guardAs(s.handleMessagesSubscribe))
-	router.HandleFunc("/messages/inbox", s.guardAs(s.handleMessagesInbox))
-	router.HandleFunc("/messages/list", s.guardAs(s.handleMessagesList))
-	router.HandleFunc("/messages/watch", s.guardAs(s.handleMessagesWatch))
-	router.HandleFunc("/messages/thread/", s.guardAs(s.handleMessagesThread))
-	router.HandleFunc("/messages/", s.guardAs(s.handleMessagesItem))
+	router.HandleFunc("/messages", s.guardMailbox(s.handleMessagesCollection))
+	router.HandleFunc("/messages/notify", s.guardMailbox(s.handleMessageNotify))
+	router.HandleFunc("/messages/request", s.guardMailbox(s.handleMessageRequest))
+	router.HandleFunc("/messages/subscribe", s.guardMailbox(s.handleMessagesSubscribe))
+	router.HandleFunc("/messages/inbox", s.guardMailbox(s.handleMessagesInbox))
+	router.HandleFunc("/messages/list", s.guardMailbox(s.handleMessagesList))
+	router.HandleFunc("/messages/watch", s.guardMailbox(s.handleMessagesWatch))
+	router.HandleFunc("/messages/thread/", s.guardMailbox(s.handleMessagesThread))
+	router.HandleFunc("/messages/", s.guardMailbox(s.handleMessagesItem))
 }
 
 type messageNotifyRequest struct {
@@ -377,6 +379,15 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 {
 		action = parts[1]
 	}
+	// Operator-attested replies (CW-20261114-0152) authenticate on their own terms.
+	switch action {
+	case "operator-reply/challenge":
+		s.handleOperatorReplyChallenge(w, r, id)
+		return
+	case "operator-reply":
+		s.handleOperatorReply(w, r, id)
+		return
+	}
 
 	if action != "" && action != "purge" && action != "trace" && action != "reply" && action != "delivery" || r.Method == http.MethodDelete {
 		if env, err := s.MessageStore.Get(r.Context(), id); err == nil {
@@ -563,7 +574,7 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id str
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	if !s.sameSeat(r.Context(), as, env.From.URN()) && !s.sameSeat(r.Context(), as, env.To.URN()) {
+	if !s.sameAddress(r.Context(), as, env.From.URN()) && !s.sameAddress(r.Context(), as, env.To.URN()) {
 		writeError(w, http.StatusForbidden, CodeForbidden, "as must be the message's sender or recipient")
 		return
 	}
@@ -822,9 +833,12 @@ func (s *Server) handleMessagesThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
+	// A turn stored under an alias of the claimed address is the caller's too
+	// (address_aliases.go); with no alias this is the one address, as before.
+	mine := s.aliasForms(r.Context(), as)
 	scoped := make([]messaging.Envelope, 0, len(envs))
 	for _, env := range envs {
-		if as == env.From.URN() || as == env.To.URN() {
+		if slices.Contains(mine, env.From.URN()) || slices.Contains(mine, env.To.URN()) {
 			scoped = append(scoped, env)
 		}
 	}
@@ -1231,7 +1245,7 @@ func (s *Server) handleMessagesSubscribe(w http.ResponseWriter, r *http.Request)
 			}
 			// Store already filters by `to`; this is a defense-in-depth
 			// check for any Store impl that doesn't enforce it.
-			if !env.To.IsZero() && env.To != to {
+			if !env.To.IsZero() && env.To != to && !s.sameAddress(r.Context(), env.To.URN(), to.URN()) {
 				continue
 			}
 			b, err := json.Marshal(env)
@@ -1293,13 +1307,24 @@ func (s *Server) refuseDeprecatedRecipient(ctx context.Context, to messaging.Add
 func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
 	// Mail to a seat's logical form goes to its catalog urn, where it binds and
 	// reads (CW-20261114-0013); before, it landed where nobody reads it.
-	if env.To.Kind == messaging.KindAgent {
-		if c := s.canonicalSeat(ctx, env.To.URN()); c != env.To.URN() {
-			if addr, err := messaging.ParseURN(c); err == nil {
-				env.To = addr
+	seat := func() {
+		if env.To.Kind == messaging.KindAgent {
+			if c := s.canonicalSeat(ctx, env.To.URN()); c != env.To.URN() {
+				if addr, err := messaging.ParseURN(c); err == nil {
+					env.To = addr
+				}
 			}
 		}
 	}
+	seat()
+	// Mail to an alias goes to the canonical address (address_aliases.go),
+	// resolved here so the deprecation check and federation routing see it. The
+	// canonical address is mapped to its seat again: an alias row made before
+	// its target became a catalog seat may still name the logical form.
+	if err := s.canonicalizeMail(ctx, &env); err != nil {
+		return messaging.Envelope{}, err
+	}
+	seat()
 	if err := s.refuseDeprecatedRecipient(ctx, env.To); err != nil {
 		return messaging.Envelope{}, err
 	}
@@ -1310,7 +1335,29 @@ func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messa
 	if publication && s.Channels != nil {
 		return s.Channels.Publish(ctx, env)
 	}
+	s.stampReplyAwaiting(ctx, &env)
 	return s.MessageStore.Send(ctx, env)
+}
+
+// MetadataAwaiting is the metadata key naming the address an untyped reply
+// awaits (a typed envelope carries awaiting in its payload).
+const MetadataAwaiting = "awaiting"
+
+// stampReplyAwaiting sets an untyped reply's awaiting metadata to the parent's
+// sender when unset (CW-20261117-0003), so every reply names the asker. Typed
+// envelopes carry awaiting in the payload (handleMessagePost).
+func (s *Server) stampReplyAwaiting(ctx context.Context, env *messaging.Envelope) {
+	if env.InReplyTo == "" || env.ContentType == envelope.ContentType || env.Metadata[MetadataAwaiting] != "" || s.MessageStore == nil {
+		return
+	}
+	p, err := s.MessageStore.Get(ctx, env.InReplyTo)
+	if err != nil || p.From.IsZero() || canonicalAddress(p.From) == canonicalAddress(env.From) {
+		return
+	}
+	if env.Metadata == nil {
+		env.Metadata = map[string]string{}
+	}
+	env.Metadata[MetadataAwaiting] = canonicalAddress(p.From)
 }
 
 // applySendIdempotencyKey maps the Idempotency-Key header onto the metadata key

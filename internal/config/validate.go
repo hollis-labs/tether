@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"regexp"
 	"sort"
 	"strings"
@@ -79,6 +80,11 @@ func (c *Catalog) Validate() error {
 	}
 	if err := c.Global.Federation.Validate(); err != nil {
 		return err
+	}
+	if c.Global.OperatorAttestation != nil {
+		if _, err := operatorattest.Parse(*c.Global.OperatorAttestation); err != nil {
+			return err
+		}
 	}
 	urns := map[string]string{}
 	for id, a := range c.Agents {

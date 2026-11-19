@@ -17,6 +17,13 @@ type Ceilings interface {
 	FormationCeilings(context.Context, Principal) (FormationPolicy, error)
 }
 
+// ShapedCeilings is an optional Ceilings extension that picks the ceilings from
+// the request itself (for example by team shape). When implemented it is used
+// instead of FormationCeilings.
+type ShapedCeilings interface {
+	FormationCeilingsFor(context.Context, Principal, FormRequest) (FormationPolicy, error)
+}
+
 // FormationAdmitter is an optional Ceilings extension that sees the whole
 // request before any definition write, for rules that span slots (shape,
 // runtime pairing). A non-nil error refuses the formation.
@@ -41,7 +48,12 @@ type PairingReporter interface {
 }
 
 type FormationPolicy struct {
-	Limits                                         mesh.Limits
+	// Limits is the hard maximum a formation may resolve to; a team or launch
+	// request may only tighten it.
+	Limits mesh.Limits
+	// DefaultLimits fills every spawn limit a request leaves unspecified (zero).
+	// A zero DefaultLimits (or a zero field) falls back to Limits itself.
+	DefaultLimits                                  mesh.Limits
 	MaxSlots, MaxMembersPerSlot, MaxInitialMembers int
 	AllowedPermissions                             []teams.Permission
 	// AllowAdoptedSlots lets a formation provision no member at all, leaving
@@ -61,7 +73,12 @@ func (s *Service) formationPolicy(ctx context.Context, p Principal, req FormRequ
 	if err != nil {
 		return mesh.Limits{}, "", err
 	}
-	policy, err := s.deps.Ceilings.FormationCeilings(ctx, p)
+	var policy FormationPolicy
+	if shaped, ok := s.deps.Ceilings.(ShapedCeilings); ok {
+		policy, err = shaped.FormationCeilingsFor(ctx, p, req)
+	} else {
+		policy, err = s.deps.Ceilings.FormationCeilings(ctx, p)
+	}
 	if err != nil {
 		return mesh.Limits{}, "", err
 	}
@@ -89,7 +106,7 @@ func (s *Service) formationPolicy(ctx context.Context, p Principal, req FormRequ
 			return mesh.Limits{}, "", ErrDenied
 		}
 	}
-	limits, err := teams.ResolveLimits(req.Team.Policy.Spawn, policy.Limits, policy.Limits)
+	limits, err := teams.ResolveLimits(withDefaults(req.Team.Policy.Spawn, policy.DefaultLimits), policy.Limits, policy.Limits)
 	if err != nil {
 		return mesh.Limits{}, "", err
 	}
@@ -209,4 +226,31 @@ func validateLaunch(req FormRequest) (teams.Team, error) {
 		return teams.Team{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	return team, nil
+}
+
+// withDefaults fills the limits a request left unspecified from def. A default
+// above the ceiling is left for ResolveLimits to refuse.
+func withDefaults(request, def mesh.Limits) mesh.Limits {
+	if request.MaxDepth == 0 {
+		request.MaxDepth = def.MaxDepth
+	}
+	if request.MaxChildren == 0 {
+		request.MaxChildren = def.MaxChildren
+	}
+	if request.FanOut == 0 {
+		request.FanOut = def.FanOut
+	}
+	if request.MaxRounds == 0 {
+		request.MaxRounds = def.MaxRounds
+	}
+	if request.MaxStalls == 0 {
+		request.MaxStalls = def.MaxStalls
+	}
+	if request.Budget == 0 {
+		request.Budget = def.Budget
+	}
+	if request.Timeout == 0 {
+		request.Timeout = def.Timeout
+	}
+	return request
 }

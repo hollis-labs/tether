@@ -242,3 +242,75 @@ func TestBindTurnInputSourcesOnlyForAProvenBinding(t *testing.T) {
 		}
 	})
 }
+
+// CW-20261114-0080: a proven mail-wake binding carries the triage class of the
+// waking mail; an unproven binding, a non-wake input and an untriaged wake carry
+// none. Re-reading a bound turn agrees.
+func TestBindTurnInputTriageOnlyForAProvenMailWake(t *testing.T) {
+	ctx := context.Background()
+	wake := func(t *testing.T, db *Store, ref string, accept bool) {
+		t.Helper()
+		in, err := db.RecordTurnInput(ctx, TurnInput{SessionID: "s", Source: InputMailWake, SenderClass: ClassUnknown, Basis: BasisSharedOperator, RefID: ref})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if accept {
+			_ = db.SettleTurnInput(ctx, in.ID, true)
+		}
+	}
+	triage := func(t *testing.T, db *Store, ref, class string) {
+		t.Helper()
+		if _, _, err := db.TriageRecord(ctx, TriageRow{MessageID: ref, Recipient: "msg://agent/x/a", Seat: "msg://agent/x/a", Class: class, Reason: "test", State: "woken", CreatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("human wake", func(t *testing.T) {
+		db := inputStore(t)
+		triage(t, db, "m1", "human")
+		wake(t, db, "m1", true)
+		got, _ := db.BindTurnInput(ctx, "s", "t1")
+		if strings.Join(got.Sources, ",") != InputMailWake || strings.Join(got.Triage, ",") != "human" {
+			t.Fatalf("%+v", got)
+		}
+		if again, _ := db.BindTurnInput(ctx, "s", "t1"); strings.Join(again.Triage, ",") != "human" {
+			t.Fatalf("re-read lost the triage: %+v", again)
+		}
+	})
+	t.Run("untriaged wake", func(t *testing.T) {
+		db := inputStore(t)
+		wake(t, db, "m1", true)
+		if got, _ := db.BindTurnInput(ctx, "s", "t1"); len(got.Sources) != 1 || len(got.Triage) != 0 {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("not a wake", func(t *testing.T) {
+		db := inputStore(t)
+		triage(t, db, "m1", "action")
+		in, _ := db.RecordTurnInput(ctx, TurnInput{SessionID: "s", Source: InputSessionTurn, SenderClass: ClassOperator, Basis: BasisPrincipal, RefID: "m1"})
+		_ = db.SettleTurnInput(ctx, in.ID, true)
+		if got, _ := db.BindTurnInput(ctx, "s", "t1"); len(got.Triage) != 0 {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("unproven bindings", func(t *testing.T) {
+		db := inputStore(t)
+		triage(t, db, "m1", "human")
+		wake(t, db, "m1", false) // submitting
+		if got, _ := db.BindTurnInput(ctx, "s", "t1"); got.Basis != "submission_unsettled" || len(got.Triage) != 0 {
+			t.Fatalf("unsettled: %+v", got)
+		}
+		if again, _ := db.BindTurnInput(ctx, "s", "t1"); len(again.Triage) != 0 {
+			t.Fatalf("re-read of an unsettled binding: %+v", again)
+		}
+		db = inputStore(t)
+		triage(t, db, "m1", "human")
+		triage(t, db, "m2", "action")
+		wake(t, db, "m1", true)
+		wake(t, db, "m2", true)
+		a, _ := db.BindTurnInput(ctx, "s", "t1")
+		b, _ := db.BindTurnInput(ctx, "s", "t2")
+		if a.Basis != "queued_inputs_present" || len(a.Triage) != 0 || b.Basis != "queued_input" || len(b.Triage) != 0 {
+			t.Fatalf("queued: %+v %+v", a, b)
+		}
+	})
+}

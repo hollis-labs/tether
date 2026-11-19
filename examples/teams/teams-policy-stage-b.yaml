@@ -1,0 +1,49 @@
+# Stage B policy: Torque's dispatcher may form and dissolve teams, ceilings are
+# sized for hours of real work, and each launch is one allowlisted model.
+# Copy to <catalog root>/teams-policy.yaml and definitions/*.md to
+# <catalog root>/team-definitions/, then restart the daemon (the pause file
+# teams-policy.paused still works without a restart).
+version: 1
+
+# Service principals that may form and dissolve teams besides the local
+# operator. They must still present a valid credential carrying team.write;
+# unlisted services are refused. Identity enforcement is not required.
+services:
+  - msg://service/torque/dispatcher
+
+# Optional. Omitted fields take the built-ins shown here. `max` is the hard cap
+# no team or launch request may widen; `default` fills what a request leaves
+# unset (a team's policy.spawn can only tighten it).
+ceilings:
+  default: {timeout: 4h, max_rounds: 200, max_stalls: 20, max_depth: 2, max_children: 6, fan_out: 6, budget: 2000}
+  max:     {timeout: 12h, max_rounds: 500, max_stalls: 40, max_depth: 3, max_children: 8, fan_out: 8, budget: 10000}
+
+# "require" (default): the reviewer must differ from the workers by runtime, or
+# by model when both launches name one, whenever the allowlist can satisfy it.
+# "prefer": always only a preference (logged and recorded when not met).
+reviewer_pairing: require
+
+# One entry per launch id and per definition pin. Several launches per runtime
+# are fine, so roles map to different models: add `model:` to each, for example
+#   {launch: my-claude-astra, runtime: claude, model: astra, definition: {...}}
+#   {launch: my-claude-sol,   runtime: claude, model: sol,   definition: {...}}
+#   {launch: tether-agy,      runtime: antigravity, definition: {...}}
+# and put the orchestrator and reviewer slots on the Astra pin, the workers on
+# the Sol or Agy pin. Each launch needs its own definition file and pin.
+launches:
+  - launch: tether-claude
+    runtime: claude
+    definition: {id: claude-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/claude-agent.md
+  - launch: tether-claude-worktree
+    runtime: claude
+    definition: {id: claude-worktree-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/claude-worktree-agent.md
+  - launch: agent-mux-codex-app-server
+    runtime: codex
+    definition: {id: codex-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/codex-agent.md
+  - launch: agent-mux-codex-app-server-worktree
+    runtime: codex
+    definition: {id: codex-worktree-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/codex-worktree-agent.md

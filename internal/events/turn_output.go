@@ -42,6 +42,11 @@ type TurnOutputEvent struct {
 	// order, present only when the binding is proven (CW-20261114-0061). Unlike
 	// InputClasses it is kept when Audience is unknown; absent means unknown.
 	InputSources []string `json:"input_sources,omitempty"`
+	// InputTriage is the wake_triage class (human, action, fyi, read) of the
+	// mail that woke the seat, per bound input in InputIDs order, "" for an
+	// input that is not a mail wake or was not triaged; omitted when all are ""
+	// (CW-20261114-0080). Same proven-binding rule as InputSources.
+	InputTriage []string `json:"input_triage,omitempty"`
 }
 
 // TurnOutputExcerpt is the shared unrouted retention policy for producers and

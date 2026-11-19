@@ -128,6 +128,40 @@ func TestToolMetricsPrioritizeFrequentToolsOverJunkGroups(t *testing.T) {
 	}
 }
 
+// Across the CW-20261113-0009 cutover every call counts once: a call logged
+// before it has a tool_call_end and a tool.call.finished without
+// discovery_mode; a call logged after it has only a tool.call.finished with
+// discovery_mode.
+func TestToolMetricsCountEachCallOnceAcrossTheCanonicalCutover(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	insert := func(kind, payload string) {
+		t.Helper()
+		if _, _, err := db.InsertEvent(events.ScopeDaemon, "", kind, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Before: both rows for one call.
+	insert(events.EventTypeToolCallEnd, `{"tool_name":"read","server":"alpha","ok":true,"duration_ms":10,"discovery_mode":"flat"}`)
+	insert("tool.call.finished", `{"tool":"read","server":"alpha","ok":true,"duration_ms":10}`)
+	// After: the canonical row only, for two calls.
+	call := events.ToolCallEvent{ToolName: "read", Server: "alpha", OK: true, DurationMs: 20, ToolCallDetails: events.ToolCallDetails{DiscoveryMode: "flat"}}
+	for range 2 {
+		ev := events.CanonicalToolCall(call, true)
+		insert(ev.Kind, ev.PayloadJSON)
+	}
+	out, err := (telemetry.QueryService{Source: db}).ReadMetrics(context.Background(), telemetry.MetricsRequest{Tool: "read", Mode: "flat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Groups) != 1 || out.Groups[0].Calls != 3 || out.Groups[0].Duration.SumMs != 50 || out.Groups[0].Tool != "read" {
+		t.Fatalf("groups %+v", out.Groups)
+	}
+}
+
 func TestDurableToolMetricsDiscoveryModeDimensionFilterAndCompact(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {

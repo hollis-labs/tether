@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -136,7 +138,18 @@ type deviceStream struct {
 	cancel context.CancelFunc
 	p      Principal
 	hash   string
+	// unavailableSince (unix nanos, 0 when verified) is when re-verification
+	// first failed for a reason other than the credential being invalid.
+	unavailableSince atomic.Int64
 }
+
+// streamUnavailableGrace is how long a device stream outlives a credential that
+// cannot be re-verified because identity is unavailable (a stalled or busy
+// database), as opposed to one that is invalid, revoked, expired or narrowed,
+// which ends the stream at once. Without it a slow database read as a
+// revocation and dropped every worker connection, whose handshakes then
+// ordered live sessions killed (CW-20261114-0168).
+var streamUnavailableGrace = 2 * time.Minute
 
 func (s *Store) watchDevice(parent context.Context, p Principal, hash string) (context.Context, func(), error) {
 	ctx, cancel := context.WithCancel(parent)
@@ -183,8 +196,30 @@ func (s *Store) watchDevice(parent context.Context, p Principal, hash string) (c
 	return ctx, func() { stop(); <-joined }, nil
 }
 
+// deviceStreamValid reports whether stream may continue: its credential
+// verified, or verification is unavailable (not refused) and has been for less
+// than streamUnavailableGrace.
 func (s *Store) deviceStreamValid(ctx context.Context, stream *deviceStream) bool {
-	return s.verifyDeviceStream(ctx, stream) == nil
+	err := s.verifyDeviceStream(ctx, stream)
+	if err == nil {
+		if since := stream.unavailableSince.Swap(0); since != 0 {
+			log.Printf("identity: device %s stream verified again after %s unavailable", stream.p.ID, time.Since(time.Unix(0, since)).Round(time.Second))
+		}
+		return true
+	}
+	if errors.Is(err, ErrInvalidToken) || ctx.Err() != nil {
+		return false
+	}
+	now := time.Now()
+	if stream.unavailableSince.CompareAndSwap(0, now.UnixNano()) {
+		log.Printf("identity: device %s stream kept: verification unavailable (%v); ends after %s", stream.p.ID, err, streamUnavailableGrace)
+		return true
+	}
+	if now.Sub(time.Unix(0, stream.unavailableSince.Load())) < streamUnavailableGrace {
+		return true
+	}
+	log.Printf("identity: device %s stream ended: verification unavailable for %s (%v)", stream.p.ID, streamUnavailableGrace, err)
+	return false
 }
 
 func (s *Store) verifyDeviceStream(ctx context.Context, stream *deviceStream) error {
