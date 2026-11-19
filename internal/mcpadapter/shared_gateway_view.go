@@ -226,6 +226,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		a.registerDocsResources(s)
 		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
 	}
+	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(r.pool, upstreams.servers, gateway, opts.Publisher))
 	// Outermost: a denied machine call is audited and never reaches the upstream
 	// or the call logger. The access mode is the caller's (ProxyOptions), not
 	// the daemon's env; unset is read-only.
