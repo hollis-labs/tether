@@ -81,6 +81,7 @@ type fakeStdio struct {
 	done, essay  [][]byte // the "done" turn; the essay turn up to the interrupt
 	essayAborted [][]byte // the essay turn from the interrupt to its result
 	writes       atomic.Int64
+	capture      chan<- string
 }
 
 func newFakeStdio(t testing.TB) *fakeStdio {
@@ -102,6 +103,9 @@ func (f *fakeStdio) out(lines [][]byte) {
 func (f *fakeStdio) Write(_ context.Context, frame []byte) error {
 	f.writes.Add(1)
 	if text, ok := claudestdio.UserFrameText(frame); ok {
+		if f.capture != nil {
+			f.capture <- text
+		}
 		if text == longText {
 			f.out(f.essay)
 		} else {
@@ -207,10 +211,11 @@ type fakeSessions struct {
 	mu       sync.Mutex
 	runtimes map[string]Runtime
 	built    map[string]int
+	inputs   chan string
 }
 
 func newFakeSessions(t testing.TB) *fakeSessions {
-	return &fakeSessions{t: t, runtimes: map[string]Runtime{}, built: map[string]int{}}
+	return &fakeSessions{t: t, runtimes: map[string]Runtime{}, built: map[string]int{}, inputs: make(chan string, 32)}
 }
 
 func (s *fakeSessions) set(session string, rt Runtime) {
@@ -237,7 +242,9 @@ func (s *fakeSessions) ChatBackend(session string, rt Runtime) (Backend, error) 
 	case RuntimeClaudePTY:
 		return newFakePTY(s.t, session).backend(), nil
 	case RuntimeClaudeStdio:
-		return newFakeStdio(s.t).backend(), nil
+		f := newFakeStdio(s.t)
+		f.capture = s.inputs
+		return f.backend(), nil
 	case RuntimeCodexAppServer:
 	}
 	return nil, &UnsupportedRuntimeError{SessionID: session, Runtime: rt, Reason: "no fake"}

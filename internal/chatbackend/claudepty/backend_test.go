@@ -2,6 +2,7 @@ package claudepty
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -378,5 +379,128 @@ func waitFor(t *testing.T, ok func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Context travels in the paste, and the transcript/hook echo must claim the submitted
+// run rather than create an observed run that would publish the private prompt.
+func TestAppContextClaimsSubmittedRun(t *testing.T) {
+	fx := loadFixture(t, "three-turns")
+	turn := chatbackend.Turn{Text: turn1Text, Context: json.RawMessage(`{ "view": "private-app-view" }`)}
+	input, err := turn.InputText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldJSON, _ := json.Marshal(turn1Text)
+	newJSON, _ := json.Marshal(input)
+	for i := range fx.lines {
+		fx.lines[i] = []byte(strings.ReplaceAll(string(fx.lines[i]), string(oldJSON), string(newJSON)))
+	}
+	for i := range fx.hooks {
+		fx.hooks[i].Payload = []byte(strings.ReplaceAll(string(fx.hooks[i].Payload), string(oldJSON), string(newJSON)))
+	}
+	h := newHarness(t, nil)
+	var submitted chatbackend.Run
+	h.replay(fx, map[int]func(){0: func() {
+		submitted, err = h.b.Submit(context.Background(), turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}}, nil)
+	h.settle()
+	if got := h.in.all(); len(got) < 2 || got[0] != "\x1b[200~"+input+"\x1b[201~" || got[1] != "\r" {
+		t.Fatalf("paste = %q", got)
+	}
+	for _, r := range h.runs {
+		if strings.Contains(r.Text, "private-app-view") {
+			t.Fatalf("private prompt became observed: %+v", r)
+		}
+	}
+	evs := events(t, submitted)
+	if terminal(evs).Verb != chatstream.VerbRunFinish {
+		t.Fatalf("context turn was not claimed: %s", terminal(evs).Verb)
+	}
+	for _, ev := range evs {
+		raw, _ := json.Marshal(ev)
+		if strings.Contains(string(raw), "private-app-view") {
+			t.Fatalf("context in run event: %s", raw)
+		}
+	}
+}
+
+// A transcript can arrive after Submit's claim deadline or as queued input in
+// an unrelated run. Both paths must publish only the original public text.
+func TestAppContextLateAndQueuedEchoes(t *testing.T) {
+	for _, tc := range []struct {
+		name, fixture, text string
+		expire              bool
+	}{
+		{name: "late", fixture: "three-turns", text: turn1Text, expire: true},
+		{name: "queued", fixture: "queued-merge", text: "Read hello.txt and tell me the launch code in one short sentence."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := loadFixture(t, tc.fixture)
+			turn := chatbackend.Turn{Text: tc.text, Context: json.RawMessage(`{"view":"private-app-view"}`)}
+			input, err := turn.InputText()
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldJSON, _ := json.Marshal(tc.text)
+			newJSON, _ := json.Marshal(input)
+			for i := range fx.lines {
+				fx.lines[i] = []byte(strings.ReplaceAll(string(fx.lines[i]), string(oldJSON), string(newJSON)))
+			}
+			for i := range fx.hooks {
+				fx.hooks[i].Payload = []byte(strings.ReplaceAll(string(fx.hooks[i].Payload), string(oldJSON), string(newJSON)))
+			}
+			h := newHarness(t, nil)
+			var submitted chatbackend.Run
+			h.replay(fx, map[int]func(){0: func() {
+				submitted, err = h.b.Submit(context.Background(), turn)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.expire {
+					h.now = h.now.Add(h.b.cfg.ClaimTimeout + time.Second)
+					h.b.tick(h.now)
+				}
+			}}, nil)
+			h.settle()
+			if terminal(events(t, submitted)).Verb != chatstream.VerbRunError {
+				t.Fatal("expected failed claim")
+			}
+			seen := false
+			for _, r := range h.runs {
+				if strings.Contains(r.Text, "private-app-view") {
+					t.Fatalf("private observed prompt: %q", r.Text)
+				}
+				if r.Text == tc.text {
+					seen = true
+				}
+				for _, ev := range events(t, r.Run) {
+					raw, _ := json.Marshal(ev)
+					if strings.Contains(string(raw), "private-app-view") {
+						t.Fatalf("private event: %s", raw)
+					}
+					if ev.Kind == ActivityQueuedInput && strings.Contains(string(ev.Value), "launch code") {
+						seen = true
+					}
+				}
+			}
+			if !seen {
+				t.Fatal("missing public input echo")
+			}
+		})
+	}
+}
+
+func TestInvalidContextDoesNotWriteInput(t *testing.T) {
+	h := newHarness(t, nil)
+	_, err := h.b.Submit(context.Background(), chatbackend.Turn{Text: "hello", Context: json.RawMessage(`{`)})
+	if err == nil {
+		t.Fatal("invalid context accepted")
+	}
+	if got := h.in.all(); len(got) != 0 {
+		t.Fatalf("invalid context wrote input: %q", got)
 	}
 }

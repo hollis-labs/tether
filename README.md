@@ -333,6 +333,7 @@ printf '%s\n' "$ANTHROPIC_API_KEY" | tether-apikey-helper set keychain://anthrop
 | [`docs/agy-shim-acceptance.md`](docs/agy-shim-acceptance.md) | Operator-owned AGY restart acceptance matrix |
 | [`docs/workstreams.md`](docs/workstreams.md) | Workstreams, session refs, and the recovery digest |
 | [`docs/mcp.md`](docs/mcp.md) | MCP adapter setup, auth, tool reference |
+| [`docs/app-bound-seats.md`](docs/app-bound-seats.md) | Claude seats with app tools and per-turn chat context |
 | [`docs/api/README.md`](docs/api/README.md) | HTTP/UDS daemon API reference |
 | [`docs/go-client-migration.md`](docs/go-client-migration.md) | Migrating apps from `go-agenttether-client` to `go-tether-client` |
 | [`docs/sandboxing.md`](docs/sandboxing.md) | Sandbox profiles (macOS + Linux) |

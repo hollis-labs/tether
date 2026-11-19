@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -98,18 +99,21 @@ type Config struct {
 type Backend struct {
 	cfg Config
 
-	mu        sync.Mutex
-	mapper    claudetranscript.Mapper
-	open      *turn    // the turn the transcript has open
-	pending   *pending // a submitted text not yet seen as a turn
-	hookOpen  string   // prompt id of a turn the hooks opened and have not closed
-	stopped   map[string]time.Time
-	claudeSID string
-	closed    bool
-	observedQ []chatbackend.ObservedRun
-	observedN chan struct{}
-	observed  chan chatbackend.ObservedRun
-	startOnce sync.Once
+	mu      sync.Mutex
+	mapper  claudetranscript.Mapper
+	open    *turn    // the turn the transcript has open
+	pending *pending // a submitted text not yet seen as a turn
+	// Keep public text for context-bearing prompts even after a claim times out:
+	// a late transcript or queued-input echo must not publish private context.
+	publicPrompts map[string]string
+	hookOpen      string // prompt id of a turn the hooks opened and have not closed
+	stopped       map[string]time.Time
+	claudeSID     string
+	closed        bool
+	observedQ     []chatbackend.ObservedRun
+	observedN     chan struct{}
+	observed      chan chatbackend.ObservedRun
+	startOnce     sync.Once
 }
 
 type run struct {
@@ -160,11 +164,12 @@ func New(cfg Config) *Backend {
 		cfg.NewRunID = newRunID
 	}
 	return &Backend{
-		cfg:       cfg,
-		stopped:   map[string]time.Time{},
-		claudeSID: cfg.ClaudeSessionID,
-		observedN: make(chan struct{}, 1),
-		observed:  make(chan chatbackend.ObservedRun),
+		cfg:           cfg,
+		stopped:       map[string]time.Time{},
+		publicPrompts: map[string]string{},
+		claudeSID:     cfg.ClaudeSessionID,
+		observedN:     make(chan struct{}, 1),
+		observed:      make(chan chatbackend.ObservedRun),
 	}
 }
 
@@ -230,6 +235,10 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 	if b.cfg.Input == nil {
 		return nil, errors.New("claudepty: no input")
 	}
+	inputText, err := t.InputText()
+	if err != nil {
+		return nil, err
+	}
 	b.mu.Lock()
 	switch {
 	case b.closed:
@@ -244,11 +253,14 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 		id = b.cfg.NewRunID()
 	}
 	r := b.newRun(id)
-	p := &pending{text: t.Text, run: r, deadline: b.cfg.Now().Add(b.cfg.ClaimTimeout)}
+	p := &pending{text: inputText, run: r, deadline: b.cfg.Now().Add(b.cfg.ClaimTimeout)}
 	b.pending = p
+	if len(t.Context) != 0 {
+		b.publicPrompts[promptKey(inputText)] = t.Text
+	}
 	b.mu.Unlock()
 
-	err := b.cfg.Input.SendInput(b.cfg.SessionID, pasteBytes(t.Text))
+	err = b.cfg.Input.SendInput(b.cfg.SessionID, pasteBytes(inputText))
 	if err == nil {
 		select {
 		case <-ctx.Done():
@@ -360,6 +372,17 @@ func (b *Backend) onLine(line []byte) {
 	}
 }
 
+// publicText only replaces exact prompts this backend submitted with context.
+// b.mu is held; ordinary terminal input is preserved verbatim.
+func (b *Backend) publicText(text string) string {
+	if public, ok := b.publicPrompts[promptKey(text)]; ok {
+		return public
+	}
+	return text
+}
+
+func promptKey(text string) string { return strings.Join(strings.Fields(cleanText(text)), " ") }
+
 // apply acts on mapper signals; b.mu is held. It reports whether Esc must be pressed (a canceled submission started).
 func (b *Backend) apply(sigs []claudetranscript.Signal) (esc bool) {
 	now := b.cfg.Now()
@@ -374,7 +397,7 @@ func (b *Backend) apply(sigs []claudetranscript.Signal) (esc bool) {
 				}
 			} else {
 				t.run = b.newRun(b.cfg.NewRunID())
-				b.publishObserved(chatbackend.ObservedRun{Run: t.run.stream, Text: s.Prompt.Text, Source: s.Prompt.Source, Origin: s.Prompt.Origin, TurnRef: s.PromptID})
+				b.publishObserved(chatbackend.ObservedRun{Run: t.run.stream, Text: b.publicText(s.Prompt.Text), Source: s.Prompt.Source, Origin: s.Prompt.Origin, TurnRef: s.PromptID})
 			}
 			if b.hookOpen != s.PromptID {
 				b.hookOpen = "" // a hook turn that never saw its Stop is over once another prompt starts
@@ -398,7 +421,8 @@ func (b *Backend) apply(sigs []claudetranscript.Signal) (esc bool) {
 			}
 		case claudetranscript.TurnQueued:
 			if b.open != nil {
-				ev := chatstream.Event{V: chatstream.SchemaVersion, Verb: chatstream.VerbActivity, Time: now, Value: mustJSON(map[string]string{"text": s.Text})}
+				text := b.publicText(s.Text)
+				ev := chatstream.Event{V: chatstream.SchemaVersion, Verb: chatstream.VerbActivity, Time: now, Value: mustJSON(map[string]string{"text": text})}
 				// Set apart from the literal: a chatstream activity kind is not a Tether bus event kind, and the
 				// events package's admission-policy scan reads Kind keys in any *Event literal.
 				ev.Kind = ActivityQueuedInput
