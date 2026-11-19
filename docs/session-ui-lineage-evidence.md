@@ -1,10 +1,10 @@
 # UI lineage evidence (CW-20261115-0084)
 
-Authenticated item `GET /sessions/{replacement}` adds two nullable details.
-Collection reads do not populate either. These fields describe verified
+Authenticated item `GET /sessions/{replacement}` adds three nullable details.
+Collection reads do not populate them. These fields describe verified
 execution lineage for UI plan/history reconciliation. They confer no launch,
 read, native-context, credential or runtime-custody authority. In particular,
-neither can satisfy the native continuation API's `native_admission` requirement.
+none can satisfy the native continuation API's `native_admission` requirement.
 
 ## Retained local-team replacement
 
@@ -101,3 +101,25 @@ remote reads, null historical/collection detail and native separation.
 `internal/api/ui_lineage_test.go` covers replacement projection and explicit
 failure without exposing private error payloads. Tachyon reconciliation and
 native-POST rejection after a UI receipt are consumer-owned tests.
+
+## Ordinary hub orphan recovery
+
+`hub_resume_lineage` is null unless persisted ordinary hub resume plans establish
+this exact UI ancestry:
+
+```json
+{"kind":"hub_resume_v1","source_session_id":"source","replacement_session_id":"replacement","logical_agent_id":"same-seat"}
+```
+
+Both canonical rows must be local and name the same nonempty logical agent; the
+replacement has explicit resume intent and its exact source parent. Both stored
+plans must name that agent, neither can be a team plan, and the replacement plan
+must explicitly name `ResumeSourceSessionID`. Retained source shim custody or an
+uncertain custody read refuses evidence. A lineage-only create with no stored
+resume source does not gain this proof.
+
+This covers existing successful ordinary hub recovery from a positively gone
+orphan, whose source row deliberately remains orphaned. Historical destinations
+may later be settled or orphaned; the UI separately requires its current tip to
+be running. Detached, unknown or active sources are not admitted. This is stored
+UI ancestry, with no fabricated acknowledgement time and no native admission.

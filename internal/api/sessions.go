@@ -582,6 +582,15 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id str
 			return
 		}
 	}
+	if reader, ok := s.Service.(interface {
+		GetHubResumeLineage(context.Context, string) (*store.HubResumeLineage, error)
+	}); ok {
+		dto.HubResumeLineage, err = reader.GetHubResumeLineage(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "hub resume lineage lookup failed")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, sessionResponseFor(r, dto))
 }
 

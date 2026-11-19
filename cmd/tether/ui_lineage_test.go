@@ -108,3 +108,71 @@ func TestDaemonUILineageIsAuthenticatedItemOnlyAndNeverNative(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonHubResumeLineageItemRead(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.CreateSession(store.SessionRow{ID: "old", LogicalAgentID: "seat", State: "orphaned"}, &launch.Plan{LogicalAgentID: "seat"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateSession(store.SessionRow{ID: "new", LogicalAgentID: "seat", State: "running", Intent: "resume", ParentSessionID: sql.NullString{String: "old", Valid: true}}, &launch.Plan{LogicalAgentID: "seat", ResumeSourceSessionID: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	ids := identity.NewStore(db.DB())
+	token, err := ids.Mint(context.Background(), identity.Principal{ID: "reader", Kind: "operator", Scopes: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &app.Service{Store: db, Manager: agentsessions.NewManager(nil)}
+	h := identity.MiddlewareWithScopes(identity.Enforce, ids, nil, identity.ScopePolicy{}, api.NewHandler(api.Deps{Service: &serviceAdapter{svc: svc}, GroupStore: db}))
+	for _, mode := range []string{"item", "collection", "unauthenticated", "historical"} {
+		t.Run(mode, func(t *testing.T) {
+			path := "/sessions/new"
+			if mode == "collection" {
+				path = "/sessions"
+			}
+			if mode == "historical" {
+				if err := db.UpdateSessionState("new", "orphaned", 0, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := httptest.NewRequest("GET", path, nil)
+			if mode != "unauthenticated" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if mode == "unauthenticated" {
+				if w.Code != 401 {
+					t.Fatalf("unauthenticated: %d", w.Code)
+				}
+				return
+			}
+			if w.Code != 200 {
+				t.Fatalf("read: %d %s", w.Code, w.Body.String())
+			}
+			if mode == "collection" {
+				var rows api.ListSessionsResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+					t.Fatal(err)
+				}
+				for _, r := range rows.Sessions {
+					if r.HubResumeLineage != nil {
+						t.Fatal("list populated proof")
+					}
+				}
+				return
+			}
+			var got api.SessionDTO
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.HubResumeLineage == nil || got.HubResumeLineage.Kind != "hub_resume_v1" || got.HubResumeLineage.SourceSessionID != "old" || got.NativeAdmission != nil || got.WorkerLineage != nil || got.ReplacementLineage != nil {
+				t.Fatalf("hub proof: %+v", got)
+			}
+		})
+	}
+}

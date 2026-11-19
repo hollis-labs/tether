@@ -1645,3 +1645,7 @@ func (a *serviceAdapter) GetReplacementLineage(ctx context.Context, id string) (
 func (a *serviceAdapter) GetWorkerLineage(ctx context.Context, id string) (*store.WorkerLineage, error) {
 	return a.svc.Store.GetWorkerLineage(ctx, id)
 }
+
+func (a *serviceAdapter) GetHubResumeLineage(ctx context.Context, id string) (*store.HubResumeLineage, error) {
+	return a.svc.Store.GetHubResumeLineage(ctx, id)
+}

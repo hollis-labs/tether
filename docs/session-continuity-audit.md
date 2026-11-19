@@ -96,11 +96,11 @@ relabeled: their historical creator cannot be verified retroactively.
 Conversation generation alone does not move a Tachyon plan. Whole-unit review
 identified the additional non-UI boot/Agent Ops and retained-team read boundary.
 Tether now exposes the narrow authenticated item-only `replacement_lineage` and
-`worker_lineage` evidence described in
+`worker_lineage`, plus ordinary `hub_resume_lineage`, evidence described in
 [session-ui-lineage-evidence.md](session-ui-lineage-evidence.md). The first
 projects a committed retained local-team replacement and independently checks
 stored actors; the second requires explicit relaunch provenance plus an exact
-authenticated worker launch acknowledgement. Neither is native proof.
+authenticated worker launch acknowledgement. None is native proof. Ordinary hub orphan recovery uses exact persisted non-team resume plans and refuses retained source shim custody.
 
 The Tachyon orchestrator owns canonical explicit-resume discovery, complete-chain
 validation and atomic association before plan/history/thread reads (#806 draft,
