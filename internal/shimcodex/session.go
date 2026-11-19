@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"sync"
 	"time"
@@ -46,6 +47,7 @@ type Session struct {
 	deliveryMu      sync.Mutex
 	deliveryCallMu  sync.Mutex
 	deliveryError   error
+	outputFanout    io.Writer
 }
 
 func NewSession(engine *Engine, transport Transport, providerPID int) (*Session, error) {
@@ -188,9 +190,14 @@ func (s *Session) submit(ctx context.Context, method string, params any) (Operat
 // AcceptOutput is called only by the sole shim reader. State and private
 // inbox are durable before ACK; public output delivery is still an obligation.
 func (s *Session) AcceptOutput(ctx context.Context, cursor, stream string, data []byte) error {
-	_, err := s.engine.AcceptOutput(ctx, s.engine.Snapshot().Epoch, cursor, stream, data)
+	accepted, err := s.engine.AcceptOutput(ctx, s.engine.Snapshot().Epoch, cursor, stream, data)
 	if err != nil {
 		return err
+	}
+	// Copy only newly accepted stdout. Replayed journal records must not create
+	// duplicate chat runs; stderr and private protocol responses stay off-wire.
+	if accepted && stream == "stdout" && s.outputFanout != nil {
+		_, _ = s.outputFanout.Write(data)
 	}
 	if err = s.transport.Ack(ctx, s.engine.Snapshot().Cursor); err != nil {
 		return fail("ack_unknown")

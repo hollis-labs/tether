@@ -119,6 +119,11 @@ func generationEvent(ev chatstream.Event) bool {
 // The flag-on daemon surface end to end: the wire mounted by internal/api, a Claude streaming-stdio seat behind the
 // runner, two clients on one conversation, a relaunch that bumps the generation, and a stale attachment refused.
 func TestWireIntegration(t *testing.T) {
+	for _, rt := range []Runtime{RuntimeClaudeStdio, RuntimeCodexAppServer} {
+		t.Run(string(rt), func(t *testing.T) { testWireIntegration(t, rt) })
+	}
+}
+func testWireIntegration(t *testing.T, runtime Runtime) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	st, err := tstore.Open(filepath.Join(dir, "state.db"))
@@ -127,7 +132,7 @@ func TestWireIntegration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	sessions := newFakeSessions(t)
-	sessions.set("s1", RuntimeClaudeStdio)
+	sessions.set("s1", runtime)
 	(&env{st: st}).session(t, "s1", "seat", "")
 
 	w, err := Open(ctx, Config{StateDir: dir, Store: st, Sessions: sessions})
@@ -199,10 +204,10 @@ func TestWireIntegration(t *testing.T) {
 	select {
 	case input := <-sessions.inputs:
 		if input != "<app-context>{\"view\":\"private-app-view\",\"selected\":[1,2]}</app-context>\nhello" {
-			t.Fatalf("Claude stdin text = %q", input)
+			t.Fatalf("Agent input text = %q", input)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("Claude received no input")
+		t.Fatal("Agent received no input")
 	}
 	records := 0
 	for rec, err := range w.db.Log.After(ctx, convID, 0) {
@@ -221,7 +226,7 @@ func TestWireIntegration(t *testing.T) {
 
 	// A relaunch writes a resume session for the seat: the conversation moves in that transaction, the wire hears it
 	// after the commit, and the generation rises on the stream.
-	sessions.set("s1r", RuntimeClaudeStdio)
+	sessions.set("s1r", runtime)
 	(&env{st: st}).session(t, "s1r", "seat", "s1")
 	ga, gb := until(t, sa, generationEvent), until(t, sb, generationEvent)
 	for _, g := range [][]sseEvent{ga, gb} {

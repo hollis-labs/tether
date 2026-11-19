@@ -3,6 +3,7 @@
 package shimcodex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -327,5 +328,29 @@ func TestSessionReadinessNeverUsesEmptyInboxOrStaleDeliveryObservation(t *testin
 				t.Fatalf("unearned readiness: %v", err)
 			}
 		})
+	}
+}
+
+// The chat tap copies committed stdout once; replay and stderr stay out of it.
+func TestSessionStdoutFanoutDoesNotReplay(t *testing.T) {
+	e, _ := newEngine(t)
+	s, err := NewSession(e, &fixtureTransport{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop(context.Background()) })
+	var out bytes.Buffer
+	s.outputFanout = &out
+	line := []byte("{\"method\":\"warning\",\"params\":{\"message\":\"hello\"}}\n")
+	for i := 0; i < 2; i++ {
+		if err := s.AcceptOutput(context.Background(), "j:1", "stdout", line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AcceptOutput(context.Background(), "j:2", "stderr", []byte("private error")); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out.Bytes(), line) {
+		t.Fatalf("stdout copied incorrectly: %q", out.String())
 	}
 }

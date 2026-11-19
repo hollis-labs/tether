@@ -6,9 +6,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -20,6 +23,9 @@ import (
 	"github.com/hollis-labs/libs/harness/core/sandbox"
 	"github.com/hollis-labs/libs/harness/core/shim"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	"github.com/hollis-labs/libs/ui/ui-go/chatstream"
+	"github.com/hollis-labs/tether/internal/chatbackend"
+	"github.com/hollis-labs/tether/internal/chatwire"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
@@ -41,6 +47,9 @@ func TestHostedCodexAppProvider(t *testing.T) {
 	scanner := bufio.NewScanner(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
 	initialized, notified, thread := false, false, false
+	turnID := ""
+	turns := 0
+	autoComplete := os.Getenv("TETHER_CODEX_APP_COMPLETE") == "yes"
 	for scanner.Scan() {
 		var m struct {
 			ID     json.RawMessage `json:"id"`
@@ -73,14 +82,31 @@ func TestHostedCodexAppProvider(t *testing.T) {
 			if !thread {
 				os.Exit(91)
 			}
-			result = map[string]any{"turn": map[string]string{"id": "app-turn"}}
+			turns++
+			turnID = "app-turn"
+			if turns > 1 {
+				turnID = fmt.Sprintf("app-turn-%d", turns)
+			}
+			result = map[string]any{"turn": map[string]string{"id": turnID}}
+		case "turn/interrupt":
+			// Finish the surviving turn without repeating its already-accepted start.
+			for _, line := range []string{
+				fmt.Sprintf(`{"method":"item/agentMessage/delta","params":{"threadId":"app-native","turnId":%q,"itemId":"answer","delta":"fixture recovered tail"}}`, turnID),
+				fmt.Sprintf(`{"method":"turn/completed","params":{"threadId":"app-native","turn":{"id":%q,"status":"interrupted"}}}`, turnID),
+			} {
+				if _, err := fmt.Fprintln(os.Stdout, line); err != nil {
+					os.Exit(88)
+				}
+			}
+			autoComplete = true
+			result = map[string]any{}
 		default:
 			os.Exit(90)
 		}
 		if enc.Encode(map[string]any{"id": m.ID, "result": result}) != nil {
 			os.Exit(89)
 		}
-		if m.Method == "turn/start" && os.Getenv("TETHER_CODEX_APP_COMPLETE") == "yes" {
+		if m.Method == "turn/start" && autoComplete {
 			for _, line := range []string{
 				`{"emittedAtMs":1,"method":"turn/started","params":{"threadId":"app-native","turn":{"id":"app-turn","status":"inProgress","items":[],"error":null}}}`,
 				`{"method":"item/started","params":{"threadId":"app-native","turnId":"app-turn","startedAtMs":1,"item":{"id":"answer","type":"agentMessage","text":"","phase":"final_answer","delivery":null}}}`,
@@ -88,7 +114,7 @@ func TestHostedCodexAppProvider(t *testing.T) {
 				`{"method":"item/completed","params":{"threadId":"app-native","turnId":"app-turn","completedAtMs":2,"item":{"id":"answer","type":"agentMessage","text":"fixture actual reply","phase":"final_answer","delivery":null}}}`,
 				`{"method":"turn/completed","params":{"threadId":"app-native","turn":{"id":"app-turn","status":"completed","items":[],"error":null}}}`,
 			} {
-				if _, err := fmt.Fprintln(os.Stdout, line); err != nil {
+				if _, err := fmt.Fprintln(os.Stdout, strings.ReplaceAll(line, `"app-turn"`, strconv.Quote(turnID))); err != nil {
 					os.Exit(88)
 				}
 			}
@@ -97,16 +123,28 @@ func TestHostedCodexAppProvider(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestHostedCodexActualLaunchAndRecovery(t *testing.T) { runHostedCodexDeliveryFixture(t, false) }
+func TestHostedCodexActualLaunchAndRecovery(t *testing.T) {
+	runHostedCodexDeliveryFixture(t, hostedCodexFixtureOptions{})
+}
 func TestHostedCodexActualCompletedTurnDeliveryAndRecovery(t *testing.T) {
-	runHostedCodexDeliveryFixture(t, true)
+	runHostedCodexDeliveryFixture(t, hostedCodexFixtureOptions{complete: true})
 }
 func TestHostedCodexActualRetainedTurnDeliveryAndRecovery(t *testing.T) {
-	runHostedCodexDeliveryFixture(t, true, true)
+	runHostedCodexDeliveryFixture(t, hostedCodexFixtureOptions{complete: true, retained: true})
 }
 
-func runHostedCodexDeliveryFixture(t *testing.T, complete bool, retained ...bool) {
-	retain := len(retained) != 0 && retained[0]
+func TestHostedCodexChatBackend(t *testing.T) {
+	runHostedCodexDeliveryFixture(t, hostedCodexFixtureOptions{complete: true, chatBefore: true})
+}
+
+func TestHostedCodexChatAfterControllerRecovery(t *testing.T) {
+	runHostedCodexDeliveryFixture(t, hostedCodexFixtureOptions{chatAfter: true})
+}
+
+type hostedCodexFixtureOptions struct{ complete, retained, chatBefore, chatAfter bool }
+
+func runHostedCodexDeliveryFixture(t *testing.T, options hostedCodexFixtureOptions) {
+	complete, retain := options.complete, options.retained
 	t.Setenv(EnvLaunchHost, "shim")
 	root, err := os.MkdirTemp("/var/tmp", "th2-ca-")
 	if err != nil {
@@ -179,12 +217,60 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool, retained ...bool
 		// and provider run normally, but public delivery is connected at boot.
 		runtime.Config.Deliver = nil
 	}
+	chatEnabled := options.chatBefore
+	if chatEnabled || options.chatAfter {
+		s.installCodexTap("codex-app", "codex", req.Runtime, &req.Options)
+	}
 	if err = s.Manager.Start(ctx, req); err != nil {
 		t.Fatal(err)
 	}
 	s.watchSessionBindings("codex-app")
-	if err = s.sendTurnJSONRPC(ctx, "codex-app", "fixture"); err != nil {
-		t.Fatal(err)
+	if chatEnabled {
+		be, err := s.ChatBackend("codex-app", chatwire.RuntimeCodexAppServer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chatCtx, stopChat := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- be.Run(chatCtx) }()
+		<-be.(interface{ Ready() <-chan struct{} }).Ready()
+		run, err := be.Submit(ctx, chatbackend.Turn{Text: "fixture", Context: json.RawMessage(`{"secret":"hosted-private-context"}`)})
+		if err != nil {
+			stopChat()
+			<-done
+			t.Fatal(err)
+		}
+		terminals, deltas := 0, 0
+		for ev, err := range run.Events() {
+			if err != nil {
+				t.Error(err)
+			}
+			if ev.IsTerminal() {
+				terminals++
+				if ev.Verb != chatstream.VerbRunFinish {
+					t.Errorf("hosted chat terminal: %s", ev.Verb)
+				}
+			}
+			if ev.Verb == chatstream.VerbPartDelta {
+				deltas++
+			}
+		}
+		stopChat()
+		<-done
+		if terminals != 1 || deltas == 0 {
+			t.Fatal("hosted stdout did not reach the chat backend")
+		}
+	} else {
+		text := "fixture"
+		if options.chatAfter {
+			text, err = (chatbackend.Turn{Text: text, Context: json.RawMessage(`{"secret":"recovery-private-context"}`)}).InputText()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = s.sendTurnJSONRPC(ctx, "codex-app", text); err != nil {
+			t.Fatal(err)
+		}
 	}
 	shimRow, err := s.Store.SessionShim(ctx, "codex-app")
 	if err != nil {
@@ -262,5 +348,75 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool, retained ...bool
 	inspection, err := p.Inspect(ctx, r)
 	if err != nil || !inspection.Running || inspection.Receipt.ProviderPID != r.ProviderPID {
 		t.Fatal("recovery changed provider")
+	}
+	if options.chatAfter {
+		be, err := s.ChatBackend("codex-app", chatwire.RuntimeCodexAppServer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chatCtx, stopChat := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- be.Run(chatCtx) }()
+		<-be.(interface{ Ready() <-chan struct{} }).Ready()
+		t.Cleanup(func() { stopChat(); <-done })
+		if _, err := be.Submit(ctx, chatbackend.Turn{Text: "must not be delivered"}); !errors.Is(err, chatbackend.ErrBusy) {
+			t.Fatalf("recovered active turn: %v, want ErrBusy", err)
+		}
+		busy, err := port.Load(ctx)
+		if err != nil || busy.NextID != after.NextID || len(busy.Operations) != len(after.Operations) {
+			t.Fatal("busy submission reached the provider", err)
+		}
+		if _, err = s.Manager.JsonRpcCall(ctx, "codex-app", "turn/interrupt", map[string]string{"threadId": "app-native", "turnId": "app-turn"}); err != nil {
+			t.Fatal(err)
+		}
+		var observed chatbackend.ObservedRun
+		select {
+		case observed = <-be.Observed():
+		case <-ctx.Done():
+			t.Fatal("recovered output was not observed", ctx.Err())
+		}
+		check := func(run chatbackend.Run, want chatstream.Verb, wantText string) {
+			t.Helper()
+			terminals := 0
+			var text strings.Builder
+			for ev, err := range run.Events() {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ev.IsTerminal() {
+					terminals++
+					if ev.Verb != want {
+						t.Fatalf("recovered terminal %s, want %s", ev.Verb, want)
+					}
+				}
+				if ev.Verb == chatstream.VerbPartDelta {
+					text.WriteString(ev.Text)
+				}
+				raw, _ := json.Marshal(ev)
+				if strings.Contains(string(raw), "recovery-private-context") {
+					t.Fatal("private context replayed after recovery")
+				}
+			}
+			if terminals != 1 || !strings.Contains(text.String(), wantText) {
+				t.Fatalf("recovered output: %d terminals, text %q", terminals, text.String())
+			}
+		}
+		check(observed.Run, chatstream.VerbRunAbort, "fixture recovered tail")
+		if strings.Contains(observed.Text, "recovery-private-context") {
+			t.Fatal("private context in observed input")
+		}
+		next, err := be.Submit(ctx, chatbackend.Turn{Text: "next turn"})
+		if err != nil {
+			t.Fatal("next recovered turn", err)
+		}
+		check(next, chatstream.VerbRunFinish, "fixture actual reply")
+		final, err := port.Load(ctx)
+		if err != nil || final.ThreadID != "app-native" || final.LastTerminal != "app-turn-2" {
+			t.Fatal("next turn did not keep native thread", err)
+		}
+		live, err := p.Inspect(ctx, r)
+		if err != nil || !live.Running || live.Receipt.ProviderPID != r.ProviderPID {
+			t.Fatal("chat recovery replaced provider", err)
+		}
 	}
 }
