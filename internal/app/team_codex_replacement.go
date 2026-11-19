@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -137,6 +138,7 @@ func (s *Service) recoverRetainedCodexTeam(ctx context.Context, key string, row 
 	if err != nil {
 		return err
 	}
+	log.Printf("app: codex team replacement %s of %s created by principal %q", id, row.ID, store.IdempotencyPrincipalTeam)
 	// the replacement event was written as an outbox row on that transaction
 	s.Store.EventsCommitted()
 	return s.launchRetainedTeamReplacement(ctx, key, id)

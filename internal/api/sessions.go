@@ -315,34 +315,26 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	var res LaunchResult
 	var err error
-	// A keyed request always takes the input path: that is where the
-	// request digest is computed and the key recorded.
-	if req.Worker != "" || req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" || req.TaskID != "" || req.App != "" || req.Continuity != "" {
-		// v005-08 Tier-2 path: caller-provided payload (any field set routes here).
-		res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
-			Worker:             req.Worker,
-			LaunchID:           req.Launch,
-			Route:              req.Route,
-			BootPromptOverride: req.BootPrompt,
-			AgentFile:          req.AgentFile,
-			AgentInline:        req.AgentInline,
-			BootProfileFile:    req.BootProfileFile,
-			Override:           req.Override,
-			PromptAppend:       req.PromptAppend,
-			Injection:          req.Injection,
-			IdempotencyKey:     req.IdempotencyKey,
+	// All creates carry authenticated creator provenance, even without a key.
+	res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
+		Worker:             req.Worker,
+		LaunchID:           req.Launch,
+		Route:              req.Route,
+		BootPromptOverride: req.BootPrompt,
+		AgentFile:          req.AgentFile,
+		AgentInline:        req.AgentInline,
+		BootProfileFile:    req.BootProfileFile,
+		Override:           req.Override,
+		PromptAppend:       req.PromptAppend,
+		Injection:          req.Injection,
+		IdempotencyKey:     req.IdempotencyKey,
 
-			ReplaceIdempotency:   req.ReplaceIdempotency,
-			IdempotencyPrincipal: idemPrincipal,
-			TaskID:               req.TaskID,
-			App:                  req.App,
-			Continuity:           req.Continuity,
-		})
-	} else if req.BootPrompt != "" {
-		res, err = s.Service.CreateSessionWithBootPrompt(req.Launch, req.BootPrompt)
-	} else {
-		res, err = s.Service.CreateSession(req.Launch)
-	}
+		ReplaceIdempotency:   req.ReplaceIdempotency,
+		IdempotencyPrincipal: idemPrincipal,
+		TaskID:               req.TaskID,
+		App:                  req.App,
+		Continuity:           req.Continuity,
+	})
 	if err != nil {
 		var invalidRoute *launchprofile.InvalidRouteError
 		if errors.As(err, &invalidRoute) {
@@ -572,6 +564,30 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id str
 		dto.NativeAdmission, err = reader.GetWorkerNativeAdmission(id)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, CodeInternalError, "native admission lookup failed")
+			return
+		}
+	}
+	if reader, ok := s.Service.(interface {
+		GetReplacementLineage(context.Context, string) (*store.ReplacementLineage, error)
+		GetWorkerLineage(context.Context, string) (*store.WorkerLineage, error)
+	}); ok {
+		dto.ReplacementLineage, err = reader.GetReplacementLineage(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "replacement lineage lookup failed")
+			return
+		}
+		dto.WorkerLineage, err = reader.GetWorkerLineage(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "worker lineage lookup failed")
+			return
+		}
+	}
+	if reader, ok := s.Service.(interface {
+		GetHubResumeLineage(context.Context, string) (*store.HubResumeLineage, error)
+	}); ok {
+		dto.HubResumeLineage, err = reader.GetHubResumeLineage(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "hub resume lineage lookup failed")
 			return
 		}
 	}

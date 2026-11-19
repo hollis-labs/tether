@@ -127,7 +127,7 @@ func TestTeamReplacementAtomicallyRemapsOriginalAuthorityAndFreezesOldExecution(
 		t.Fatal("historical roster was rewritten", err)
 	}
 	newRow, err := r.svc.Store.GetSession(in.DestinationID)
-	if err != nil || newRow.State != "created" || newRow.ParentSessionID.String != in.Source.ID || newRow.LogicalAgentID != in.Source.LogicalAgentID || newRow.ProviderID != in.Source.ProviderID {
+	if err != nil || newRow.RequestingPrincipal.String != store.IdempotencyPrincipalTeam || newRow.State != "created" || newRow.ParentSessionID.String != in.Source.ID || newRow.LogicalAgentID != in.Source.LogicalAgentID || newRow.ProviderID != in.Source.ProviderID {
 		t.Fatal("replacement identity/lineage changed", err)
 	}
 	oldRow, err := r.svc.Store.GetSession(in.Source.ID)

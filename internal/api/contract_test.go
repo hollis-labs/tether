@@ -146,8 +146,8 @@ func TestContract_CreateSession_ContractFields(t *testing.T) {
 }
 
 // TestContract_CreateSession_BootPromptOverride verifies that when boot_prompt
-// is provided in the body, CreateSessionWithBootPrompt is dispatched (not
-// CreateSession). Both return the same contract fields.
+// is provided in the body, the input path preserves it alongside creator
+// provenance. The response retains the same contract fields.
 func TestContract_CreateSession_BootPromptOverride(t *testing.T) {
 	svc := contractService()
 	body := `{"launch":"myproject-backend","boot_prompt":"## Custom Boot\nDo the thing."}`
@@ -162,8 +162,10 @@ func TestContract_CreateSession_BootPromptOverride(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// With boot_prompt set, CreateSession is still routed through CreateSessionWithBootPrompt
-	// in the handler; both paths should produce the same contract response shape.
+	// The input path must retain the boot prompt and the response shape.
+	if len(svc.createInputs) != 1 || svc.createInputs[0].BootPromptOverride != "## Custom Boot\nDo the thing." {
+		t.Fatalf("boot prompt lost: %+v", svc.createInputs)
+	}
 	if resp.ID == "" || resp.ProviderID == "" || resp.LogicalAgentID == "" || resp.ProviderKind == "" {
 		t.Errorf("contract fields missing in boot_prompt create response: %+v", resp)
 	}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/store"
 	"strings"
 	"sync"
 	"testing"
@@ -79,7 +80,7 @@ func runRelaunchContinuity(t *testing.T, svc *Service) {
 
 func TestContinuationWithoutAgentIsFresh(t *testing.T) {
 	s := &Service{}
-	if intent, parent := s.continuation(&launch.Plan{Continuity: "relaunch"}); intent != "" || parent.Valid {
+	if intent, parent, err := s.continuation(&launch.Plan{Continuity: "relaunch"}); intent != "" || parent.Valid || err != nil {
 		t.Fatalf("got %q/%+v", intent, parent)
 	}
 }
@@ -146,5 +147,54 @@ func TestResumeFallsBackToSessionLaunchID(t *testing.T) {
 	_, err = svc.ResumeLogicalAgent("worker", api.ResumeOptions{})
 	if err != nil && strings.Contains(err.Error(), "never launched") {
 		t.Fatalf("resume ignored the session's launch_id: %v", err)
+	}
+}
+
+// An unreadable source is uncertainty, never permission to create a fresh session.
+func TestRelaunchParentLookupFailsClosed(t *testing.T) {
+	svc := relaunchHarness(t)
+	if err := svc.Store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.continuation(&launch.Plan{Continuity: "relaunch", LogicalAgentID: "worker"}); err == nil {
+		t.Fatal("failed lookup silently became fresh")
+	}
+}
+
+func TestCreatePrincipalPersistsAcrossRelaunchAndReplay(t *testing.T) {
+	svc := relaunchHarness(t)
+	parent, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", IdempotencyPrincipal: "creator-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"", "key"} {
+		in := CreateSessionInput{LaunchID: "l1", Continuity: "relaunch", IdempotencyKey: key, IdempotencyPrincipal: "creator-b"}
+		child, err := svc.CreateSessionWithInput(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := svc.Store.GetSession(child.SessionID)
+		if err != nil || row.RequestingPrincipal.String != "creator-b" || row.Intent != "resume" || !row.ParentSessionID.Valid {
+			t.Fatalf("child=%+v err=%v", row, err)
+		}
+		if key != "" {
+			replay, err := svc.CreateSessionWithInput(in)
+			if err != nil || replay.SessionID != child.SessionID || !replay.Replayed {
+				t.Fatalf("replay=%+v err=%v", replay, err)
+			}
+		}
+	}
+	row, err := svc.Store.GetSession(parent.SessionID)
+	if err != nil || row.RequestingPrincipal.String != "creator-a" {
+		t.Fatalf("source creator changed: %+v %v", row, err)
+	}
+	rows, err := svc.Store.ListSessions(store.ListSessionsOptions{Limit: 10})
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("rows=%+v %v", rows, err)
+	}
+	for _, row := range rows {
+		if !row.RequestingPrincipal.Valid {
+			t.Fatal("list lost creator")
+		}
 	}
 }
