@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -88,13 +89,13 @@ func Run(ctx context.Context, dc *client.Client, opts client.MCPOptions, transpo
 	}
 	defer relay.close()
 	initialized := upstream.InitializeResult()
-	server := mcp.NewServer(&mcp.Implementation{Name: "tether-forwarder", Version: "1"}, &mcp.ServerOptions{
-		// The daemon Streamable HTTP transport currently negotiates legacy MCP.
-		// Match that epoch: newer subscription envelopes require a separate relay.
-		SupportedProtocolVersions: []string{"2025-11-25"},
-		Instructions:              initialized.Instructions,
-		Capabilities:              initialized.Capabilities,
-	})
+	server := gomcp.NewServer("tether-forwarder", "1",
+		// Match the daemon's legacy session transport and preserve relay behavior.
+		gomcp.WithSupportedProtocolVersions([]string{"2025-11-25"}),
+		gomcp.WithInstructions(initialized.Instructions),
+		gomcp.WithCapabilities(initialized.Capabilities),
+		gomcp.WithoutPanicGuard(),
+	).SDKServer()
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			switch method {
