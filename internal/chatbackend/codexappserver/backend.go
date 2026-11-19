@@ -26,10 +26,8 @@ type envelope struct {
 			ID string `json:"id"`
 		} `json:"turn"`
 		Item struct {
-			Type    string `json:"type"`
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
+			Type    string          `json:"type"`
+			Content json.RawMessage `json:"content"`
 		} `json:"item"`
 	} `json:"params"`
 }
@@ -297,8 +295,13 @@ func (b *Backend) line(p []byte) {
 	// Submitted context is private even when Codex echoes it as a userMessage.
 	if e.Params.Item.Type == "userMessage" {
 		if r.observed && !r.published && r.text == "" {
-			for _, c := range e.Params.Item.Content {
-				r.text += c.Text
+			var content []struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(e.Params.Item.Content, &content) == nil {
+				for _, c := range content {
+					r.text += c.Text
+				}
 			}
 		}
 		b.publish(r)
