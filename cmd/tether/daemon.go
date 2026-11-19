@@ -59,6 +59,7 @@ import (
 	"github.com/hollis-labs/tether/internal/modelcatalog"
 	"github.com/hollis-labs/tether/internal/secretsetup"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/terminalattach"
 )
 
 var daemonCmd = &cobra.Command{
@@ -339,16 +340,33 @@ var daemonRunCmd = &cobra.Command{
 			}
 			eventIngest = ing
 		}
-		// The chat wire (CW-20261118-0011), behind daemon.chat_wire.enabled.
+		// The chat wire (CW-20261118-0011), behind daemon.chat_wire.enabled, and terminal attachments
+		// (CW-20261118-0012), behind daemon.terminal_attachments.enabled. Either can be on alone; when both are, they
+		// use one chat host and so one input lease.
 		var chatWire *chatwire.Wire
-		if cfg.ChatWire {
-			chatWire, err = chatwire.Open(ctx, chatwire.Config{StateDir: stateRoot, Store: svc.Store, Sessions: svc})
+		var terminalHost terminalattach.Host
+		if cfg.ChatWire || cfg.TerminalAttachments {
+			chatHost, err := chatwire.OpenHost(stateRoot)
 			if err != nil {
 				_ = closeService()
-				return fmt.Errorf("chat wire: %w", err)
+				return err
 			}
-			api.EnableChatWireScopes()
-			log.Printf("chat wire: serving %s (daemon.chat_wire.enabled)", chatwire.Prefix)
+			if cfg.TerminalAttachments {
+				if terminalHost, err = chatwire.NewTerminalHost(chatwire.TerminalConfig{Host: chatHost, Store: svc.Store, Sessions: svc}); err != nil {
+					_ = closeService()
+					return fmt.Errorf("terminal attachments: %w", err)
+				}
+				log.Printf("terminal attachments: serving /terminal-attachments (daemon.terminal_attachments.enabled)")
+			}
+			if cfg.ChatWire {
+				chatWire, err = chatwire.Open(ctx, chatwire.Config{StateDir: stateRoot, Host: chatHost, Store: svc.Store, Sessions: svc})
+				if err != nil {
+					_ = closeService()
+					return fmt.Errorf("chat wire: %w", err)
+				}
+				api.EnableChatWireScopes()
+				log.Printf("chat wire: serving %s (daemon.chat_wire.enabled)", chatwire.Prefix)
+			}
 		}
 		closeChatWire := func() {
 			if chatWire != nil {
@@ -452,6 +470,9 @@ var daemonRunCmd = &cobra.Command{
 
 		if chatWire != nil {
 			server.ChatWire = chatWire.Handler()
+		}
+		if terminalHost != nil {
+			server.TerminalHost = terminalHost
 		}
 		if mcpHandler != nil {
 			server.MCP = mcpHandler
@@ -1447,6 +1468,7 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		Modules:             profile,
 		TeamsEnabled:        profile.Enabled(environment.Teams),
 		ChatWire:            d.ChatWire.Enabled,
+		TerminalAttachments: d.TerminalAttachments.Enabled,
 		IdentityMode:        mode,
 		IdentityPoints:      identityPointModes(cat.Global.Identity),
 		ServiceTokenRequest: cat.Global.Identity.ServiceRequest,

@@ -10,7 +10,10 @@ Single-writer arbitration holds **only for clients using
 `/terminal-attachments`**. The existing `/sessions/{id}/input` and
 `/sessions/{id}/resize` routes bypass this lease, even while another UI writer
 holds it. `Deps.TerminalHost` is nil by default, so the new route is off and
-existing Tether input/resize behavior is unchanged. CW-20261116-0019 owns the
+existing Tether input/resize behavior is unchanged. The daemon sets it with
+`daemon.terminal_attachments.enabled` (CW-20261118-0012) from
+`chatwire.NewTerminalHost`, over the chat wire's chat host, with
+`conversation.Resolver` as the target resolver. CW-20261116-0019 owns the
 daemon conversation-to-PTY mapping and the legacy-route policy before
 activation. Do not present the optional surface as an exclusive writer gate
 for all Tether clients until that work lands.

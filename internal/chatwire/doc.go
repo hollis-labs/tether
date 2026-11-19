@@ -56,4 +56,15 @@
 //
 // The resolver rule stands: a terminal attachment's TargetResolver (CW-20261118-0012) runs under chathost's lock and
 // must use conversation.Resolver, never this Control, which takes chathost's lock itself.
+//
+// # Terminal attachments
+//
+// NewTerminalHost (terminal.go) is /terminal-attachments behind daemon.terminal_attachments.enabled, a flag separate
+// from daemon.chat_wire.enabled. The daemon opens one chat host (OpenHost) and gives it to both, so a terminal
+// controller and a chat controller hold one writer lease. Its TargetResolver (terminaltarget.Resolver) resolves a conversation
+// or session ID through conversation.Resolver.Resolve, derives the binding with HostBinding(owner, seat, seat, target)
+// as the Control does for the seat's chat conversation, and asks the sessions whether this daemon runs a PTY for it;
+// it holds no chat host. Resolve, which runs outside the lease lock, first brings the chat host to the Tether row's
+// generation (syncHost), so a conversation no chat client opened, or one relaunched since, can be attached to. Both
+// sides sync the same chat host; syncHost retries a lost compare-and-swap.
 package chatwire
