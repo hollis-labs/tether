@@ -3,13 +3,17 @@ package store
 import (
 	"database/sql"
 	"embed"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -33,16 +37,105 @@ type MigrateResult struct {
 // summary of what happened. It is idempotent: re-running on an already
 // migrated database is a no-op.
 func Migrate(db *sql.DB) (MigrateResult, error) {
+	return MigrateWithProgress(db, "")
+}
+
+// MigrateWithProgress is Migrate that, when progressPath is set, keeps a
+// MigrationProgress file there while each migration runs and removes it when
+// done (CW-20261115-0046): a release tool can tell a daemon that is migrating
+// from one that is down. Each migration's elapsed time is logged.
+func MigrateWithProgress(db *sql.DB, progressPath string) (MigrateResult, error) {
 	sub, err := fs.Sub(embeddedMigrations, "migrations")
 	if err != nil {
 		return MigrateResult{}, fmt.Errorf("sub-fs: %w", err)
 	}
-	return migrateFS(db, sub)
+	return migrateFSWithProgress(db, sub, progressPath)
+}
+
+// MigrationProgress is the migration a process is applying right now.
+type MigrationProgress struct {
+	Version   int       `json:"version"`
+	Name      string    `json:"name"`
+	StartedAt time.Time `json:"started_at"`
+	PID       int       `json:"pid"`
+	// Remaining are the versions still to apply after this one.
+	Remaining []int `json:"remaining"`
+}
+
+// MigrationProgressPath is where the daemon keeps its progress file for the
+// state database at dbPath.
+func MigrationProgressPath(dbPath string) string { return dbPath + ".migrating" }
+
+// ReadMigrationProgress reads the progress file for dbPath; ok is false when
+// no migration is running, including when the file names a process that is no
+// longer alive (a daemon that died mid-migration leaves a stale file).
+func ReadMigrationProgress(dbPath string) (MigrationProgress, bool, error) {
+	raw, err := os.ReadFile(MigrationProgressPath(dbPath)) //nolint:gosec // G304: the daemon's own state path
+	if errors.Is(err, fs.ErrNotExist) {
+		return MigrationProgress{}, false, nil
+	}
+	if err != nil {
+		return MigrationProgress{}, false, err
+	}
+	var p MigrationProgress
+	if err = json.Unmarshal(raw, &p); err != nil {
+		return MigrationProgress{}, false, err
+	}
+	if !processAlive(p.PID) {
+		return p, false, nil
+	}
+	return p, true, nil
+}
+
+// processAlive reports whether pid names a running process.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// afterProgressWrite, when set by a test, runs once a migration's progress
+// file is written and before the migration is applied.
+var afterProgressWrite func()
+
+// writeMigrationProgress writes p to path atomically and reports whether it did.
+func writeMigrationProgress(path string, p MigrationProgress) bool {
+	if path == "" {
+		return false
+	}
+	raw, _ := json.Marshal(p)
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		log.Printf("store: write migration progress: %v", err)
+		return false
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("store: write migration progress: %v", err)
+		_ = os.Remove(tmp)
+		return false
+	}
+	return true
 }
 
 // migrateFS is the testable core — it accepts any fs.FS that lists
 // migration files at its root.
 func migrateFS(db *sql.DB, fsys fs.FS) (MigrateResult, error) {
+	return migrateFSWithProgress(db, fsys, "")
+}
+
+// migrateFSWithProgress keeps the progress file only while it is applying a
+// migration, and removes only a file it wrote itself: a process that opens the
+// database while another is migrating it (a CLI beside the daemon) never erases
+// the migrating process's signal (#592 review).
+func migrateFSWithProgress(db *sql.DB, fsys fs.FS, progressPath string) (MigrateResult, error) {
+	wrote := false
+	defer func() {
+		if wrote {
+			_ = os.Remove(progressPath)
+		}
+	}()
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
         version    INTEGER PRIMARY KEY,
         name       TEXT NOT NULL,
@@ -61,11 +154,18 @@ func migrateFS(db *sql.DB, fsys fs.FS) (MigrateResult, error) {
 		return MigrateResult{}, err
 	}
 
+	var pending []int
+	for _, m := range migs {
+		if _, ok := applied[m.version]; !ok {
+			pending = append(pending, m.version)
+		}
+	}
 	var res MigrateResult
 	for _, m := range migs {
 		if _, ok := applied[m.version]; ok {
 			continue
 		}
+		pending = pending[1:]
 		// Adoption path: first migration against a pre-migrations DB.
 		if m.version == 1 {
 			adopted, err := hasLegacyTables(db)
@@ -81,9 +181,18 @@ func migrateFS(db *sql.DB, fsys fs.FS) (MigrateResult, error) {
 				continue
 			}
 		}
+		start := time.Now()
+		if writeMigrationProgress(progressPath, MigrationProgress{Version: m.version, Name: m.name, StartedAt: start.UTC(), PID: os.Getpid(), Remaining: append([]int{}, pending...)}) {
+			wrote = true
+		}
+		if afterProgressWrite != nil {
+			afterProgressWrite()
+		}
+		log.Printf("store: applying migration %04d_%s (%d more after it)", m.version, m.name, len(pending))
 		if err := applyMigration(db, m); err != nil {
 			return res, err
 		}
+		log.Printf("store: migration %04d_%s applied in %s", m.version, m.name, time.Since(start).Round(time.Millisecond))
 		res.Applied = append(res.Applied, m.version)
 	}
 	return res, nil

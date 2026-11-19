@@ -522,3 +522,27 @@ func TestMailTriageClaimedUserFromOnBehalfIsAction(t *testing.T) {
 		t.Fatalf("claimed user from with on_behalf_of triaged %+v (%v), want action/on_behalf_of", row, err)
 	}
 }
+
+// Sender verification also governs the newer quiet wake and coalesced digest paths.
+func TestMailTriageVerifiedSenderAcrossNewWakePaths(t *testing.T) {
+	r := newTriageRig(t)
+	ctx := context.Background()
+	pol := r.tri.policy(r.to)
+	body := envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindMessage, To: []string{"@worker"}, Attention: envelope.AttentionNone, Body: "quiet"}
+	spoof := r.send(triageOperator, messaging.MsgKindNotice, envelope.ContentType, body, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	if !r.tri.quietNone(ctx, spoof, pol) {
+		t.Fatal("claimed operator bypassed attention=none")
+	}
+	genuine := r.send(triageOperator, messaging.MsgKindNotice, envelope.ContentType, body, nil)
+	if r.tri.quietNone(ctx, genuine, pol) {
+		t.Fatal("verified operator lost wake override")
+	}
+	notice := r.send(triageOperator, messaging.MsgKindNotice, "", map[string]string{"body": "digest item"}, map[string]string{metaFromVerification: "unverified", metaFromPrincipal: peer})
+	if _, err := r.tri.record(ctx, notice, pol, r.now); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := r.tri.digest(ctx, messaging.Envelope{To: r.to})
+	if strings.Contains(line, "@chrispian") || !strings.Contains(line, "@agt_peer") {
+		t.Fatalf("digest sender = %q", line)
+	}
+}

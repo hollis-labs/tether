@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,5 +28,30 @@ func TestEffectiveMailTriage(t *testing.T) {
 	bad := &Catalog{Agents: map[string]Agent{"a": {ID: "a", MailTriage: &launchprofile.MailTriage{ActionInterval: "soon"}}}}
 	if err := bad.Validate(); err == nil {
 		t.Fatal("invalid interval accepted")
+	}
+}
+
+// catalog.defaults.mail_triage.ack_filter: false parses from global.yaml and
+// turns the filter off; absent it is on.
+func TestAckFilterYAMLEndToEnd(t *testing.T) {
+	load := func(extra string) *Catalog {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "global.yaml"), []byte("catalog:\n  defaults:\n    mail_triage:\n      enabled: true\n"+extra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cat, err := Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cat
+	}
+	if !load("").Global.AckFilterEnabled() {
+		t.Fatal("ack filter should default on")
+	}
+	if load("      ack_filter: false\n").Global.AckFilterEnabled() {
+		t.Fatal("ack_filter: false did not turn the filter off")
+	}
+	if !load("      ack_filter: true\n").Global.AckFilterEnabled() {
+		t.Fatal("ack_filter: true turned it off")
 	}
 }

@@ -42,6 +42,13 @@ const (
 	// resize need terminal-grade input authority, which tether.terminal or
 	// tether.sessions (what session.write always covered) provides.
 	ScopeInput = "input"
+	// ScopeOperatorReply lets an operator-paired device (Tachyon) ask for a
+	// challenge and post an operator-attested reply; ScopeOperatorReplyView
+	// lets Tangent's own operator-paired device read the canonical card it
+	// signs over (CW-20261114-0152). Device scopes only: an issued token can
+	// never carry them (CanonicalScopes refuses them).
+	ScopeOperatorReply     = "message.operator_reply"
+	ScopeOperatorReplyView = "message.operator_reply_view"
 )
 
 // NormalizeDeviceScopes validates independent capabilities, not a privilege hierarchy.
@@ -54,7 +61,8 @@ func NormalizeDeviceScopes(scopes []string) ([]string, error) {
 	seen := make(map[string]bool)
 	for _, scope := range scopes {
 		switch scope {
-		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker, WorkloadTrustScope, BasaliskStatusScope, TachyonItemsScope, TachyonCompletionsScope, TachyonOutcomesScope:
+		case ScopeRead, ScopeOperate, ScopeTerminal, ScopeMaintain, ScopeAdmin, ScopeWorker, WorkloadTrustScope, BasaliskStatusScope, TachyonItemsScope, TachyonCompletionsScope, TachyonOutcomesScope,
+			ScopeOperatorReply, ScopeOperatorReplyView:
 		default:
 			return nil, fmt.Errorf("unknown device scope")
 		}

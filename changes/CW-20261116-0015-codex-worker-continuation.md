@@ -1,0 +1,2 @@
+- CW-20261116-0015: Add opt-in same-worker Codex native continuation with exact source-generation fencing, explicit current policy-digest authorization, immutable historical policy, and native-thread readiness before accepting a turn.
+- Expose a durable server-confirmed native admission receipt on session GET so callers can distinguish verified continuation from fresh relaunch; historical and unconfirmed attempts remain unknown (CW-20261116-0015).

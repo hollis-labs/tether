@@ -45,7 +45,12 @@ type Declared struct {
 	Since     time.Time `json:"since"`
 	ExpiresAt time.Time `json:"expires_at,omitzero"`
 	SetBy     string    `json:"set_by"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// SetByVerification says whether the hub verified that the setter holds SetBy
+	// (verified, or stamped from its own address), or not (unverified; empty with no
+	// principal), and SetByPrincipal is the principal that set it (CW-20261114-0130).
+	SetByVerification string    `json:"set_by_verification,omitempty"`
+	SetByPrincipal    string    `json:"set_by_principal,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // Expired reports whether the declaration has lapsed at now.

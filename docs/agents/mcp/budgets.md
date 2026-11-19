@@ -68,6 +68,10 @@ What the cap does:
 - It cuts only a **successful result of a tool annotated read-only**. An error
   is never cut, and neither is a write receipt or any result from a tool that
   is not annotated read-only.
+- It never cuts a catalog plan read (`tether_catalog_plan`,
+  `tether_catalog_plan_get`, `tether_catalog_validate`): an approver must see
+  every planned file. These are built-in per-tool `-1` values; a profile's own
+  `result_cap.tools` entry for the same name still wins (CW-20261118-0033).
 - It cuts the largest array in the result at an item boundary, so the text is
   still valid JSON, with at least the first item kept. Fields next to the array
   are kept. A `structuredContent` copy is cut the same way.
@@ -78,6 +82,11 @@ What the cap does:
    "total":600,"original_bytes":124189,"next_cursor":"<id>.156",
    "how_to_continue":"call tether_result_next with {\"cursor\":\"<id>.156\"}; ..."}}
   ```
+
+  When the result has an object `structuredContent`, the same marker is also
+  set there under the reserved top-level key `_gateway_truncated`, so a client
+  that shows only `structuredContent` (Claude Code) still sees the cut and the
+  cursor (CW-20261118-0033). Results under the cap are not changed.
 
 - It keeps a copy of the original result in memory (ten minutes, at most 64
   results and 48 MiB, none over 8 MiB) and serves the rest with

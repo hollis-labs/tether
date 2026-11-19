@@ -1,0 +1,605 @@
+[
+ {
+  "run_id": "run-1",
+  "observed": false,
+  "text": "Read hello.txt and other.txt (both at once, in parallel). Then work out carefully which code has more letters, thinking it through before you answer in one sentence.",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "model": "claude-sonnet-5-5",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/work",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "tools": [
+       "Read"
+      ],
+      "mcp_servers": [],
+      "model": "claude-sonnet-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.327",
+      "output_style": "default",
+      "uuid": "14b2265d-6f1a-4cb3-beb3-8925ec40f5a3"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.status",
+    "value": {
+     "type": "system",
+     "subtype": "status",
+     "status": "requesting",
+     "session_id": "00000000-0000-4000-8000-000000000001",
+     "uuid": "27d8dfc9-8dbd-47ec-802d-c8c3ff43bd39"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAqEUotMrDApXVWywskF"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAqEUotMrDApXVWywskF",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqEUotMrDApXVWywskF:0",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_01A5umH4HkrLT18tUyDec6Ra",
+     "name": "Read"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqEUotMrDApXVWywskF:0",
+    "json_fragment": "{\"file_path\": \"/work/hello.txt\"}"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqEUotMrDApXVWywskF:0",
+    "final": {
+     "file_path": "/work/hello.txt"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqEUotMrDApXVWywskF:1",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_0113ivze4zM4a2AFVSE4H2gE",
+     "name": "Read"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqEUotMrDApXVWywskF:1",
+    "json_fragment": "{\"file_path\": \""
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqEUotMrDApXVWywskF:1",
+    "json_fragment": "/work/other.txt\"}"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqEUotMrDApXVWywskF:1",
+    "final": {
+     "file_path": "/work/other.txt"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAqEUotMrDApXVWywskF"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAqEUotMrDApXVWywskF"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "c509eaaf-ada9-4ff6-b0e3-e49c06de4dbf",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "c509eaaf-ada9-4ff6-b0e3-e49c06de4dbf:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAqEUotMrDApXVWywskF:0",
+     "tool_use_id": "toolu_01A5umH4HkrLT18tUyDec6Ra"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "c509eaaf-ada9-4ff6-b0e3-e49c06de4dbf:0",
+    "final": {
+     "content": "1\tThe launch code is ORANGE-42.\n2\t",
+     "is_error": false,
+     "text": "1\tThe launch code is ORANGE-42.\n2\t",
+     "tool_use_id": "toolu_01A5umH4HkrLT18tUyDec6Ra",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "c509eaaf-ada9-4ff6-b0e3-e49c06de4dbf"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "raw",
+    "raw": {
+     "dialect": "claude.stream-json",
+     "type": "rate_limit_event",
+     "payload": {
+      "type": "rate_limit_event",
+      "rate_limit_info": {
+       "status": "allowed",
+       "resetsAt": 1795402800,
+       "rateLimitType": "seven_day",
+       "overageStatus": "rejected",
+       "overageDisabledReason": "out_of_credits",
+       "isUsingOverage": false,
+       "unifiedWindows": {
+        "seven_day": {
+         "utilization": 0.4,
+         "resetsAt": 1795402800,
+         "status": "allowed"
+        }
+       }
+      },
+      "uuid": "aff64dfd-809f-4af2-ac55-a10eeb914e13",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "e4a12a9f-038f-4da1-865b-d9ac0307651e",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "e4a12a9f-038f-4da1-865b-d9ac0307651e:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAqEUotMrDApXVWywskF:1",
+     "tool_use_id": "toolu_0113ivze4zM4a2AFVSE4H2gE"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "e4a12a9f-038f-4da1-865b-d9ac0307651e:0",
+    "final": {
+     "content": "1\tThe backup code is BLUE-7.\n2\t",
+     "is_error": false,
+     "text": "1\tThe backup code is BLUE-7.\n2\t",
+     "tool_use_id": "toolu_0113ivze4zM4a2AFVSE4H2gE",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "e4a12a9f-038f-4da1-865b-d9ac0307651e"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.status",
+    "value": {
+     "type": "system",
+     "subtype": "status",
+     "status": "requesting",
+     "session_id": "00000000-0000-4000-8000-000000000001",
+     "uuid": "6c4501ce-3c9b-42f1-a4d2-a7d7e72c1473"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAqEsi3H4XgYKJqso9s2"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAqEsi3H4XgYKJqso9s2",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:0",
+    "kind": "reasoning"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.thinking_tokens",
+    "value": {
+     "type": "system",
+     "subtype": "thinking_tokens",
+     "estimated_tokens": 50,
+     "estimated_tokens_delta": 50,
+     "session_id": "00000000-0000-4000-8000-000000000001",
+     "uuid": "8aaa7775-9858-40a1-8228-5fd4d6673617"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:0"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:0"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.thinking_tokens",
+    "value": {
+     "type": "system",
+     "subtype": "thinking_tokens",
+     "estimated_tokens": 183,
+     "estimated_tokens_delta": 133,
+     "session_id": "00000000-0000-4000-8000-000000000001",
+     "uuid": "01d3b79a-195a-4232-8dfc-879044fb02ad"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:0",
+    "final": {
+     "signature": "redacted-signature",
+     "text": ""
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:1",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:1",
+    "text": "ORANGE-42 (from hello.txt) has more letters than BLUE-7 (from other.txt), with 6 letters (O, R, A, N, G, E) against 4 "
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:1",
+    "text": "(B, L, U, E)."
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqEsi3H4XgYKJqso9s2:1",
+    "final": {
+     "text": "ORANGE-42 (from hello.txt) has more letters than BLUE-7 (from other.txt), with 6 letters (O, R, A, N, G, E) against 4 (B, L, U, E)."
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAqEsi3H4XgYKJqso9s2"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAqEsi3H4XgYKJqso9s2"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 4,
+     "cache_read": 5074,
+     "cache_write": 2097,
+     "output": 428,
+     "total": 7603
+    },
+    "ext": {
+     "claude": {
+      "duration_ms": 7601,
+      "num_turns": 3,
+      "stop_reason": "end_turn",
+      "subtype": "success",
+      "terminal_reason": "completed",
+      "total_cost_usd": 0.0131834
+     }
+    }
+   }
+  ]
+ },
+ {
+  "run_id": "run-2",
+  "observed": true,
+  "text": "Reply with only the word: done",
+  "source": "stdin",
+  "origin": "send_turn",
+  "turn_ref": "6772ddb1-05ed-4296-83b1-cceec65e1589",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "model": "claude-sonnet-5-5",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/work",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "tools": [
+       "Read"
+      ],
+      "mcp_servers": [],
+      "model": "claude-sonnet-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.327",
+      "output_style": "default",
+      "uuid": "6772ddb1-05ed-4296-83b1-cceec65e1589"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.status",
+    "value": {
+     "type": "system",
+     "subtype": "status",
+     "status": "requesting",
+     "session_id": "00000000-0000-4000-8000-000000000001",
+     "uuid": "1aa9c170-bb7c-488a-9af4-57bdf7b78a84"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAqF3EXXzZ7Jw2JMf7RM"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAqF3EXXzZ7Jw2JMf7RM",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqF3EXXzZ7Jw2JMf7RM:0",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqF3EXXzZ7Jw2JMf7RM:0",
+    "text": "done"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqF3EXXzZ7Jw2JMf7RM:0",
+    "final": {
+     "text": "done"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAqF3EXXzZ7Jw2JMf7RM"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAqF3EXXzZ7Jw2JMf7RM"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 4,
+     "cache_read": 3767,
+     "cache_write": 165,
+     "output": 3,
+     "total": 3939
+    },
+    "ext": {
+     "claude": {
+      "duration_ms": 1551,
+      "num_turns": 1,
+      "stop_reason": "end_turn",
+      "subtype": "success",
+      "terminal_reason": "completed",
+      "total_cost_usd": 0.0142581
+     }
+    }
+   }
+  ]
+ }
+]

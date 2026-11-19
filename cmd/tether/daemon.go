@@ -33,6 +33,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
+	"github.com/hollis-labs/tether/internal/chatwire"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -219,6 +220,7 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		svc.ReconcileStaleState()
+		go sampleWAL(ctx, svc.Store)
 
 		// Passive catalog and Cerberus bootstrap importers are retired per CW-20260914-0043.
 		// Catalog files retain their launch configuration role (repo root, workspace mode,
@@ -337,6 +339,26 @@ var daemonRunCmd = &cobra.Command{
 			}
 			eventIngest = ing
 		}
+		// The chat wire (CW-20261118-0011), behind daemon.chat_wire.enabled.
+		var chatWire *chatwire.Wire
+		if cfg.ChatWire {
+			chatWire, err = chatwire.Open(ctx, chatwire.Config{StateDir: stateRoot, Store: svc.Store, Sessions: svc})
+			if err != nil {
+				_ = closeService()
+				return fmt.Errorf("chat wire: %w", err)
+			}
+			api.EnableChatWireScopes()
+			log.Printf("chat wire: serving %s (daemon.chat_wire.enabled)", chatwire.Prefix)
+		}
+		closeChatWire := func() {
+			if chatWire != nil {
+				closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := chatWire.Close(closeCtx); err != nil {
+					log.Printf("chat wire: close: %v", err)
+				}
+			}
+		}
 		server := &daemon.Server{
 			Environment:              environmentDescriptor,
 			EnvironmentReport:        environmentReport,
@@ -375,6 +397,8 @@ var daemonRunCmd = &cobra.Command{
 			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			Seats:               svc.Store,
 			Aliases:             svc.Store,
+			OperatorAttestation: svc.OperatorAttestation,
+			OperatorReplies:     svc.Store,
 			Channels:            svc.Channels,
 			Forums:              forumhost.New(svc.Store),
 			Routing:             svc,
@@ -411,6 +435,7 @@ var daemonRunCmd = &cobra.Command{
 			},
 			LogsDir:          filepath.Join(stateRoot, "logs"),
 			SandboxProtect:   func() *daemon.SandboxProtectHealth { return sandboxProtectHealth(svc.ProtectionHealth()) },
+			WAL:              func() *daemon.WALHealth { return walHealth(svc.Store, time.Now()) },
 			SessionBootstrap: svc.Store,
 			DeliveryTrace:    svc.Store,
 			DeliveryRepair:   svc.Store,
@@ -419,13 +444,20 @@ var daemonRunCmd = &cobra.Command{
 			// Complete reducer persistence and join the routing worker before
 			// closing the store, even after the server has drained sessions.
 			Close: func() error {
+				closeChatWire()
 				stopReport()
 				return closeService()
 			},
 		}
 
+		if chatWire != nil {
+			server.ChatWire = chatWire.Handler()
+		}
 		if mcpHandler != nil {
 			server.MCP = mcpHandler
+			if mcpHandler.backend != nil {
+				server.MCPBackend = mcpHandler.backend
+			}
 			server.MCPShutdown = mcpHandler.Close
 			server.MCPDrain = mcpHandler.Drain
 		}
@@ -1043,7 +1075,15 @@ func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, erro
 	return a.LaunchSessionWithContext(context.Background(), sessionID)
 }
 func (a *serviceAdapter) LaunchSessionWithContext(ctx context.Context, sessionID string) (api.LaunchResult, error) {
-	l, err := a.svc.LaunchSessionWithContext(ctx, sessionID)
+	return launchResult(a.svc.LaunchSessionWithContext(ctx, sessionID))
+}
+
+// LaunchChatSession is the operator chat's launch: catalog-bounded for a catalog seat (CW-20261114-0063).
+func (a *serviceAdapter) LaunchChatSession(ctx context.Context, sessionID string) (api.LaunchResult, error) {
+	return launchResult(a.svc.LaunchChatSession(ctx, sessionID))
+}
+
+func launchResult(l *app.Launched, err error) (api.LaunchResult, error) {
 	if err != nil {
 		return api.LaunchResult{}, err
 	}
@@ -1069,6 +1109,7 @@ func (a *serviceAdapter) ListSessions(opts store.ListSessionsOptions) ([]store.S
 func (a *serviceAdapter) SessionIdentityURN(id string) string { return a.svc.SessionIdentityURN(id) }
 
 var _ api.CallerIdentityLookup = (*serviceAdapter)(nil)
+var _ api.ChatLauncher = (*serviceAdapter)(nil)
 
 func (a *serviceAdapter) GetSession(id string) (*store.SessionRow, error) {
 	return a.svc.GetSession(id)
@@ -1405,6 +1446,7 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		RemoteListener:      remote,
 		Modules:             profile,
 		TeamsEnabled:        profile.Enabled(environment.Teams),
+		ChatWire:            d.ChatWire.Enabled,
 		IdentityMode:        mode,
 		IdentityPoints:      identityPointModes(cat.Global.Identity),
 		ServiceTokenRequest: cat.Global.Identity.ServiceRequest,
@@ -1590,4 +1632,9 @@ func buildTokenIssuer(ctx context.Context, svc *app.Service, dir string) (*authi
 	svc.AgentTokens = issuer
 	go issuer.Maintain(ctx, authissuer.DefaultRotateEvery)
 	return issuer, nil
+}
+
+// GetWorkerNativeAdmission forwards durable server observations to session reads.
+func (a *serviceAdapter) GetWorkerNativeAdmission(id string) (*store.WorkerNativeAdmission, error) {
+	return a.svc.GetWorkerNativeAdmission(id)
 }

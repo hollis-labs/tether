@@ -3,3 +3,4 @@
   (`from_principal`), or, with none, as an agent's. An agent claiming `from: msg://user/local/operator` is no longer
   triaged human/`from_operator`, and is not named @chrispian in `mail.triaged` or the FYI line. `mail.triaged` gains
   `from_verification`.
+- Reconcile verified-sender triage with reply wakes, quiet attention rules and coalesced digests (CW-20261119-0044): digest labels use sender attribution, and live/backfilled reply-to-own checks reject forged parent senders while preserving verified seat aliases.

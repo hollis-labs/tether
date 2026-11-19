@@ -1,0 +1,659 @@
+[
+ {
+  "run_id": "run-1",
+  "observed": false,
+  "text": "Read hello.txt and tell me the launch code in one short sentence.",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.error",
+    "code": "input_merged",
+    "message": "the agent took this input inside the turn that was running (prompt 6c9484aa-20c7-44b4-a4d6-65d08df1bced)"
+   }
+  ]
+ },
+ {
+  "run_id": "run-2",
+  "observed": true,
+  "text": "The tether-mail plugin sent a message:\n\u003cmail wake: content redacted\u003e",
+  "source": "system",
+  "origin": "system",
+  "turn_ref": "6c9484aa-20c7-44b4-a4d6-65d08df1bced",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAiTwu6AR3b7JABomTqX"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAiTwu6AR3b7JABomTqX",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiTwu6AR3b7JABomTqX:0",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_01LsWYuw61fDJfkKHaDS2fWn",
+     "name": "Bash"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiTwu6AR3b7JABomTqX:0",
+    "final": {
+     "command": "redacted"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAiTwu6AR3b7JABomTqX"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAiTwu6AR3b7JABomTqX"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "1889b931-9ead-4347-b840-47010711cb40",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "1889b931-9ead-4347-b840-47010711cb40:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAiTwu6AR3b7JABomTqX:0",
+     "tool_use_id": "toolu_01LsWYuw61fDJfkKHaDS2fWn"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "1889b931-9ead-4347-b840-47010711cb40:0",
+    "final": {
+     "content": "redacted output",
+     "is_error": false,
+     "text": "redacted output",
+     "tool_use_id": "toolu_01LsWYuw61fDJfkKHaDS2fWn",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "1889b931-9ead-4347-b840-47010711cb40"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAiUJpCH5eujuXyzHmu9"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAiUJpCH5eujuXyzHmu9",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiUJpCH5eujuXyzHmu9:0",
+    "kind": "reasoning"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiUJpCH5eujuXyzHmu9:0",
+    "final": {
+     "signature": "redacted-signature",
+     "text": ""
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiUJpCH5eujuXyzHmu9:1",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_01SxpFuMfvgEbLuDxvxwzZbo",
+     "name": "Bash"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiUJpCH5eujuXyzHmu9:1",
+    "final": {
+     "command": "redacted"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.queued_input",
+    "value": {
+     "text": "Read hello.txt and tell me the launch code in one short sentence."
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAiUJpCH5eujuXyzHmu9"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAiUJpCH5eujuXyzHmu9"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "20e8f37b-1852-4da8-a543-0a5eb20f08cf",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "20e8f37b-1852-4da8-a543-0a5eb20f08cf:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAiUJpCH5eujuXyzHmu9:1",
+     "tool_use_id": "toolu_01SxpFuMfvgEbLuDxvxwzZbo"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "20e8f37b-1852-4da8-a543-0a5eb20f08cf:0",
+    "final": {
+     "content": "redacted output",
+     "is_error": false,
+     "text": "redacted output",
+     "tool_use_id": "toolu_01SxpFuMfvgEbLuDxvxwzZbo",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "20e8f37b-1852-4da8-a543-0a5eb20f08cf"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAiUZDMr4vu8c6168oG3"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAiUZDMr4vu8c6168oG3",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiUZDMr4vu8c6168oG3:0",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_01Cx8RnhKXeh53zr5rWQ5CpE",
+     "name": "Bash"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiUZDMr4vu8c6168oG3:0",
+    "final": {
+     "command": "redacted"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiUZDMr4vu8c6168oG3:1",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_01R8ZeZPc8MUHkHLd5Qxi1JK",
+     "name": "Bash"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiUZDMr4vu8c6168oG3:1",
+    "final": {
+     "command": "redacted"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAiUZDMr4vu8c6168oG3"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAiUZDMr4vu8c6168oG3"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "9200982f-c742-44b7-9bcd-f3c5370d632c",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "9200982f-c742-44b7-9bcd-f3c5370d632c:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAiUZDMr4vu8c6168oG3:0",
+     "tool_use_id": "toolu_01Cx8RnhKXeh53zr5rWQ5CpE"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "9200982f-c742-44b7-9bcd-f3c5370d632c:0",
+    "final": {
+     "content": "redacted output",
+     "is_error": false,
+     "text": "redacted output",
+     "tool_use_id": "toolu_01Cx8RnhKXeh53zr5rWQ5CpE",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "9200982f-c742-44b7-9bcd-f3c5370d632c"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "4aeca52c-22a5-4863-91d7-5347b21d0c4d",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "4aeca52c-22a5-4863-91d7-5347b21d0c4d:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAiUZDMr4vu8c6168oG3:1",
+     "tool_use_id": "toolu_01R8ZeZPc8MUHkHLd5Qxi1JK"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "4aeca52c-22a5-4863-91d7-5347b21d0c4d:0",
+    "final": {
+     "content": "redacted output",
+     "is_error": false,
+     "text": "redacted output",
+     "tool_use_id": "toolu_01R8ZeZPc8MUHkHLd5Qxi1JK",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "4aeca52c-22a5-4863-91d7-5347b21d0c4d"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAiUpmFhX6bY6U4TwuPW"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAiUpmFhX6bY6U4TwuPW",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiUpmFhX6bY6U4TwuPW:0",
+    "kind": "reasoning"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiUpmFhX6bY6U4TwuPW:0",
+    "final": {
+     "signature": "redacted-signature",
+     "text": ""
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiUpmFhX6bY6U4TwuPW:1",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_01KSsrX7xVCTEerZjFxw5Mye",
+     "name": "Bash"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiUpmFhX6bY6U4TwuPW:1",
+    "final": {
+     "command": "redacted"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAiUpmFhX6bY6U4TwuPW"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAiUpmFhX6bY6U4TwuPW"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "11486589-b514-4b53-823a-62408e8cb443",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "11486589-b514-4b53-823a-62408e8cb443:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAiUpmFhX6bY6U4TwuPW:1",
+     "tool_use_id": "toolu_01KSsrX7xVCTEerZjFxw5Mye"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "11486589-b514-4b53-823a-62408e8cb443:0",
+    "final": {
+     "content": "redacted output",
+     "is_error": false,
+     "text": "redacted output",
+     "tool_use_id": "toolu_01KSsrX7xVCTEerZjFxw5Mye",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "11486589-b514-4b53-823a-62408e8cb443"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAiV8tukb9SQQFopDE6i"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAiV8tukb9SQQFopDE6i",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiV8tukb9SQQFopDE6i:0",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiV8tukb9SQQFopDE6i:0",
+    "final": {
+     "text": "redacted reply text"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAiV8tukb9SQQFopDE6i"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAiV8tukb9SQQFopDE6i"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "ext": {
+     "claude": {
+      "stop_reason": "end_turn",
+      "subtype": "success"
+     }
+    }
+   }
+  ]
+ }
+]

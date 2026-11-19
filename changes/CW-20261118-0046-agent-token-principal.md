@@ -1,0 +1,1 @@
+- Team API accepts issued agent session tokens (CW-20261118-0046): `Principals.ResolvePrincipal` only recognised Kind `session`, so every agent token (Kind `agent`, minted by authissuer) was `unauthenticated` on `/teams/*` under enforce. A well-formed session-bound agent token (`IsBoundAgentToken`) now resolves to its session actor; malformed ones are still refused.

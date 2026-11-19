@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
@@ -77,6 +79,9 @@ type Service struct {
 	turnFeeds              map[string]turnFeedRegistration
 	outputRetries          outputRetryState
 	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+	// killOrders is session ID -> why a worker's welcome ordered it killed
+	// (CW-20261114-0168), until its terminal state arrives.
+	killOrders sync.Map
 
 	// TeamsEnabled grants launched sessions the team.write scope so they can
 	// call tether_team_*; set by daemon startup from modules.teams.
@@ -91,14 +96,20 @@ type Service struct {
 	Workers      *workerhub.Hub
 	// AgentTokens, when set, registers a launch grant per worker session and
 	// deny-lists the session id when it ends (the token issuer).
-	AgentTokens    AgentTokenIssuer
-	workerIngestMu sync.Mutex
-	// workStates is the last published work-state per worker session, guarded by
-	// workerIngestMu (see recordWorkState).
+	AgentTokens AgentTokenIssuer
+	// workerIngest serializes a session's worker frames; different sessions
+	// ingest in parallel (CW-20261114-0120: it was one global lock).
+	workerIngest sessionLocks
+	// workerStateMu guards workStates and workerCarries, the per-session
+	// in-memory ingest state (each entry is only used under its session's lock).
+	workerStateMu sync.Mutex
+	// workStates is the last published work-state per worker session (see recordWorkState).
 	workStates    map[string]string
 	workerCarries map[string][]byte
-	Manager       *agentsessions.Manager
-	Bus           events.Bus
+	// sessionLogs keeps worker session logs open with group-commit fsync.
+	sessionLogs sessionLogSet
+	Manager     *agentsessions.Manager
+	Bus         events.Bus
 	// EventStamp is the stamp stage installed on Bus.
 	EventStamp *eventstamp.Stage
 	// EventPipeline exposes value-free shadow/enforcement counters.
@@ -158,6 +169,9 @@ type Service struct {
 	// stopRequests. Nil when the Manager was built without
 	// newSessionManager, in which case a stop is recorded as "completed".
 	stops *stopRequests
+	// attestation is the operator attestation trust root in force
+	// (CW-20261114-0152); nil when the feature is off.
+	attestation atomic.Pointer[operatorattest.Config]
 	// stopWatchers counts the clearStopOnExit goroutines in flight. Production never
 	// waits on it; tests that replace Service fields wait first so they do not race the
 	// goroutine's reads of Manager and stops.
@@ -171,6 +185,12 @@ type Service struct {
 	// *subprocessLog, keyed by session id, from launch until the session
 	// ends (CW-20261001-0033).
 	subprocessLogs sync.Map
+
+	// stdioTaps holds each Claude streaming-stdio session's chat tap
+	// (*claudestdio.Tap), keyed by session id: local sessions from launch
+	// until they end, worker sessions from the first chat backend until they
+	// exit (chat_stdio.go, CW-20261118-0010).
+	stdioTaps sync.Map
 
 	// specResolver is the S5 Spec-path launch resolver. It is constructed
 	// lazily on first use (only when the launch engine is "spec") via
@@ -188,6 +208,13 @@ type Service struct {
 	// wakePark carries the wake sweep's parked deliveries between ticks.
 	// See wakeParkSet in wake.go.
 	wakePark wakeParkSet
+	// wakeRearm holds wakes refused as busy, re-armed on their session's turn
+	// end (CW-20261117-0002).
+	wakeRearm wakeRearmSet
+	// replyBackfill runs the reply_to_own triage backfill once per daemon.
+	replyBackfill sync.Once
+	// seatDigest throttles the seat digest wake pass (CW-20261117-0002).
+	seatDigest seatDigestState
 	// mailTriager gates wakes for seats with mail_triage on (CW-20261114-0017).
 	mailTriager *mailTriage
 
@@ -419,7 +446,9 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 	service.mailTriager = service.newMailTriage()
 	service.installRecipientWake()
 	service.Workers.Event = service.ingestWorkerFrame
+	service.Workers.EventBatch = service.ingestWorkerOutputs
 	service.Workers.Degraded = service.publishWorkerDegraded
+	service.Workers.KillOrdered = service.recordWorkerKillOrder
 	service.installOutpostMail()
 	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
@@ -429,6 +458,7 @@ func newService(catalogRoot string, validateMCPGrants, frozenEventIDs bool) (*Se
 			return nil, fmt.Errorf("turn router: %w", err)
 		}
 	}
+	service.loadOperatorAttestation(context.Background(), cat)
 	return service, nil
 }
 
@@ -662,6 +692,7 @@ func (s *Service) Close() error {
 		return true
 	})
 	s.stopOutputRetries()
+	s.sessionLogs.closeAll()
 	s.turnRouter.Close()
 	if s.Store == nil {
 		return nil

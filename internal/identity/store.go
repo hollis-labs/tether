@@ -217,10 +217,10 @@ func (s *Store) RevokeSession(ctx context.Context, sessionID string) error {
 
 func (s *Store) RecordObservation(ctx context.Context, o Observation) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO identity_audit
-        (at, principal_id, session_id, mode, authentication, method, route, route_pattern, required_scope, would_allow, event, verified)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.At.UTC().Format(time.RFC3339Nano),
+        (at, principal_id, session_id, mode, authentication, method, route, route_pattern, required_scope, would_allow, event, verified, detail)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.At.UTC().Format(time.RFC3339Nano),
 		o.PrincipalID, o.SessionID, o.Mode, o.Authentication, o.Method, o.Route,
-		o.RoutePattern, o.RequiredScope, wouldAllowColumn(o.WouldAllow), o.Event, o.Authentication == "verified")
+		o.RoutePattern, o.RequiredScope, wouldAllowColumn(o.WouldAllow), o.Event, o.Authentication == "verified", nullIfEmpty(o.Detail))
 	if err != nil {
 		return fmt.Errorf("persist identity observation: %w", err)
 	}
@@ -429,4 +429,12 @@ func (s *Store) PrincipalLive(ctx context.Context, id string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// nullIfEmpty stores "" as NULL.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

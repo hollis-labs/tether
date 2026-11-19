@@ -20,14 +20,16 @@ import (
 // ProviderProcess is the private, already-materialized launch consumed by the
 // provider bridge inside the shim. Credentials stay in files/environment.
 type ProviderProcess struct {
-	Provider     string                    `json:"provider"`
-	RuntimeKind  string                    `json:"runtime_kind"`
-	Binary       string                    `json:"binary"`
-	Workdir      string                    `json:"workdir"`
-	ProjectDir   string                    `json:"project_dir"`
-	WorkspaceDir string                    `json:"workspace_dir"`
-	Launch       *agentlaunch.TurnTemplate `json:"launch"`
-	ExtraArgs    []string                  `json:"extra_args,omitempty"`
+	ResumeThreadID  string                    `json:"resume_thread_id,omitempty"`
+	NativeReadyPath string                    `json:"native_ready_path,omitempty"`
+	Provider        string                    `json:"provider"`
+	RuntimeKind     string                    `json:"runtime_kind"`
+	Binary          string                    `json:"binary"`
+	Workdir         string                    `json:"workdir"`
+	ProjectDir      string                    `json:"project_dir"`
+	WorkspaceDir    string                    `json:"workspace_dir"`
+	Launch          *agentlaunch.TurnTemplate `json:"launch"`
+	ExtraArgs       []string                  `json:"extra_args,omitempty"`
 }
 
 func (e *Executor) prepareProvider(ctx context.Context, spec workerwire.LaunchSpec, binary, cwd, root string) (result *agentlaunch.PreparedLaunch, err error) {
@@ -112,6 +114,10 @@ func providerProcessArgs(root string, spec workerwire.LaunchSpec, p *agentlaunch
 	}
 	cfg := ProviderProcess{Provider: spec.Provider, RuntimeKind: spec.RuntimeKind, Binary: p.Argv[0], Workdir: p.Workdir,
 		WorkspaceDir: root, ProjectDir: p.Compiled.Plan.Project.Root, Launch: p.Launch}
+	if spec.ResumeSessionID != "" {
+		cfg.ResumeThreadID = spec.ResumeSessionID
+		cfg.NativeReadyPath = filepath.Join(root, "native-readiness", "ready.json")
+	}
 	cfg.Launch = cfg.Launch.Clone()
 	cfg.Launch.Convention.Env = nil
 	path := filepath.Join(root, "provider.json")

@@ -87,3 +87,13 @@ func (s *Store) RecipientWakeOutcome(ctx context.Context, id string) (string, bo
 	}
 	return result.String, err == nil, err
 }
+
+// MessageRecipientState returns when the recipient read and consumed
+// messageID (zero when it has not), for the delivery trace.
+func (s *Store) MessageRecipientState(ctx context.Context, messageID string) (readAt, consumedAt time.Time, err error) {
+	var read, consumed sql.NullString
+	if err = s.db.QueryRowContext(ctx, `SELECT read_at, consumed_at FROM messages WHERE id=?`, messageID).Scan(&read, &consumed); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return parseMsgTime(read.String), parseMsgTime(consumed.String), nil
+}

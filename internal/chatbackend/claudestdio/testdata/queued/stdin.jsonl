@@ -1,0 +1,2 @@
+{"after_line":0,"note":"submit","frame":{"type":"user","message":{"role":"user","content":"Write a 200-word poem about rivers."}}}
+{"after_line":5,"note":"other_writer","frame":{"type":"user","message":{"role":"user","content":"Reply with only the word: second"}}}

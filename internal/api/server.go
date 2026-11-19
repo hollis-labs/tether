@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/router"
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/terminalattach"
 )
 
 // AttachmentStore is the narrow storage contract for listing client
@@ -83,6 +85,12 @@ type Deps struct {
 	ProxyEvents ProxyEventStore
 	// Attachments, when non-nil, enables GET /sessions/{id}/attachments.
 	Attachments AttachmentStore
+	// TerminalHost enables observe-first terminal attachments. The authoritative
+	// conversation host resolves targets and fences runtime generations.
+	TerminalHost terminalattach.Host
+	// ChatWire, when non-nil, is mounted at /chat/v1 (chat_wire.go,
+	// CW-20261118-0011): the daemon sets it only when its chat_wire flag is on.
+	ChatWire http.Handler
 	// Registry, when non-nil, enables the /registry/... federation
 	// directory routes wired in registerRegistryRoutes. Absent the dep,
 	// the daemon falls through to its 404 default — matches the
@@ -173,6 +181,10 @@ type Deps struct {
 	// verification on /messages (CW-20261010-0262).
 	IdentityMode  identity.Mode
 	IdentityAudit func(context.Context, identity.Observation) error
+	// OperatorAttestation is the operator attestation trust root in force (nil:
+	// off) and OperatorReplies its store (CW-20261114-0152).
+	OperatorAttestation func() *operatorattest.Config
+	OperatorReplies     OperatorReplyStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -205,6 +217,8 @@ type Server struct {
 	Routing             RoutingService
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
+	Terminal            *terminalattach.Controller
+	ChatWire            http.Handler
 	Registry            RegistryService
 	Settings            SettingsService
 	RegistryCatalogRoot string
@@ -224,6 +238,9 @@ type Server struct {
 	// records the finding and keeps the request.
 	IdentityMode  identity.Mode
 	IdentityAudit func(context.Context, identity.Observation) error
+	// Operator-attested replies (CW-20261114-0152, operator_reply.go).
+	OperatorAttestation func() *operatorattest.Config
+	OperatorReplies     OperatorReplyStore
 
 	chatReplays         chatReplays
 	refSourceAssertions metric.Int64Counter
@@ -270,26 +287,33 @@ func NewHandler(deps Deps) http.Handler {
 		Routing:             deps.Routing,
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,
+		ChatWire:            deps.ChatWire,
 		Registry:            deps.Registry,
 		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		CatalogReload:       deps.CatalogReload,
 
-		CatalogApply:     deps.CatalogApply,
-		Groups:           deps.Groups,
-		LogsDir:          deps.LogsDir,
-		DeliveryClaims:   deps.DeliveryClaims,
-		SessionBootstrap: deps.SessionBootstrap,
-		DeliveryTrace:    deps.DeliveryTrace,
-		DeliveryRepair:   deps.DeliveryRepair,
-		Retention:        deps.Retention,
-		RoutingReplies:   deps.RoutingReplies,
-		IdentityMode:     deps.IdentityMode,
-		IdentityAudit:    deps.IdentityAudit,
+		CatalogApply:        deps.CatalogApply,
+		Groups:              deps.Groups,
+		LogsDir:             deps.LogsDir,
+		DeliveryClaims:      deps.DeliveryClaims,
+		SessionBootstrap:    deps.SessionBootstrap,
+		DeliveryTrace:       deps.DeliveryTrace,
+		DeliveryRepair:      deps.DeliveryRepair,
+		Retention:           deps.Retention,
+		RoutingReplies:      deps.RoutingReplies,
+		IdentityMode:        deps.IdentityMode,
+		IdentityAudit:       deps.IdentityAudit,
+		OperatorAttestation: deps.OperatorAttestation,
+		OperatorReplies:     deps.OperatorReplies,
+	}
+	if deps.TerminalHost != nil {
+		s.Terminal = terminalattach.New(deps.TerminalHost)
 	}
 	router := http.NewServeMux()
 	s.registerDocsRoutes(router)
 	s.registerSessionRoutes(router)
+	s.registerTerminalAttachmentRoutes(router)
 	s.registerAIRoutes(router)
 	s.registerCheckpointRoutes(router)
 	s.registerBrokerRoutes(router)
@@ -300,6 +324,7 @@ func NewHandler(deps Deps) http.Handler {
 
 	s.registerCatalogApplyRoutes(router)
 	s.registerChatRoutes(router)
+	s.registerChatWireRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)
 	s.registerWorkstreamRoutes(router)

@@ -28,7 +28,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
@@ -42,6 +44,31 @@ import (
 type DeliveryTraceStore interface {
 	DeliveryIDForMessage(ctx context.Context, messageID string) (string, bool, error)
 	DeliveryStore() delivery.Store
+}
+
+// traceRecipientState is the optional seam the trace uses to report the
+// recipient's own acts and the recorded wake outcome (CW-20261118-0024).
+// *store.Store satisfies it; a store without it gives the trace without them.
+type traceRecipientState interface {
+	MessageRecipientState(ctx context.Context, messageID string) (readAt, consumedAt time.Time, err error)
+	RecipientWakeOutcome(ctx context.Context, messageID string) (string, bool, error)
+}
+
+// Attempt holder kinds. A push wake claims for the session it submits a turn
+// to; mark_read, consume and the published-local bridge claim for the
+// recipient address. An attempt held by the recipient carries the same
+// host_accepted/turn_submitted/consumed stages, but no wake made them: read
+// it as "the recipient settled the delivery", never as "a turn was submitted".
+const (
+	HolderKindSession   = "session"
+	HolderKindRecipient = "recipient"
+)
+
+func traceHolderKind(holder string) string {
+	if strings.HasPrefix(holder, "msg://") {
+		return HolderKindRecipient
+	}
+	return HolderKindSession
 }
 
 // TraceReceipt is one stage-transition event, in the order it happened.
@@ -67,8 +94,12 @@ type TraceReceipt struct {
 // Profile data. No Profile field (Callback, HostAddress, KindMeta) is
 // ever included in a trace.
 type TraceAttempt struct {
-	AttemptID         string `json:"attempt_id"`
-	Holder            string `json:"holder"` // the session id this attempt was claimed for
+	AttemptID string `json:"attempt_id"`
+	Holder    string `json:"holder"` // the session id this attempt was claimed for, or the recipient address
+	// HolderKind is "session" for a push wake attempt and "recipient" for an
+	// attempt the recipient's mark_read/consume (or a bridge claim) recorded:
+	// its turn_submitted stage is a settlement receipt, not a submitted turn.
+	HolderKind        string `json:"holder_kind"`
 	BindingGeneration int64  `json:"binding_generation,omitempty"`
 	HostID            string `json:"host_id,omitempty"`
 	BindingVisibility string `json:"binding_visibility,omitempty"`
@@ -104,6 +135,17 @@ type TraceResponse struct {
 	// claim while Receipts shows the exact sequence including any
 	// implicit persisted/lease_acquired stages between claims.
 	Receipts []TraceReceipt `json:"receipts,omitempty"`
+
+	// WakeOutcome is the recorded wake outcome for this message: what the
+	// send returned as tether.wake_outcome, updated by each sweep retry.
+	// Absent when no wake was admitted (offline, triaged, no-wake, ...);
+	// the wake.outcome events carry those. Delivered means a turn was
+	// submitted to the session, not that the recipient acted on it.
+	WakeOutcome *WakeOutcome `json:"wake_outcome,omitempty"`
+	// ReadAt/ConsumedAt are the recipient's own acts (mark_read, consume or
+	// its own inbox pull): the only stages that say the mail was handled.
+	ReadAt     string `json:"read_at,omitempty"`
+	ConsumedAt string `json:"consumed_at,omitempty"`
 }
 
 // handleMessageTrace services GET /messages/{id}/trace. Same-host,
@@ -137,6 +179,18 @@ func (s *Server) handleMessageTrace(w http.ResponseWriter, r *http.Request, id s
 		To:        env.To.URN(),
 		Kind:      string(env.Kind),
 		ThreadID:  env.ThreadID,
+	}
+	if rs, ok := s.DeliveryTrace.(traceRecipientState); ok {
+		if readAt, consumedAt, err := rs.MessageRecipientState(r.Context(), id); err == nil {
+			out.ReadAt, out.ConsumedAt = formatTraceTime(readAt), formatTraceTime(consumedAt)
+		}
+		if raw, found, err := rs.RecipientWakeOutcome(r.Context(), id); err == nil && found {
+			outcome := WakeOutcome{Reason: "wake-outcome-unknown"}
+			if raw != "" {
+				_ = json.Unmarshal([]byte(raw), &outcome)
+			}
+			out.WakeOutcome = &outcome
+		}
 	}
 
 	deliveryID, ok, err := s.DeliveryTrace.DeliveryIDForMessage(r.Context(), id)
@@ -173,6 +227,7 @@ func (s *Server) handleMessageTrace(w http.ResponseWriter, r *http.Request, id s
 		ta := TraceAttempt{
 			AttemptID:         string(a.ID),
 			Holder:            a.Holder,
+			HolderKind:        traceHolderKind(a.Holder),
 			BindingGeneration: a.BindingGeneration,
 			AcquiredAt:        formatTraceTime(a.AcquiredAt),
 			Stage:             string(a.Stage),

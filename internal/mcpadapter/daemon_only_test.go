@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/agent"
@@ -442,7 +443,9 @@ func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		evs, err := f.db.ListEventsBySession("sess-1", 0, 0)
+		// Canonical events take the session scope only for a resolved
+		// session, which this unauthenticated fixture has none of.
+		evs, err := f.db.EventsSince(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -452,7 +455,7 @@ func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
 		}
 		// Ingestion commits the proxy row before publishing the end event.
 		// Wait for both stores before asserting or canceling the publisher.
-		if len(rows) > 0 && kinds[events.EventTypeToolCallStart] > 0 && kinds[events.EventTypeToolCallEnd] > 0 {
+		if len(rows) > 0 && kinds[catalog.KindToolCallStarted] > 0 && kinds[catalog.KindToolCallFinished] > 0 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -463,8 +466,8 @@ func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
 	if rows[0].OK || len(rows[0].Error) > api.MaxProxyEventErrorBytes || !strings.HasSuffix(rows[0].Error, "[truncated]") {
 		t.Errorf("row = ok %v, error %d bytes ending %q; want a failure with a truncated error within the cap", rows[0].OK, len(rows[0].Error), rows[0].Error[max(0, len(rows[0].Error)-14):])
 	}
-	if kinds[events.EventTypeToolCallStart] != 1 || kinds[events.EventTypeToolCallEnd] != 1 {
-		t.Errorf("event kinds for sess-1 = %v, want one tool_call_start and one tool_call_end: an orphan start", kinds)
+	if kinds[catalog.KindToolCallStarted] != 1 || kinds[catalog.KindToolCallFinished] != 1 || kinds[events.EventTypeToolCallStart] != 0 || kinds[events.EventTypeToolCallEnd] != 0 {
+		t.Errorf("event kinds = %v, want one tool.call.started and one tool.call.finished and no legacy pair", kinds)
 	}
 }
 
@@ -506,5 +509,29 @@ func TestDaemonOnly_SessionPeekRequiresTerminalScope(t *testing.T) {
 		if !res.IsError || strings.Contains(textOf(res), "not_found") || (!strings.Contains(textOf(res), "insufficient_scope") && !strings.Contains(textOf(res), "auth_required")) {
 			t.Errorf("%s: peek = %q, want a scope refusal", name, textOf(res))
 		}
+	}
+}
+
+// CW-20261114-0166 (#579 review): a history read that runs out of time is
+// reported as partial with a cursor, never as a session with no events.
+func TestSessionEventsReportsAPartialRead(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	old := historyDeadline
+	historyDeadline = time.Nanosecond
+	t.Cleanup(func() { historyDeadline = old })
+	res := callAnyTool(t, f.inProcess, "tether_session_events", map[string]any{"session_id": "sess-1"})
+	if res.IsError {
+		t.Fatalf("error: %s", textOf(res))
+	}
+	got := parseToolJSON(t, res)
+	if got["partial"] != true || got["note"] == nil {
+		t.Fatalf("an out-of-time read was not reported as partial: %s", textOf(res))
+	}
+	if _, ok := got["next_cursor"]; !ok {
+		t.Fatalf("no cursor: %s", textOf(res))
+	}
+	historyDeadline = old
+	if got = parseToolJSON(t, callAnyTool(t, f.inProcess, "tether_session_events", map[string]any{"session_id": "sess-1"})); got["partial"] != false || got["count"].(float64) == 0 {
+		t.Fatalf("a full read: %v", got)
 	}
 }

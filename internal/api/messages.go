@@ -19,6 +19,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
+	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
@@ -377,6 +378,15 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 	action := ""
 	if len(parts) == 2 {
 		action = parts[1]
+	}
+	// Operator-attested replies (CW-20261114-0152) authenticate on their own terms.
+	switch action {
+	case "operator-reply/challenge":
+		s.handleOperatorReplyChallenge(w, r, id)
+		return
+	case "operator-reply":
+		s.handleOperatorReply(w, r, id)
+		return
 	}
 
 	if action != "" && action != "purge" && action != "trace" && action != "reply" && action != "delivery" || r.Method == http.MethodDelete {
@@ -1325,7 +1335,29 @@ func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messa
 	if publication && s.Channels != nil {
 		return s.Channels.Publish(ctx, env)
 	}
+	s.stampReplyAwaiting(ctx, &env)
 	return s.MessageStore.Send(ctx, env)
+}
+
+// MetadataAwaiting is the metadata key naming the address an untyped reply
+// awaits (a typed envelope carries awaiting in its payload).
+const MetadataAwaiting = "awaiting"
+
+// stampReplyAwaiting sets an untyped reply's awaiting metadata to the parent's
+// sender when unset (CW-20261117-0003), so every reply names the asker. Typed
+// envelopes carry awaiting in the payload (handleMessagePost).
+func (s *Server) stampReplyAwaiting(ctx context.Context, env *messaging.Envelope) {
+	if env.InReplyTo == "" || env.ContentType == envelope.ContentType || env.Metadata[MetadataAwaiting] != "" || s.MessageStore == nil {
+		return
+	}
+	p, err := s.MessageStore.Get(ctx, env.InReplyTo)
+	if err != nil || p.From.IsZero() || canonicalAddress(p.From) == canonicalAddress(env.From) {
+		return
+	}
+	if env.Metadata == nil {
+		env.Metadata = map[string]string{}
+	}
+	env.Metadata[MetadataAwaiting] = canonicalAddress(p.From)
 }
 
 // applySendIdempotencyKey maps the Idempotency-Key header onto the metadata key
