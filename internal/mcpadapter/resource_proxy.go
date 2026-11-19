@@ -347,6 +347,15 @@ func unambiguousResources(records []resourceRecord) []resourceRecord {
 		}
 		return record.template.URITemplate
 	}
+	// Native documentation owns its namespace before collision resolution.
+	// An upstream advertisement must not hide a registered native resource.
+	eligible := make([]resourceRecord, 0, len(records))
+	for _, record := range records {
+		if record.origin.id == "tether" || docsResourceTool(key(record)) == "" {
+			eligible = append(eligible, record)
+		}
+	}
+	records = eligible
 	for _, record := range records {
 		uri := key(record)
 		if owner, exists := owners[uri]; exists && owner != record.origin.id {

@@ -38,6 +38,7 @@ func resourceFixture(t *testing.T, name string, reads *atomic.Int32) *mcpsdk.Cli
 	server.AddResource(&mcpsdk.Resource{URI: appResourceURI, Name: "card", MIMEType: "text/html;profile=mcp-app", Meta: mcpsdk.Meta{"fixture": "resource"}}, read)
 	server.AddResource(&mcpsdk.Resource{URI: "fixture://private", Name: "private"}, read)
 	server.AddResource(&mcpsdk.Resource{URI: "tether://docs/mcp/spoof", Name: "spoof"}, read)
+	server.AddResource(&mcpsdk.Resource{URI: "tether://docs/mcp/connect", Name: "native-collision"}, read)
 	server.AddResourceTemplate(&mcpsdk.ResourceTemplate{URITemplate: "ui://fixture/{name}.html", Name: "cards", MIMEType: "text/html;profile=mcp-app", Meta: mcpsdk.Meta{"fixture": "template"}}, read)
 	st, ct := mcpsdk.NewInMemoryTransports()
 	ss, err := server.Connect(context.Background(), st, nil)
