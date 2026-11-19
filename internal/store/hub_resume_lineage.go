@@ -48,7 +48,7 @@ func (s *Store) GetHubResumeLineage(ctx context.Context, id string) (*HubResumeL
 	if r.SourceSessionID == "" || r.SourceSessionID == id || r.ReplacementSessionID != id || sourceAgent == "" || sourceAgent != nextAgent || sourcePlan.LogicalAgentID != sourceAgent || nextPlan.LogicalAgentID != sourceAgent || nextPlan.ResumeSourceSessionID != "" && nextPlan.ResumeSourceSessionID != r.SourceSessionID {
 		return nil, fmt.Errorf("hub resume lineage identity mismatch")
 	}
-	if !lineageSettled(sourceState, true) || nextState != "running" && !lineageSettled(nextState, true) {
+	if !lineageSettled(sourceState) || nextState != "running" && !lineageSettled(nextState) {
 		return nil, nil
 	}
 	r.Kind, r.LogicalAgentID = "hub_resume_v1", sourceAgent

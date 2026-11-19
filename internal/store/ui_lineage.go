@@ -73,7 +73,7 @@ func (s *Store) GetReplacementLineage(ctx context.Context, id string) (*Replacem
 	if _, err := time.Parse(time.RFC3339Nano, r.CommittedAt); err != nil {
 		return nil, fmt.Errorf("replacement lineage timestamp invalid")
 	}
-	if !lineageSettled(sourceState, true) || destState != "running" && !lineageSettled(destState, true) {
+	if !lineageSettled(sourceState) || destState != "running" && !lineageSettled(destState) {
 		return nil, nil
 	}
 	return &r, nil
@@ -194,12 +194,12 @@ func (s *Store) GetWorkerLineage(ctx context.Context, id string) (*WorkerLineage
 	if err != nil {
 		return nil, err
 	}
-	if !lineageSettled(sourceState, true) || destState != "running" && !lineageSettled(destState, true) {
+	if !lineageSettled(sourceState) || destState != "running" && !lineageSettled(destState) {
 		return nil, nil
 	}
 	return &r, nil
 }
 
-func lineageSettled(state string, retainedTeam bool) bool {
-	return state == "completed" || state == "failed" || state == "killed" || retainedTeam && state == "orphaned"
+func lineageSettled(state string) bool {
+	return state == "completed" || state == "failed" || state == "killed" || state == "orphaned"
 }
