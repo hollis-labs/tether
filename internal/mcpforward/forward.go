@@ -111,6 +111,41 @@ func Run(ctx context.Context, dc *client.Client, opts client.MCPOptions, transpo
 					return nil, relayError(err)
 				}
 				return result, nil
+			case "resources/list":
+				params := mcp.ListResourcesParams{}
+				if incoming := req.GetParams().(*mcp.ListResourcesParams); incoming != nil {
+					params = *incoming
+				}
+				params.Meta = relayMeta(params.Meta)
+				result, err := relay.invokeRead(ctx, func(upstream *mcp.ClientSession) (mcp.Result, error) { return upstream.ListResources(ctx, &params) })
+				if err != nil {
+					return nil, relayError(err)
+				}
+				return result, nil
+			case "resources/templates/list":
+				params := mcp.ListResourceTemplatesParams{}
+				if incoming := req.GetParams().(*mcp.ListResourceTemplatesParams); incoming != nil {
+					params = *incoming
+				}
+				params.Meta = relayMeta(params.Meta)
+				result, err := relay.invokeRead(ctx, func(upstream *mcp.ClientSession) (mcp.Result, error) {
+					return upstream.ListResourceTemplates(ctx, &params)
+				})
+				if err != nil {
+					return nil, relayError(err)
+				}
+				return result, nil
+			case "resources/read":
+				params := mcp.ReadResourceParams{}
+				if incoming := req.GetParams().(*mcp.ReadResourceParams); incoming != nil {
+					params = *incoming
+				}
+				params.Meta = relayMeta(params.Meta)
+				result, err := relay.invokeRead(ctx, func(upstream *mcp.ClientSession) (mcp.Result, error) { return upstream.ReadResource(ctx, &params) })
+				if err != nil {
+					return nil, relayError(err)
+				}
+				return result, nil
 			case "tools/call":
 				raw := req.GetParams().(*mcp.CallToolParamsRaw)
 				if raw == nil {
