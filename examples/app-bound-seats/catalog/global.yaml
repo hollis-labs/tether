@@ -1,0 +1,11 @@
+version: 0.1.0
+catalog:
+  roots:
+    projects: projects
+    agents: agents
+    providers: providers
+    launches: launches
+  defaults:
+    workspace_root: ~/tether/workspaces
+    state_db: ~/tether/state.db
+    temp_root: ~/tether/tmp

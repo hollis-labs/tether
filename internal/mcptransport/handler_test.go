@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/authissuer"
@@ -1023,25 +1024,31 @@ func TestThinForwardersShareDaemonPoolOverUnix(t *testing.T) {
 		if !forwarded.Context.Verified || forwarded.Context.SessionID != id || forwarded.Context.PrincipalID != "session:"+id {
 			t.Fatalf("wrong forwarded session: %+v", forwarded.Context)
 		}
-		var telemetry events.ToolCallEvent
-		for telemetry.ToolName == "" {
+		// The event log carries the canonical tool.call.finished; the call's
+		// attribution is in proxy_events (CW-20261113-0009).
+		var finished events.Event
+		for finished.Kind == "" {
 			select {
 			case event := <-stream:
 				if event.Kind == events.EventTypeToolCallEnd {
-					if err := json.Unmarshal([]byte(event.PayloadJSON), &telemetry); err != nil {
-						t.Fatal(err)
-					}
+					t.Fatal("legacy tool_call_end logged")
+				}
+				if event.Kind == catalog.KindToolCallFinished && strings.Contains(event.PayloadJSON, `"tool":"app_echo"`) {
+					finished = event
 				}
 			case <-ctx.Done():
 				t.Fatal("daemon telemetry lost")
 			}
 		}
+		if finished.SessionID != id {
+			t.Fatalf("canonical telemetry lost the resolved session: %+v", finished)
+		}
 		rows, err := f.db.QueryProxyEvents(store.ProxyEventFilter{SessionID: id, ToolName: "app_echo"})
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("durable attribution lost/duplicated: %+v %v", rows, err)
 		}
-		if rows[0].Attribution != forwarded.Context || telemetry.Attribution != forwarded.Context {
-			t.Fatalf("forwarded/persisted/telemetry attribution diverged: %+v %+v %+v", forwarded.Context, rows[0].Attribution, telemetry.Attribution)
+		if rows[0].Attribution != forwarded.Context {
+			t.Fatalf("forwarded/persisted attribution diverged: %+v %+v", forwarded.Context, rows[0].Attribution)
 		}
 		_ = session.Close()
 		select {

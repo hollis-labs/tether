@@ -325,7 +325,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		if e != nil {
 			return p.prechildFailure(r)
 		}
-		logFile = os.NewFile(uintptr(fd), logPath)
+		logFile = os.NewFile(uintptr(fd), logPath) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 		defer func() { _ = logFile.Close() }()
 	}
 	if err = WritePrivateJSON(r.DescriptorPath, spec); err != nil {
@@ -366,7 +366,10 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		p.mu.Lock()
 		p.reaped[identity(r)] = reaped
 		p.mu.Unlock()
-		go func() { _ = waitHostChild(cmd); close(reaped) }() // Reap a child owned by this process.
+		// Read the waiter here, not in the goroutine: a goroutine that starts late would read it
+		// concurrently with a test swapping it (CW-20261115-0074).
+		wait := waitHostChild
+		go func() { _ = wait(cmd); close(reaped) }() // Reap a child owned by this process.
 	} else {
 		args := []string{"systemd-run", "--user", "--no-block", "--collect", "--service-type=exec", "--unit=" + r.UnitName, "--property=Restart=no", "--property=KillMode=control-group"}
 		for _, entry := range p.cfg.HostEnv {

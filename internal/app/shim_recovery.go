@@ -189,11 +189,14 @@ func (s *Service) reattachShim(ctx context.Context, shimRow store.SessionShimRow
 	}
 	output := s.newSessionTurnOutput(*row, plan)
 	output.wire(rt, &opts)
+	stdioTap := s.installStdioTap(row.ID, plan.ProviderBrand, rt, &opts)
 	s.turnOutputs.Store(row.ID, output)
 	if err = s.Manager.Start(context.WithoutCancel(ctx), agentsessions.StartRequest{ID: row.ID, Runtime: rt, Options: opts, SessionMeta: map[string]string{"logical_agent_id": row.LogicalAgentID, "provider_id": row.ProviderID, "launch_id": row.LaunchID, "project_id": row.ProjectID}}); err != nil {
 		s.turnOutputs.Delete(row.ID)
+		s.dropStdioTap(row.ID, stdioTap)
 		return err
 	}
+	s.watchStdioTap(row.ID, stdioTap)
 	s.finalizeSessionOutput(ctx, row.ID, output)
 	s.watchSessionBindings(row.ID)
 	if err = host.waitHandshake(ctx, receipt, checkpoint.ControllerEpoch); err != nil {
@@ -292,7 +295,11 @@ func (s *Service) stopShimSession(id string) (bool, error) {
 		return true, err
 	}
 	if changed {
-		publishSessionEvent(s.Bus, id, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: change.To, ExitCode: new(int), Reason: s.stops.reason(id), Session: sessionFieldsFor(s.Store, id)})
+		reason := s.stops.reason(id)
+		if reason == "" {
+			reason = EndReasonShimRecovery
+		}
+		publishSessionEvent(s.Bus, id, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: change.To, ExitCode: new(int), Reason: reason, Session: sessionFieldsFor(s.Store, id)})
 		publishFinalUsageIfTerminal(s.Bus, s.Store, id, change.LogicalAgentID, change.To)
 	}
 	if err = s.waitShimBinding(context.Background(), id); err != nil {

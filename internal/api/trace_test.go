@@ -200,3 +200,54 @@ func TestMessageTrace_NotConfigured_404(t *testing.T) {
 		t.Fatalf("status = %d, want 404 (DeliveryTrace not configured)", resp.StatusCode)
 	}
 }
+
+// TestMessageTrace_RecipientSettlementIsNotAWake reproduces the live trace of
+// CW-20261118-0024: mail to an offline recipient that the recipient later
+// marked read shows host_accepted/turn_submitted/consumed receipts. They were
+// recorded by mark_read, held by the recipient address; no wake was admitted.
+// The trace must say so: holder_kind recipient, read_at set, no wake_outcome.
+// A real push wake is held by a session and reports its recorded outcome.
+func TestMessageTrace_RecipientSettlementIsNotAWake(t *testing.T) {
+	srv, db, _ := newTraceTestServer(t)
+	ctx := context.Background()
+	from := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"}
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "lead"}
+
+	read, err := db.MessagingStore().Send(ctx, messaging.Envelope{Kind: messaging.MsgKindResponse, From: from, To: to})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MessagingStore().MarkRead(ctx, read.ID, to); err != nil {
+		t.Fatal(err)
+	}
+	_, out := getTrace(t, srv.URL, read.ID)
+	if len(out.Attempts) != 1 || out.Attempts[0].HolderKind != HolderKindRecipient || out.Attempts[0].TurnSubmittedAt == "" {
+		t.Fatalf("attempts = %+v, want one recipient-held settlement", out.Attempts)
+	}
+	if out.ReadAt == "" || out.ConsumedAt != "" || out.WakeOutcome != nil || out.Status != string(delivery.DeliveryDelivered) {
+		t.Fatalf("trace = read %q consumed %q wake %+v status %s; want read, not consumed, no wake, delivered", out.ReadAt, out.ConsumedAt, out.WakeOutcome, out.Status)
+	}
+
+	woken, err := db.MessagingStore().Send(ctx, messaging.Envelope{Kind: messaging.MsgKindRequest, From: from, To: to})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveryID, _, _ := db.DeliveryIDForMessage(ctx, woken.ID)
+	_, err = db.DeliveryStore().Claim(ctx, delivery.ClaimRequest{DeliveryID: delivery.DeliveryID(deliveryID), Holder: "s1", LeaseDuration: time.Minute, Nowait: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, _, err := db.AdmitRecipientWake(ctx, woken.ID); err != nil || !first {
+		t.Fatal(first, err)
+	}
+	if err := db.CompleteRecipientWake(ctx, woken.ID, `{"attempted":true,"delivered":true,"session_id":"s1"}`); err != nil {
+		t.Fatal(err)
+	}
+	_, out = getTrace(t, srv.URL, woken.ID)
+	if len(out.Attempts) != 1 || out.Attempts[0].HolderKind != HolderKindSession {
+		t.Fatalf("attempts = %+v, want one session-held wake", out.Attempts)
+	}
+	if out.WakeOutcome == nil || !out.WakeOutcome.Delivered || out.WakeOutcome.SessionID != "s1" || out.ReadAt != "" {
+		t.Fatalf("wake outcome %+v read %q, want delivered to s1 and unread", out.WakeOutcome, out.ReadAt)
+	}
+}

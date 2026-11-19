@@ -106,49 +106,49 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 	if s.LaunchHost() != HostShim {
 		return req, nil
 	}
-	fallback := func(code string) (agentsessions.StartRequest, error) {
+	fallback := func(code string) agentsessions.StartRequest {
 		s.shimDiagnostic(req.ID, nil, "direct_fallback", code)
-		return req, nil
+		return req
 	}
 	if plan.ResumeSourceSessionID != "" {
 		// A vanished child needs native recovery, not a survival claim. Keep
 		// the bounded attempt/teardown retry inside the direct runtime Start.
-		return fallback("native_recovery_direct")
+		return fallback("native_recovery_direct"), nil
 	}
 	claude := plan.ProviderBrand == "claude" && req.Runtime.Caps().StreamingStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeStreamingStdio
 	codex := plan.ProviderBrand == "codex" && req.Runtime.Caps().JsonRpcStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeJSONRPCStdio && req.Options.SessionIDPreset == "" && !req.Options.AutoFireFirstTurn && len(req.Options.FirstTurnPayload) == 0
 	agy := plan.ProviderBrand == "antigravity" && req.Runtime.Caps().ProviderSessionID && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeSubprocessPerTurn
 	if (!claude && !codex && !agy) || req.Options.PreparedExecution != nil || len(req.Options.ExtraFiles) != 0 || req.Options.Supervisor != nil {
-		return fallback("unsupported_runtime")
+		return fallback("unsupported_runtime"), nil
 	}
 	if err := shimhost.Supported(); err != nil {
-		return fallback(shimFailureCode(err))
+		return fallback(shimFailureCode(err)), nil
 	}
 	host, err := s.shimHost()
 	if err != nil {
-		return fallback(shimFailureCode(err))
+		return fallback(shimFailureCode(err)), nil
 	}
 	if err = host.capability(); err != nil {
-		return fallback(shimFailureCode(err))
+		return fallback(shimFailureCode(err)), nil
 	}
 	spec, policy, limits, err := shimProviderSpec(host, plan, req)
 	if err != nil {
-		return fallback(shimFailureCode(err))
+		return fallback(shimFailureCode(err)), nil
 	}
 	spec, cleanup, err := host.prepare(spec, policy, limits)
 	if err != nil {
-		return fallback("sandbox_unavailable")
+		return fallback("sandbox_unavailable"), nil
 	}
 	// A scope wrapper owns a separate unit and does not provide the shim's
 	// process identity. Refuse it before placement rather than weaken teardown.
 	if strings.HasSuffix(spec.Argv[0], "systemd-run") {
 		cleanup()
-		return fallback("unsupported_limits")
+		return fallback("unsupported_limits"), nil
 	}
 	intent := host.provider.PlacementIdentity(req.ID+":1", spec)
 	if err = s.persistShim(ctx, req.ID, plan.ProviderID, spec.BootGeneration, intent); err != nil {
 		cleanup()
-		return fallback("placement_bookkeeping_unavailable")
+		return fallback("placement_bookkeeping_unavailable"), nil
 	}
 	// Make the durable intent eligible for startup recovery before submission.
 	var placementDecision *store.WorkspaceLaunchDecision
@@ -174,7 +174,7 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 			return req, removeErr
 		}
 		_ = s.Store.UpdateSessionState(req.ID, string(session.StateCreated), 0, nil)
-		return fallback(shimFailureCode(err))
+		return fallback(shimFailureCode(err)), nil
 	}
 	if hasScratch {
 		// Earlier host preparation/checkpoint callbacks may have changed the
@@ -214,7 +214,7 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 			return req, &shimhost.Failure{Code: "outcome_unknown", Message: "unstarted placement bookkeeping could not be cleared"}
 		}
 		_ = s.Store.UpdateSessionState(req.ID, string(session.StateCreated), 0, nil)
-		return fallback(shimFailureCode(err))
+		return fallback(shimFailureCode(err)), nil
 	}
 	if receipt.Attempted {
 		host.cleanup.Store(req.ID, cleanup)

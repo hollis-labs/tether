@@ -1,0 +1,10 @@
+id: surface-claude
+project: surface-chat
+agent: surface-assistant
+provider: claude-code
+chat: true
+display_name: Surface Assistant
+workspace:
+  mode: hybrid
+mcp:
+  servers: [surface]

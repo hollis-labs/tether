@@ -76,27 +76,15 @@ func TestIngestProxyEvent_PublishPutsTheCallOnTheDaemonsBus(t *testing.T) {
 		}
 	}
 
-	if len(bus.published) != 4 {
-		t.Fatalf("published %d events, want legacy and canonical pairs", len(bus.published))
+	// Only the canonical pair is published (CW-20261113-0009).
+	if len(bus.published) != 2 {
+		t.Fatalf("published %d events, want the canonical pair", len(bus.published))
 	}
-	wantKinds := []string{events.EventTypeToolCallStart, events.EventTypeToolCallEnd}
-	for i, e := range []events.Event{bus.published[0], bus.published[2]} {
-		if e.Kind != wantKinds[i] || e.Scope != events.ScopeSession || e.SessionID != "s1" {
-			t.Errorf("event %d = %+v, want %s on the session scope of s1", i, e, wantKinds[i])
-		}
-		var tce events.ToolCallEvent
-		if err := json.Unmarshal([]byte(e.PayloadJSON), &tce); err != nil {
-			t.Fatalf("event %d payload: %v", i, err)
-		}
-		if tce.ToolName != "hadron_x" || tce.Server != "hadron" || tce.ArgsSchemaFP != "ab12cd34" {
-			t.Errorf("event %d payload = %+v", i, tce)
-		}
-		if tce.Timestamp.Year() < 2026 || time.Since(tce.Timestamp) > time.Minute {
-			t.Errorf("event %d timestamp = %v: the daemon must stamp the time itself, not take the caller's", i, tce.Timestamp)
-		}
+	if len(store.events) != 1 || store.events[0].ToolName != "hadron_x" || store.events[0].SessionID != "s1" {
+		t.Fatalf("proxy rows = %+v", store.events)
 	}
 
-	for i, e := range []events.Event{bus.published[1], bus.published[3]} {
+	for i, e := range bus.published {
 		wantKind := catalog.KindToolCallStarted
 		if i == 1 {
 			wantKind = catalog.KindToolCallFinished
@@ -195,8 +183,8 @@ func TestIngestProxyEvent_PublishNeedsAnExistingSession(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("no session id: status = %d, want 201 (body %s)", rr.Code, rr.Body.String())
 	}
-	if len(bus.published) != 2 || bus.published[0].Scope != events.ScopeDaemon || bus.published[0].SessionID != "" {
-		t.Errorf("published = %+v, want legacy and canonical events on the daemon scope", bus.published)
+	if len(bus.published) != 1 || bus.published[0].Scope != events.ScopeDaemon || bus.published[0].SessionID != "" {
+		t.Errorf("published = %+v, want the canonical event on the daemon scope", bus.published)
 	}
 
 	// With no way to look sessions up, a named session cannot be vouched for.
@@ -310,15 +298,19 @@ func TestIngestProxyEventPreservesTelemetryAndRejectsInvalidMetrics(t *testing.T
 	if rr.Code != http.StatusCreated {
 		t.Fatal(rr.Code, rr.Body.String())
 	}
-	if len(rows.events) != 1 || len(bus.published) != 2 {
+	if len(rows.events) != 1 || len(bus.published) != 1 {
 		t.Fatal("record not persisted and published")
 	}
-	var call events.ToolCallEvent
-	if err := json.Unmarshal([]byte(bus.published[0].PayloadJSON), &call); err != nil {
+	row := rows.events[0]
+	if row.ArgsBytes != 19 || row.ResultBytes != 98 || row.ErrorClass != events.ToolErrorDenied || !row.ErrorTruncated || row.DiscoveryMode != "flat" {
+		t.Fatalf("dropped telemetry: %+v", row.ToolCallDetails)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(bus.published[0].PayloadJSON), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if call.ArgsBytes != 19 || call.ResultBytes != 98 || call.ErrorClass != events.ToolErrorDenied || !call.ErrorTruncated || !rows.events[0].ErrorTruncated {
-		t.Fatalf("dropped telemetry: %+v", call)
+	if payload["args_bytes"] != float64(19) || payload["result_bytes"] != float64(98) || payload["error_class"] != string(events.ToolErrorDenied) || payload["discovery_mode"] != "flat" {
+		t.Fatalf("dropped canonical telemetry: %v", payload)
 	}
 	for _, bad := range []events.ToolCallDetails{{ArgsBytes: -1}, {ResultBytes: -1}, {GatewayMs: -1}, {ForwardMs: -1}, {ErrorClass: "invented"}, {Profile: strings.Repeat("x", 257)}, {TraceID: "ABCDEF0123456789ABCDEF0123456789"}, {TraceID: "0123"}, {SpanID: "g123456789abcdef"}, {SpanID: "ABCDEF0123456789"}} {
 		rr := postProxyEvent(t, h, ProxyEventIngestRequest{ToolCallDetails: bad, ToolName: "read", Publish: true})

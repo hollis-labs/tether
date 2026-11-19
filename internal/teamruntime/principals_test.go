@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/teamhost"
@@ -155,6 +156,29 @@ func TestVerifiedSessionUsesOnlyItsRetainedActorAndBinding(t *testing.T) {
 		t.Fatal("session selector trusted", err)
 	}
 }
+func TestIssuedAgentTokenResolvesAsItsSessionActor(t *testing.T) {
+	db, s, reg := dbFixture(t, filepath.Join(t.TempDir(), "db"))
+	port, e, _, req := sessionFixture(t, db, s, reg, "principal-agent")
+	id, err := port.Launch(ctx, req)
+	check(t, err)
+	resolver := Principals{Mode: identity.Enforce, Sessions: e}
+	token := identity.Principal{Verified: true, ID: identity.SessionPrincipalIDPrefix + id, Kind: "agent", SessionID: id, TokenID: "tok"}
+	out, err := resolver.ResolvePrincipal(identity.WithPrincipal(ctx, token))
+	check(t, err)
+	if out.ID != req.Actor || !out.Verified {
+		t.Fatal("issued agent token misattributed", out)
+	}
+	for name, bad := range map[string]identity.Principal{
+		"no token id":   {Verified: true, ID: token.ID, Kind: "agent", SessionID: id},
+		"wrong subject": {Verified: true, ID: "msg://session/local/other", Kind: "agent", SessionID: id, TokenID: "tok"},
+		"no session id": {Verified: true, ID: token.ID, Kind: "agent", TokenID: "tok"},
+		"unverified":    {ID: token.ID, Kind: "agent", SessionID: id, TokenID: "tok"},
+	} {
+		if _, err := resolver.ResolvePrincipal(identity.WithPrincipal(ctx, bad)); !errors.Is(err, teamsvc.ErrUnauthenticated) {
+			t.Fatal(name, "admitted", err)
+		}
+	}
+}
 func TestDevModeAdmitsOnlyVerifiedLocalOperator(t *testing.T) {
 	socketRoot, err := os.MkdirTemp("/var/tmp", "team-dev.")
 	check(t, err)
@@ -187,5 +211,62 @@ func TestDevModeAdmitsOnlyVerifiedLocalOperator(t *testing.T) {
 		if _, err = r.ResolvePrincipal(identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"})); !errors.Is(err, teamsvc.ErrUnauthenticated) {
 			t.Fatal(mode, "nonlocal operator admitted", err)
 		}
+	}
+}
+
+// A policy-listed service presenting a valid credential is admitted even with
+// identity in observe/off (identity enforcement is not required for the
+// dispatcher); an unlisted one, a bad credential and an asserted header are not.
+func TestPrincipalsAdmitPolicyListedServiceWithoutEnforcement(t *testing.T) {
+	db, _, _ := dbFixture(t, filepath.Join(t.TempDir(), "identity"))
+	auth := identity.NewStore(db.DB())
+	listed, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/dispatcher", Kind: "service", Display: "Dispatcher", Scopes: []string{"team.write"}})
+	check(t, err)
+	// Listed in services: but minted without the teams scope.
+	scopeless, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/dispatcher", Kind: "service", Display: "Dispatcher no scope", Scopes: []string{"session.write"}})
+	check(t, err)
+	other, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/other", Kind: "service", Display: "Other"})
+	check(t, err)
+	services := func(id string) bool { return id == "msg://service/torque/dispatcher" }
+	for _, tc := range []struct {
+		name   string
+		mode   identity.Mode
+		bearer string
+		listed func(string) bool
+		want   error
+	}{
+		{"observe listed", identity.Observe, listed, services, nil},
+		{"off listed", identity.Off, listed, services, nil},
+		{"enforce listed", identity.Enforce, listed, services, nil},
+		{"observe listed without team.write", identity.Observe, scopeless, services, teamsvc.ErrUnauthenticated},
+		{"off listed without team.write", identity.Off, scopeless, services, teamsvc.ErrUnauthenticated},
+		{"observe unlisted", identity.Observe, other, services, teamsvc.ErrUnauthenticated},
+		{"observe no list", identity.Observe, listed, nil, teamsvc.ErrUnauthenticated},
+		{"observe bad credential", identity.Observe, "asserted-token", services, teamsvc.ErrUnauthenticated},
+		{"observe no credential", identity.Observe, "", services, teamsvc.ErrUnauthenticated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got teamsvc.Principal
+			var result error
+			resolver := Principals{Mode: tc.mode, Services: tc.listed}
+			middleware := identity.Middleware(identity.Observe, auth, nil, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got, result = resolver.ResolvePrincipal(r.Context())
+			}))
+			request := httptest.NewRequest(http.MethodPost, "/teams/form", nil)
+			request.Header.Set("X-Principal", "msg://service/torque/dispatcher") // an assertion is never proof
+			if tc.bearer != "" {
+				request.Header.Set("Authorization", "Bearer "+tc.bearer)
+			}
+			middleware.ServeHTTP(httptest.NewRecorder(), request)
+			if tc.want != nil {
+				if !errors.Is(result, tc.want) {
+					t.Fatalf("want %v, got %v", tc.want, result)
+				}
+				return
+			}
+			if result != nil || got.ID != "msg://service/torque/dispatcher" || got.Kind != mesh.ActorService || !got.Verified || got.LocalOperator {
+				t.Fatalf("listed service not admitted: %+v %v", got, result)
+			}
+		})
 	}
 }

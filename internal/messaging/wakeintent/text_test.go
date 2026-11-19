@@ -1,6 +1,7 @@
 package wakeintent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 )
 
-func TestDefaultWakeTextIsAPointerThatEndsSilently(t *testing.T) {
+func TestDefaultWakeTextIsAPointerThatEndsEmpty(t *testing.T) {
 	env := messaging.Envelope{
 		ID:   "m1",
 		From: messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "archie"},
@@ -17,7 +18,7 @@ func TestDefaultWakeTextIsAPointerThatEndsSilently(t *testing.T) {
 		Kind: messaging.MsgKindNotice,
 	}
 	got := DefaultWakeText(env, 2, "high", false)
-	for _, want := range []string{"**Mailbox wake (daemon-injected)**", "2 unread message(s)", "`m1`", "urgency `high`", "mark it read and end the turn silently"} {
+	for _, want := range []string{"**Mailbox wake (daemon-injected)**", "2 unread message(s)", "`m1`", "urgency `high`", "Reply to anything that asked you something", "If nothing needs action, end the turn without producing any message"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("wake text missing %q:\n%s", want, got)
 		}
@@ -52,6 +53,36 @@ func TestWakeTextShowsOnBehalfOf(t *testing.T) {
 	}
 }
 
+// The wake never tells an agent to end silently without the "if nothing needs
+// action" condition (CW-20261117-0002).
+func TestWakeGuidanceNeverUnconditionallySilent(t *testing.T) {
+	if strings.Contains(WakeGuidance, "end the turn silently") {
+		t.Fatalf("guidance still carries the unconditional silent-end instruction: %q", WakeGuidance)
+	}
+	if strings.Contains(strings.ToLower(WakeGuidance), "silently") {
+		t.Fatalf("guidance still says silently: %q", WakeGuidance)
+	}
+	if !strings.Contains(WakeGuidance, "Reply to anything that asked you something") {
+		t.Fatalf("guidance lost the reply instruction: %q", WakeGuidance)
+	}
+	if !strings.Contains(WakeGuidance, "If nothing needs action, end the turn without producing any message") {
+		t.Fatalf("guidance lost the conditional: %q", WakeGuidance)
+	}
+}
+
+// A typed ask's wake names the sender handle, subject and deliverable (CW-20261117-0003).
+func TestWakeTextSummarisesATypedRequest(t *testing.T) {
+	raw, _ := json.Marshal(envelope.Envelope{Schema: envelope.Schema, Kind: envelope.KindRequest, From: "@archie", To: []string{"@tether"}, Subject: "Land 0002", Body: "please", Deliverable: "Merged PR"})
+	from, _ := messaging.ParseURN("msg://agent/agent-mux/agt_archie")
+	to, _ := messaging.ParseURN("msg://agent/agent-mux/agt_me")
+	text := DefaultWakeText(messaging.Envelope{ID: "m9", From: from, To: to, Kind: messaging.MsgKindRequest, ContentType: envelope.ContentType, Payload: raw}, 1, "normal", false)
+	for _, want := range []string{"@archie request: Land 0002", "Deliverable: Merged PR", "tether_reply"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("wake text lacks %q:\n%s", want, text)
+		}
+	}
+}
+
 // CW-20261114-0127: every generated wake (send-time and retried; triage-gated wakes use the same text)
 // tells the seat to ask Chrispian for a decision with its own typed message, not prose in its reply.
 func TestWakeTextSaysHowToAskChrispian(t *testing.T) {
@@ -63,6 +94,15 @@ func TestWakeTextSaysHowToAskChrispian(t *testing.T) {
 		got := DefaultWakeText(env, 1, "normal", retried)
 		if !strings.HasSuffix(got, want) {
 			t.Fatalf("wake (retried=%v) does not end with the ask guidance:\n%s", retried, got)
+		}
+	}
+}
+
+// Adding ask guidance must retain the explicit no-ack and settlement rules.
+func TestWakeGuidanceRetainsNoAckAndSettlement(t *testing.T) {
+	for _, want := range []string{"Reply to anything that asked you something.", "If nothing needs action, end the turn without producing any message", "no acknowledgement", "no \"noted\"", "no summary", "Marking a message read or consumed settles it."} {
+		if !strings.Contains(WakeGuidance, want) {
+			t.Fatalf("wake guidance lost %q: %s", want, WakeGuidance)
 		}
 	}
 }

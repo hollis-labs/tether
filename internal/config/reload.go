@@ -66,7 +66,14 @@ func diffMap[V any](r *ReloadReport, kind string, a, b map[string]V) {
 	}
 }
 
-// GlobalDiffers reports whether the global.yaml settings differ.
+// GlobalDiffers reports whether the global.yaml settings that need a restart
+// differ. operator_attestation is not one: an approved change takes effect on
+// reload (CW-20261114-0152).
 func GlobalDiffers(a, b *Catalog) bool {
-	return a != nil && b != nil && !reflect.DeepEqual(a.Global, b.Global)
+	if a == nil || b == nil {
+		return false
+	}
+	x, y := a.Global, b.Global
+	x.OperatorAttestation, y.OperatorAttestation = nil, nil
+	return !reflect.DeepEqual(x, y)
 }

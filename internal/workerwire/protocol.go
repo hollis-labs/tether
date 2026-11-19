@@ -46,20 +46,31 @@ type Cursor struct {
 	Session string `json:"session"`
 	FromSeq int64  `json:"from_seq"`
 }
+
+// NativeContext is a content-free receipt from the source execution, never a credential.
+type NativeContext struct {
+	Session    string `json:"session"`
+	Generation string `json:"generation"`
+	Thread     string `json:"thread"`
+	Workroot   string `json:"workroot"`
+	Actor      string `json:"actor"`
+}
+
 type Frame struct {
-	Activity  *Activity       `json:"activity,omitempty"`
-	Features  []string        `json:"features,omitempty"`
-	Bindings  []Binding       `json:"bindings,omitempty"`
-	Binding   *Binding        `json:"binding,omitempty"`
-	URN       string          `json:"urn,omitempty"`
-	Text      string          `json:"text,omitempty"`
-	MessageID string          `json:"message_id,omitempty"`
-	T         string          `json:"t"`
-	Proto     int             `json:"proto,omitempty"`
-	Worker    *Worker         `json:"worker,omitempty"`
-	Caps      json.RawMessage `json:"caps,omitempty"`
-	Sessions  []Session       `json:"sessions,omitempty"`
-	Hosts     []Host          `json:"hosts,omitempty"`
+	NativeContext *NativeContext  `json:"native_context,omitempty"`
+	Activity      *Activity       `json:"activity,omitempty"`
+	Features      []string        `json:"features,omitempty"`
+	Bindings      []Binding       `json:"bindings,omitempty"`
+	Binding       *Binding        `json:"binding,omitempty"`
+	URN           string          `json:"urn,omitempty"`
+	Text          string          `json:"text,omitempty"`
+	MessageID     string          `json:"message_id,omitempty"`
+	T             string          `json:"t"`
+	Proto         int             `json:"proto,omitempty"`
+	Worker        *Worker         `json:"worker,omitempty"`
+	Caps          json.RawMessage `json:"caps,omitempty"`
+	Sessions      []Session       `json:"sessions,omitempty"`
+	Hosts         []Host          `json:"hosts,omitempty"`
 	// Restore is set on a worker hello: the counts of its start-up restore.
 	Restore   *RestoreCounts  `json:"restore,omitempty"`
 	Reaped    []string        `json:"reaped,omitempty"`

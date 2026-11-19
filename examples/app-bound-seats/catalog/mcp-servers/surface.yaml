@@ -1,0 +1,6 @@
+id: surface
+transport: http
+url: http://127.0.0.1:8080/mcp
+enabled: true
+# Surface owns tool authorization: expose only read and act tools here.
+tool_prefix: surface_

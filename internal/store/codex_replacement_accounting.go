@@ -280,7 +280,7 @@ func accountingOpenDir(path string) (*os.File, error) {
 		}
 		fd = next
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), path) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 	info, e := f.Stat()
 	var stat unix.Stat_t
 	if e != nil || info.Mode().Perm()&0077 != 0 || unix.Fstat(fd, &stat) != nil || int64(stat.Uid) != int64(os.Geteuid()) {
@@ -290,11 +290,11 @@ func accountingOpenDir(path string) (*os.File, error) {
 	return f, nil
 }
 func accountingReadAt(dir *os.File, name string, limit int64) ([]byte, error) {
-	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0) //nolint:gosec // G115: Fd() of an open *os.File is a small non-negative descriptor that fits int
 	if err != nil {
 		return nil, accountingRefuse("history_unavailable")
 	}
-	f := os.NewFile(uintptr(fd), name)
+	f := os.NewFile(uintptr(fd), name) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 	defer func() { _ = f.Close() }()
 	var stat unix.Stat_t
 	if unix.Fstat(fd, &stat) != nil || int64(stat.Uid) != int64(os.Geteuid()) || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0077 != 0 || stat.Size > limit {

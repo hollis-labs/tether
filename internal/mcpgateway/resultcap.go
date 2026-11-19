@@ -53,6 +53,24 @@ const (
 	maxArrayDepth   = 6
 )
 
+// BuiltinToolResultCaps are per-tool caps every view starts with, in the same
+// units as ResultCap.Tools (-1 is unlimited). A profile's own Tools entry for
+// the same name still wins. Catalog plan reads are listed because an approver
+// must see the whole plan: a large diff otherwise left room for one planned
+// file of five, and the cut was easy to miss (CW-20261118-0033).
+var BuiltinToolResultCaps = map[string]int{
+	"tether_catalog_plan":     -1,
+	"tether_catalog_plan_get": -1,
+	"tether_catalog_validate": -1,
+}
+
+// StructuredMarkerKey is the top-level key that carries the truncation marker
+// inside a cut result's StructuredContent (CW-20261118-0033). Clients that show
+// StructuredContent instead of the text blocks would otherwise see a silent
+// cut. The leading underscore and gateway prefix keep it out of any tool's own
+// field names; the gateway owns it and overwrites a value a tool might send.
+const StructuredMarkerKey = "_gateway_truncated"
+
 // ResultCap is the optional per-profile override. Bytes: 0 inherits the default,
 // a positive value sets the cap, -1 removes it. Tools overrides by exact tool name.
 type ResultCap struct {
@@ -86,14 +104,18 @@ func (c *ResultCap) Validate() error {
 }
 
 // For returns the effective cap in bytes for a tool: base is the daemon default
-// (0 or less means no cap), then the profile default, then the per-tool value.
+// (0 or less means no cap), then the profile default, then the built-in
+// per-tool value (BuiltinToolResultCaps), then the profile per-tool value.
 // A result of 0 or less means unlimited.
 func (c *ResultCap) For(tool string, base int) int {
 	limit := base
+	if c != nil && c.DefaultBytes != 0 {
+		limit = c.DefaultBytes
+	}
+	if n, ok := BuiltinToolResultCaps[tool]; ok && n != 0 {
+		limit = n
+	}
 	if c != nil {
-		if c.DefaultBytes != 0 {
-			limit = c.DefaultBytes
-		}
 		if n, ok := c.Tools[tool]; ok && n != 0 {
 			limit = n
 		}
@@ -286,6 +308,9 @@ type pageMarker struct {
 }
 
 // render builds the result for items [from, from+k) of the stashed snapshot.
+// When StructuredContent is kept and is an object, the marker is also set
+// under StructuredMarkerKey, so a client that shows only StructuredContent
+// still sees the cut and the cursor.
 func render(base *mcpsdk.CallToolResult, textIdx int, tree any, structured any, path []string, items []any, from, k int, marker pageMarker) *mcpsdk.CallToolResult {
 	slice := items[from : from+k]
 	out := *base
@@ -299,6 +324,10 @@ func render(base *mcpsdk.CallToolResult, textIdx int, tree any, structured any, 
 		}
 	}
 	marker.From, marker.Returned = from, k
+	// Only a copy withSlice made is written to; base's own map is never touched.
+	if m, ok := out.StructuredContent.(map[string]any); ok && structured != nil {
+		m[StructuredMarkerKey] = marker
+	}
 	out.Content = append(out.Content, &mcpsdk.TextContent{Text: jsonCompact(struct {
 		Marker pageMarker `json:"gateway_truncated"`
 	}{marker})})

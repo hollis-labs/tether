@@ -251,7 +251,11 @@ func (s *Service) StopTeamSession(ctx context.Context, id string) error {
 		return nil
 	}
 	if row.State == string(session.StateCreated) {
-		return s.Store.UpdateSessionState(id, string(session.StateKilled), 0, nil)
+		if err = s.Store.UpdateSessionState(id, string(session.StateKilled), 0, nil); err != nil {
+			return err
+		}
+		s.publishSessionEnded(id, row.LogicalAgentID, row.State, string(session.StateKilled), nil, EndReasonNeverStarted)
+		return nil
 	}
 	if err = s.StopSession(id); err != nil {
 		if !errors.Is(err, agentsessions.ErrSessionNotRunning) {
@@ -304,6 +308,7 @@ func (s *Service) stopWorkerTeamSession(row *store.SessionRow) error {
 		if err = s.Store.UpdateSessionState(row.ID, string(session.StateKilled), 0, nil); err != nil {
 			return err
 		}
+		s.publishSessionEnded(row.ID, row.LogicalAgentID, row.State, string(session.StateKilled), nil, EndReasonTeamStop)
 		s.releaseWorkerIdentity(row.ID)
 		if s.Registry != nil {
 			_, _ = s.Registry.RevokeSessionBindings(context.Background(), row.ID)

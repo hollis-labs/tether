@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,7 +20,8 @@ import (
 // can be admitted remotely; optional dependencies do not hide registrations.
 func TestRemoteScopesCoverRegisteredRoutes(t *testing.T) {
 	policy := map[string]bool{}
-	for _, rule := range RemoteRouteScopes {
+	// The chat wire's policy joins the table only when the daemon mounts it.
+	for _, rule := range append(slices.Clone(RemoteRouteScopes), ChatWireRouteScopes...) {
 		policy[rule.Registration] = true
 	}
 	for _, pattern := range registeredRoutePatterns(t) {

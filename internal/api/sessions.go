@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -231,7 +232,7 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, r *http.Request, id 
 		var err error
 		observations, err = reporter.SessionHealthObservations(r.Context(), id)
 		if err != nil {
-			slog.Warn("session health observations unavailable", "session_id", id)
+			slog.Warn("session health observations unavailable", "session_id", id) //nolint:gosec // G706 false positive: structured slog attrs are quoted/encoded by the handler; id is a session id
 			observations = SessionHealthObservations{}
 		}
 	}
@@ -376,6 +377,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusCreated
 	if res.Replayed {
 		status = http.StatusOK
+	}
+	if !res.Replayed {
+		// Who asked for the session, so a fresh start where a continuation was expected can be traced.
+		log.Printf("api: session %s created for launch %q by principal %q (continuity %q)", res.SessionID, req.Launch, idemPrincipal, req.Continuity)
 	}
 	writeJSON(w, status, launchResponseFor(r, res))
 }
@@ -561,6 +566,15 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	dto = dtos[0]
+	if reader, ok := s.Service.(interface {
+		GetWorkerNativeAdmission(string) (*store.WorkerNativeAdmission, error)
+	}); ok {
+		dto.NativeAdmission, err = reader.GetWorkerNativeAdmission(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "native admission lookup failed")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, sessionResponseFor(r, dto))
 }
 

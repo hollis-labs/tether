@@ -89,7 +89,7 @@ func openPrivate(path string, flags int) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), path) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 	info, err := f.Stat()
 	stat, ok := func() (*syscall.Stat_t, bool) {
 		if info == nil {
@@ -114,7 +114,7 @@ func openReceipts(ctx context.Context, root string) (*receipts, func(), error) {
 		return nil, nil, problem("receipt", "lock-unavailable", "Retain the enrollment state; its private lock could not be opened.")
 	}
 	for {
-		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB) //nolint:gosec // G115: Fd() of an open *os.File is a small non-negative descriptor that fits int
 		if err == nil {
 			break
 		}
@@ -129,7 +129,7 @@ func openReceipts(ctx context.Context, root string) (*receipts, func(), error) {
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
-	return &receipts{root}, func() { _ = unix.Flock(int(f.Fd()), unix.LOCK_UN); _ = f.Close() }, nil
+	return &receipts{root}, func() { _ = unix.Flock(int(f.Fd()), unix.LOCK_UN); _ = f.Close() }, nil //nolint:gosec // G115: Fd() of an open *os.File is a small non-negative descriptor that fits int
 }
 
 func (s *receipts) load() (Receipt, error) {

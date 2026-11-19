@@ -325,7 +325,7 @@ func (s *Server) deliverChat(r *http.Request, launchID, worker string, req ChatS
 		return resp, http.StatusInternalServerError, CodeInternalError, "session creation failed"
 	}
 	if !res.Replayed {
-		if _, err := s.launchWithCaller(r.Context(), res.SessionID); err != nil {
+		if _, err := s.launchChat(r.Context(), res.SessionID); err != nil {
 			// The worker's error text can carry paths and stderr; the full cause
 			// stays in the daemon log and the session.launch_failed event.
 			return resp, http.StatusInternalServerError, CodeInternalError, "session launch failed on the worker (see the session.launch_failed event for session " + res.SessionID + ")"
@@ -399,6 +399,21 @@ func chatPromptInput(r *http.Request) *identity.InputOrigin {
 // were anonymous).
 type contextLauncher interface {
 	LaunchSessionWithContext(ctx context.Context, sessionID string) (LaunchResult, error)
+}
+
+// ChatLauncher is the chat launch (CW-20261114-0063): with the caller's context,
+// and bounded by the seat's catalog definition rather than the device that asked.
+type ChatLauncher interface {
+	LaunchChatSession(ctx context.Context, sessionID string) (LaunchResult, error)
+}
+
+// launchChat launches a chat-created session: the catalog-bounded chat launch
+// when the service has one, else launchWithCaller.
+func (s *Server) launchChat(ctx context.Context, sessionID string) (LaunchResult, error) {
+	if l, ok := s.Service.(ChatLauncher); ok {
+		return l.LaunchChatSession(ctx, sessionID)
+	}
+	return s.launchWithCaller(ctx, sessionID)
 }
 
 func (s *Server) launchWithCaller(ctx context.Context, sessionID string) (LaunchResult, error) {

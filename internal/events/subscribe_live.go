@@ -14,7 +14,7 @@ func (b *memBus) SubscribeLive(ctx context.Context, f Filter) (<-chan Event, fun
 	}
 	b.nextID++
 	s := &subscriber{id: b.nextID, filter: f, live: make(chan Event, b.subBuffer), out: make(chan Event, b.subBuffer), done: make(chan struct{}), maxConsec: b.maxConsecDrops}
-	s.ctx, s.stop = context.WithCancel(context.WithoutCancel(ctx))
+	s.ctx, s.stop = context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // G118: s.stop is the subscriber's cancel; evict calls it
 	b.subs[s.id] = s
 	b.unlock()
 	go b.runSubscriber(s)

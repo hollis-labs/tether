@@ -26,7 +26,8 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 		Name: "tether_message_trace",
 		Description: "Show the structured delivery trace for a message: who sent to whom, why a " +
 			"binding resolved, which host accepted, which turn was submitted, and why " +
-			"retry/expiry occurred. Read-only; no scope required.",
+			"retry/expiry occurred, plus the recorded wake_outcome and the recipient's read_at/consumed_at. " +
+			"An attempt with holder_kind recipient was recorded by mark_read/consume, not by a wake. Read-only; no scope required.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID.", true),
 		),

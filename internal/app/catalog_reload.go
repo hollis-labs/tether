@@ -55,6 +55,11 @@ func (s *Service) ReloadCatalog(_ context.Context) (*config.ReloadReport, error)
 	if err := fresh.Validate(); err != nil {
 		return nil, fmt.Errorf("reload refused, catalog invalid (nothing changed): %w", err)
 	}
+	attestation, err := s.checkOperatorAttestation(context.Background(), fresh)
+	if err != nil {
+		s.auditAttestation(context.Background(), AuditOperatorAttestationRefused, map[string]any{"phase": "reload", "reason": err.Error()})
+		return nil, fmt.Errorf("reload refused (nothing changed; the previous attestation keys stay in force): %w", err)
+	}
 	report := config.DiffCatalogs(old, fresh)
 	if config.GlobalDiffers(old, fresh) {
 		report.RestartRequired = append(report.RestartRequired,
@@ -76,12 +81,15 @@ func (s *Service) ReloadCatalog(_ context.Context) (*config.ReloadReport, error)
 	}
 	next := *fresh
 	next.Global = old.Global
+	// The approved trust root takes effect without a restart (CW-20261114-0152).
+	next.Global.OperatorAttestation = fresh.Global.OperatorAttestation
 	next.Paths = old.Paths
 
 	s.catalogState.mu.Lock()
 	s.Catalog = &next
 	s.catalogState.generation++
 	s.catalogState.mu.Unlock()
+	s.attestation.Store(attestation)
 	report.Reloaded = true
 	return &report, nil
 }

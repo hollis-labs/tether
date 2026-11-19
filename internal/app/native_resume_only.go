@@ -148,28 +148,28 @@ func (r *recoveryRuntime) startNativeOnly(ctx context.Context, opts agentsession
 	}
 	done := make(chan error, 1)
 	go func() { _, err := sess.Wait(); done <- err }()
-	refuse := func(reason string) (agentsessions.Session, error) {
+	refuse := func(reason string) error {
 		if err := stopRecoveryAttempt(sess, done); err != nil {
-			return nil, &recoveryUnconfirmedError{err: errors.Join(nativeOnlyError(reason), err), pid: sess.Health().PID}
+			return &recoveryUnconfirmedError{err: errors.Join(nativeOnlyError(reason), err), pid: sess.Health().PID}
 		}
-		return nil, nativeOnlyError(reason)
+		return nativeOnlyError(reason)
 	}
 	rpc, ok := sess.(agentsessions.JsonRpcCaller)
 	if !ok {
-		return refuse("native RPC unavailable")
+		return nil, refuse("native RPC unavailable")
 	}
 	handshake, cancel := context.WithTimeout(r.request, 5*time.Second)
 	defer cancel()
 	if _, err := rpc.Call(handshake, "initialize", map[string]any{"clientInfo": map[string]string{"name": "tether", "version": tetherClientVersion}}); err != nil {
-		return refuse("native initialize refused")
+		return nil, refuse("native initialize refused")
 	}
 	response, err := rpc.Call(handshake, "thread/resume", map[string]any{"threadId": opts.SessionIDPreset, "excludeTurns": true, "cwd": opts.Workdir})
 	if err != nil {
-		return refuse("native thread resume refused")
+		return nil, refuse("native thread resume refused")
 	}
 	actual, err := turn.DecodeCodexThreadID(response)
 	if err != nil || actual != opts.SessionIDPreset {
-		return refuse("native thread identity unconfirmed")
+		return nil, refuse("native thread identity unconfirmed")
 	}
 	grace := r.service.resumeGrace
 	if grace <= 0 {
@@ -179,28 +179,28 @@ func (r *recoveryRuntime) startNativeOnly(ctx context.Context, opts agentsession
 	defer timer.Stop()
 	select {
 	case <-r.request.Done():
-		return refuse("native resume canceled")
+		return nil, refuse("native resume canceled")
 	case <-done:
 		return nil, nativeOnlyError("native process ended before admission")
 	case <-timer.C:
 	}
 	if !sess.Health().Alive {
-		return refuse("native process health unconfirmed")
+		return nil, refuse("native process health unconfirmed")
 	}
 	for i, path := range roots {
 		current, err := os.Lstat(path)
 		if err != nil || !os.SameFile(identities[i], current) {
-			return refuse("recorded context identity changed")
+			return nil, refuse("recorded context identity changed")
 		}
 	}
 	if err := credentialHome.ValidateNativeLink(r.plan.NativeStateRoot); err != nil {
-		return refuse("native credential mapping changed")
+		return nil, refuse("native credential mapping changed")
 	}
 	if err := r.service.validateNativeOnlySource(r.request, source, r.plan); err != nil {
-		return refuse("source context changed before admission")
+		return nil, refuse("source context changed before admission")
 	}
 	if err := r.service.Store.UpsertSessionProviderMapping(r.id, "tether", r.plan.ProviderID, actual); err != nil {
-		return refuse("native mapping persistence refused")
+		return nil, refuse("native mapping persistence refused")
 	}
 	if onSessionID != nil {
 		onSessionID(actual)

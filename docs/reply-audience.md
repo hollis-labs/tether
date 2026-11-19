@@ -108,9 +108,13 @@ Chrispian looks for what needs him. Every mailbox wake ends with the rule
 (CW-20261114-0127): if you need a decision or approval from Chrispian, send it
 as its own typed message (`tether_message_post` to `@chrispian`,
 `kind=question`, `decision` or `approval_request`, `attention=human`; the `ask`
-skill), never inside your reply. A typed request is what Tachyon's Needs-you
-lists and what a pending approval is made of; a question asked in a reply's
-text is invisible to both.
+skill), never inside your reply. These typed asks feed Tachyon's Needs-you
+and the pending-approval workflow; a question asked in a reply's text is
+invisible to both.
+
+The API also supports `kind=request` for work with a concrete `deliverable`.
+Use the question, decision or approval-request kinds above when Chrispian must
+answer or approve something; request support does not replace those kinds.
 
 ## Privacy and retention
 

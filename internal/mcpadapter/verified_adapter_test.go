@@ -126,3 +126,16 @@ func TestVerifiedAdapter_NativeSDKResolvesAdmittedCallerContext(t *testing.T) {
 		t.Fatalf("native SDK trusted forged attribution: %+v", got)
 	}
 }
+
+func TestVerifiedAdapterRetainsRemoteProvenanceAcrossNativeDispatch(t *testing.T) {
+	p := identity.Principal{Verified: true, ID: "session:remote", Kind: "session", SessionID: "remote"}
+	ctx := identity.WithRemoteContext(identity.WithPrincipal(context.Background(), p))
+	a, err := NewVerifiedAdapter(ctx, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := a.verifiedCallerContext(context.Background())
+	if !identity.IsRemote(got) || identity.LocalConnection(got) {
+		t.Fatal("remote native dispatch acquired local proof")
+	}
+}

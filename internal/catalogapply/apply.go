@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"io"
 	"io/fs"
 	"os"
@@ -137,6 +138,28 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 		return &Result{PlanID: planID, BackupID: backupID, RolledBack: true, Changed: changed}, fmt.Errorf("catalog invalid after install: %w (restored from %s)", verr, backupID)
 	}
 
+	// An operator-approved trust-root change is recorded as approved before the
+	// reload, which refuses any block other than the approved one
+	// (CW-20261114-0152); a rolled-back apply puts the previous record back.
+	restoreTrust := func() {}
+	if cp.OperatorOnly {
+		if e.OnOperatorAttestation == nil {
+			restore()
+			return &Result{PlanID: planID, BackupID: backupID, RolledBack: true, Changed: changed}, fmt.Errorf("plan %q %s, but this daemon cannot record an approved trust root (restored)", planID, ReasonOperatorAttestation)
+		}
+		var next *operatorattest.RawConfig
+		for _, f := range cp.Files {
+			if f.Path == "global.yaml" && f.Action != "delete" {
+				next = attestationBlockOf(f.content)
+			}
+		}
+		undo, terr := e.OnOperatorAttestation(ctx, planID, next)
+		if terr != nil {
+			restore()
+			return &Result{PlanID: planID, BackupID: backupID, RolledBack: true, Changed: changed}, fmt.Errorf("record the approved operator attestation: %w (restored)", terr)
+		}
+		restoreTrust = undo
+	}
 	res := &Result{PlanID: planID, Applied: true, BackupID: backupID, Changed: changed, Activation: activationOf(cp)}
 	if e.Reload != nil {
 		rr, rerr := e.Reload(ctx)
@@ -146,6 +169,7 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 			// refused would only fail the next restart. Put the previous
 			// ones back so disk and live agree.
 			restore()
+			restoreTrust()
 			return &Result{PlanID: planID, BackupID: backupID, RolledBack: true, Changed: changed, ReloadError: rerr.Error()},
 				fmt.Errorf("catalog reload refused: %w (restored from %s)", rerr, backupID)
 		case len(rr) > 0:

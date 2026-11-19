@@ -92,6 +92,25 @@ All five must be green. CI enforces the same gate.
 
 If a lint finding feels like a false positive, prefer a narrow `//nolint:<linter> // <reason>` suppression over disabling the linter globally. Broad config changes to silence noise are reviewed on a case-by-case basis.
 
+## Migrations
+
+A migration runs when the daemon starts, before it serves `/health`, so a slow
+one holds the release's health wait.
+
+- **Measure it on a copy.** Time it on a `VACUUM INTO` copy of the production
+  state database (`tether migrations apply --state-db <copy>` logs each
+  migration's elapsed time).
+- **Over about 10 s on the copy, say so in the PR body**, with the measured
+  time. The live database is slower: the WAL, a busy hub and a cold cache made a
+  6 s index take about 90 s. The release owner then runs it as its own step
+  before the binary swap: `tether migrations apply` with the new binary,
+  **with the daemon stopped**. A migration holds SQLite's write lock for its
+  whole run, so a live daemon's writes would stall until it finishes.
+- **`tether migrations status [--json]`** reports, read-only, which migrations
+  a binary would apply to a state database, and the one a daemon is applying
+  right now (from `<state.db>.migrating`; a file whose process is gone is
+  ignored).
+
 ## Reporting security issues
 
 Do **not** open a public issue for security reports. Email the maintainer
