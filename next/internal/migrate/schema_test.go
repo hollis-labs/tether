@@ -40,9 +40,10 @@ var excluded = map[string]string{
 
 // newOnly names objects only the new database has, with the reason.
 var newOnly = map[string]string{
-	"goose_db_version":    "the database module's goose version table",
-	"idx_messages_seq":    "00002: messages.seq is unique (plan 13.1)",
-	"messages_assign_seq": "00002: SQLite assigns messages.seq to a new row (Postgres uses an identity column)",
+	"goose_db_version":     "the database module's goose version table",
+	"idx_messages_seq":     "00002: messages.seq is unique (plan 13.1)",
+	"messages_assign_seq":  "00002: SQLite assigns messages.seq to a new row (Postgres uses an identity column)",
+	"replaced_shim_delete": "00006: the old store created this guard in Go at open (session_replacement.go); here it is a migration",
 }
 
 // transform is a table whose new shape differs from the old one by design: exactly the listed columns

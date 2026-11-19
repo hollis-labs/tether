@@ -72,6 +72,14 @@ The client API keeps its root paths and the ADR 0010 error envelope `{"error":{"
 
 The old store runs go-messaging's `delivery.ApplySQLiteSchema` from `libs/mesh/core` **v0.10.0**. The live `messaging_*` tables were created and evolved by that version. The Substrate BOM pins `libs/mesh/core` at **v0.6.0** under `app_libs`. The port must open those tables with the same library version (or a later one whose schema migration accepts them), so the BOM pin has to move first. Until it does, `next/` does not import the library: S1 keeps the library tables out of the squashed schema and compares nothing against it. The messaging slice adds the import, and a test that applies the pinned library schema on top of `00001` and compares it with the old store's.
 
+### go-messaging is SQLite-only (gap CW-20261115-0013)
+
+**Status:** open. Substrate gap task CW-20261115-0013, routed to the libs owner.
+
+go-messaging's delivery store (`messaging_*` tables, class C) has only a SQLite implementation, and it needs a raw `*sql.DB`. The port reaches it through `Stores.LibraryDB(ctx)` (S2a): the one sanctioned raw handle, SQLite only, refused inside a `WriteTx` or `Joint`. Library-backed code returns `ErrLibraryUnavailable` on Postgres, and its tests skip there with a notice. Class C cannot move to Postgres until the library has a Postgres store.
+
+The Postgres store will also need the two replacement guard triggers the old store created in Go at open, on `messaging_attempts` (`replaced_delivery_claim`) and `messaging_receipts` (`replaced_delivery_receipt`). They cannot be migrations, because the library creates those tables after the migrations run. S2b-3b installs them through `LibraryDB` on SQLite (`InstallReplacementDeliveryFences`); on Postgres that is a no-op today. The third guard, `replaced_shim_delete` on `session_shims`, is migration `00006` on both dialects (numbers allocated by the lead: 00003-00004 for the 0102/0103 carries, 00005 for the journal lock).
+
 ### D6: socket admission stays as today
 
 **Status:** recommended (a).
@@ -127,9 +135,19 @@ Known differences between the dialects, handled in the slices that port the quer
 Items to settle before class C moves to Postgres (the S2 query port keeps SQLite parity until then):
 - **Staged turn outputs with a NUL byte or invalid UTF-8** (S2b-2c, #580). Today's store keeps such a body, and on SQLite the port still does (the cutover runs on SQLite). Postgres's `text` cannot hold either, so on Postgres `StageTurnOutput` refuses them with `ErrStagedBodyUnstorable`. Before class C moves, decide between encoding such bodies and the refusal. Existing staged rows that hold such bytes need a carry plan in `migrate-from` (S12), which cannot copy them as they are into `text`. A JSON body's `\u0000` escape is plain text and is unaffected.
 
+- **Same-second session ties** (S2b-3a). "The agent's newest session" breaks `created_at` ties (one-second resolution) by rowid, insertion order, on SQLite, as the old store did. Postgres has no insertion order, so there ties break by id (random): two sessions of one agent created in the same second may then chain the wrong parent or resume the older conversation. Before class C moves, `sessions` needs an insertion-order column (an identity, as `messages.seq`).
+
+- **The id-cursor locks serialize writers** (#595). On Postgres every insert into `messages`, `message_event_journal` and `events` takes a transaction-scoped advisory lock (`LockMessageSeq`, migration `00005`'s statement trigger, `eventstore.LockEventSeq`), so ids commit in order for the readers that page by id. Each lock serializes all writers of its table across the whole database, which is cheap at today's volume (about 600 messages a day plus state changes and events). When class B moves to Postgres, either confirm the volume still allows it, or replace the locks with readers that hold back below the oldest in-flight transaction (`pg_snapshot_xmin`). The lock order in one transaction is messages, then the journal, then events. A transaction that updates and inserts messages takes `LockMessageSeq` first.
+
 Framework items:
 - **Version tables.** Substrate #44 (named stores, one goose version table per store) is not in the pinned Substrate (`fe86d444`). Both sets use the default `goose_db_version` until the pin moves. The class-B and class-C stores need #44's per-store table before they move.
 - **Extensions.** The Postgres tests use go-store's `storetest`, which creates the `pg_trgm` and `unaccent` extensions on the test server. The server needs them, as stock Postgres 17 images provide.
+
+## Cutover pre-checks (for the runbook)
+
+Checks to run on the old store before the final copy. Each names the slice that found it.
+
+- **No session in `created` holding an admitted workspace allocation** (S2b-3a, #593). The port computes the reservation digest over the new `SessionRow`. The old digest marshalled the nullable columns as `{"Int64":0,"Valid":false}`-style objects, in a different field order, so no old digest matches, whatever the columns hold. A session whose launch stopped between admission and placement would fail every launch after the cutover and stay `created`. That state counts as live, so it blocks resume and recovery for its agent and counts against the parent's child cap. No workspace data is lost. Drain or stop any such session before the final copy.
 
 ## Data directory and the old layout
 

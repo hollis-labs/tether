@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	gostore "github.com/hollis-labs/libs/core/store"
+
 	"github.com/hollis-labs/tether/next/internal/store"
 	"github.com/hollis-labs/tether/next/internal/store/eventstore"
 	"github.com/hollis-labs/tether/next/internal/store/sessionstore"
@@ -181,6 +183,16 @@ func TestPolicyWorkerParserAndActivity(t *testing.T) {
 		if dir, err := ss.SessionBootDir(ctx, "ses-1"); err != nil || dir != "/boot/two" {
 			t.Fatalf("boot dir %q %v", dir, err)
 		}
+		// Only an unescaped \u0000 is mapped: a literal backslash before "u0000" in the path is kept
+		// as it is, and adjacent escapes elsewhere in the payload are all mapped (two passes).
+		insert("session.boot_dir_planted", `{"path":"/b\\u0000x"}`)
+		if dir, err := ss.SessionBootDir(ctx, "ses-1"); err != nil || dir != `/b\u0000x` {
+			t.Fatalf("boot dir with a literal backslash-u0000 %q %v", dir, err)
+		}
+		insert("session.boot_dir_planted", `{"path":"/boot/three","n":"\u0000\u0000\u0000"}`)
+		if dir, err := ss.SessionBootDir(ctx, "ses-1"); err != nil || dir != "/boot/three" {
+			t.Fatalf("boot dir after adjacent escapes %q %v", dir, err)
+		}
 	})
 }
 
@@ -200,6 +212,21 @@ func TestPolicyResumeAndPlan(t *testing.T) {
 			t.Fatalf("latest %+v", got)
 		}
 		clock.Advance(time.Second)
+		// Same-second ties: SQLite keeps the old rowid (insertion) order; Postgres breaks them by id.
+		y, c := row("ses-y"), row("ses-c")
+		y.LogicalAgentID, c.LogicalAgentID = "agent2", "agent2"
+		polCreate(t, ss, y, "")
+		polCreate(t, ss, c, "")
+		want := "ses-c" // inserted last
+		if s.C().Dialect().Name() == gostore.DriverPostgres {
+			want = "ses-y" // id DESC
+		}
+		if got, _ := ss.LatestSessionForAgent(ctx, "agent2"); got == nil || got.ID != want {
+			t.Fatalf("same-second tie %+v, want %s", got, want)
+		}
+		if id, _ := ss.LatestSessionForLogicalAgent(ctx, "agent2"); id != want {
+			t.Fatalf("same-second tie (logical) %q, want %s", id, want)
+		}
 		if live, _ := ss.AgentHasLiveSession(ctx, "agent"); !live {
 			t.Fatal("launching session not live")
 		}
@@ -235,6 +262,19 @@ func TestPolicyResumeAndPlan(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := ss.ClearNativeResume(ctx, "ses-old", "ses-a", "claude", "n1"); err != nil {
+			t.Fatal(err)
+		}
+		// No HTML escaping in a rewritten plan, as SQLite's json_set writes.
+		if err := ss.SetNativeStateRoot(ctx, "ses-b2", "/r"); !errors.Is(err, sessionstore.ErrSessionNotFound) {
+			t.Fatalf("missing plan: %v", err)
+		}
+		if err := ss.SetNativeStateRoot(ctx, "ses-a", "/root<&>"); err != nil {
+			t.Fatal(err)
+		}
+		if plan, _ := ss.LaunchPlanJSON(ctx, "ses-a"); !strings.Contains(plan, `"native_state_root":"/root<&>"`) {
+			t.Fatalf("plan escaped: %s", plan)
+		}
+		if err := ss.SetNativeStateRoot(ctx, "ses-a", "/root"); err != nil {
 			t.Fatal(err)
 		}
 		plan, _ := ss.LaunchPlanJSON(ctx, "ses-a")
