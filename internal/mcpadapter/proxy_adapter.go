@@ -510,6 +510,7 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		a.registerDocsResources(s)
 		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
 	}
+	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(pool, nil, gateway, auditPub))
 	if len(mws) > 0 {
 		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws, registry))
 	}

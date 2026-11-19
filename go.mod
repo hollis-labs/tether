@@ -12,7 +12,7 @@ require (
 	github.com/hollis-labs/libs/llm/core v0.2.0
 	github.com/hollis-labs/libs/mesh/core v0.11.0
 	github.com/hollis-labs/libs/security/policy v0.1.0
-	github.com/hollis-labs/libs/ui/ui-go v0.4.0
+	github.com/hollis-labs/libs/ui/ui-go v0.5.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
@@ -109,7 +109,7 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2
 	github.com/zalando/go-keyring v0.2.8 // indirect
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect

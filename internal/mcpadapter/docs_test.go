@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -21,16 +22,19 @@ func TestDocsThroughSharedGatewayResourcesAndTools(t *testing.T) {
 				a := newTestAdapter(t)
 				a.principal = &identity.Principal{ID: "docs-reader", Kind: "service"}
 				a.svc.Catalog = &config.Catalog{}
-				r, err := NewSharedUpstreams(nil, daemonTestRoots(t), true)
+				r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "app", Transport: "http"}}, daemonTestRoots(t), true)
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer r.Close()
+				var upstreamReads atomic.Int32
+				upstream := resourceFixture(t, "app", &upstreamReads)
+				r.pool.statuses["app"] = &clientStatus{client: upstream, state: "connected", accepted: true}
 				profile := &mcpgateway.Profile{}
 				if deny {
 					profile.Tools.Deny = []string{"tether_docs_*"}
 				}
-				view, err := r.NewGatewayView(ctx, a, ProxyOptions{Profile: mcpgateway.ProfileSelection{Profile: profile}, ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: mode, Source: "test"}}}})
+				view, err := r.NewGatewayView(ctx, a, ProxyOptions{ServerFilter: []string{"app"}, Profile: mcpgateway.ProfileSelection{Profile: profile}, ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: mode, Source: "test"}}}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -49,7 +53,13 @@ func TestDocsThroughSharedGatewayResourcesAndTools(t *testing.T) {
 				if found == deny {
 					t.Fatalf("resource visibility: found=%v deny=%v", found, deny)
 				}
+				if upstreamReads.Load() != 0 {
+					t.Fatal("listing dispatched an upstream read")
+				}
 				read, readErr := client.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "tether://docs/mcp/connect"})
+				if upstreamReads.Load() != 0 {
+					t.Fatal("native documentation read dispatched upstream")
+				}
 				if deny {
 					for _, resource := range resources.Resources {
 						if strings.HasPrefix(resource.URI, "tether://docs/") {

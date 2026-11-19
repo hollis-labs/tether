@@ -2,12 +2,15 @@
 // agent session submits a user turn, cancels it, yields the turn's events, and reports turns the agent ran that were not
 // submitted through it (observed runs). Task CW-20261118-0010; design in direction/proposals/chat-attach-wire.md.
 //
-// Two implementations, one per Claude runtime:
+// Implementations include the Claude runtimes and Codex app-server:
 //
 //   - claudepty: the Claude Code TUI in a PTY. Content comes from the vendor transcript (whole messages, no deltas), turn
 //     boundaries from Tether's Claude hooks, submit and cancel are keystrokes.
+//
 //   - claudestdio: `claude -p --input-format stream-json --output-format stream-json`. Content and deltas come from
 //     stdout through chatstream/adapter/claudejson; submit is a stream-json user frame, cancel an interrupt request.
+//
+//   - codexappserver: the existing Codex JSON-RPC session, with deltas, observed turns and targeted interrupts.
 //
 // The interface is shaped so a chat.Runner (libs/agent/chat; internal/chatwire.Runner) wraps a Backend unchanged:
 // Runner.Start is Submit, Run.Events and Run.Cancel are the same, Info.Deltas is the runner's capabilities.deltas, and
@@ -52,7 +55,7 @@ type Turn struct {
 	Context json.RawMessage
 }
 
-// InputText renders the Claude input without changing the public user text.
+// InputText renders the agent input without changing the public user text.
 // Invalid context is refused before any input is delivered.
 func (t Turn) InputText() (string, error) {
 	if len(t.Context) == 0 {

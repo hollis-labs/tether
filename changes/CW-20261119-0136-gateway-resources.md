@@ -1,0 +1,1 @@
+- CW-20261119-0136: Relay upstream MCP resources and URI templates through caller-scoped gateway views and the stdio forwarder, preserving UI metadata and applying profile policy and read audit receipts.

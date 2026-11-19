@@ -192,6 +192,9 @@ type Service struct {
 	// exit (chat_stdio.go, CW-20261118-0010).
 	stdioTaps sync.Map
 
+	// codexTaps copies the existing local app-server stdout for the chat wire.
+	codexTaps sync.Map
+
 	// specResolver is the S5 Spec-path launch resolver. It is constructed
 	// lazily on first use (only when the launch engine is "spec") via
 	// specResolverOnce and reused across launches. specResolverErr records

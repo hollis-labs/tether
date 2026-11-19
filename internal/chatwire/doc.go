@@ -6,8 +6,7 @@
 //
 //   - Runner (runner.go): resolves a conversation's current session through internal/conversation (never through
 //     chathost) and runs one internal/chatbackend backend per session, picked by runtime: Claude PTY → claudepty,
-//     Claude streaming-stdio → claudestdio. Codex app-server is a typed *UnsupportedRuntimeError until
-//     CW-20261118-0009. Info: Deltas per backend (stdio true, PTY false), Approvals false, RunnerRef
+//     Claude streaming-stdio → claudestdio, Codex app-server → codexappserver. Info: Deltas per backend (stdio true, PTY false), Approvals false, RunnerRef
 //     "<session>/<attempt>". The backends' observed runs (typed into the terminal, mail wakes) go to Service.Observe.
 //   - Control (control.go): the input lease is chathost's writer lease, so chat attach and terminal attach share it.
 //     It is not a chat.Bumper.
