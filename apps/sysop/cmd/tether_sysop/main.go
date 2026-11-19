@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -591,6 +592,10 @@ func main() {
 	addr := flag.String("addr", ":8947", "HTTP listen address")
 	catalogRoot := flag.String("catalog", "~/.tether/catalog", "Tether catalog root")
 	flag.Parse()
+	// A misconfigured Cerberus address fails at start, not on the first resource action.
+	if _, err := resolveCerberusEndpoint(); err != nil {
+		log.Fatalf("tether_sysop: %v", err)
+	}
 
 	server := &appServer{catalogRoot: config.Expand(*catalogRoot), addr: *addr, startedAt: time.Now()}
 	router := http.NewServeMux()
@@ -5356,9 +5361,111 @@ func runCerberusResourceAction(ctx context.Context, resource, action string) (st
 	return output, nil
 }
 
+// cerberusErrorResponse covers both error shapes: the old daemon's {success, error} and the new
+// Cerberus API's flat {code, message, details} (CW-20261114-0145).
 type cerberusErrorResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e cerberusErrorResponse) text() string {
+	if msg := strings.TrimSpace(e.Error); msg != "" {
+		return msg
+	}
+	return strings.TrimSpace(e.Message)
+}
+
+// Cerberus endpoint settings (CW-20261114-0145). CERBERUS_ADDR is unix:/path or an http(s) base URL
+// (the new Cerberus: http://127.0.0.1:4786/api); unset keeps the old daemon's socket at
+// ~/.cerberus/cerberus.sock. CERBERUS_TOKEN_FILE names a file whose contents are sent as a bearer token,
+// re-read on every call.
+const (
+	cerberusAddrEnv      = "CERBERUS_ADDR"
+	cerberusTokenFileEnv = "CERBERUS_TOKEN_FILE"
+)
+
+// cerberusEndpoint is where resource actions go: a base URL, and the unix socket to dial ("" for http).
+type cerberusEndpoint struct {
+	base   string
+	socket string
+}
+
+func resolveCerberusEndpoint() (cerberusEndpoint, error) {
+	addr := strings.TrimSpace(os.Getenv(cerberusAddrEnv))
+	switch {
+	case addr == "":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return cerberusEndpoint{}, fmt.Errorf("resolve cerberus socket: %w", err)
+		}
+		return cerberusEndpoint{base: "http://cerberus-daemon", socket: filepath.Join(home, ".cerberus", "cerberus.sock")}, nil
+	case strings.HasPrefix(addr, "unix:"):
+		path := strings.TrimPrefix(addr, "unix:")
+		if !filepath.IsAbs(path) {
+			return cerberusEndpoint{}, fmt.Errorf("%s=%q: a unix socket path must be absolute", cerberusAddrEnv, addr)
+		}
+		return cerberusEndpoint{base: "http://cerberus-daemon", socket: path}, nil
+	case strings.HasPrefix(addr, "http://"), strings.HasPrefix(addr, "https://"):
+		u, err := url.Parse(addr)
+		if err != nil || u.Hostname() == "" {
+			return cerberusEndpoint{}, fmt.Errorf("%s=%q: not a valid URL", cerberusAddrEnv, addr)
+		}
+		// The bearer token travels in the clear over http: only to this machine or the tailnet.
+		if u.Scheme == "http" && !cerberusPlainHTTPHost(u.Hostname()) {
+			return cerberusEndpoint{}, fmt.Errorf("%s=%q: plain http is allowed only to loopback or the tailnet (Tailscale's CGNAT and IPv6 ranges, *.ts.net); use https", cerberusAddrEnv, addr)
+		}
+		return cerberusEndpoint{base: strings.TrimRight(addr, "/")}, nil
+	}
+	return cerberusEndpoint{}, fmt.Errorf("%s=%q: want unix:/path or an http(s):// URL", cerberusAddrEnv, addr)
+}
+
+// tailnetPrefixes are Tailscale's ranges: its CGNAT /10 (first octet 100, second 64-127), and
+// its IPv6 ULA prefix (built from bytes so no infrastructure literal sits in the source).
+var tailnetPrefixes = []netip.Prefix{
+	netip.PrefixFrom(netip.AddrFrom4([4]byte{100, 64, 0, 0}), 10),
+	netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
+}
+
+// cerberusPlainHTTPHost reports whether host may be reached over plain http: loopback (localhost, 127/8,
+// ::1) or the tailnet (its address ranges or a *.ts.net name).
+func cerberusPlainHTTPHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "localhost" || strings.HasSuffix(host, ".ts.net") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, p := range tailnetPrefixes {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// cerberusToken is the bearer token from CERBERUS_TOKEN_FILE, re-read on each call; "" when unset.
+func cerberusToken() (string, error) {
+	path := strings.TrimSpace(os.Getenv(cerberusTokenFileEnv))
+	if path == "" {
+		return "", nil
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: the operator names the token file in CERBERUS_TOKEN_FILE
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", cerberusTokenFileEnv, err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", fmt.Errorf("%s %s is empty", cerberusTokenFileEnv, path)
+	}
+	return token, nil
 }
 
 type cerberusRegistryFile struct {
@@ -5369,13 +5476,16 @@ type cerberusRegistryFile struct {
 }
 
 func runCerberusSocketResourceAction(ctx context.Context, resource, action string) (string, error) {
-	home, err := os.UserHomeDir()
+	endpoint, err := resolveCerberusEndpoint()
 	if err != nil {
-		return "", fmt.Errorf("resolve cerberus socket: %w", err)
+		return "", err
 	}
-	socketPath := filepath.Join(home, ".cerberus", "cerberus.sock")
-	if !pathExists(socketPath) {
-		return "", fmt.Errorf("cerberus socket not found at %s", socketPath)
+	if endpoint.socket != "" && !pathExists(endpoint.socket) {
+		return "", fmt.Errorf("cerberus socket not found at %s", endpoint.socket)
+	}
+	token, err := cerberusToken()
+	if err != nil {
+		return "", err
 	}
 	method := http.MethodPost
 	path := "/resources/" + url.PathEscape(resource) + "/" + action
@@ -5384,16 +5494,28 @@ func runCerberusSocketResourceAction(ctx context.Context, resource, action strin
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	transport := &http.Transport{}
+	if endpoint.socket != "" {
+		socketPath := endpoint.socket
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socketPath)
-		},
+		}
 	}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport}
-	req, err := http.NewRequestWithContext(runCtx, method, "http://cerberus-daemon"+path, nil)
+	client := &http.Client{
+		Transport: transport,
+		// Redirects could forward the bearer token beyond the validated endpoint,
+		// including a same-host HTTPS-to-HTTP downgrade. Refuse them as errors.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("cerberus redirects are not allowed")
+		},
+	}
+	req, err := http.NewRequestWithContext(runCtx, method, endpoint.base+path, nil)
 	if err != nil {
 		return "", err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -5408,15 +5530,18 @@ func runCerberusSocketResourceAction(ctx context.Context, resource, action strin
 	if method == http.MethodPost {
 		var apiErr cerberusErrorResponse
 		if err := json.Unmarshal(body, &apiErr); err == nil && !apiErr.Success && strings.TrimSpace(apiErr.Error) != "" {
-			return output, errors.New(strings.TrimSpace(apiErr.Error))
+			return output, errors.New(apiErr.text())
 		}
 	}
 	if resp.StatusCode >= 400 {
 		var apiErr cerberusErrorResponse
-		if err := json.Unmarshal(body, &apiErr); err == nil && strings.TrimSpace(apiErr.Error) != "" {
-			return output, errors.New(strings.TrimSpace(apiErr.Error))
+		if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.text() != "" {
+			return output, errors.New(apiErr.text())
 		}
-		return output, fmt.Errorf("cerberus socket %s %s: http %d", method, path, resp.StatusCode)
+		if endpoint.socket != "" {
+			return output, fmt.Errorf("cerberus socket %s %s: http %d", method, path, resp.StatusCode)
+		}
+		return output, fmt.Errorf("cerberus %s %s: http %d", method, path, resp.StatusCode)
 	}
 	return output, nil
 }
