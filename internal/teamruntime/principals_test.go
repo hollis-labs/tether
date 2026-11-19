@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/libs/mesh/core/teams"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/teamhost"
@@ -187,5 +188,57 @@ func TestDevModeAdmitsOnlyVerifiedLocalOperator(t *testing.T) {
 		if _, err = r.ResolvePrincipal(identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"})); !errors.Is(err, teamsvc.ErrUnauthenticated) {
 			t.Fatal(mode, "nonlocal operator admitted", err)
 		}
+	}
+}
+
+// A policy-listed service presenting a valid credential is admitted even with
+// identity in observe/off (identity enforcement is not required for the
+// dispatcher); an unlisted one, a bad credential and an asserted header are not.
+func TestPrincipalsAdmitPolicyListedServiceWithoutEnforcement(t *testing.T) {
+	db, _, _ := dbFixture(t, filepath.Join(t.TempDir(), "identity"))
+	auth := identity.NewStore(db.DB())
+	listed, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/dispatcher", Kind: "service", Display: "Dispatcher"})
+	check(t, err)
+	other, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/other", Kind: "service", Display: "Other"})
+	check(t, err)
+	services := func(id string) bool { return id == "msg://service/torque/dispatcher" }
+	for _, tc := range []struct {
+		name   string
+		mode   identity.Mode
+		bearer string
+		listed func(string) bool
+		want   error
+	}{
+		{"observe listed", identity.Observe, listed, services, nil},
+		{"off listed", identity.Off, listed, services, nil},
+		{"enforce listed", identity.Enforce, listed, services, nil},
+		{"observe unlisted", identity.Observe, other, services, teamsvc.ErrUnauthenticated},
+		{"observe no list", identity.Observe, listed, nil, teamsvc.ErrUnauthenticated},
+		{"observe bad credential", identity.Observe, "asserted-token", services, teamsvc.ErrUnauthenticated},
+		{"observe no credential", identity.Observe, "", services, teamsvc.ErrUnauthenticated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got teamsvc.Principal
+			var result error
+			resolver := Principals{Mode: tc.mode, Services: tc.listed}
+			middleware := identity.Middleware(identity.Observe, auth, nil, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got, result = resolver.ResolvePrincipal(r.Context())
+			}))
+			request := httptest.NewRequest(http.MethodPost, "/teams/form", nil)
+			request.Header.Set("X-Principal", "msg://service/torque/dispatcher") // an assertion is never proof
+			if tc.bearer != "" {
+				request.Header.Set("Authorization", "Bearer "+tc.bearer)
+			}
+			middleware.ServeHTTP(httptest.NewRecorder(), request)
+			if tc.want != nil {
+				if !errors.Is(result, tc.want) {
+					t.Fatalf("want %v, got %v", tc.want, result)
+				}
+				return
+			}
+			if result != nil || got.ID != "msg://service/torque/dispatcher" || got.Kind != mesh.ActorService || !got.Verified || got.LocalOperator {
+				t.Fatalf("listed service not admitted: %+v %v", got, result)
+			}
+		})
 	}
 }

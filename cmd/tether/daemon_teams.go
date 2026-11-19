@@ -94,12 +94,14 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 		adopter = teamruntime.HostAdoptions{Host: host}
 	}
 	ops, err := teamsvc.New(teamsvc.Deps{
-		Principals: teamruntime.Principals{Mode: cfg.IdentityModeFor("teams"), Sessions: enroller},
+		Principals: teamruntime.Principals{Mode: cfg.IdentityModeFor("teams"), Sessions: enroller, Services: policy.IsService},
 		Ceilings:   teamspolicy.Ceilings{Policy: policy}, Runs: host, Calls: host,
 		Definitions: storage, Roster: storage, Ledger: storage, Signals: storage,
 		Provisioner: host, Adopter: adopter, Workflows: host, Triggers: host, Sender: host,
 		Routing: host, Trust: host, Approvals: host, Clock: host, IDs: host,
-		Defaults: teamsvc.ConservativePolicy().Limits,
+		// Defaults bound later member adds; the policy's maximum, not the old
+		// conservative five-minute limits.
+		Defaults: policy.MaxLimits(), Deadlines: host,
 	})
 	if err != nil {
 		return nil, noop, err
@@ -113,7 +115,10 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 			// Tombstone expired formations before port recovery can retry them.
 			expired := host.ReconcileExpiredFormations(ctx, limit)
 			ports := (teamruntime.Reconciler{Enroller: enroller, Sessions: sessions, Messenger: messenger}).Reconcile(ctx, limit)
-			return errors.Join(expired, ports)
+			// Stop runs that reported a final result, hit their timeout ceiling
+			// or have no live member left; no session outlives its run.
+			reaped := ops.ReapRuns(ctx, limit)
+			return errors.Join(expired, ports, reaped)
 		},
 		Logf: log.Printf,
 	})

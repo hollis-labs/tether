@@ -75,6 +75,11 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 		if err != nil {
 			return Result{Run: &run}, err
 		}
+		if s.deps.Deadlines != nil {
+			if err = s.deps.Deadlines.RecordRunDeadline(ctx, run.ID, s.deps.Clock.Now().Add(limits.Timeout)); err != nil {
+				return Result{Run: &run}, err
+			}
+		}
 		out := Result{Run: &run, Self: p.ID, Coordinator: p.ID, Channel: run.Channel}
 		if snapshot, serr := s.deps.Roster.Snapshot(ctx, run.ID); serr == nil {
 			for _, m := range snapshot.Members {
@@ -325,15 +330,17 @@ func deliveryKey(run, key, member string) string {
 
 func (s *Service) ReportResult(ctx context.Context, req ReportResultRequest) (Result, error) {
 	return s.call(ctx, string(mesh.ReportResult), req.Key, req, func(ctx context.Context, p Principal, _ Scope, _ Record) (Result, error) {
-		t, _, err := s.run(ctx, req.RunID, p)
+		t, reporter, err := s.run(ctx, req.RunID, p)
 		if err != nil {
 			return Result{}, err
 		}
 		if req.DelegateKey == "" || req.Body == "" {
 			return Result{}, ErrInvalidRequest
 		}
-		err = s.router.ReplyResult(ctx, t, req.RunID, req.DelegateKey, p.ID, req.Body)
-		return Result{}, err
+		if err = s.router.ReplyResult(ctx, t, req.RunID, req.DelegateKey, p.ID, req.Body); err != nil {
+			return Result{}, err
+		}
+		return Result{}, s.finishOnResult(ctx, t, req.RunID, reporter)
 	})
 }
 
@@ -492,6 +499,9 @@ func (s *Service) Dissolve(ctx context.Context, req RunRequest) (Result, error) 
 		err := teams.EndRun(ctx, req.RunID, guardedRoster{RosterStore: s.deps.Roster, team: t, plan: plan, provisioner: s.deps.Provisioner}, s.deps.Provisioner, s.deps.Routing)
 		if err == nil {
 			err = s.deps.Runs.MarkDissolved(ctx, req.RunID)
+		}
+		if err == nil && s.deps.Deadlines != nil {
+			err = s.deps.Deadlines.CloseRun(ctx, req.RunID)
 		}
 		return Result{}, err
 	})

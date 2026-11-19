@@ -18,6 +18,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/libs/mesh/core/teams"
@@ -38,8 +39,20 @@ const (
 	SlotCoordinator = "coordinator"
 	SlotWorkers     = "workers"
 	SlotReviewer    = "reviewer"
+	// SlotOrchestrator is the Stage B agent that runs the team: it is the only
+	// member workers and the reviewer may reach, and its reported result ends
+	// the run. The coordinator slot stays the owner's governance seat.
+	SlotOrchestrator = "orchestrator"
 
 	maxWorkers = 2
+	// maxWorkersB and maxAgentsB bound a Stage B team: one orchestrator, one to
+	// three workers and one reviewer, never more than five agents in all.
+	maxWorkersB = 3
+	maxAgentsB  = 5
+
+	// Reviewer pairing modes (reviewer_pairing in the policy file).
+	PairingRequire = "require"
+	PairingPrefer  = "prefer"
 )
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -74,9 +87,43 @@ type file struct {
 	SessionFormation bool `yaml:"session_formation"`
 	// Adoption lets the run owner adopt already-running fleet agents into pool
 	// seats (see docs/teams-activation.md). Default off; read at daemon start.
-	Adoption bool     `yaml:"adoption"`
-	Launches []Launch `yaml:"launches"`
+	Adoption bool `yaml:"adoption"`
+	// Services lists the service principals (for example Torque's dispatcher)
+	// that may form and dissolve teams, in addition to the local operator. A
+	// service must still present a valid credential; an unlisted service is
+	// refused. Default: none.
+	Services []string `yaml:"services"`
+	// Ceilings bounds and defaults the spawn limits of a formation; omitted
+	// fields take the built-in Stage B values.
+	Ceilings *ceilingsFile `yaml:"ceilings"`
+	// ReviewerPairing is "require" (default) or "prefer".
+	ReviewerPairing string   `yaml:"reviewer_pairing"`
+	Launches        []Launch `yaml:"launches"`
 }
+
+// LimitSpec is the YAML form of mesh.Limits. Zero fields mean "built-in".
+type LimitSpec struct {
+	Timeout     time.Duration `yaml:"timeout"`
+	MaxRounds   int           `yaml:"max_rounds"`
+	MaxStalls   int           `yaml:"max_stalls"`
+	MaxDepth    int           `yaml:"max_depth"`
+	MaxChildren int           `yaml:"max_children"`
+	FanOut      int           `yaml:"fan_out"`
+	Budget      float64       `yaml:"budget"`
+}
+type ceilingsFile struct {
+	Default LimitSpec `yaml:"default"`
+	Max     LimitSpec `yaml:"max"`
+}
+
+// Built-in Stage B ceilings. The maximum is a hard cap no team or launch
+// request may widen; the default applies to whatever a request leaves unset.
+// They replace the Stage A conservative limits (five minutes, budget 1, 16
+// rounds, depth 1) with room for real multi-hour work.
+var (
+	builtinMax     = mesh.Limits{Timeout: 12 * time.Hour, MaxRounds: 500, MaxStalls: 40, MaxDepth: 3, MaxChildren: 8, FanOut: 8, Budget: 10000}
+	builtinDefault = mesh.Limits{Timeout: 4 * time.Hour, MaxRounds: 200, MaxStalls: 20, MaxDepth: 2, MaxChildren: 6, FanOut: 6, Budget: 2000}
+)
 
 // Policy is immutable after Load. The zero value and nil both deny.
 type Policy struct {
@@ -86,6 +133,10 @@ type Policy struct {
 	paused      atomic.Bool
 	sessionForm bool
 	adoption    bool
+	services    map[mesh.URN]bool
+	maxLimits   mesh.Limits
+	defLimits   mesh.Limits
+	pairing     string
 	pairingMu   sync.Mutex
 	pairings    map[string]ReviewerPairing
 }
@@ -95,6 +146,38 @@ func (p *Policy) SessionFormation() bool { return p != nil && p.sessionForm }
 
 // Adoption reports whether adopting running agents into a team is enabled.
 func (p *Policy) Adoption() bool { return p != nil && p.adoption }
+
+// IsService reports whether id is a policy-listed service principal that may
+// form and dissolve teams.
+func (p *Policy) IsService(id string) bool { return p != nil && p.services[mesh.URN(id)] }
+
+// Services lists the policy-listed service principals.
+func (p *Policy) Services() []string {
+	if p == nil {
+		return nil
+	}
+	out := make([]string, 0, len(p.services))
+	for id := range p.services {
+		out = append(out, string(id))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// MaxLimits is the hard formation ceiling; DefaultLimits fills what a request
+// leaves unspecified. Both are the built-in Stage B values for a nil policy.
+func (p *Policy) MaxLimits() mesh.Limits {
+	if p == nil {
+		return builtinMax
+	}
+	return p.maxLimits
+}
+func (p *Policy) DefaultLimits() mesh.Limits {
+	if p == nil {
+		return builtinDefault
+	}
+	return p.defLimits
+}
 
 // LaunchIDs lists the exact launch ids the policy binds.
 func (p *Policy) LaunchIDs() []string {
@@ -149,7 +232,29 @@ func Parse(raw []byte) (*Policy, error) {
 	if len(f.Launches) == 0 {
 		return nil, errors.New("launches: at least one exact launch is required")
 	}
-	p := &Policy{byPin: map[mesh.DefinitionRef]Launch{}, sessionForm: f.SessionFormation, adoption: f.Adoption}
+	p := &Policy{byPin: map[mesh.DefinitionRef]Launch{}, sessionForm: f.SessionFormation, adoption: f.Adoption, services: map[mesh.URN]bool{}}
+	for i, id := range f.Services {
+		urn := mesh.URN(id)
+		if (mesh.Actor{URN: urn, Kind: mesh.ActorService}).Validate() != nil {
+			return nil, fmt.Errorf("services[%d] (%q): must be a service principal urn like msg://service/torque/dispatcher", i, id)
+		}
+		if p.services[urn] {
+			return nil, fmt.Errorf("services[%d] (%q): duplicate service", i, id)
+		}
+		p.services[urn] = true
+	}
+	var err error
+	if p.maxLimits, p.defLimits, err = resolveCeilings(f.Ceilings); err != nil {
+		return nil, fmt.Errorf("ceilings: %w", err)
+	}
+	switch f.ReviewerPairing {
+	case "", PairingRequire:
+		p.pairing = PairingRequire
+	case PairingPrefer:
+		p.pairing = PairingPrefer
+	default:
+		return nil, fmt.Errorf("reviewer_pairing must be %q or %q, got %q", PairingRequire, PairingPrefer, f.ReviewerPairing)
+	}
 	seen := map[string]bool{}
 	for i, l := range f.Launches {
 		at := fmt.Sprintf("launches[%d] (%q)", i, l.Launch)
@@ -172,6 +277,76 @@ func Parse(raw []byte) (*Policy, error) {
 		p.launches = append(p.launches, l)
 	}
 	return p, nil
+}
+
+func mergeLimits(spec LimitSpec, base mesh.Limits) mesh.Limits {
+	out := base
+	if spec.Timeout != 0 {
+		out.Timeout = spec.Timeout
+	}
+	if spec.MaxRounds != 0 {
+		out.MaxRounds = spec.MaxRounds
+	}
+	if spec.MaxStalls != 0 {
+		out.MaxStalls = spec.MaxStalls
+	}
+	if spec.MaxDepth != 0 {
+		out.MaxDepth = spec.MaxDepth
+	}
+	if spec.MaxChildren != 0 {
+		out.MaxChildren = spec.MaxChildren
+	}
+	if spec.FanOut != 0 {
+		out.FanOut = spec.FanOut
+	}
+	if spec.Budget != 0 {
+		out.Budget = spec.Budget
+	}
+	return out
+}
+
+// resolveCeilings applies the file over the built-ins. A default the file does
+// not set is clamped to the maximum; one it sets above the maximum is an error.
+func resolveCeilings(c *ceilingsFile) (maxL, defL mesh.Limits, err error) {
+	var spec ceilingsFile
+	if c != nil {
+		spec = *c
+	}
+	maxL = mergeLimits(spec.Max, builtinMax)
+	defL = mergeLimits(spec.Default, builtinDefault)
+	if err = maxL.Validate(); err != nil {
+		return maxL, defL, fmt.Errorf("max: %w", err)
+	}
+	if maxL.MaxRounds < 1 || maxL.MaxStalls < 1 {
+		return maxL, defL, errors.New("max: max_rounds and max_stalls must be positive")
+	}
+	if err = defL.Validate(); err != nil {
+		return maxL, defL, fmt.Errorf("default: %w", err)
+	}
+	type pair struct {
+		name     string
+		def, max float64
+		set      bool
+		clamp    func()
+	}
+	for _, f := range []pair{
+		{"timeout", float64(defL.Timeout), float64(maxL.Timeout), spec.Default.Timeout != 0, func() { defL.Timeout = maxL.Timeout }},
+		{"max_rounds", float64(defL.MaxRounds), float64(maxL.MaxRounds), spec.Default.MaxRounds != 0, func() { defL.MaxRounds = maxL.MaxRounds }},
+		{"max_stalls", float64(defL.MaxStalls), float64(maxL.MaxStalls), spec.Default.MaxStalls != 0, func() { defL.MaxStalls = maxL.MaxStalls }},
+		{"max_depth", float64(defL.MaxDepth), float64(maxL.MaxDepth), spec.Default.MaxDepth != 0, func() { defL.MaxDepth = maxL.MaxDepth }},
+		{"max_children", float64(defL.MaxChildren), float64(maxL.MaxChildren), spec.Default.MaxChildren != 0, func() { defL.MaxChildren = maxL.MaxChildren }},
+		{"fan_out", float64(defL.FanOut), float64(maxL.FanOut), spec.Default.FanOut != 0, func() { defL.FanOut = maxL.FanOut }},
+		{"budget", defL.Budget, maxL.Budget, spec.Default.Budget != 0, func() { defL.Budget = maxL.Budget }},
+	} {
+		if f.def <= f.max {
+			continue
+		}
+		if f.set {
+			return maxL, defL, fmt.Errorf("default %s exceeds max %s", f.name, f.name)
+		}
+		f.clamp()
+	}
+	return maxL, defL, nil
 }
 
 // Pause and Resume toggle the in-memory gate; the marker file is the
@@ -232,6 +407,9 @@ func (p *Policy) HostOptions() teamhost.Options {
 		opts.TrustTiers[ref] = teamhost.TrustTrusted
 	}
 	opts.ActorTrust[teamsvc.LocalOperator] = teamhost.TrustTrusted
+	for id := range p.services {
+		opts.ActorTrust[id] = teamhost.TrustTrusted
+	}
 	if p.sessionForm {
 		opts.OwnerAgentTrust = teamhost.TrustTrusted
 	}
@@ -257,8 +435,10 @@ var _ teamsvc.Ceilings = Ceilings{}
 var _ teamsvc.FormationAdmitter = Ceilings{}
 var _ teamsvc.AdoptionAdmitter = Ceilings{}
 
-// StageA is the fixed Stage A formation ceiling: conservative limits at depth 1,
-// messaging authority (message, assign, delegate) and at most three slots.
+// StageA is the Stage A formation shape with its original conservative limits
+// (five minutes, budget 1, 16 rounds, depth 1). It is kept for callers that
+// want those tight limits in a team's own spawn policy; the daemon's ceilings
+// are the policy's Stage B limits (see FormationCeilings).
 func StageA() teamsvc.FormationPolicy {
 	f := teamsvc.ConservativePolicy()
 	f.Limits.MaxDepth = 1
@@ -267,18 +447,29 @@ func StageA() teamsvc.FormationPolicy {
 	return f
 }
 
+// StageB is the formation shape ceiling: up to four slots (the owner seat plus
+// orchestrator, workers, reviewer), at most six initial members (five agents
+// and the owner) and the policy's limits. Messaging authority only.
+func (p *Policy) StageB() teamsvc.FormationPolicy {
+	return teamsvc.FormationPolicy{
+		Limits: p.MaxLimits(), DefaultLimits: p.DefaultLimits(),
+		MaxSlots: 4, MaxMembersPerSlot: maxWorkersB, MaxInitialMembers: maxAgentsB + 1,
+		AllowedPermissions: []teams.Permission{teams.MayMessage, teams.MayAssign, teams.MayDelegate},
+	}
+}
+
 func (c Ceilings) FormationCeilings(_ context.Context, p teamsvc.Principal) (teamsvc.FormationPolicy, error) {
 	if err := c.gate(p); err != nil {
 		return teamsvc.FormationPolicy{}, err
 	}
-	f := StageA()
+	f := c.Policy.StageB()
 	f.AllowAdoptedSlots = c.Policy.adoption
 	return f, nil
 }
 
 // AdmitAdoption refuses adoption unless the policy enables it and the gate
-// (operator or permitted session, not paused) admits the caller. Everything
-// about the actor and session is verified by the host, not here.
+// (operator, listed service or permitted session, not paused) admits the
+// caller. Everything about the actor and session is verified by the host.
 func (c Ceilings) AdmitAdoption(_ context.Context, p teamsvc.Principal, _ teams.Team, _ teams.Slot) error {
 	if err := c.gate(p); err != nil {
 		return err
@@ -289,14 +480,24 @@ func (c Ceilings) AdmitAdoption(_ context.Context, p teamsvc.Principal, _ teams.
 	return nil
 }
 
+// DissolvesOnResult makes the orchestrator's reported result the final one:
+// the run dissolves and every member session stops. Only Stage B teams (those
+// with an orchestrator slot) end this way.
+func (c Ceilings) DissolvesOnResult(t teams.Team, reporterSlot string) bool {
+	return c.Policy != nil && reporterSlot == SlotOrchestrator && slices.ContainsFunc(t.Slots, func(s teams.Slot) bool { return s.Name == SlotOrchestrator })
+}
+
+var _ teamsvc.LifecyclePolicy = Ceilings{}
+
 func (c Ceilings) gate(p teamsvc.Principal) error {
 	if c.Policy == nil {
 		return fmt.Errorf("%w: no teams policy provisioned", teamsvc.ErrDenied)
 	}
 	operator := p.Verified && p.LocalOperator && p.ID == teamsvc.LocalOperator && p.Kind == mesh.ActorUser
+	service := p.Verified && !p.LocalOperator && p.Kind == mesh.ActorService && c.Policy.IsService(string(p.ID))
 	session := c.Policy.sessionForm && p.Verified && !p.LocalOperator && p.Kind == mesh.ActorAgent && p.ID.Validate() == nil
-	if !operator && !session {
-		return fmt.Errorf("%w: team formation is operator-only", teamsvc.ErrDenied)
+	if !operator && !service && !session {
+		return fmt.Errorf("%w: team formation is limited to the operator and policy-listed services", teamsvc.ErrDenied)
 	}
 	if c.Policy.Paused() {
 		return fmt.Errorf("%w: team formation is paused", teamsvc.ErrUnavailable)
@@ -304,21 +505,47 @@ func (c Ceilings) gate(p teamsvc.Principal) error {
 	return nil
 }
 
-// AdmitFormation enforces the Stage A shape and runtime pairing. It runs
-// before any definition write, so a refusal has no side effects.
+func deny(format string, a ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{teamsvc.ErrDenied}, a...)...)
+}
+
+// AdmitFormation enforces the Stage A or Stage B shape and runtime pairing. It
+// runs before any definition write, so a refusal has no side effects. A team
+// with an orchestrator slot is Stage B; anything else must be Stage A shaped.
 func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req teamsvc.FormRequest) error {
 	if err := c.gate(p); err != nil {
 		return err
-	}
-	deny := func(format string, a ...any) error {
-		return fmt.Errorf("%w: "+format, append([]any{teamsvc.ErrDenied}, a...)...)
 	}
 	slots := map[string]teams.Slot{}
 	for _, s := range req.Team.Slots {
 		slots[s.Name] = s
 	}
+	if _, ok := slots[SlotOrchestrator]; ok {
+		return c.admitStageB(req, slots)
+	}
+	return c.admitStageA(req, slots)
+}
+
+// admitOwner checks the owner seat: the coordinator slot is held by the forming
+// principal as run owner (a governance seat, no session), so it provisions no
+// member of its own and an agent can never take it.
+func admitOwner(req teamsvc.FormRequest, slots map[string]teams.Slot) error {
+	owner := req.Team.Routing.CoordinatorSlot
+	if len(req.Team.Phases) > 0 && req.Team.Phases[0].OwnerSlot != "" {
+		owner = req.Team.Phases[0].OwnerSlot
+	}
+	if req.Team.Routing.CoordinatorSlot != SlotCoordinator || owner != SlotCoordinator {
+		return deny("coordinator and owner slot must both be %q", SlotCoordinator)
+	}
+	if slots[SlotCoordinator].Min != 0 || req.Launch.Counts[SlotCoordinator] != 0 {
+		return deny("the coordinator slot is the owner's seat and provisions no member")
+	}
+	return nil
+}
+
+func (c Ceilings) admitStageA(req teamsvc.FormRequest, slots map[string]teams.Slot) error {
 	if len(req.Team.Slots) != 3 || len(slots) != 3 {
-		return deny("stage A teams have exactly three slots: %s, %s, %s", SlotCoordinator, SlotWorkers, SlotReviewer)
+		return deny("stage A teams have exactly three slots: %s, %s, %s (or add %q for a stage B team)", SlotCoordinator, SlotWorkers, SlotReviewer, SlotOrchestrator)
 	}
 	// The operator holds the coordinator slot as the run owner (a governance
 	// seat, no session), so the slot provisions no member of its own: the
@@ -332,7 +559,7 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 		// delegate; workers and reviewer keep their maxima.
 		limits = map[string]struct{ min, max int }{SlotCoordinator: {0, 1}, SlotWorkers: {0, maxWorkers}, SlotReviewer: {0, 1}}
 	}
-	runtimes, models := map[string]string{}, map[string]string{}
+	launches := map[string]Launch{}
 	for name, bounds := range limits {
 		s, ok := slots[name]
 		if !ok {
@@ -356,38 +583,114 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 		if !ok {
 			return deny("slot %q definition is not an allowlisted exact pin", name)
 		}
-		runtimes[name], models[name] = l.Runtime, l.Model
+		launches[name] = l
 	}
-	// The operator's owner seat must be the coordinator slot, and that slot
-	// must provision no member, so an agent can never take the coordinator role.
-	owner := req.Team.Routing.CoordinatorSlot
-	if len(req.Team.Phases) > 0 && req.Team.Phases[0].OwnerSlot != "" {
-		owner = req.Team.Phases[0].OwnerSlot
+	if err := admitOwner(req, slots); err != nil {
+		return err
 	}
-	if req.Team.Routing.CoordinatorSlot != SlotCoordinator || owner != SlotCoordinator {
-		return deny("coordinator and owner slot must both be %q", SlotCoordinator)
+	return c.admitPairing(req.Key, launches[SlotWorkers], launches[SlotReviewer])
+}
+
+// stageBGrants is every grant a Stage B team may carry, and nothing else.
+// The orchestrator directs workers and the reviewer; workers and the reviewer
+// may reach only the orchestrator, never each other; the owner's seat reaches
+// only the orchestrator (it hands the task over and receives the result).
+var stageBGrants = func() map[teams.Grant]bool {
+	out := map[teams.Grant]bool{}
+	for _, v := range []teams.Permission{teams.MayMessage, teams.MayAssign, teams.MayDelegate} {
+		out[teams.Grant{FromSlot: SlotCoordinator, Verb: v, ToSlot: SlotOrchestrator}] = true
+		out[teams.Grant{FromSlot: SlotOrchestrator, Verb: v, ToSlot: SlotWorkers}] = true
+		out[teams.Grant{FromSlot: SlotOrchestrator, Verb: v, ToSlot: SlotReviewer}] = true
 	}
-	if slots[SlotCoordinator].Min != 0 || req.Launch.Counts[SlotCoordinator] != 0 {
-		return deny("the coordinator slot is the operator's seat and provisions no member")
+	out[teams.Grant{FromSlot: SlotWorkers, Verb: teams.MayMessage, ToSlot: SlotOrchestrator}] = true
+	out[teams.Grant{FromSlot: SlotReviewer, Verb: teams.MayMessage, ToSlot: SlotOrchestrator}] = true
+	return out
+}()
+
+// admitStageB enforces the orchestrator-led shape: slots coordinator (owner
+// seat), orchestrator (1), workers (1..3) and reviewer (1), so a team is three
+// to five agents and never more than five, with the fixed authority above.
+func (c Ceilings) admitStageB(req teamsvc.FormRequest, slots map[string]teams.Slot) error {
+	if len(req.Team.Slots) != 4 || len(slots) != 4 {
+		return deny("stage B teams have exactly four slots: %s, %s, %s, %s", SlotCoordinator, SlotOrchestrator, SlotWorkers, SlotReviewer)
 	}
-	// Reviewer must differ from the workers by runtime, or by model when both
-	// launches name one. With a single allowlisted runtime this is only
-	// preferred: the formation proceeds and the fallback is logged and recorded
-	// in the pairing report for later evals.
-	pairing := ReviewerPairing{WorkerRuntime: runtimes[SlotWorkers], WorkerModel: models[SlotWorkers], ReviewerRuntime: runtimes[SlotReviewer], ReviewerModel: models[SlotReviewer]}
-	pairing.Different = pairing.WorkerRuntime != pairing.ReviewerRuntime || (pairing.WorkerModel != "" && pairing.ReviewerModel != "" && pairing.WorkerModel != pairing.ReviewerModel)
-	if !pairing.Different {
-		distinct := map[string]bool{}
-		for _, l := range c.Policy.launches {
-			distinct[l.Runtime] = true
+	type bound struct{ min, max int }
+	shape := map[string]bound{SlotCoordinator: {0, 1}, SlotOrchestrator: {1, 1}, SlotWorkers: {1, maxWorkersB}, SlotReviewer: {1, 1}}
+	launches := map[string]Launch{}
+	count := map[string]int{}
+	for name, b := range shape {
+		s, ok := slots[name]
+		if !ok {
+			return deny("missing slot %q", name)
 		}
-		if len(distinct) > 1 {
+		// Only workers may be a pool (needed for more than one concurrent
+		// member); every other seat is a fresh single member.
+		if s.Resolution != teams.Fresh && (name != SlotWorkers || s.Resolution != teams.Pool) {
+			return deny("slot %q must use fresh members (workers may use a pool)", name)
+		}
+		if s.Min < b.min || s.Max > b.max || s.Min > s.Max {
+			return deny("slot %q size must be within %d..%d", name, b.min, b.max)
+		}
+		l, ok := c.Policy.byPin[s.Definition]
+		if !ok {
+			return deny("slot %q definition is not an allowlisted exact pin", name)
+		}
+		launches[name] = l
+		count[name] = s.Min
+		if n, ok := req.Launch.Counts[name]; ok {
+			count[name] = n
+		}
+	}
+	if err := admitOwner(req, slots); err != nil {
+		return err
+	}
+	if count[SlotOrchestrator] != 1 || count[SlotReviewer] != 1 || count[SlotWorkers] < 1 || count[SlotWorkers] > maxWorkersB {
+		return deny("a stage B team launches one %s, one to %d %s and one %s", SlotOrchestrator, maxWorkersB, SlotWorkers, SlotReviewer)
+	}
+	if agents := count[SlotOrchestrator] + count[SlotWorkers] + count[SlotReviewer]; agents > maxAgentsB {
+		return deny("a team has at most %d agents, got %d", maxAgentsB, agents)
+	}
+	for _, g := range req.Team.Authority.Grants {
+		if !stageBGrants[g] {
+			return deny("grant %s %s -> %s is not allowed in a stage B team (workers and the reviewer may message only the %s)", g.FromSlot, g.Verb, g.ToSlot, SlotOrchestrator)
+		}
+	}
+	return c.admitPairing(req.Key, launches[SlotWorkers], launches[SlotReviewer])
+}
+
+// admitPairing applies the reviewer rule: the reviewer runs on a different
+// runtime or model than the workers. It is required when the allowlist can
+// satisfy it and the policy says "require" (the default); when the allowlist
+// has no two launches that differ, or the policy says "prefer", the formation
+// proceeds and the fallback is logged and recorded for later evals.
+func (c Ceilings) admitPairing(key string, workers, reviewer Launch) error {
+	pairing := ReviewerPairing{WorkerRuntime: workers.Runtime, WorkerModel: workers.Model, ReviewerRuntime: reviewer.Runtime, ReviewerModel: reviewer.Model}
+	pairing.Different = launchesDiffer(workers, reviewer)
+	if !pairing.Different {
+		if c.Policy.pairing != PairingPrefer && c.Policy.pairingSatisfiable() {
 			return deny("reviewer must run on a different runtime or model than the workers (%s)", pairing.WorkerRuntime)
 		}
-		log.Printf("teams: reviewer pairing fallback for run %q: only runtime %q is allowlisted, reviewer shares runtime/model with workers", req.Key, pairing.WorkerRuntime)
+		log.Printf("teams: reviewer pairing fallback for run %q: reviewer shares runtime/model (%s) with workers (allowlist cannot or need not separate them)", key, pairing.WorkerRuntime)
 	}
-	c.Policy.recordPairing(req.Key, pairing)
+	c.Policy.recordPairing(key, pairing)
 	return nil
+}
+
+func launchesDiffer(a, b Launch) bool {
+	return a.Runtime != b.Runtime || (a.Model != "" && b.Model != "" && a.Model != b.Model)
+}
+
+// pairingSatisfiable reports whether any two allowlisted launches differ by
+// runtime or model, so a different reviewer is possible at all.
+func (p *Policy) pairingSatisfiable() bool {
+	for i, a := range p.launches {
+		for _, b := range p.launches[i+1:] {
+			if launchesDiffer(a, b) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ReviewerPairing records the author (worker) and reviewer runtime/model chosen
