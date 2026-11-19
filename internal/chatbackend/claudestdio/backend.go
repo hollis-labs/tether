@@ -250,6 +250,10 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 	if b.cfg.Stdin == nil || b.cfg.Tap == nil {
 		return nil, errors.New("claudestdio: no stdin")
 	}
+	inputText, err := t.InputText()
+	if err != nil {
+		return nil, err
+	}
 	b.mu.Lock()
 	switch {
 	case b.closed:
@@ -270,8 +274,8 @@ func (b *Backend) Submit(ctx context.Context, t chatbackend.Turn) (chatbackend.R
 	b.submitting = in
 	b.mu.Unlock()
 
-	frame := UserFrame(t.Text)
-	err := b.cfg.Tap.Input(frame, in, func() error { return b.cfg.Stdin.Write(ctx, frame) })
+	frame := UserFrame(inputText)
+	err = b.cfg.Tap.Input(frame, in, func() error { return b.cfg.Stdin.Write(ctx, frame) })
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
