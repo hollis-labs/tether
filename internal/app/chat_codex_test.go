@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,7 +205,14 @@ func TestCodexChatCancelExistingSession(t *testing.T) {
 // Chat must preserve the same per-turn sandbox recheck as SendTurn/SendInput.
 func TestCodexChatRefusesWidenedSandbox(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	fake := providertest.New(t, runtimes.Codex, providertest.Script(providertest.AwaitEOF()))
+	fake := providertest.New(t, runtimes.Codex, providertest.Script(
+		providertest.Recv(`{"id":1,"method":"initialize"}`), providertest.Send(`{"id":1,"result":{}}`),
+		providertest.Recv(`{"id":2,"method":"thread/start"}`), providertest.Send(`{"id":2,"result":{"thread":{"id":"guard-thread"}}}`),
+		providertest.Recv(`{"id":3,"method":"turn/start"}`),
+		providertest.Stdout(`{"method":"turn/started","params":{"threadId":"guard-thread","turn":{"id":"guard-turn","status":"inProgress"}}}`),
+		providertest.Stdout(`{"method":"turn/completed","params":{"threadId":"guard-thread","turn":{"id":"guard-turn","status":"completed"}}}`),
+		providertest.Send(`{"id":3,"result":{"turn":{"id":"guard-turn"}}}`), providertest.AwaitEOF(),
+	))
 	svc, be, ctx := codexChatHarness(t, fake, nil)
 	work := t.TempDir()
 	dir := filepath.Join(work, ".codex")
@@ -218,10 +226,52 @@ func TestCodexChatRefusesWidenedSandbox(t *testing.T) {
 	if _, err := be.Submit(ctx, chatbackend.Turn{Text: "must not be sent"}); !errors.Is(err, launch.ErrCodexSandboxWidened) {
 		t.Fatalf("sandbox recheck: %v", err)
 	}
+	calls := fake.Calls()
+	if len(calls) > 1 || (len(calls) == 1 && len(calls[0].Stdin) != 0) {
+		t.Fatal("refused chat input reached the provider")
+	}
+	if err := os.Remove(filepath.Join(dir, "config.toml")); err != nil {
+		t.Fatal(err)
+	}
+	run, err := be.Submit(ctx, chatbackend.Turn{Text: "allowed after removing config"})
+	if err != nil {
+		t.Fatal("recovered guard left a stale busy claim", err)
+	}
+	terminals := 0
+	for ev, err := range run.Events() {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.IsTerminal() {
+			terminals++
+			if ev.Verb != chatstream.VerbRunFinish {
+				t.Fatalf("allowed turn: %s", ev.Verb)
+			}
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("allowed turn has %d terminals", terminals)
+	}
 	_ = svc.Manager.Stop(ctx, "s1")
 	_ = svc.Manager.Shutdown(ctx)
-	calls := fake.Calls()
-	if len(calls) != 1 || len(calls[0].Stdin) != 0 {
-		t.Fatal("refused chat input reached the provider")
+	calls = fake.Calls()
+	if len(calls) != 1 {
+		t.Fatal("guard recovery restarted provider")
+	}
+	counts := map[string]int{}
+	for _, line := range calls[0].Stdin {
+		var frame struct {
+			Method string `json:"method"`
+		}
+		if json.Unmarshal([]byte(line), &frame) != nil {
+			t.Fatal("invalid input frame")
+		}
+		counts[frame.Method]++
+		if strings.Contains(line, "must not be sent") {
+			t.Fatal("refused input reached provider")
+		}
+	}
+	if counts["initialize"] != 1 || counts["thread/start"] != 1 || counts["turn/start"] != 1 {
+		t.Fatalf("guard recovery calls: %v", counts)
 	}
 }

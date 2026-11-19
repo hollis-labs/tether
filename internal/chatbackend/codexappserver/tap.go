@@ -118,3 +118,16 @@ func (t *Tap) Input(text string, token any, exclusive bool, send func() error) e
 	}
 	return err
 }
+
+// Restore seeds only the active native turn boundary and an incomplete stdout
+// line from the durable controller checkpoint. It must run before the resumed
+// reader starts. Committed user frames/responses are never replayed to chat.
+func (t *Tap) Restore(threadID, turnID string, partial []byte) {
+	if threadID != "" && turnID != "" {
+		frame, _ := json.Marshal(map[string]any{"method": "turn/started", "params": map[string]any{"threadId": threadID, "turn": map[string]string{"id": turnID, "status": "inProgress"}}})
+		t.line(frame)
+	}
+	if len(partial) > 0 {
+		_, _ = t.Write(partial)
+	}
+}

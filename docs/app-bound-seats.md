@@ -100,6 +100,12 @@ this backend so its stdout tap is installed. `codex exec --json`, PTY Codex and
 remote worker seats are not served by this backend. The remote worker provider
 protocol currently accepts user frames only and has no `turn/interrupt` route.
 
+After a hosted controller reattaches, the backend restores its active native
+turn boundary and incomplete stdout prefix from the durable checkpoint before
+following new output. The remaining output appears as an observed run; prior
+user messages and private context are not replayed. A recovered active turn
+refuses new chat input as busy until it ends.
+
 Text and reasoning deltas, command execution and MCP tool calls use the shared
 `codexappserver` chatstream decoder. Per-turn `context` uses the same private
 `<app-context>` block as Claude; echoed user items and RPC responses are excluded

@@ -393,3 +393,48 @@ func TestObservedPrivateInputBeforeAttach(t *testing.T) {
 		})
 	}
 }
+
+// A recovered controller's cursor can sit in the middle of a line. Restore
+// that prefix without replaying a committed user message or losing completion.
+func TestRestoredTurnBoundaryAndPartialLine(t *testing.T) {
+	for _, userEcho := range []bool{false, true} {
+		t.Run(fmt.Sprint(userEcho), func(t *testing.T) {
+			line := completed("completed")
+			if userEcho {
+				line = item("item/started", `{"type":"userMessage","content":[{"type":"text","text":"<app-context>restore-secret</app-context>\npublic input"}]}`)
+			}
+			split := len(line) / 2
+			tap := NewTap()
+			tap.Restore("thread-1", "turn-1", []byte(line[:split]))
+			f := &fakeServer{tap: tap}
+			b := New(Config{Tap: tap, Send: f.send})
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- b.Run(ctx) }()
+			<-b.Ready()
+			t.Cleanup(func() { cancel(); <-done })
+			if _, err := b.Submit(ctx, chatbackend.Turn{Text: "busy"}); !errors.Is(err, chatbackend.ErrBusy) {
+				t.Fatalf("recovered busy %v", err)
+			}
+			if len(f.inputs) != 0 {
+				t.Fatal("recovered busy input delivered")
+			}
+			f.write(line[split:])
+			if userEcho {
+				f.write(completed("completed"))
+			}
+			select {
+			case o := <-b.Observed():
+				if userEcho && o.Text != "public input" {
+					t.Fatalf("recovered input %q", o.Text)
+				}
+				raw, _ := json.Marshal(collect(t, o.Run, chatstream.VerbRunFinish))
+				if bytes.Contains(raw, []byte("restore-secret")) {
+					t.Fatal("restored private partial line leaked")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("restored completion lost")
+			}
+		})
+	}
+}
