@@ -222,6 +222,12 @@ func (s *Server) handleRegistry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch parts[2] {
+		case "external-id":
+			if r.Method != http.MethodPost {
+				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "external-id requires POST")
+				return
+			}
+			s.handleRegistryAttachExternalID(w, r, urn)
 		case "sync":
 			if r.Method != http.MethodPost {
 				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
@@ -673,6 +679,25 @@ func (s *Server) handleRegistryUpdate(w http.ResponseWriter, r *http.Request, ur
 	writeJSON(w, http.StatusOK, projectProfile(out, inc))
 }
 
+// handleRegistryAttachExternalID extends the registry item actions with an
+// attachment-only operation; it never updates profile fields or mints a URN.
+func (s *Server) handleRegistryAttachExternalID(w http.ResponseWriter, r *http.Request, urn string) {
+	var key registerExternalKey
+	if err := json.NewDecoder(r.Body).Decode(&key); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	substrate, externalID, _, err := key.resolve()
+	if err == nil {
+		err = s.Registry.AttachExternalID(r.Context(), urn, substrate, externalID)
+	}
+	if err != nil {
+		writeRegistryError(w, err)
+		return
+	}
+	s.handleRegistryLookup(w, r, urn)
+}
+
 // handleRegistryDeregister services DELETE /registry/{kind}/{urn}.
 // Returns the soft-deleted Profile (status='deprecated'), not 204, so
 // callers can read the bumped updated_at without a follow-up GET.
@@ -836,6 +861,8 @@ func writeRegistryError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, registry.ErrNotFound):
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+	case errors.Is(err, registry.ErrExternalIDConflict):
+		writeError(w, http.StatusConflict, CodeConflict, err.Error())
 	case errors.Is(err, registry.ErrInvalidRequest):
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 	case errors.Is(err, registry.ErrNoResolver):
