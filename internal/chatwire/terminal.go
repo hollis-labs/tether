@@ -11,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/conversation"
 	"github.com/hollis-labs/tether/internal/terminalattach"
+	"github.com/hollis-labs/tether/internal/terminaltarget"
 )
 
 // TerminalSessions is the daemon's PTY boundary for terminal attachments (*app.Service).
@@ -48,57 +49,12 @@ func NewTerminalHost(cfg TerminalConfig) (terminalattach.Host, error) {
 	if cfg.Authorize == nil {
 		cfg.Authorize = func(ctx context.Context, owner string) error { return Authorize(ctx, owner, chat.PermRead) }
 	}
-	t := &TerminalTargets{Resolver: conversation.Resolver{Store: cfg.Store}, Sessions: cfg.Sessions, Authorize: cfg.Authorize}
+	t := &terminaltarget.Resolver{Mapping: conversation.Resolver{Store: cfg.Store}, Sessions: cfg.Sessions, Authorize: cfg.Authorize}
 	return &terminalHost{
-		ChatHost: &terminalattach.ChatHost{Host: cfg.Host, ResolveTarget: t.Resolve, PTY: cfg.Sessions},
+		ChatHost: &terminalattach.ChatHost{Host: cfg.Host, ResolveTarget: terminalTargetResolver(t), PTY: cfg.Sessions},
 		host:     cfg.Host,
 		targets:  t,
 	}, nil
-}
-
-// TerminalTargets is the terminal attachments' TargetResolver: a conversation or session ID to the current chat host
-// binding and exact PTY session. It reads the Tether store and the sessions' in-process PTY table only.
-type TerminalTargets struct {
-	Resolver  conversation.Resolver
-	Sessions  interface{ HasTerminal(sessionID string) bool }
-	Authorize func(ctx context.Context, owner string) error
-}
-
-// Resolve implements terminalattach.TargetResolver. A superseded session target is terminalattach.ErrStaleGeneration;
-// a caller Authorize refuses gets terminalattach.ErrNotFound, as for a conversation that does not exist.
-func (r *TerminalTargets) Resolve(ctx context.Context, target string) (terminalattach.Binding, error) {
-	b, _, err := r.resolve(ctx, target)
-	return b, err
-}
-
-// resolve returns the terminal binding and the chat host binding it carries.
-func (r *TerminalTargets) resolve(ctx context.Context, target string) (terminalattach.Binding, runtimecontract.Binding, error) {
-	t, err := r.Resolver.Resolve(ctx, target)
-	switch {
-	case errors.Is(err, conversation.ErrNotFound):
-		return terminalattach.Binding{}, runtimecontract.Binding{}, terminalattach.ErrNotFound
-	case errors.Is(err, conversation.ErrStale):
-		return terminalattach.Binding{}, runtimecontract.Binding{}, terminalattach.ErrStaleGeneration
-	case err != nil:
-		return terminalattach.Binding{}, runtimecontract.Binding{}, err
-	}
-	if err := r.Authorize(ctx, t.Owner); err != nil {
-		return terminalattach.Binding{}, runtimecontract.Binding{}, fmt.Errorf("%w: %w", terminalattach.ErrNotFound, err)
-	}
-	// The chat host binding as the chat wire derives it for the seat's chat conversation: the chat agent is the seat
-	// (Wire.agent resolves agents with BySeat), its scope the seat, its owner the conversation's.
-	b := HostBinding(t.Owner, t.Seat, t.Seat, t)
-	return terminalattach.Binding{
-		OwnerID:        string(b.OwnerID),
-		OperativeID:    string(b.OperativeID),
-		SeatID:         string(b.SeatID),
-		ConversationID: string(b.ConversationID),
-		AttemptID:      string(b.AttemptID),
-		SessionID:      t.SessionID,
-		Generation:     uint64(b.Generation),
-		// A worker's PTY is on the worker; only this daemon's own PTYs are attachable here.
-		Terminal: t.WorkerID == "" && t.SessionID != "" && r.Sessions.HasTerminal(t.SessionID),
-	}, b, nil
 }
 
 // terminalHost is terminalattach.ChatHost plus bringing the chat host to the Tether conversation's generation before a
@@ -107,16 +63,42 @@ func (r *TerminalTargets) resolve(ctx context.Context, target string) (terminala
 type terminalHost struct {
 	*terminalattach.ChatHost
 	host    *chathost.Host
-	targets *TerminalTargets
+	targets *terminaltarget.Resolver
 }
 
 func (h *terminalHost) Resolve(ctx context.Context, target string) (terminalattach.Binding, error) {
-	b, hb, err := h.targets.resolve(ctx, target)
+	b, err := terminalTargetResolver(h.targets)(ctx, target)
 	if err != nil || !b.Terminal || b.OperativeID == "" {
 		return b, err // no seat: Controller.Open refuses the incomplete binding
+	}
+	hb := runtimecontract.Binding{
+		OwnerID: runtimecontract.OwnerID(b.OwnerID), OperativeID: runtimecontract.OperativeID(b.OperativeID),
+		SeatID: runtimecontract.SeatID(b.SeatID), ConversationID: runtimecontract.ConversationID(b.ConversationID),
+		AttemptID: runtimecontract.AttemptID(b.AttemptID), Generation: runtimecontract.Generation(b.Generation),
 	}
 	if err := syncHost(ctx, h.host, hb); err != nil {
 		return terminalattach.Binding{}, err
 	}
 	return h.ChatHost.Resolve(ctx, target)
+}
+
+// Adapt the mapping-only resolver to the terminal transport outside its package.
+// The callback itself never consults the chat host or Control.
+func terminalTargetResolver(r *terminaltarget.Resolver) terminalattach.TargetResolver {
+	return func(ctx context.Context, target string) (terminalattach.Binding, error) {
+		t, err := r.Resolve(ctx, target)
+		switch {
+		case errors.Is(err, conversation.ErrNotFound):
+			return terminalattach.Binding{}, fmt.Errorf("%w: %w", terminalattach.ErrNotFound, err)
+		case errors.Is(err, conversation.ErrStale):
+			return terminalattach.Binding{}, terminalattach.ErrStaleGeneration
+		case err != nil:
+			return terminalattach.Binding{}, err
+		}
+		return terminalattach.Binding{
+			OwnerID: t.Owner, OperativeID: t.Seat, SeatID: t.Seat,
+			ConversationID: t.ConversationID, AttemptID: t.AttemptID,
+			SessionID: t.SessionID, Generation: t.Generation, Terminal: t.Terminal,
+		}, nil
+	}
 }

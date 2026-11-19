@@ -61,7 +61,7 @@
 //
 // NewTerminalHost (terminal.go) is /terminal-attachments behind daemon.terminal_attachments.enabled, a flag separate
 // from daemon.chat_wire.enabled. The daemon opens one chat host (OpenHost) and gives it to both, so a terminal
-// controller and a chat controller hold one writer lease. Its TargetResolver (TerminalTargets) resolves a conversation
+// controller and a chat controller hold one writer lease. Its TargetResolver (terminaltarget.Resolver) resolves a conversation
 // or session ID through conversation.Resolver.Resolve, derives the binding with HostBinding(owner, seat, seat, target)
 // as the Control does for the seat's chat conversation, and asks the sessions whether this daemon runs a PTY for it;
 // it holds no chat host. Resolve, which runs outside the lease lock, first brings the chat host to the Tether row's

@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
@@ -63,5 +65,26 @@ func TestTerminalAttachmentsMountOnlyWithFlag(t *testing.T) {
 	}
 	if !reflect.DeepEqual(added, []string{"/terminal-attachments", "/terminal-attachments/"}) {
 		t.Fatalf("terminal attachments added %v", added)
+	}
+}
+
+// Exercise the production router as well as its mount list.
+func TestTerminalAttachmentsRouteDisabledByDefault(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "off", true: "on"}[enabled], func(t *testing.T) {
+			s := &Server{Catalog: stubCatalogLoader{}, Config: Config{TerminalAttachments: enabled}}
+			want := http.StatusNotFound
+			if enabled {
+				s.TerminalHost = nopTerminalHost{}
+				want = http.StatusMethodNotAllowed
+			}
+			for _, path := range []string{"/terminal-attachments", "/terminal-attachments/example"} {
+				w := httptest.NewRecorder()
+				s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+				if w.Code != want {
+					t.Fatalf("GET %s = %d, want %d: %s", path, w.Code, want, w.Body.String())
+				}
+			}
+		})
 	}
 }

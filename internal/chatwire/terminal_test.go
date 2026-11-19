@@ -19,6 +19,7 @@ import (
 	"github.com/hollis-labs/tether/internal/conversation"
 	tstore "github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/terminalattach"
+	"github.com/hollis-labs/tether/internal/terminaltarget"
 )
 
 // termPTY is the daemon's PTY table for terminal attachments: which sessions have a live PTY, and what was typed.
@@ -231,28 +232,28 @@ func TestTerminalTargets(t *testing.T) {
 	e := newEnv(t)
 	e.session(t, "s1", "seat", "")
 	pty := newTermPTY()
-	targets := &TerminalTargets{Resolver: conversation.Resolver{Store: e.st}, Sessions: pty, Authorize: func(context.Context, string) error { return nil }}
+	targets := &terminaltarget.Resolver{Mapping: conversation.Resolver{Store: e.st}, Sessions: pty, Authorize: func(context.Context, string) error { return nil }}
 
 	tc, err := e.resolver.BySeat(ctx, "seat")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := targets.Resolve(ctx, "s1")
+	b, err := terminalTargetResolver(targets)(ctx, "s1")
 	if err != nil || b.Terminal || b.SessionID != "s1" || b.ConversationID != tc.ConversationID {
 		t.Fatalf("no PTY: %+v %v", b, err)
 	}
 	pty.setLive("s1")
-	b, err = targets.Resolve(ctx, tc.ConversationID)
+	b, err = terminalTargetResolver(targets)(ctx, tc.ConversationID)
 	want := HostBinding(tc.Owner, "seat", "seat", tc)
 	if err != nil || !b.Terminal || b.OwnerID != string(want.OwnerID) || b.OperativeID != "seat" || b.SeatID != "seat" ||
 		b.AttemptID != tc.AttemptID || b.Generation != tc.Generation {
 		t.Fatalf("live PTY: %+v %v; want the chat host binding %+v", b, err, want)
 	}
-	if _, err := targets.Resolve(ctx, "missing"); !errors.Is(err, terminalattach.ErrNotFound) {
+	if _, err := terminalTargetResolver(targets)(ctx, "missing"); !errors.Is(err, terminalattach.ErrNotFound) {
 		t.Fatalf("missing target: %v", err)
 	}
 	targets.Authorize = func(context.Context, string) error { return ErrForbidden }
-	if _, err := targets.Resolve(ctx, "s1"); !errors.Is(err, terminalattach.ErrNotFound) {
+	if _, err := terminalTargetResolver(targets)(ctx, "s1"); !errors.Is(err, terminalattach.ErrNotFound) {
 		t.Fatalf("refused caller: %v", err)
 	}
 }
