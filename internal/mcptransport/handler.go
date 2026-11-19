@@ -246,7 +246,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w = rl
 	defer func() {
 		if rl.status >= 400 {
-			slog.Info("daemon MCP refused", "status", rl.status, "method", r.Method, "remote", identity.IsRemote(r.Context()), "detail", rl.detail())
+			slog.Info("daemon MCP refused", "status", rl.status, "method", r.Method, "remote", identity.IsRemote(r.Context()), "detail", rl.detail()) //nolint:gosec // G706 false positive: structured slog attrs are quoted/encoded by the handler; detail is the refusal body Tether wrote
 		}
 	}()
 	h.mu.Lock()
@@ -459,8 +459,8 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		v.tokenExp = *a.caller.Principal.ExpiresAt
 	}
 	v.localConnection = identity.LocalConnection(ctx)
-	v.callCtx, v.cancelCalls = context.WithCancel(h.ctx)
-	v.streamCtx, v.cancelStreams = context.WithCancel(h.ctx)
+	v.callCtx, v.cancelCalls = context.WithCancel(h.ctx)     //nolint:gosec // G118: v.cancelCalls is called when the view is closed or refused
+	v.streamCtx, v.cancelStreams = context.WithCancel(h.ctx) //nolint:gosec // G118: v.cancelStreams is called when the view is closed or refused
 	h.mu.Lock()
 	count, nonoperator := 0, 0
 	for existing := range h.views {

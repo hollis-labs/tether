@@ -14,6 +14,36 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
+func TestHostedCodexDeliveryReaderAdvancesBeforeCandidateCheck(t *testing.T) {
+	s, _, e := codexCompletedInboxFixture(t)
+	ctx := context.Background()
+	err := e.DeliverInbox(ctx, func(ctx context.Context, state shimcodex.State) (shimcodex.Projection, error) {
+		// The reader can commit replay metadata after delivery freezes its input
+		// but before the store checks that revision. This is a stale candidate,
+		// not a permanent delivery failure that should refuse boot reattachment.
+		if err := e.AcceptMetadata(ctx, state.Epoch, "j:2", "shim.attached", []byte(`{}`)); err != nil {
+			return shimcodex.Projection{}, err
+		}
+		p, err := s.deliverCodexInbox(ctx, state)
+		if !errors.Is(err, store.ErrSessionShimConflict) {
+			t.Fatalf("stale candidate error = %v", err)
+		}
+		return p, err
+	})
+	if !shimcodex.HasCode(err, "delivery_changed") {
+		t.Fatalf("stale delivery must be retried, got %v", err)
+	}
+	if len(e.Snapshot().Inbox) == 0 || len(outputEvents(t, s)) != 0 {
+		t.Fatal("stale candidate consumed input or published output")
+	}
+	if err := e.DeliverInbox(ctx, s.deliverCodexInbox); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Snapshot().Inbox) != 0 || len(outputEvents(t, s)) != 1 {
+		t.Fatal("retry did not deliver retained output exactly once")
+	}
+}
+
 func codexCompletedInboxFixture(t *testing.T, split ...bool) (*Service, *store.CodexProtocolStore, *shimcodex.Engine) {
 	t.Helper()
 	s, r, p := codexOutputFixture(t)

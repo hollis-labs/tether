@@ -592,7 +592,7 @@ func (p *ClientPool) publish(ctx context.Context, id string, client upstreamClie
 	if notify && handler != nil {
 		handler(refresh)
 	}
-	slog.Info("mcp-proxy: upstream tools ready", "server", id, "tools", len(tools))
+	slog.Info("mcp-proxy: upstream tools ready", "server", id, "tools", len(tools)) //nolint:gosec // G706 false positive: structured slog attrs are quoted/encoded by the handler; id is a catalog server id
 	return refresh, nil
 }
 

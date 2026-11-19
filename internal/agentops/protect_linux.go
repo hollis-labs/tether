@@ -185,7 +185,7 @@ func createFileGuarded(path string, body []byte, protected []string) error {
 		}
 		return &fs.PathError{Op: "open", Path: path, Err: err}
 	}
-	return writeAndClose(os.NewFile(uintptr(fd), path), body)
+	return writeAndClose(os.NewFile(uintptr(fd), path), body) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 }
 
 // updateFileGuarded reads and rewrites the file at path through the open,
@@ -203,7 +203,7 @@ func updateFileGuarded(path string, p Params, protected []string) (launchprofile
 	if err != nil {
 		return launchprofile.LaunchProfile{}, symlinkAware(path, err)
 	}
-	rf := os.NewFile(uintptr(rfd), path)
+	rf := os.NewFile(uintptr(rfd), path) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 	fi, err := rf.Stat()
 	if err == nil && !fi.Mode().IsRegular() {
 		err = fmt.Errorf("%s is not a regular file", path)
@@ -224,7 +224,7 @@ func updateFileGuarded(path string, p Params, protected []string) (launchprofile
 	if err != nil {
 		return launchprofile.LaunchProfile{}, symlinkAware(path, err)
 	}
-	if err := writeAndClose(os.NewFile(uintptr(wfd), path), body); err != nil {
+	if err := writeAndClose(os.NewFile(uintptr(wfd), path), body); err != nil { //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 		return launchprofile.LaunchProfile{}, err
 	}
 	return a, nil
