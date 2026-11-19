@@ -5502,7 +5502,14 @@ func runCerberusSocketResourceAction(ctx context.Context, resource, action strin
 		}
 	}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport}
+	client := &http.Client{
+		Transport: transport,
+		// Redirects could forward the bearer token beyond the validated endpoint,
+		// including a same-host HTTPS-to-HTTP downgrade. Refuse them as errors.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("cerberus redirects are not allowed")
+		},
+	}
 	req, err := http.NewRequestWithContext(runCtx, method, endpoint.base+path, nil)
 	if err != nil {
 		return "", err

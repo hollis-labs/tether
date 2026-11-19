@@ -11,10 +11,45 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
 type seenRequest struct{ method, path, auth string }
+
+// Even a same-host redirect forwards Authorization by default. Resource calls
+// must fail rather than follow it or treat the redirect response as success.
+func TestCerberusEndpointRejectsRedirects(t *testing.T) {
+	for _, status := range []int{301, 302, 303, 307, 308} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var redirected atomic.Int64
+			var initial atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/redirected" {
+					redirected.Add(1)
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				initial.Add(1)
+				if r.Header.Get("Authorization") != "Bearer k-redirect" {
+					t.Error("initial request missing configured bearer")
+				}
+				http.Redirect(w, r, "/redirected", status)
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv(cerberusAddrEnv, srv.URL+"/api")
+			t.Setenv(cerberusTokenFileEnv, tokenFile(t, "k-redirect"))
+			for _, action := range []string{"status", "restart"} {
+				if _, err := runCerberusSocketResourceAction(context.Background(), "tether-hub", action); err == nil || !strings.Contains(err.Error(), "cerberus redirects are not allowed") {
+					t.Errorf("%s redirect error = %v", action, err)
+				}
+			}
+			if initial.Load() != 2 || redirected.Load() != 0 {
+				t.Fatalf("requests: initial=%d redirected=%d", initial.Load(), redirected.Load())
+			}
+		})
+	}
+}
 
 // fakeCerberus answers resource actions like the old daemon and records what it was asked.
 func fakeCerberus(t *testing.T, fail bool) (http.Handler, func() []seenRequest) {
