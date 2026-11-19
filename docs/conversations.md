@@ -62,7 +62,10 @@ With `daemon.chat_wire.enabled` on, `internal/chatwire` then moves the chat
 host binding to the same generation and attempt and tells the chat Service to
 re-read the generation (CW-20261118-0011); every chat Control call reconciles
 again, so a missed signal heals on the next read. `/terminal-attachments`
-(CW-20261118-0012) must derive its binding with `chatwire.HostBinding`.
+(`daemon.terminal_attachments.enabled`, CW-20261118-0012) derives its binding
+with `chatwire.HostBinding` on the same chat host, and brings the chat host to
+the conversation's generation before it resolves a target, so either flag can be
+on alone.
 
 ## Resolver
 
@@ -73,6 +76,8 @@ kind, generation, session, attempt, worker}`:
 - `BySession(ctx, sessionID)` returns the current target of the conversation
   that session ever belonged to, plus `current` (false when the session has
   been superseded).
+- `Resolve(ctx, target)` takes a conversation or a session ID: a superseded
+  session is `ErrStale`. Terminal attachments use it as their target resolver.
 
 It reads only the Tether store. It must never import or call
 `libs/agent/sdk/chathost`, because terminal attachments call their target

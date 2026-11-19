@@ -123,7 +123,7 @@ func (s *Service) StartSessionReaper(parent context.Context) {
 	if r.cancel != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(parent) //nolint:gosec // G118: cancel is kept in r.cancel and called by StopSessionReaper
 	r.cancel = cancel
 	r.done = make(chan struct{})
 	go func() {

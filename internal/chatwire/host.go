@@ -4,11 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/hollis-labs/libs/agent/sdk/chathost"
 	"github.com/hollis-labs/libs/agent/sdk/session"
 	"github.com/hollis-labs/libs/mesh/core/runtimecontract"
 )
+
+// OpenHost opens the daemon's chat host, StateDir/chat/host. The daemon opens it once and gives the same Host to the
+// chat wire (Config.Host) and to terminal attachments (TerminalConfig.Host), so both contend for one writer lease.
+// Its own authorization allows everything: callers are daemon-internal and have authorized the request already.
+func OpenHost(stateDir string) (*chathost.Host, error) {
+	if stateDir == "" {
+		return nil, errors.New("chatwire: OpenHost needs the state directory")
+	}
+	allow := func(context.Context, runtimecontract.OwnerID, chathost.Permission) error { return nil }
+	h, err := chathost.Open(filepath.Join(stateDir, "chat", "host"), allow)
+	if err != nil {
+		return nil, fmt.Errorf("chatwire: chat host: %w", err)
+	}
+	return h, nil
+}
 
 // syncHost moves the chat host conversation of want's Tether conversation to want: it registers the agent and creates
 // the conversation the first time, activates a fenced record, and steps the generation one at a time (chathost's CAS
@@ -19,7 +35,21 @@ import (
 // Generations chathost skipped (a conversation first seen at generation 5, or a daemon that was down across two
 // relaunches) are stepped through with placeholder attempt IDs: chathost requires an attempt per generation and never
 // reuses one, and only the current binding is ever compared.
+//
+// The chat Control and terminal attachments both sync the same chat host, so a step can lose a race (chathost's
+// version moved, or the conversation was created concurrently): that is session.ErrConflict, and the sync starts again
+// from a fresh load.
 func syncHost(ctx context.Context, h *chathost.Host, want runtimecontract.Binding) error {
+	var err error
+	for range 5 {
+		if err = syncHostOnce(ctx, h, want); !errors.Is(err, session.ErrConflict) {
+			return err
+		}
+	}
+	return err
+}
+
+func syncHostOnce(ctx context.Context, h *chathost.Host, want runtimecontract.Binding) error {
 	sc := session.Scope{OwnerID: want.OwnerID, OperativeID: want.OperativeID, ConversationID: want.ConversationID}
 	rec, err := h.Load(ctx, sc)
 	if errors.Is(err, session.ErrNotFound) {
