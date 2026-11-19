@@ -103,7 +103,7 @@ stored actors; the second requires explicit relaunch provenance plus an exact
 authenticated worker launch acknowledgement. None is native proof. Ordinary hub orphan recovery uses exact persisted non-team resume plans or immutable explicit-create provenance and refuses retained source shim custody.
 
 The Tachyon orchestrator owns canonical explicit-resume discovery, complete-chain
-validation and atomic association before plan/history/thread reads (#806 draft,
-following merged #804/#805). Tether does not call Tachyon on an agent's behalf.
-Until producer/consumer exact-head review and those changes land, this inventory
-is not a claim of whole-unit plan/history completion or live acceptance.
+validation and atomic association before plan/history/thread reads (merged
+Tachyon #804/#805/#806). Tether does not call Tachyon on an agent's behalf.
+This source/test inventory is not live acceptance: deployment and real-bounce
+verification remain outside scope1–4.
