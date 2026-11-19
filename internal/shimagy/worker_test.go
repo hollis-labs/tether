@@ -207,3 +207,33 @@ printf '%s\n' '{"event":"result","result":{"status":"SUCCESS"}}'
 	case <-time.After(150 * time.Millisecond):
 	}
 }
+
+func TestImmediateTargetCancelKeepsWorkerForNextTurn(t *testing.T) {
+	cfg := workerFixture(t, `printf '%s\n' '{"event":"init","conversation_id":"native-cancel"}'
+case "$*" in *slow*) exec sleep 60;; esac
+printf '%s\n' '{"event":"result","result":{"status":"SUCCESS"}}'
+`)
+	for range 20 {
+		var output bytes.Buffer
+		first := `{"type":"user","tether_turn_id":"first","message":{"role":"user","content":"slow"}}` + "\n"
+		interrupt := `{"type":"control_request","request_id":"cancel","request":{"subtype":"interrupt","target_turn_id":"first"}}` + "\n"
+		if err := Run(context.Background(), cfg, strings.NewReader(first+interrupt+userFrame("next")), &output, io.Discard); err != nil {
+			t.Fatalf("early cancel ended worker: %v", err)
+		}
+		results := 0
+		for _, frame := range workerLines(t, &output) {
+			if string(frame["event"]) == `"result"` {
+				results++
+				if results == 1 && !bytes.Contains(frame["result"], []byte("interrupted")) {
+					t.Fatalf("first turn was not aborted: %s", frame["result"])
+				}
+				if results == 2 && !bytes.Contains(frame["result"], []byte("SUCCESS")) {
+					t.Fatalf("next turn failed: %s", frame["result"])
+				}
+			}
+		}
+		if results != 2 {
+			t.Fatalf("terminal count %d", results)
+		}
+	}
+}

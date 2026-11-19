@@ -119,6 +119,11 @@ func Run(ctx context.Context, c Config, input io.Reader, output, stderr io.Write
 			go func() {
 				id := uuid.NewString()
 				next, err := runTurn(turnCtx, c, turn.text, previous, id, turn.clientID, output, stderr)
+				if err != nil && turnCtx.Err() != nil {
+					aborted := map[string]any{"event": "result", "uuid": id, "tether_turn_id": turn.clientID, "result": map[string]string{"conversation_id": previous, "status": "ERROR", "finished_reason": "interrupted"}}
+					err = json.NewEncoder(output).Encode(aborted)
+					next = previous
+				}
 				if err != nil {
 					failure := map[string]any{"event": "result", "uuid": id, "tether_turn_id": turn.clientID, "result": map[string]string{"status": "ERROR", "error": "hosted AGY turn failed"}}
 					if writeErr := json.NewEncoder(output).Encode(failure); writeErr != nil {
