@@ -170,7 +170,7 @@ func (m *mailTriage) quietNone(ctx context.Context, env messaging.Envelope, pol 
 	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
 		urgency = intent.Urgency
 	}
-	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, env.From.URN()), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle, ReplyToOwn: m.replyToOwn(ctx, env, pol)})
+	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, triageSender(env)), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle, ReplyToOwn: m.replyToOwn(ctx, env, pol)})
 	return res.Reason == "attention_none"
 }
 
@@ -184,7 +184,7 @@ func (m *mailTriage) record(ctx context.Context, env messaging.Envelope, pol sea
 	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
 		urgency = intent.Urgency
 	}
-	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, env.From.URN()), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle, ReplyToOwn: m.replyToOwn(ctx, env, pol)})
+	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, triageSender(env)), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle, ReplyToOwn: m.replyToOwn(ctx, env, pol)})
 	row, created, err := m.st.TriageRecord(ctx, store.TriageRow{MessageID: env.ID, Recipient: env.To.URN(), Seat: pol.seat, Class: string(res.Class), Reason: res.Reason, Typed: res.Typed, CreatedAt: now})
 	if err != nil || !created {
 		return row, err
@@ -200,6 +200,35 @@ func (m *mailTriage) record(ctx context.Context, env messaging.Envelope, pol sea
 	return row, nil
 }
 
+// unverifiedSender is who triage takes an unverified, unattributed sender for: an agent, so the mail is
+// never the operator's, a user's or human-class on its say-so.
+const unverifiedSender = "msg://agent/local/unverified-sender"
+
+// triageSender is the address triage judges mail by (CW-20261114-0125). The stored from is trusted only
+// when the hub verified it (from_verification verified, or stamped from the caller's own address). In
+// observe mode a claimed from that did not verify is still stored; triage then goes by the principal that
+// actually sent it (from_principal), or, with none, takes the sender for an agent.
+func triageSender(env messaging.Envelope) string {
+	return verifiedSender(env.From.URN(), env.Metadata)
+}
+
+func verifiedSender(from string, meta map[string]string) string {
+	switch meta[metaFromVerification] {
+	case "verified", "stamped":
+		return from
+	}
+	if p := meta[metaFromPrincipal]; p != "" {
+		return p
+	}
+	return unverifiedSender
+}
+
+// The daemon-stamped sender keys (api.MetaFromVerification, api.MetaFromPrincipal).
+const (
+	metaFromVerification = "from_verification"
+	metaFromPrincipal    = "from_principal"
+)
+
 // replyToOwn reports whether env answers mail its recipient seat sent: its
 // in_reply_to names a message whose sender is one of the seat's addresses.
 func (m *mailTriage) replyToOwn(ctx context.Context, env messaging.Envelope, pol seatPolicy) bool {
@@ -210,7 +239,7 @@ func (m *mailTriage) replyToOwn(ctx context.Context, env messaging.Envelope, pol
 	if err != nil {
 		return false
 	}
-	from := parent.From.URN()
+	from := triageSender(parent)
 	return from == env.To.URN() || pol.owns(from)
 }
 
@@ -219,7 +248,8 @@ func (m *mailTriage) emit(ctx context.Context, env messaging.Envelope, pol seatP
 		return
 	}
 	payload := map[string]any{"message_id": env.ID, "recipient": env.To.URN(), "seat": pol.seat, "handle": pol.handle,
-		"class": string(res.Class), "reason": res.Reason, "typed": res.Typed, "from": env.From.URN(), "from_handle": m.nameOf(ctx, env.From.URN())}
+		"class": string(res.Class), "reason": res.Reason, "typed": res.Typed, "from": env.From.URN(), "from_handle": m.nameOf(ctx, triageSender(env)),
+		"from_verification": env.Metadata[metaFromVerification]}
 	// Mail an assistant sent for someone says so wherever it is triaged (CW-20261114-0116).
 	if behalf, drafted := envelope.Behalf(env.ContentType, env.Payload); behalf != "" {
 		payload["on_behalf_of"], payload["drafted_by"] = behalf, string(drafted)
@@ -296,7 +326,7 @@ func (m *mailTriage) digest(ctx context.Context, env messaging.Envelope) (string
 			fmt.Fprintf(&b, "\n- and %d more (tether_message_inbox to list them)", len(others)-digestLimit)
 			break
 		}
-		label := m.nameOf(ctx, it.From)
+		label := m.nameOf(ctx, verifiedSender(it.From, it.Metadata))
 		if it.Subject != "" {
 			label += ": " + it.Subject
 		}
@@ -361,10 +391,11 @@ func (m *mailTriage) backfillReplyToOwn(ctx context.Context) (examined, moved in
 	now := m.clock()
 	for _, c := range cands {
 		examined++
-		owned := c.ParentFrom == c.Recipient || c.ParentFrom == c.Seat
+		parentFrom := verifiedSender(c.ParentFrom, c.ParentMetadata)
+		owned := parentFrom == c.Recipient || parentFrom == c.Seat
 		if !owned {
 			if to, perr := messaging.ParseURN(c.Recipient); perr == nil {
-				owned = m.policy(to).owns(c.ParentFrom)
+				owned = m.policy(to).owns(parentFrom)
 			}
 		}
 		if !owned {
@@ -399,7 +430,7 @@ func (m *mailTriage) fyiLine(ctx context.Context, pol seatPolicy) (string, func(
 		if i == 5 {
 			break
 		}
-		label := m.nameOf(ctx, it.From)
+		label := m.nameOf(ctx, verifiedSender(it.From, it.Metadata))
 		if it.Subject != "" {
 			label += ": " + it.Subject
 		}
