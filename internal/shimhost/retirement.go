@@ -62,7 +62,7 @@ func readRetirementJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), path) //nolint:gosec // G115: fd comes from a successful open/openat, so it is a small non-negative descriptor that fits uintptr
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {

@@ -43,12 +43,7 @@ func TestDaemonExtensionsReachProvider(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	p := config.AIProviderConfig{
-		ID:        "test-openrouter",
-		Type:      "openai",
-		BaseURL:   srv.URL + "/v1/",
-		Models:    []string{"auto"},
-		SecretRef: "literal://noop",
-		Enabled:   true,
+		BaseURL: srv.URL + "/v1/",
 		Extensions: &config.ProviderExtensions{
 			OpenRouter: &config.OpenRouterExtension{
 				Provider: map[string]any{"order": []any{"Anthropic"}},
