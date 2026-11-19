@@ -66,6 +66,9 @@ type Observation struct {
 	// Event names a handler-level finding (from_unverified, as_unverified,
 	// from_refused, as_refused). Empty for ordinary request rows.
 	Event string `json:"event,omitempty"`
+	// Detail is a JSON object for events that carry more than a route
+	// (operator_reply_attested, operator_attestation_keys_changed, ...).
+	Detail string `json:"detail,omitempty"`
 }
 
 // ScopeObservation is the verdict of a route-to-scope table for one request.

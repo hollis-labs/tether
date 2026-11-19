@@ -1,0 +1,1 @@
+- Add protected Unix-socket MCP admission and native dispatch routes for a co-located standalone gateway, preserving caller policy, remote session restrictions, token refresh and revocation without starting aggregate upstreams (CW-20261115-0069).

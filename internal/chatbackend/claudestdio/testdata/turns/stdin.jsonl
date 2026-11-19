@@ -1,0 +1,2 @@
+{"after_line":0,"note":"submit","frame":{"type":"user","message":{"role":"user","content":"Read hello.txt and other.txt (both at once, in parallel). Then work out carefully which code has more letters, thinking it through before you answer in one sentence."}}}
+{"after_line":35,"note":"other_writer","frame":{"type":"user","message":{"role":"user","content":"Reply with only the word: done"}}}

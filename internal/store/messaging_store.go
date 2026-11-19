@@ -64,6 +64,7 @@ func (s *Store) MessagingStore() InboxStore {
 // ─── Send ────────────────────────────────────────────────────────────────────
 
 func (ms *messagingStore) Send(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	env.Metadata = withoutForgedAttestation(ctx, env.Metadata)
 	if env.DeliveredAt != nil || env.ConsumedAt != nil {
 		return messaging.Envelope{}, messaging.ErrPresetLifecycle
 	}

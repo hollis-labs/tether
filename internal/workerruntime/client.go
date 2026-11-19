@@ -318,7 +318,7 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 	if w.Restore != nil {
 		restored = w.Restore()
 	}
-	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents, workerwire.FeatureStopGate}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts, Restore: restored}); err != nil {
+	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureCodexResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents, workerwire.FeatureStopGate}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts, Restore: restored}); err != nil {
 		return err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))

@@ -76,4 +76,6 @@ type Deps struct {
 	Clock       teams.Clock
 	IDs         teams.IDs
 	Defaults    mesh.Limits
+	// Deadlines is optional; see RunDeadlines.
+	Deadlines RunDeadlines
 }

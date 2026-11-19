@@ -1,0 +1,1 @@
+- Build the migration CLI upgrade test from a genuine pre-upgrade schema so newly added migrations can be tested without replaying their schema changes (CW-20261115-0069).

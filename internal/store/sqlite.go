@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,10 +36,22 @@ type Store struct {
 	// commits (see events_outbox.go).
 	eventsCommitted  atomic.Pointer[func()]
 	eventTxPublisher atomic.Pointer[func(context.Context, events.Tx, events.Event) (events.Event, error)]
-	db               *sql.DB
-	stateDBPath      string
-	channelAuthMu    sync.RWMutex
-	channelAuth      channels.Authorization
+	// conversationMoved is called after a committed write moved a conversation
+	// (OnConversationMoved); movedPending holds moves written on a caller's
+	// transaction until EventsCommitted.
+	conversationMoved atomic.Pointer[func(string)]
+	movedMu           sync.Mutex
+	movedPending      []string
+	db                *sql.DB
+	// reader is a read-only pool over the same file for history reads
+	// (CW-20261114-0166), so a long read never holds db's single connection.
+	// Nil on a store opened read-only, where db is already read-only.
+	reader      *sql.DB
+	stateDBPath string
+	// wal tracks the WAL checkpoint sequence for WALStatus.
+	wal           walMonitor
+	channelAuthMu sync.RWMutex
+	channelAuth   channels.Authorization
 	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
 	// fan-out instance on every call within a process so Subscribe/Send
 	// cross-talk works. See messaging_store.go.
@@ -82,7 +95,12 @@ func Open(path string) (*Store, error) {
 // and the optional test template in front of it.
 func openDB(path string) (*Store, error) {
 	// DSN parameters are supported by modernc.org/sqlite.
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	// journal_size_limit: SQLite reuses the -wal file from its start after a
+	// checkpoint but never shrinks it, so one spike (the 3.4 GB WAL of
+	// 2026-11-14, CW-20261114-0166) stays on disk for good. With a limit, the
+	// writer truncates the file to it whenever the log restarts
+	// (CW-20261113-0009).
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=journal_size_limit(" + strconv.FormatInt(walSizeLimit, 10) + ")"
 	syncMode, err := synchronousFromEnv()
 	if err != nil {
 		return nil, err
@@ -101,7 +119,7 @@ func openDB(path string) (*Store, error) {
 	// workload is not read-heavy enough to justify the complexity of a
 	// separate read pool.
 	db.SetMaxOpenConns(1)
-	if _, err := Migrate(db); err != nil {
+	if _, err := MigrateWithProgress(db, MigrationProgressPath(path)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -113,7 +131,7 @@ func openDB(path string) (*Store, error) {
 	// migration file so the library remains the owner of its own schema
 	// evolution, per the architecture's "reconcile the two current
 	// contracts; do not create a third competing bus."
-	if err := delivery.ApplySQLiteSchema(context.Background(), db); err != nil {
+	if err := applyDeliverySchema(context.Background(), db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply delivery schema: %w", err)
 	}
@@ -127,7 +145,12 @@ func openDB(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("install replacement delivery fences: %w", err)
 	}
-	return &Store{db: db, stateDBPath: path}, nil
+	reader, err := openReader(path)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open history reader: %w", err)
+	}
+	return &Store{db: db, reader: reader, stateDBPath: path}, nil
 }
 
 // useTemplate is false in production. A test package's TestMain turns it on
@@ -181,7 +204,12 @@ func buildTemplate() ([]byte, error) {
 	return os.ReadFile(path) //nolint:gosec // G304: the file this function just created
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.reader != nil {
+		_ = s.reader.Close()
+	}
+	return s.db.Close()
+}
 
 // DB returns the underlying *sql.DB handle. Exposed for subsystems that
 // need to attach their own typed storage layer over the same database
@@ -330,7 +358,21 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 			return err
 		}
 	}
-	return tx.Commit()
+	// The seat's conversation follows this session in the same transaction:
+	// created at generation 1 for a first session, moved (+1) otherwise.
+	catalogAgentID := ""
+	if plan != nil {
+		catalogAgentID = plan.CatalogAgentID
+	}
+	moved, err := recordConversationTx(context.Background(), tx, row.ID, catalogAgentID, sessionConversationReason(row.Intent))
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.noteConversationMoved(moved)
+	return nil
 }
 
 func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {
@@ -564,4 +606,20 @@ func synchronousFromEnv() (string, error) {
 		return v, nil
 	}
 	return "", fmt.Errorf("%s=%q: want FULL, NORMAL or EXTRA", SynchronousEnv, os.Getenv(SynchronousEnv))
+}
+
+// applyDeliverySchema applies the library's delivery schema only when the
+// recorded version differs from the one this build carries. The library's
+// upsert rewrites messaging_delivery_schema.applied_at on every call, so an
+// unconditional apply turned each open into a write that misreported when the
+// schema last changed (CW-20261115-0046). The tables and the version row are
+// written in one library transaction, so a matching version means the schema
+// for that version is already in place.
+func applyDeliverySchema(ctx context.Context, db *sql.DB) error {
+	var version int
+	err := db.QueryRowContext(ctx, `SELECT version FROM messaging_delivery_schema WHERE component='delivery'`).Scan(&version)
+	if err == nil && version == delivery.SQLiteSchemaVersion {
+		return nil
+	}
+	return delivery.ApplySQLiteSchema(ctx, db)
 }

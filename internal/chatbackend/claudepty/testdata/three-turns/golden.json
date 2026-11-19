@@ -1,0 +1,517 @@
+[
+ {
+  "run_id": "run-1",
+  "observed": false,
+  "text": "Read hello.txt and other.txt (both at once, in parallel). Then work out carefully which code has more letters, thinking it through before you answer in one sentence.",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAiqagkgGQu3g9WpZ4SA"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAiqagkgGQu3g9WpZ4SA",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiqagkgGQu3g9WpZ4SA:0",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_01RymrAaS7ZPj1yreeUev2Lz",
+     "name": "Read"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiqagkgGQu3g9WpZ4SA:0",
+    "final": {
+     "file_path": "/work/hello.txt"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiqagkgGQu3g9WpZ4SA:1",
+    "kind": "tool_call",
+    "meta": {
+     "id": "toolu_011MSBDCL72HU3HkpPhP4Pvy",
+     "name": "Read"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiqagkgGQu3g9WpZ4SA:1",
+    "final": {
+     "file_path": "/work/other.txt"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAiqagkgGQu3g9WpZ4SA"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAiqagkgGQu3g9WpZ4SA"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "685ea849-c376-425f-9fda-266e6a30dff1",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "685ea849-c376-425f-9fda-266e6a30dff1:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAiqagkgGQu3g9WpZ4SA:0",
+     "tool_use_id": "toolu_01RymrAaS7ZPj1yreeUev2Lz"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "685ea849-c376-425f-9fda-266e6a30dff1:0",
+    "final": {
+     "content": "1\tThe launch code is ORANGE-42.\n2\t",
+     "is_error": false,
+     "text": "1\tThe launch code is ORANGE-42.\n2\t",
+     "tool_use_id": "toolu_01RymrAaS7ZPj1yreeUev2Lz",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "685ea849-c376-425f-9fda-266e6a30dff1"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "c0aee893-2312-457f-ae82-84a2187f7ae3",
+    "role": "user"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "c0aee893-2312-457f-ae82-84a2187f7ae3:0",
+    "kind": "tool_result",
+    "meta": {
+     "block_type": "tool_result",
+     "call_id": "msg_011ChAiqagkgGQu3g9WpZ4SA:1",
+     "tool_use_id": "toolu_011MSBDCL72HU3HkpPhP4Pvy"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "c0aee893-2312-457f-ae82-84a2187f7ae3:0",
+    "final": {
+     "content": "1\tThe backup code is TEAL-7.\n2\t",
+     "is_error": false,
+     "text": "1\tThe backup code is TEAL-7.\n2\t",
+     "tool_use_id": "toolu_011MSBDCL72HU3HkpPhP4Pvy",
+     "type": "tool_result"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "c0aee893-2312-457f-ae82-84a2187f7ae3"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAiqtkCTCCqPWvF7UdXU"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAiqtkCTCCqPWvF7UdXU",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiqtkCTCCqPWvF7UdXU:0",
+    "kind": "reasoning"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiqtkCTCCqPWvF7UdXU:0",
+    "final": {
+     "signature": "redacted-signature",
+     "text": ""
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAiqtkCTCCqPWvF7UdXU:1",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAiqtkCTCCqPWvF7UdXU:1",
+    "final": {
+     "text": "The launch code in hello.txt, ORANGE-42, has more letters (6: O-R-A-N-G-E) than the backup code in other.txt, TEAL-7 (4: T-E-A-L)."
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAiqtkCTCCqPWvF7UdXU"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAiqtkCTCCqPWvF7UdXU"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 4,
+     "cache_read": 54318,
+     "cache_write": 8495,
+     "output": 487,
+     "total": 63304
+    },
+    "ext": {
+     "claude": {
+      "stop_reason": "end_turn",
+      "subtype": "success"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "run_id": "run-2",
+  "observed": true,
+  "text": "Reply with only the word: done",
+  "source": "typed",
+  "origin": "human",
+  "turn_ref": "bdef8ded-7c06-4d76-80dd-fad1273c5aaa",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAirLQngyZAi5trqpCCZ"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAirLQngyZAi5trqpCCZ",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAirLQngyZAi5trqpCCZ:0",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAirLQngyZAi5trqpCCZ:0",
+    "final": {
+     "text": "done"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAirLQngyZAi5trqpCCZ"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAirLQngyZAi5trqpCCZ"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 4,
+     "cache_read": 31801,
+     "cache_write": 11,
+     "output": 3,
+     "total": 31819
+    },
+    "ext": {
+     "claude": {
+      "stop_reason": "end_turn",
+      "subtype": "success"
+     }
+    }
+   }
+  ]
+ },
+ {
+  "run_id": "run-3",
+  "observed": false,
+  "text": "Write a 600-word essay about rivers.",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAirgCR59P6BjJUFEgVj"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAirgCR59P6BjJUFEgVj",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAirgCR59P6BjJUFEgVj:0",
+    "kind": "reasoning"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAirgCR59P6BjJUFEgVj:0",
+    "final": {
+     "signature": "redacted-signature",
+     "text": ""
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAirgCR59P6BjJUFEgVj:1",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAirgCR59P6BjJUFEgVj:1",
+    "final": {
+     "text": "# The Quiet Architects\n\nA river begins as almost nothing: a seep in a hillside, a trickle from melting snow, a line of damp moss. Yet given enough time, that thread of water carves canyons, builds plains, and decides where people live and how they think. Rivers are among the most patient forces on Earth, and their influence on both landscape and civilization is hard to overstate.\n\nGeologically, rivers are sculptors. Water moving downhill picks up sediment, grinds stone against stone, and slowly deepens its channel. The Colorado River spent millions of years cutting the Grand Canyon, exposing n"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAirgCR59P6BjJUFEgVj"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAirgCR59P6BjJUFEgVj"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "usage",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 4,
+     "cache_read": 31817,
+     "cache_write": 16,
+     "output": 2,
+     "total": 31839
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-3",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.abort",
+    "reason": "aborted_streaming",
+    "ext": {
+     "claude": {
+      "subtype": "success",
+      "terminal_reason": "aborted_streaming"
+     }
+    }
+   }
+  ]
+ }
+]

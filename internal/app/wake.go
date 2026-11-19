@@ -154,9 +154,33 @@ const (
 	// wakeMaxAttempts is how many wake attempts one delivery gets before the
 	// retry delay jumps to the message-age bound: the mail is not lost (it sits
 	// in the inbox, and the recipient pulls it), the wake just stops hammering
-	// a session that never became free (CW-20261030-0176).
+	// a session that never became free (CW-20261030-0176). It applies to
+	// offline and failed attempts only: a busy session is not given up on
+	// (wakeBusyDelay, CW-20261117-0002).
 	wakeMaxAttempts = 12
+	// wakeBusyRetryCap bounds the backoff of a wake that found its session
+	// busy. The session's turn end re-arms it at once (rearmBusyWakes); the
+	// backoff is only the fallback for a turn end the hub did not observe.
+	wakeBusyRetryCap = 60 * time.Second
 )
+
+// wakeBusyDelay is the retry delay of a wake that found its session busy for
+// the attempt-th time: exponential from wakeBusyRetryBackoff, capped at
+// wakeBusyRetryCap, never jumping to the give-up bound. A session busy for an
+// hour still gets the wake when its turn ends (CW-20261117-0002).
+func wakeBusyDelay(attempt int) time.Duration {
+	d := wakeBusyRetryBackoff
+	if d <= 0 {
+		return d
+	}
+	for i := 1; i < attempt && d < wakeBusyRetryCap; i++ {
+		d *= 2
+	}
+	if d > wakeBusyRetryCap {
+		d = wakeBusyRetryCap
+	}
+	return time.Duration(float64(d) * wakeRetryJitter())
+}
 
 // wakeRetryJitter returns a factor in [0.8, 1.2). A variable so tests can pin it.
 var wakeRetryJitter = func() float64 { return 0.8 + 0.4*rand.Float64() } //nolint:gosec // G404: retry jitter spreads load, it is not a security value
@@ -369,6 +393,9 @@ type wakeRuntime struct {
 	// triage gates wakes for seats with mail_triage on (CW-20261114-0017);
 	// nil wakes as before.
 	triage *mailTriage
+	// busy records a wake refused because its session was busy, so the
+	// session's turn end can re-arm it (CW-20261117-0002); nil skips that.
+	busy func(sessionID string, id delivery.DeliveryID)
 }
 
 func (s *Service) runtimeSeam() wakeRuntime {
@@ -383,6 +410,7 @@ func (s *Service) runtimeSeam() wakeRuntime {
 		resolveOutpost: s.outpostResolve,
 		sendMail:       s.outpostSend,
 		triage:         s.mailTriager,
+		busy:           s.wakeRearm.add,
 	}
 }
 
@@ -413,15 +441,28 @@ func (s *Service) SessionBoundToActor(sessionID, actorID string) bool {
 func (s *Service) AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
 	ctx = s.mailWakeInputContext(ctx, messageID)
 	env, getErr := s.Store.MessagingStore().Get(ctx, messageID)
+	if getErr == nil && env.Metadata[wakeintent.MetadataKey] != "" {
+		// A repeated notify of an admitted message reports its stored outcome
+		// (CW-20261118-0024), not a fresh triage or resolution answer.
+		if prior, ok := storedRecipientWake(ctx, s.Store, messageID); ok {
+			return prior
+		}
+	}
 	if getErr == nil {
 		// Hub mail triage (CW-20261114-0017): the notify path is gated like the others.
 		if d := s.mailTriager.gate(ctx, env); !d.wake {
 			return api.WakeOutcome{Reason: d.reason}
 		}
 	}
+	commit := func() {}
+	if getErr == nil {
+		// Coalesced wake (CW-20261117-0002): the turn lists the seat's other pending mail.
+		wakeText, commit = s.mailTriager.withDigest(ctx, env, wakeText)
+	}
 	out := s.attemptWakeUngated(ctx, env, getErr, messageID, to, sessionID, wakeText)
 	if out.Delivered && getErr == nil {
 		s.mailTriager.woke(ctx, env)
+		commit()
 	}
 	return out
 }
@@ -443,7 +484,10 @@ func (s *Service) attemptWakeUngated(ctx context.Context, env messaging.Envelope
 // RunWakeSweep is the shared pump's one bounded, non-blocking pass. See
 // the file doc comment.
 func (s *Service) RunWakeSweep(ctx context.Context) (int, error) {
-	return runWakeSweep(ctx, s.Store, s.Registry, s.runtimeSeam(), &s.wakePark)
+	s.replyBackfill.Do(func() { s.runReplyToOwnBackfill(ctx) })
+	n, err := runWakeSweep(ctx, s.Store, s.Registry, s.runtimeSeam(), &s.wakePark)
+	s.runSeatDigestWakes(ctx)
+	return n, err
 }
 
 func resolveActorSession(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, logicalAgentID string) (string, error) {
@@ -695,7 +739,10 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		return api.WakeOutcome{Reason: "offline-race", SessionID: sessionID}
 	}
 	if health.Health.State == agentsessions.LiveStateProcessing {
-		nackRetryable(ctx, ds, lease, "session busy", wakeRetryDelay(observationNumber, wakeBusyRetryBackoff))
+		nackRetryable(ctx, ds, lease, "session busy", wakeBusyDelay(observationNumber))
+		if rt.busy != nil {
+			rt.busy(sessionID, lease.DeliveryID)
+		}
 		return api.WakeOutcome{Reason: "busy", SessionID: sessionID}
 	}
 	// Recheck after the health call, immediately before submitting. A new
@@ -1066,7 +1113,9 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 				park.parkIneligible(lr.rd.ID, now)
 				continue
 			}
-			if wakeMaxMessageAge > 0 && !msg.CreatedAt.IsZero() && now.Sub(msg.CreatedAt) > wakeMaxMessageAge {
+			// A triaged seat's wakes are coalesced into one turn, so old mail cannot
+			// replay as a turn per message: it keeps no age bound (CW-20261117-0002).
+			if wakeMaxMessageAge > 0 && !msg.CreatedAt.IsZero() && now.Sub(msg.CreatedAt) > wakeMaxMessageAge && !rt.triage.enabledFor(msg.To) {
 				// Quiet backlog: old mail is left for the inbox, not replayed as a turn.
 				park.parkIneligible(lr.rd.ID, now)
 				continue
@@ -1108,6 +1157,7 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			if text == "" {
 				text = sweepWakeText(msg)
 			}
+			text, commitDigest := rt.triage.withDigest(ctx, msg, text)
 			var outcome api.WakeOutcome
 			// A retried wake is the same mail wake as the first attempt: tag its input with the
 			// message and the sender the hub stamped, as Service.AttemptWake does.
@@ -1123,6 +1173,7 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			}
 			if outcome.Delivered {
 				rt.triage.woke(ctx, msg)
+				commitDigest()
 			}
 			if outcome.Attempted {
 				attempted++

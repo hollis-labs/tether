@@ -72,7 +72,7 @@ func (a *Adapter) registerToolCallEventsTool(s *gomcp.Server, proxyStore ProxyEv
 		Name: "tether_events_tool_calls",
 		Description: "Query recent proxied tool call events recorded by tether. " +
 			"Returns up to `limit` events (default 50, max 500), newest last. " +
-			"Available only in --proxy mode.",
+			"Queries Tether's durable history; gateway-local history is separate.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("server", "Filter by upstream server ID (exact match, e.g. 'hadron')", false),
 			gomcp.StringProp("tool_name", "Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)", false),

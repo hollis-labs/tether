@@ -121,7 +121,8 @@ const DefaultMaxResultBytes = 32 << 10
 // only the second is empty (CW-20261024-0049):
 //
 //   - unavailable: the origin is known to be down or switched off ("failed" after the restart
-//     limit, "excluded" by the profile or policy). It is reported once, in unavailable_servers
+//     limit, "recovering" while a remote upstream waits out its retry backoff, which can last
+//     hours, "excluded" by the profile or policy). It is reported once, in unavailable_servers
 //     with its reason in unavailable_reasons, and does not make an inventory incomplete: there
 //     is nothing more to wait for, and a permanent gap that flipped complete would teach
 //     callers to ignore the flag.
@@ -159,7 +160,7 @@ func availability(snapshot Snapshot) (unavailable map[string]bool, ids []string,
 
 // knownUnavailable reports whether an origin's absence is settled rather than in progress.
 func knownUnavailable(origin OriginStatus) bool {
-	return origin.Status == "failed" || origin.Status == "excluded"
+	return origin.Status == "failed" || origin.Status == "recovering" || origin.Status == "excluded"
 }
 
 func truncateReason(s string) string {

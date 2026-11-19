@@ -380,6 +380,13 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	if _, err = q.ExecContext(ctx, `INSERT INTO session_replacements(source_session_id,replacement_session_id,actor_uri,intent_key,binding_id,binding_generation,source_plan_digest,credential_scopes_json,credential_expires_at,credential_mode,source_protocol_revision,source_protocol_digest,custody_json,obligation_proof_ref,committed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, in.DestinationID, f.ActorURI, in.IntentKey, f.BindingID, f.BindingGeneration, digestString, scopesJSON, expires, in.CredentialMode, replacementEvidenceValue(evidence.revision), replacementEvidenceValue(evidence.digest), replacementEvidenceValue(evidence.custody), replacementEvidenceValue(evidence.reference), now); err != nil {
 		return result, err
 	}
+	// The seat's conversation moves to the replacement (+1 generation) on
+	// this same transaction, beside session_replacements.binding_generation.
+	moved, err := recordConversationTx(ctx, q, in.DestinationID, in.Plan.CatalogAgentID, ConversationReasonReplace)
+	if err != nil {
+		return result, err
+	}
+	s.queueConversationMoved(moved)
 	lineage, _ := json.Marshal(struct {
 		ReplacedBy string `json:"replaced_by"`
 		Replaces   string `json:"replaces"`

@@ -43,6 +43,8 @@ type identityRig struct {
 	op     string
 	// failStops makes the fake worker refuse every stop command.
 	failStops *atomic.Bool
+	frameHook *atomic.Pointer[func(*websocket.Conn, workerwire.Frame) bool]
+	reconnect func()
 }
 
 // newIdentityRig wires a real hub, a real registry and the real daemon route table around a fake
@@ -69,40 +71,55 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 	header.Set("Host", "worker.test")
 	header.Set("Authorization", "Bearer "+devToken)
 	header.Set("Tether-Protocol", "1")
-	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(remote.URL, "http")+workerwire.ConnectPath, header)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ws.Close() })
-	if err = ws.WriteJSON(workerwire.Frame{T: "hello", Proto: 1, Features: features, Worker: &workerwire.Worker{Label: "fake-worker", Platform: "linux", Arch: "amd64"}}); err != nil {
-		t.Fatal(err)
-	}
-	var welcome workerwire.Frame
-	if err = ws.ReadJSON(&welcome); err != nil || welcome.T != "welcome" {
-		t.Fatalf("welcome: %+v %v", welcome, err)
-	}
 	specs := make(chan workerwire.LaunchSpec, 8)
 	failStops := &atomic.Bool{}
-	go func() {
-		for {
-			var f workerwire.Frame
-			if ws.ReadJSON(&f) != nil {
-				return
-			}
-			if f.T == "stop" {
-				reply := workerwire.Frame{T: "ack", CmdID: f.CmdID, Session: f.Session}
-				if failStops.Load() {
-					reply.Error = "stop refused"
+	frameHook := &atomic.Pointer[func(*websocket.Conn, workerwire.Frame) bool]{}
+	connectWorker := func() {
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(remote.URL, "http")+workerwire.ConnectPath, header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ws.Close() })
+		if err = ws.WriteJSON(workerwire.Frame{T: "hello", Proto: 1, Features: features, Worker: &workerwire.Worker{Label: "fake-worker", Platform: "linux", Arch: "amd64"}}); err != nil {
+			t.Fatal(err)
+		}
+		var welcome workerwire.Frame
+		if err = ws.ReadJSON(&welcome); err != nil || welcome.T != "welcome" {
+			t.Fatalf("welcome: %+v %v", welcome, err)
+		}
+		go func() {
+			for {
+				var f workerwire.Frame
+				if ws.ReadJSON(&f) != nil {
+					return
+				}
+				if hook := frameHook.Load(); hook != nil && (*hook)(ws, f) {
+					return
+				}
+				if f.T == "resume_probe" && slices.Contains(features, workerwire.FeatureCodexResume) {
+					_ = ws.WriteJSON(workerwire.Frame{T: "resume_probed", CmdID: f.CmdID, Session: f.Session, NativeContext: &workerwire.NativeContext{Session: f.Session, Generation: "generation-1", Thread: "thread-retained", Workroot: "/worker/retained", Actor: registry.LogicalAgentBindingTarget("portfolio-manager")}})
+					continue
+				}
+				if f.T == "stop" {
+					reply := workerwire.Frame{T: "ack", CmdID: f.CmdID, Session: f.Session}
+					if failStops.Load() {
+						reply.Error = "stop refused"
+					}
+					_ = ws.WriteJSON(reply)
+					continue
+				}
+				var spec workerwire.LaunchSpec
+				_ = json.Unmarshal(f.Spec, &spec)
+				specs <- spec
+				reply := workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: 7}
+				if spec.ResumeSourceSessionID != "" {
+					reply.NativeContext = &workerwire.NativeContext{Session: spec.Session, Generation: "new-generation", Thread: spec.ResumeSessionID, Workroot: "/worker/retained", Actor: spec.Actor}
 				}
 				_ = ws.WriteJSON(reply)
-				continue
 			}
-			var spec workerwire.LaunchSpec
-			_ = json.Unmarshal(f.Spec, &spec)
-			specs <- spec
-			_ = ws.WriteJSON(workerwire.Frame{T: "launched", CmdID: f.CmdID, Session: f.Session, PID: 7})
-		}
-	}()
+		}()
+	}
+	connectWorker()
 	reg := registry.NewService(registry.NewStorage(db.DB()))
 	profile, err := reg.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Portfolio Manager"})
 	if err != nil {
@@ -119,7 +136,7 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &identityRig{t: t, db: db, ids: ids, svc: svc, hub: hub, worker: workerID, specs: specs, urn: profile.URN, handle: server.Handler(), op: operator, failStops: failStops}
+	return &identityRig{t: t, db: db, ids: ids, svc: svc, hub: hub, worker: workerID, specs: specs, urn: profile.URN, handle: server.Handler(), op: operator, failStops: failStops, frameHook: frameHook, reconnect: connectWorker}
 }
 
 func (r *identityRig) launch(id, urn string) (workerwire.LaunchSpec, error) {
@@ -308,6 +325,50 @@ func TestApplyCatalogIdentityIgnoresTeamMembersAndOverrides(t *testing.T) {
 	svc.applyCatalogIdentity(member)
 	if member.IdentityURN != "" {
 		t.Fatal("team member took the base agent's stable URN")
+	}
+	if !slices.Equal(member.MCPScopes, []string{"message.write"}) {
+		t.Fatalf("team member scopes = %v, want the catalog agent's declared scopes", member.MCPScopes)
+	}
+	if len(member.EditableAgents) != 0 {
+		t.Fatal("team member took the base agent's editable agents")
+	}
+}
+
+// A team member launched by the team host (internal, origin team, bounded by the
+// forming caller's recorded grant) carries the scopes its catalog agent declares,
+// including team.write, and nothing beyond them. An ordinary launch of the same
+// agent is bounded by its launcher exactly as before.
+func TestWorkerTeamMemberCredentialCarriesDeclaredTeamScope(t *testing.T) {
+	r := newIdentityRig(t, workerwire.FeatureSessionCred)
+	r.svc.Catalog = &config.Catalog{Agents: map[string]config.Agent{"team-orchestrator": {ID: "team-orchestrator", MCPScopes: []string{"message.write", "team.write"}}}}
+	member := func(ctx context.Context, id string) workerwire.LaunchSpec {
+		t.Helper()
+		plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "team-orchestrator#abc", CatalogAgentID: "team-orchestrator", TeamMember: true, ProviderID: "claude", ProviderBrand: "claude"}
+		r.svc.applyCatalogIdentity(plan)
+		row := store.SessionRow{ID: id, WorkerID: r.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: plan.LogicalAgentID, ProviderID: "claude", ProviderKind: "cli", Workspace: t.TempDir(), State: "created"}
+		if err := r.db.CreateSession(row, plan); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.svc.launchWorkerSession(ctx, &row, plan); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case spec := <-r.specs:
+			return spec
+		case <-time.After(3 * time.Second):
+			t.Fatal("worker never received the launch")
+			return workerwire.LaunchSpec{}
+		}
+	}
+	// Formed by the operator: the recorded grant is the operator's scopes.
+	spec := member(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, Grant: &LaunchGrant{Principal: identity.OperatorID, Scopes: []string{"*"}}}), "team-member")
+	if !slices.Equal(spec.MCPScopes, []string{"message.write", "team.write"}) {
+		t.Fatalf("team member scopes = %v, want exactly the declared scopes", spec.MCPScopes)
+	}
+	// A grant that lacks team.write still bounds the member: nothing is widened.
+	spec = member(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, Grant: &LaunchGrant{Principal: "msg://service/x", Scopes: []string{"message.write"}}}), "team-member-narrow")
+	if !slices.Equal(spec.MCPScopes, []string{"message.write"}) {
+		t.Fatalf("narrow-grant team member scopes = %v", spec.MCPScopes)
 	}
 }
 

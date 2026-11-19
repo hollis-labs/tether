@@ -222,6 +222,12 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 			reason = r
 		}
 	}
+	if reason == "" && session.State(to).Terminal() {
+		reason = EndReasonRuntimeExit
+		if to == string(session.StateKilled) {
+			reason = EndReasonStop
+		}
+	}
 	payload, err := json.Marshal(sessionStateChangedPayload{
 		From:     from,
 		To:       to,

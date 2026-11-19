@@ -1,0 +1,389 @@
+[
+ {
+  "run_id": "run-1",
+  "observed": false,
+  "text": "Write a 600-word essay about rivers.",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "model": "claude-sonnet-5-5",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/work",
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "tools": [
+       "Read"
+      ],
+      "mcp_servers": [],
+      "model": "claude-sonnet-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.327",
+      "output_style": "default",
+      "uuid": "df5976ad-afd5-4754-8a97-efecef8cc193"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.status",
+    "value": {
+     "type": "system",
+     "subtype": "status",
+     "status": "requesting",
+     "session_id": "00000000-0000-4000-8000-000000000002",
+     "uuid": "e5b4fc46-2710-4865-907c-354f16159aa3"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAqFFSjhnW5eWUjPKp7s"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAqFFSjhnW5eWUjPKp7s",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqFFSjhnW5eWUjPKp7s:0",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqFFSjhnW5eWUjPKp7s:0",
+    "text": "# The Persistence of Rivers\n\nA river is one of the few things in nature that is always"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqFFSjhnW5eWUjPKp7s:0",
+    "text": " both itself and something else. The Mississippi at dawn is the same river that"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqFFSjhnW5eWUjPKp7s:0",
+    "text": " Mark Twain piloted, yet not a single drop of that water remains. He"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqFFSjhnW5eWUjPKp7s:0",
+    "text": "raclitus captured this paradox some twenty-five centuries ago when he observ"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqFFSjhnW5eWUjPKp7s:0",
+    "text": "ed that no one steps into the same river twice. The river endures as"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.assistant_aborted",
+    "value": {
+     "message_id": "msg_011ChAqFFSjhnW5eWUjPKp7s"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqFFSjhnW5eWUjPKp7s:0",
+    "final": {
+     "text": "# The Persistence of Rivers\n\nA river is one of the few things in nature that is always both itself and something else. The Mississippi at dawn is the same river that Mark Twain piloted, yet not a single drop of that water remains. Heraclitus captured this paradox some twenty-five centuries ago when he observed that no one steps into the same river twice. The river endures as"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAqFFSjhnW5eWUjPKp7s"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAqFFSjhnW5eWUjPKp7s"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "raw",
+    "raw": {
+     "dialect": "claude.stream-json",
+     "type": "user",
+     "payload": {
+      "type": "user",
+      "message": {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "[Request interrupted by user]"
+        }
+       ]
+      },
+      "parent_tool_use_id": null,
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "uuid": "3a4e76f5-052b-4ebd-ac93-131a38e50fcc",
+      "timestamp": "2026-11-18T18:02:29.626Z"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "usage",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 0,
+     "output": 0,
+     "total": 0
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.abort",
+    "reason": "aborted_streaming",
+    "ext": {
+     "claude": {
+      "duration_ms": 7647,
+      "errors": [
+       "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
+      ],
+      "num_turns": 2,
+      "subtype": "error_during_execution",
+      "terminal_reason": "aborted_streaming",
+      "total_cost_usd": 0.008059
+     }
+    }
+   }
+  ]
+ },
+ {
+  "run_id": "run-2",
+  "observed": false,
+  "text": "Reply with only the word: done",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "model": "claude-sonnet-5-5",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/work",
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "tools": [
+       "Read"
+      ],
+      "mcp_servers": [],
+      "model": "claude-sonnet-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.327",
+      "output_style": "default",
+      "uuid": "6acdb54c-f3a9-4dc2-b359-0456828c0d6d"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.status",
+    "value": {
+     "type": "system",
+     "subtype": "status",
+     "status": "requesting",
+     "session_id": "00000000-0000-4000-8000-000000000002",
+     "uuid": "1a9d9c3b-79fa-42bc-97ac-d49e3721effe"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAqFpFhcWKxUCEc6G2b4"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAqFpFhcWKxUCEc6G2b4",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqFpFhcWKxUCEc6G2b4:0",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqFpFhcWKxUCEc6G2b4:0",
+    "text": "done"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqFpFhcWKxUCEc6G2b4:0",
+    "final": {
+     "text": "done"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAqFpFhcWKxUCEc6G2b4"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAqFpFhcWKxUCEc6G2b4"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "raw",
+    "raw": {
+     "dialect": "claude.stream-json",
+     "type": "rate_limit_event",
+     "payload": {
+      "type": "rate_limit_event",
+      "rate_limit_info": {
+       "status": "allowed",
+       "resetsAt": 1795402800,
+       "rateLimitType": "seven_day",
+       "overageStatus": "rejected",
+       "overageDisabledReason": "out_of_credits",
+       "isUsingOverage": false,
+       "unifiedWindows": {
+        "seven_day": {
+         "utilization": 0.4,
+         "resetsAt": 1795402800,
+         "status": "allowed"
+        }
+       }
+      },
+      "uuid": "00ea8086-efdf-4116-afa7-fbde851aa33a",
+      "session_id": "00000000-0000-4000-8000-000000000002"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 4,
+     "cache_read": 2920,
+     "cache_write": 545,
+     "output": 3,
+     "total": 3472
+    },
+    "ext": {
+     "claude": {
+      "duration_ms": 10115,
+      "num_turns": 1,
+      "stop_reason": "end_turn",
+      "subtype": "success",
+      "terminal_reason": "completed",
+      "total_cost_usd": 0.010569
+     }
+    }
+   }
+  ]
+ }
+]

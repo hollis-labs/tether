@@ -140,9 +140,54 @@ type Hub struct {
 	// Event is installed by the app for worker-bound output/state ingestion. It
 	// runs on the connection's ingest goroutine, never on its reader.
 	Event func(string, workerwire.Frame) error
+	// EventBatch, when set, ingests a run of output frames already queued for
+	// one worker together (CW-20261115-0027), so the app commits them in one
+	// transaction. It returns one error per frame (nil: accepted). Frames
+	// other than output still go to Event, one at a time and in order.
+	EventBatch func(string, []workerwire.Frame) []error
 	// Degraded, when set, is told when Sends to a connected worker keep timing
 	// out (CW-20261114-0104).
 	Degraded func(workerID string, d DeliveryDegraded)
+	// KillOrdered, when set, is told of every session a welcome orders the
+	// worker to kill, with why (CW-20261114-0168), before the welcome is sent.
+	KillOrdered func(workerID, sessionID, reason string)
+	// lookupHeld answers what the hub knows of a session a reconnecting worker
+	// holds; nil is the database query (heldSession). Tests replace it.
+	lookupHeld func(ctx context.Context, sessionID, workerID string) (state string, seq int64, err error)
+}
+
+// welcomeLookupTimeout bounds the handshake's lookups of the sessions a worker
+// holds. They run on a context detached from the connection's: a stream that is
+// canceled mid-handshake must not turn every remaining lookup into an error.
+var welcomeLookupTimeout = 10 * time.Second
+
+// heldSession is the hub's record of a session a worker holds: its state and
+// stored cursor, or sql.ErrNoRows when this hub has no such session on this worker.
+func (h *Hub) heldSession(ctx context.Context, sessionID, workerID string) (string, int64, error) {
+	if h.lookupHeld != nil {
+		return h.lookupHeld(ctx, sessionID, workerID)
+	}
+	var state string
+	var seq int64
+	err := h.db.QueryRowContext(ctx, `SELECT s.state,COALESCE(q.last_seq,0) FROM sessions s LEFT JOIN session_worker_seq q ON q.session_id=s.id WHERE s.id=? AND s.worker_id=?`, sessionID, workerID).Scan(&state, &seq)
+	return state, seq, err
+}
+
+// welcomeVerdict is what a welcome does with one session the worker holds. A
+// kill needs a definite answer (CW-20261114-0168): the session is terminal here,
+// or this hub has no such session on this worker. A lookup that failed (a
+// stalled database, a timeout) is no answer: the session is held, left
+// running and replayed once the hub can read it, never killed.
+func welcomeVerdict(state string, err error) (kill bool, reason string, held bool) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return true, "unknown_to_hub", false
+	case err != nil:
+		return false, "", true
+	case state == "completed" || state == "failed" || state == "killed":
+		return true, "hub_state_" + state, false
+	}
+	return false, "", false
 }
 
 func New(db *sql.DB) *Hub {
@@ -308,19 +353,46 @@ func (h *Hub) Connect(w http.ResponseWriter, r *http.Request) {
 		}
 		welcome.Bindings = append(welcome.Bindings, bound)
 	}
-	for _, held := range hello.Sessions {
-		var state string
-		var seq int64
-		err := h.db.QueryRowContext(r.Context(), `SELECT s.state,COALESCE(q.last_seq,0) FROM sessions s LEFT JOIN session_worker_seq q ON q.session_id=s.id WHERE s.id=? AND s.worker_id=?`, held.ID, id).Scan(&state, &seq)
-		if err != nil || state == "completed" || state == "failed" || state == "killed" {
-			welcome.Kill = append(welcome.Kill, held.ID)
-		} else {
-			welcome.Resume = append(welcome.Resume, workerwire.Cursor{Session: held.ID, FromSeq: seq + 1})
-			c.replaying[held.ID] = true
+	lookupCtx, cancelLookup := context.WithTimeout(context.WithoutCancel(r.Context()), welcomeLookupTimeout)
+	var held []string
+	kills := map[string]string{}
+	for _, s := range hello.Sessions {
+		state, seq, err := h.heldSession(lookupCtx, s.ID, id)
+		kill, reason, hold := welcomeVerdict(state, err)
+		switch {
+		case kill:
+			welcome.Kill = append(welcome.Kill, s.ID)
+			kills[s.ID] = reason
+		case hold:
+			held = append(held, s.ID)
+			log.Printf("workerhub: worker %s holds session %s the hub could not read (%v); left running, not killed, and replayed once readable", id, s.ID, err)
+		default:
+			welcome.Resume = append(welcome.Resume, workerwire.Cursor{Session: s.ID, FromSeq: seq + 1})
+			c.replaying[s.ID] = true
+		}
+	}
+	cancelLookup()
+	// A connection that went away during the lookups gets no welcome: the worker
+	// reconnects and the next handshake decides afresh.
+	if r.Context().Err() != nil {
+		return
+	}
+	for _, s := range welcome.Kill {
+		log.Printf("workerhub: worker %s: welcome orders session %s killed (%s)", id, s, kills[s])
+		if h.KillOrdered != nil {
+			h.KillOrdered(id, s, kills[s])
 		}
 	}
 	if c.send(welcome) != nil {
 		return
+	}
+	if len(held) > 0 {
+		// Held sessions replay from the stored cursor once ingest is idle (replayDropped).
+		c.pendingMu.Lock()
+		for _, s := range held {
+			c.dropped[s] = true
+		}
+		c.pendingMu.Unlock()
 	}
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
@@ -430,13 +502,67 @@ func (h *Hub) runIngest(id string, c *connection, previous <-chan struct{}) {
 		case <-c.done:
 			return
 		case f := <-c.ingest:
-			h.ingestFrame(id, c, f)
+			h.ingestQueued(id, c, f)
 		case <-tick.C:
 		}
 		if len(c.ingest) == 0 {
 			h.replayDropped(c)
 		}
 	}
+}
+
+// ingestBatchMax bounds how many queued output frames one EventBatch takes.
+const ingestBatchMax = 64
+
+// ingestQueued ingests f and, when EventBatch is set and f is output, every
+// output frame already waiting behind it (up to ingestBatchMax), without
+// waiting for more. The first non-output frame ends the run and is ingested
+// after it, so frames keep their order (CW-20261115-0027).
+func (h *Hub) ingestQueued(id string, c *connection, f workerwire.Frame) {
+	if f.T != "output" || (h.EventBatch == nil && h.Event == nil) {
+		h.ingestFrame(id, c, f)
+		return
+	}
+	batch := []workerwire.Frame{f}
+	var next *workerwire.Frame
+drain:
+	for len(batch) < ingestBatchMax {
+		select {
+		case g := <-c.ingest:
+			if g.T != "output" {
+				next = &g
+				break drain
+			}
+			batch = append(batch, g)
+		default:
+			break drain
+		}
+	}
+	errs := h.eventBatch(id, batch)
+	for i, g := range batch {
+		// As ingestFrame does for one frame: a session whose frame was not
+		// accepted is replayed from its stored cursor.
+		if i < len(errs) && errs[i] != nil && !c.replaying[g.Session] {
+			c.replaying[g.Session] = true
+			_ = c.send(workerwire.Frame{T: "replay", Session: g.Session, FromSeq: h.NextSeq(g.Session)})
+		}
+	}
+	if next != nil {
+		h.ingestFrame(id, c, *next)
+	}
+}
+
+// eventBatch is EventBatch, or Event frame by frame when only Event is set:
+// either way every output frame takes the same drain path.
+func (h *Hub) eventBatch(id string, batch []workerwire.Frame) []error {
+	if h.EventBatch != nil {
+		return h.EventBatch(id, batch)
+	}
+	errs := make([]error, len(batch))
+	for i, f := range batch {
+		errs[i] = h.Event(id, f)
+	}
+	return errs
 }
 
 func (h *Hub) ingestFrame(id string, c *connection, f workerwire.Frame) {

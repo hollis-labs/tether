@@ -7,3 +7,6 @@ type Scope = teamhost.Scope
 type Intent = teamhost.Intent
 type Record = teamhost.Record
 type Calls = teamhost.Calls
+
+// RunDeadline is the host-owned lifecycle record of an open run.
+type RunDeadline = teamhost.RunDeadline

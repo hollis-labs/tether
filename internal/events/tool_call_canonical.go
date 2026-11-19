@@ -23,6 +23,10 @@ func CanonicalToolCall(call ToolCallEvent, finished bool) Event {
 		payload["gateway_ms"] = call.GatewayMs
 		payload["forward_ms"] = call.ForwardMs
 		payload["result_bytes"] = call.ResultBytes
+		// A closed code ("flat" or "search"), always present on finished: the
+		// tool metrics read it, and its presence marks a row written after
+		// the legacy tool_call_end stopped being logged (CW-20261113-0009).
+		payload["discovery_mode"] = call.DiscoveryMode
 	}
 	// The payload contains only JSON scalar types.
 	raw, _ := json.Marshal(payload)

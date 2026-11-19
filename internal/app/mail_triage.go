@@ -23,10 +23,17 @@ import (
 //
 //   - human  wakes now, never capped;
 //   - action wakes at most once per seat per action_interval; a later one is
-//     deferred to the end of the interval, and a wake marks the seat's other
-//     pending action mail covered (the wake text counts all unread mail);
-//   - fyi    never wakes; it rides along as one line on the seat's next
-//     human-originated turn (and typed fyi is then marked read);
+//     deferred to the end of the interval (a debounce: nothing is dropped). A
+//     reply to mail the seat sent is action whatever its kind (reply_to_own,
+//     CW-20261117-0002);
+//   - fyi    never wakes on its own; it rides along on the seat's next wake
+//     (listed in the coalesced digest) or human-originated turn (one line),
+//     and typed fyi is then marked read;
+//
+// Every wake of a triaged seat is coalesced (CW-20261117-0002): its text lists
+// the seat's other pending action and fyi mail, and once the wake is delivered
+// those rows are marked woken / surfaced, so one turn carries everything and
+// no later wake repeats it.
 //   - read   never wakes; a typed envelope with attention=none is marked read
 //     by the hub at once (message.read).
 //
@@ -42,6 +49,28 @@ type seatPolicy struct {
 	handle   string
 	enabled  bool
 	interval time.Duration
+	// forms are the addresses the seat sends and receives as (its urn and its
+	// agent-mux catalog-id form), for reply_to_own.
+	forms []string
+	// agentID is the seat's catalog id (its logical agent), for resolving its
+	// live session.
+	agentID string
+}
+
+// owns reports whether urn is one of the seat's own addresses.
+func (p seatPolicy) owns(urn string) bool {
+	if urn == "" {
+		return false
+	}
+	if urn == p.seat {
+		return true
+	}
+	for _, f := range p.forms {
+		if urn == f {
+			return true
+		}
+	}
+	return false
 }
 
 type mailTriage struct {
@@ -86,6 +115,12 @@ func (m *mailTriage) gate(ctx context.Context, env messaging.Envelope) triageDec
 	}
 	pol := m.policy(env.To)
 	if !pol.enabled {
+		// attention:none never wakes a seat, triaged or not (CW-20261118-0050):
+		// it stays unread and visible, and the next real wake's unread count
+		// carries it. Triaged seats get the same through the Read class below.
+		if pol.seat != "" && m.quietNone(ctx, env, pol) {
+			return triageDecision{class: triage.Read, reason: "attention-none"}
+		}
 		return triageDecision{wake: true}
 	}
 	now := m.clock()
@@ -123,6 +158,22 @@ func (m *mailTriage) gate(ctx context.Context, env messaging.Envelope) triageDec
 	return triageDecision{wake: true, class: class}
 }
 
+// quietNone reports whether env is an explicit attention=none typed envelope
+// that no action rule overrides (operator, urgency high, reply to the seat's own
+// mail, on_behalf_of): the same answer triage.Classify gives, for a seat that
+// has no triage record.
+func (m *mailTriage) quietNone(ctx context.Context, env messaging.Envelope, pol seatPolicy) bool {
+	if env.ContentType != envelope.ContentType {
+		return false
+	}
+	urgency := env.Metadata["urgency"]
+	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
+		urgency = intent.Urgency
+	}
+	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, env.From.URN()), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle, ReplyToOwn: m.replyToOwn(ctx, env, pol)})
+	return res.Reason == "attention_none"
+}
+
 // record classifies env the first time it is seen, publishes mail.triaged and
 // settles auto-settled mail; later calls return the stored triage.
 func (m *mailTriage) record(ctx context.Context, env messaging.Envelope, pol seatPolicy, now time.Time) (store.TriageRow, error) {
@@ -133,7 +184,7 @@ func (m *mailTriage) record(ctx context.Context, env messaging.Envelope, pol sea
 	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
 		urgency = intent.Urgency
 	}
-	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, env.From.URN()), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle})
+	res := triage.Classify(triage.Input{From: m.operatorForm(ctx, env.From.URN()), Kind: env.Kind, ContentType: env.ContentType, Payload: env.Payload, Urgency: urgency, RecipientHandle: pol.handle, ReplyToOwn: m.replyToOwn(ctx, env, pol)})
 	row, created, err := m.st.TriageRecord(ctx, store.TriageRow{MessageID: env.ID, Recipient: env.To.URN(), Seat: pol.seat, Class: string(res.Class), Reason: res.Reason, Typed: res.Typed, CreatedAt: now})
 	if err != nil || !created {
 		return row, err
@@ -147,6 +198,20 @@ func (m *mailTriage) record(ctx context.Context, env messaging.Envelope, pol sea
 	}
 	m.emit(ctx, env, pol, res)
 	return row, nil
+}
+
+// replyToOwn reports whether env answers mail its recipient seat sent: its
+// in_reply_to names a message whose sender is one of the seat's addresses.
+func (m *mailTriage) replyToOwn(ctx context.Context, env messaging.Envelope, pol seatPolicy) bool {
+	if env.InReplyTo == "" {
+		return false
+	}
+	parent, err := m.st.MessagingStore().Get(ctx, env.InReplyTo)
+	if err != nil {
+		return false
+	}
+	from := parent.From.URN()
+	return from == env.To.URN() || pol.owns(from)
 }
 
 func (m *mailTriage) emit(ctx context.Context, env messaging.Envelope, pol seatPolicy, res triage.Result) {
@@ -169,9 +234,11 @@ func (m *mailTriage) emit(ctx context.Context, env messaging.Envelope, pol seatP
 	}
 }
 
-// woke records a delivered wake of env's seat: the message is woken, an action
-// wake starts the seat's interval, and the seat's other pending action mail is
-// covered by this wake.
+// woke records a delivered wake of env's seat: the message is woken and an
+// action wake starts the seat's interval. The seat's other pending mail is not
+// touched here: the digest the wake carried settles what it listed
+// (CW-20261117-0002 removed the blanket "covered" that left mail unread and
+// unnamed).
 func (m *mailTriage) woke(ctx context.Context, env messaging.Envelope) {
 	if m == nil || m.st == nil || m.policy == nil {
 		return
@@ -189,7 +256,130 @@ func (m *mailTriage) woke(ctx context.Context, env messaging.Envelope) {
 	if row.Class == string(triage.Action) {
 		_ = m.st.SetSeatLastActionWake(ctx, pol.seat, now)
 	}
-	_, _ = m.st.TriageCoverPending(ctx, pol.seat, env.ID, now)
+}
+
+// digestLimit caps the messages a coalesced wake names one by one.
+const digestLimit = 15
+
+// digest is the coalesced part of a wake to env's seat (CW-20261117-0002): the
+// seat's other pending action and fyi mail, one line each, and the commit to
+// run once the wake was delivered, which marks every pending row the digest
+// counted covered (action: named by this wake, so it never wakes on its own)
+// or surfaced (fyi, typed fyi also read). "" and a
+// no-op when the seat is not triaged or has nothing else pending.
+func (m *mailTriage) digest(ctx context.Context, env messaging.Envelope) (string, func()) {
+	noop := func() {}
+	if m == nil || m.st == nil || m.policy == nil {
+		return "", noop
+	}
+	pol := m.policy(env.To)
+	if !pol.enabled {
+		return "", noop
+	}
+	items, _, err := m.st.TriageSeatPending(ctx, pol.seat, 500)
+	if err != nil {
+		return "", noop
+	}
+	others := items[:0:0]
+	for _, it := range items {
+		if it.MessageID != env.ID {
+			others = append(others, it)
+		}
+	}
+	if len(others) == 0 {
+		return "", noop
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Also pending for you (%d):", len(others))
+	for i, it := range others {
+		if i == digestLimit {
+			fmt.Fprintf(&b, "\n- and %d more (tether_message_inbox to list them)", len(others)-digestLimit)
+			break
+		}
+		label := m.nameOf(ctx, it.From)
+		if it.Subject != "" {
+			label += ": " + it.Subject
+		}
+		tag := ""
+		switch {
+		case it.Reason == "reply_to_own":
+			tag = " [reply to you]"
+		case it.Class == string(triage.FYI):
+			tag = " [fyi]"
+		}
+		fmt.Fprintf(&b, "\n- `%s` %s%s", it.MessageID, label, tag)
+	}
+	commit := func() {
+		now := m.clock()
+		cctx := context.WithoutCancel(ctx)
+		for _, it := range others {
+			// Covered: this wake named it, so it never wakes on its own.
+			state := store.TriageCovered
+			if it.Class == string(triage.FYI) {
+				state = store.TriageSurfaced
+			}
+			_ = m.st.TriageSetState(cctx, it.MessageID, state, now)
+			if it.Class == string(triage.FYI) && it.Typed {
+				if to, err := messaging.ParseURN(it.Recipient); err == nil {
+					_ = m.st.MessagingStore().MarkRead(cctx, it.MessageID, to)
+				}
+			}
+		}
+	}
+	return b.String(), commit
+}
+
+// withDigest appends env's coalesced digest to a wake text. The returned
+// commit must run only once the wake was delivered.
+func (m *mailTriage) withDigest(ctx context.Context, env messaging.Envelope, text string) (string, func()) {
+	line, commit := m.digest(ctx, env)
+	if line == "" {
+		return text, commit
+	}
+	return text + "\n\n" + line, commit
+}
+
+// enabledFor reports whether mail to to is triaged.
+func (m *mailTriage) enabledFor(to messaging.Address) bool {
+	return m != nil && m.policy != nil && m.policy(to).enabled
+}
+
+// backfillReplyToOwn re-classifies pending fyi mail that answers mail its seat
+// sent as action/reply_to_own (CW-20261117-0002): before the rule existed such
+// replies were filed as fyi and never woke anyone. The wake sweep then wakes
+// each seat once, coalesced. Idempotent: only pending fyi rows move. It returns
+// the candidates examined, the rows moved and the seats they belong to.
+func (m *mailTriage) backfillReplyToOwn(ctx context.Context) (examined, moved int, seats map[string]int, err error) {
+	seats = map[string]int{}
+	if m == nil || m.st == nil || m.policy == nil {
+		return 0, 0, seats, nil
+	}
+	cands, err := m.st.TriageFYIReplies(ctx)
+	if err != nil {
+		return 0, 0, seats, err
+	}
+	now := m.clock()
+	for _, c := range cands {
+		examined++
+		owned := c.ParentFrom == c.Recipient || c.ParentFrom == c.Seat
+		if !owned {
+			if to, perr := messaging.ParseURN(c.Recipient); perr == nil {
+				owned = m.policy(to).owns(c.ParentFrom)
+			}
+		}
+		if !owned {
+			continue
+		}
+		ok, uerr := m.st.TriageReclassify(ctx, c.MessageID, string(triage.Action), "reply_to_own", now)
+		if uerr != nil {
+			return examined, moved, seats, uerr
+		}
+		if ok {
+			moved++
+			seats[c.Seat]++
+		}
+	}
+	return examined, moved, seats, nil
 }
 
 // fyiLine is the one line a human-originated turn to the seat carries about its
@@ -275,7 +465,11 @@ func (s *Service) seatPolicyFor(to messaging.Address) seatPolicy {
 		if handle == "" {
 			handle = id
 		}
-		return seatPolicy{seat: seat, handle: "@" + handle, enabled: enabled, interval: interval}
+		forms := []string{"msg://agent/agent-mux/" + id}
+		if a.URN != "" {
+			forms = append(forms, a.URN)
+		}
+		return seatPolicy{seat: seat, handle: "@" + handle, enabled: enabled, interval: interval, forms: forms, agentID: id}
 	}
 	return seatPolicy{}
 }

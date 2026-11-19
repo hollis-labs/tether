@@ -17,7 +17,9 @@ import (
 // over agentsessions.Manager.SendInput.
 func (s *Service) SendInput(id string, data []byte) error {
 	if row, worker := s.workerSession(id); worker {
-		return s.sendWorkerCommand(context.Background(), row, "input", data)
+		return s.stdioInput(id, data, stdioFromSendInput, func() error {
+			return s.sendWorkerCommand(context.Background(), row, "input", data)
+		})
 	}
 	if err := s.refuseWidenedCodex(id); err != nil {
 		return err
@@ -28,7 +30,9 @@ func (s *Service) SendInput(id string, data []byte) error {
 			// event can still open a marker, and semantic SendTurn stays tracked.
 			return s.Manager.SendInput(id, data)
 		}
-		return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, data) })
+		return s.stdioInput(id, data, stdioFromSendInput, func() error {
+			return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, data) })
+		})
 	})
 }
 
@@ -114,7 +118,7 @@ func (s *Service) sendTurn(ctx context.Context, id, text string) error {
 			}
 			data = append(data, '\n')
 		}
-		return s.sendWorkerCommand(ctx, row, "input", data)
+		return s.stdioInput(id, data, stdioFromSendTurn, func() error { return s.sendWorkerCommand(ctx, row, "input", data) })
 	}
 	if err := s.refuseWidenedCodex(id); err != nil {
 		return err
@@ -129,7 +133,9 @@ func (s *Service) sendTurn(ctx context.Context, id, text string) error {
 		if err != nil {
 			return err
 		}
-		return s.trackTurnSubmissionContext(ctx, id, func() error { return s.Manager.SendInput(id, payload) })
+		return s.stdioInput(id, payload, stdioFromSendTurn, func() error {
+			return s.trackTurnSubmissionContext(ctx, id, func() error { return s.Manager.SendInput(id, payload) })
+		})
 	case info.Caps.JsonRpcStdio:
 		return s.trackTurnSubmissionContext(ctx, id, func() error { return s.sendTurnJSONRPC(ctx, id, text) })
 	default:

@@ -192,23 +192,17 @@ func TestPlacementClearsStaleCommitFiles(t *testing.T) {
 }
 func TestHostJournalPinRefusesBeforeEpochChanges(t *testing.T) {
 	p, r := placedHost(t, nil)
-	before, err := p.Inspect(context.Background(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := inspectHost(t, p, r)
 	wrong := r
 	wrong.Journal = "foreign"
-	if err = p.Stop(context.Background(), wrong); err == nil {
+	if err := p.Stop(context.Background(), wrong); err == nil {
 		t.Fatal("wrong journal accepted")
 	}
-	after, err := p.Inspect(context.Background(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	after := inspectHost(t, p, r)
 	if after.Receipt.Epoch != before.Receipt.Epoch {
 		t.Fatal("wrong journal changed controller epoch")
 	}
-	if _, err = p.Reattach(context.Background(), wrong); err == nil {
+	if _, err := p.Reattach(context.Background(), wrong); err == nil {
 		t.Fatal("reattach wrong journal accepted")
 	}
 }
@@ -298,21 +292,15 @@ func TestStopRefusesStoredPIDWhenAuthenticatedPeerDiffers(t *testing.T) {
 
 func TestHostPIDMismatchRefusesBeforeEpochChanges(t *testing.T) {
 	p, r := placedHost(t, nil)
-	before, err := p.Inspect(context.Background(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := inspectHost(t, p, r)
 	wrong := r
 	wrong.HostPID = os.Getpid()
-	err = p.Stop(context.Background(), wrong)
+	err := p.Stop(context.Background(), wrong)
 	var fault *Failure
 	if !errors.As(err, &fault) || fault.Code != "identity_mismatch" {
 		t.Fatalf("PID mismatch: %v", err)
 	}
-	after, err := p.Inspect(context.Background(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	after := inspectHost(t, p, r)
 	if after.Receipt.Epoch != before.Receipt.Epoch {
 		t.Fatal("PID refusal changed controller epoch")
 	}

@@ -27,11 +27,19 @@ var ErrIdentityInUse = errors.New("stable agent identity is already bound to ano
 // override, and a team member (derived "<agent>#<slot>" id) never takes the
 // base agent's URN.
 func (s *Service) applyCatalogIdentity(plan *launch.Plan) {
-	if s.cat() == nil || plan.TeamMember {
+	if s.cat() == nil {
 		return
 	}
 	agent, ok := s.cat().Agents[plan.CatalogAgent()]
 	if !ok {
+		return
+	}
+	if plan.TeamMember {
+		// A team member never takes the base agent's URN or editable agents, but
+		// it does get the credential scopes its catalog agent declares (for
+		// example team.write, without which a member cannot call any
+		// tether_team_* verb). They are still bounded by the launch ceiling.
+		plan.MCPScopes = slices.Clone(agent.MCPScopes)
 		return
 	}
 	plan.IdentityURN = agent.URN
@@ -144,6 +152,23 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 		return undo, err
 	}
 	expires := time.Now().UTC().Add(sessionTokenTTL())
+	if p.NativeResumeOnly {
+		ceiling, err := s.nativeOnlyCredentialCeiling(ctx, p)
+		if err != nil {
+			revokeBinding()
+			return undo, err
+		}
+		if !slices.Contains(ceiling.scopes, "*") {
+			scopes = slices.DeleteFunc(scopes, func(v string) bool { return !scopeHeld(ceiling.scopes, v) })
+		}
+		if len(scopes) == 0 {
+			revokeBinding()
+			return undo, launchScopeError{wanted: wanted}
+		}
+		if ceiling.expires != nil && ceiling.expires.Before(expires) {
+			expires = *ceiling.expires
+		}
+	}
 	self := "msg://session/local/" + row.ID
 	// CreatedBy records who launched the session, as the hub-local path does
 	// (mintSessionCredential). Without it every worker-hosted session credential
@@ -165,7 +190,7 @@ func (s *Service) prepareWorkerIdentity(ctx context.Context, row *store.SessionR
 	}
 	s.auditLaunchAttribution(ctx, row.ID, mode, attribution)
 	spec.Credential, spec.MCPScopes = token, scopes
-	revokeGrant := s.grantAgentTokens(ctx, row, spec, scopes)
+	revokeGrant := s.grantAgentTokens(ctx, row, spec, scopes, expires)
 	return func() {
 		revokeBinding()
 		revokeGrant()
@@ -231,7 +256,7 @@ type AgentTokenIssuer interface {
 // beside the existing session credential: a worker without FeatureAgentToken,
 // or an issuer failure, leaves the launch as it was. The returned func undoes
 // the grant when the launch fails.
-func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, spec *workerwire.LaunchSpec, mcpScopes []string) func() {
+func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, spec *workerwire.LaunchSpec, mcpScopes []string, expires time.Time) func() {
 	noop := func() {}
 	if s.AgentTokens == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureAgentToken) {
 		return noop
@@ -248,7 +273,7 @@ func (s *Service) grantAgentTokens(ctx context.Context, row *store.SessionRow, s
 		return noop
 	}
 	grant := map[string][]string{"tether": canonical}
-	if err := s.AgentTokens.RegisterSessionGrant(row.ID, device, grant, time.Now().Add(sessionTokenTTL())); err != nil {
+	if err := s.AgentTokens.RegisterSessionGrant(row.ID, device, grant, expires); err != nil {
 		log.Printf("worker session %s: agent token grant failed", row.ID)
 		return noop
 	}

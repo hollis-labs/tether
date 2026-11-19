@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,6 +38,56 @@ type EventDTO struct {
 type EventListResponse struct {
 	Events     []EventDTO `json:"events"`
 	NextCursor int64      `json:"next_cursor,omitempty"`
+	// Partial says the read hit its deadline (CW-20261114-0166): Events is
+	// what was found newer than NextCursor; continue from NextCursor.
+	Partial bool `json:"partial,omitempty"`
+}
+
+// EventHistoryStore is the bounded history read (CW-20261114-0166): on a
+// read-only connection, cut off by its context with a partial page and a
+// cursor. The handlers use it when the store has it.
+type EventHistoryStore interface {
+	QueryEventHistory(ctx context.Context, f store.EventFilter) (store.EventPage, error)
+}
+
+// queryEventHistory reads one page of history: bounded by HistoryDeadline on a
+// store that supports it, else the plain query.
+func (s *Server) queryEventHistory(ctx context.Context, f store.EventFilter) (store.EventPage, error) {
+	if h, ok := s.EventsStore.(EventHistoryStore); ok {
+		ctx, cancel := context.WithTimeout(ctx, store.HistoryDeadline)
+		defer cancel()
+		return h.QueryEventHistory(ctx, f)
+	}
+	var (
+		rows []events.Event
+		err  error
+	)
+	if f.SessionID != "" && len(f.Kinds) == 0 && len(f.Scopes) == 0 && f.SinceSeq == 0 {
+		rows, err = s.EventsStore.ListEventsBySession(f.SessionID, f.Limit, f.Cursor)
+	} else {
+		rows, err = s.EventsStore.QueryEvents(f)
+	}
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	page := store.EventPage{Events: rows}
+	effective := f.Limit
+	if effective <= 0 {
+		effective = 100
+	}
+	if len(rows) == effective && len(rows) > 0 {
+		page.NextCursor = rows[len(rows)-1].Seq
+	}
+	return page, nil
+}
+
+// writeEventPage writes a history page as an EventListResponse.
+func writeEventPage(w http.ResponseWriter, page store.EventPage) {
+	out := make([]EventDTO, 0, len(page.Events))
+	for _, e := range page.Events {
+		out = append(out, eventToDTO(e))
+	}
+	writeJSON(w, http.StatusOK, EventListResponse{Events: out, NextCursor: page.NextCursor, Partial: page.Partial})
 }
 
 func eventToDTO(e events.Event) EventDTO {
@@ -197,24 +248,12 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
-	rows, err := s.EventsStore.QueryEvents(filter)
+	page, err := s.queryEventHistory(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, "query events: "+err.Error())
 		return
 	}
-	out := make([]EventDTO, 0, len(rows))
-	for _, e := range rows {
-		out = append(out, eventToDTO(e))
-	}
-	resp := EventListResponse{Events: out}
-	effective := filter.Limit
-	if effective <= 0 {
-		effective = 100
-	}
-	if len(rows) == effective && len(rows) > 0 {
-		resp.NextCursor = rows[len(rows)-1].Seq
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeEventPage(w, page)
 }
 
 func parseEventsHistoryFilter(q map[string][]string) (store.EventFilter, error) {
@@ -291,22 +330,10 @@ func (s *Server) handleSessionEventsList(w http.ResponseWriter, r *http.Request,
 		cursor = n
 	}
 
-	rows, err := s.EventsStore.ListEventsBySession(sessionID, limit, cursor)
+	page, err := s.queryEventHistory(r.Context(), store.EventFilter{SessionID: sessionID, Limit: limit, Cursor: cursor})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	out := make([]EventDTO, 0, len(rows))
-	for _, e := range rows {
-		out = append(out, eventToDTO(e))
-	}
-	resp := EventListResponse{Events: out}
-	effective := limit
-	if effective <= 0 {
-		effective = 100
-	}
-	if len(rows) == effective && len(rows) > 0 {
-		resp.NextCursor = rows[len(rows)-1].Seq
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeEventPage(w, page)
 }

@@ -46,7 +46,7 @@ func (s *Store) PendingReplies(ctx context.Context, agentURNs []string, handle s
  WHERE m.to_urn IN (`+in+`) AND m.content_type=? AND m.canceled_at IS NULL AND m.archived_at IS NULL AND m.routing_staged=0
    AND json_valid(m.payload)
    AND (json_extract(m.payload,'$.awaiting') = ?
-        OR (coalesce(json_extract(m.payload,'$.awaiting'),'') = '' AND json_extract(m.payload,'$.kind') IN ('question','decision','approval_request')))
+        OR (coalesce(json_extract(m.payload,'$.awaiting'),'') = '' AND json_extract(m.payload,'$.kind') IN ('question','decision','approval_request','request')))
    AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.in_reply_to=m.id AND r.from_urn IN (`+in+`))
  ORDER BY m.created_at DESC, m.id DESC LIMIT ?`, pendingArgs(agentURNs, handle, limit)...)
 	if err != nil {
@@ -74,11 +74,21 @@ func (s *Store) PendingReplies(ctx context.Context, agentURNs []string, handle s
 
 // NeedsReply reports whether e waits on the holder of handle.
 func NeedsReply(e envelope.Envelope, handle string) bool {
+	// A reply that is not itself an ask settles the exchange: it wakes the asker
+	// (awaiting is stamped to the asker, CW-20261117-0003) but never demands a
+	// reply to the reply, or two seats would hold each other's Stop gate forever.
+	if e.InReplyTo != "" && !asks(e.Kind) {
+		return false
+	}
 	if e.Awaiting != "" {
 		return e.Awaiting == handle
 	}
-	return envelope.HasOptions(e.Kind)
+	return asks(e.Kind)
 }
+
+// asks reports whether kind expects an answer: options to choose from, or a
+// request to act and report back.
+func asks(k envelope.Kind) bool { return envelope.HasOptions(k) || k == envelope.KindRequest }
 
 func pendingArgs(urns []string, handle string, limit int) []any {
 	args := make([]any, 0, 2*len(urns)+3)

@@ -26,6 +26,9 @@ const FeatureExtractRefs = "extract-refs"
 // workspace). The hub resumes on a worker only when it is advertised.
 const FeatureWorkerResume = "worker-resume"
 
+// FeatureCodexResume requires exact-source, generation-bound native admission.
+const FeatureCodexResume = "codex-native-resume-v1"
+
 // FeatureEditableAgents is advertised by a worker that plants
 // LaunchSpec.EditableAgents as --editable-agent on the tether MCP entry. The
 // hub refuses to launch an agent that declares editable_agents on a worker
@@ -112,7 +115,9 @@ type LaunchSpec struct {
 	AgentURN string `json:"agent_urn,omitempty"`
 	// ResumeSessionID is the provider's own conversation id to continue (claude --resume). Set only for a
 	// hub-approved resume on the same worker that ran the source session.
-	ResumeSessionID string `json:"resume_session_id,omitempty"`
+	ResumeSessionID       string `json:"resume_session_id,omitempty"`
+	ResumeSourceSessionID string `json:"resume_source_session_id,omitempty"`
+	ResumeGeneration      string `json:"resume_generation,omitempty"`
 
 	// AgentTokens are the issued-JWT token files the outpost maintains for the
 	// session (see FeatureAgentToken). The hub registers the same set as the

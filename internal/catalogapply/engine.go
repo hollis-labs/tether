@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -91,7 +92,15 @@ type Plan struct {
 	BackupID         string        `json:"backup_id,omitempty"`
 	Activation       string        `json:"activation,omitempty"`
 	ApprovalRequired string        `json:"approval_required,omitempty"`
+	// OperatorOnly marks a plan that changes the operator attestation trust
+	// root (CW-20261114-0152): only the operator approves it, even where
+	// delegated privileged approval is enabled.
+	OperatorOnly bool `json:"operator_only,omitempty"`
 }
+
+// ReasonOperatorAttestation is the privileged reason of a plan that adds,
+// changes or removes global.yaml's operator_attestation block.
+const ReasonOperatorAttestation = "changes the operator attestation trust root"
 
 // Caller names who planned a change: the verified principal and, for a
 // launched agent, its session and agent. It is recorded, not trusted for access.
@@ -131,6 +140,11 @@ type Engine struct {
 	// (ApprovalRequest.Delegated) from non-privileged plans to every plan.
 	// Off by default: privileged plans stay operator-approved.
 	DelegatedPrivileged bool
+	// OnOperatorAttestation, when set, is called while an OperatorOnly plan is
+	// applied, after its files are installed and before the reload: it records
+	// next (nil when the block is removed) as the approved trust root. restore
+	// puts the previous record back if the apply is then rolled back.
+	OnOperatorAttestation func(ctx context.Context, planID string, next *operatorattest.RawConfig) (restore func(), err error)
 	// DelegatedApps names the apps whose service principals (msg://service/<app>/<env>)
 	// may approve by delegation. Empty means no delegation.
 	DelegatedApps []string
@@ -281,6 +295,9 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 				pf.Privileged = true
 				for _, r := range reasons {
 					privSet[f.Path+": "+r] = true
+					if r == ReasonOperatorAttestation {
+						p.OperatorOnly = true
+					}
 				}
 			}
 			diff.WriteString(unifiedDiff(f.Path, old, f.Content))
@@ -405,6 +422,9 @@ func privilegedReasons(p, old, next string, deleted bool) []string {
 	}
 	if privilegedPath(p) {
 		reasons = append(reasons, "changes daemon defaults, upstream servers or sandbox rules")
+	}
+	if p == "global.yaml" && attestationBlock(old) != attestationBlock(nextUnlessDeleted(next, deleted)) {
+		reasons = append(reasons, ReasonOperatorAttestation)
 	}
 	dir := strings.SplitN(p, "/", 2)[0]
 	if dir != "agents" && dir != "launches" {
@@ -571,6 +591,9 @@ func (e *Engine) Approve(req ApprovalRequest) (*Plan, error) {
 	if req.Digest != p.Digest {
 		return nil, fmt.Errorf("digest mismatch: the approval names a different plan content than %q holds", p.ID)
 	}
+	if req.Delegated && p.OperatorOnly {
+		return nil, fmt.Errorf("plan %q %s; only the operator credential approves it (`tether catalog approve`)", p.ID, ReasonOperatorAttestation)
+	}
 	if req.Delegated && len(p.Privileged) > 0 && !e.DelegatedPrivileged {
 		return nil, fmt.Errorf("plan %q makes privileged changes; only the operator approves those (`tether catalog approve`)", p.ID)
 	}
@@ -616,4 +639,29 @@ func (e *Engine) Backups() ([]BackupInfo, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
+}
+
+func nextUnlessDeleted(next string, deleted bool) string {
+	if deleted {
+		return ""
+	}
+	return next
+}
+
+// attestationBlockOf parses global.yaml content's operator_attestation block
+// (nil when absent or unparseable).
+func attestationBlockOf(content string) *operatorattest.RawConfig {
+	var g struct {
+		OperatorAttestation *operatorattest.RawConfig `yaml:"operator_attestation"`
+	}
+	if yaml.Unmarshal([]byte(content), &g) != nil {
+		return nil
+	}
+	return g.OperatorAttestation
+}
+
+// attestationBlock is the block's digest, "" when absent: two contents with
+// the same block compare equal whatever else changed.
+func attestationBlock(content string) string {
+	return operatorattest.Digest(attestationBlockOf(content))
 }
