@@ -293,7 +293,12 @@ The run ends, and every member session stops, when:
 - no non-owner member is live any more (all stopped, failed or released).
 
 The owner can still dissolve explicitly (`tether_team_dissolve`). A dissolved run
-is closed; a failed dissolve is retried on the next pass. A formation that fails after members launched tears them down. Only Stage B runs
+is closed; a failed dissolve is retried on the next pass. `tether_team_member_add` on a Stage B run (owner only) adds a worker under the
+run's recorded ceilings, with a timeout of what remains until the run's
+deadline, at most three workers and five agents; the added worker has the
+workers grants (it can message only the orchestrator). Stage A runs keep the
+old member-add behavior.
+A formation that fails after members launched tears them down. Only Stage B runs
 get a deadline row and are reaped. Deadlines live in
 `team_run_deadlines` (migration 0108); runs formed before it have none and are
 dissolved with the verbs. Limits other than `timeout` (`max_rounds`, `max_stalls`,

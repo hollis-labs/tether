@@ -517,6 +517,42 @@ func (c Ceilings) DissolvesOnResult(t teams.Team, reporterSlot string) bool {
 	return c.Policy != nil && reporterSlot == SlotOrchestrator && isStageB(t)
 }
 
+// AdmitMemberAdd limits what may be added to a Stage B run: only workers, at
+// most three of them, and never more than five agents in all. Counted members
+// are those still holding a seat (live or terminating); the owner is not an
+// agent. The added worker has the workers slot's grants, so it can message only
+// the orchestrator.
+func (c Ceilings) AdmitMemberAdd(t teams.Team, roster teams.Roster, slot string) error {
+	if c.Policy == nil || !isStageB(t) {
+		return nil
+	}
+	if slot != SlotWorkers {
+		return deny("only %s may be added to a stage B run", SlotWorkers)
+	}
+	agents, workers := 0, 0
+	for _, m := range roster.Members {
+		if m.Governance == teams.Owner {
+			continue
+		}
+		switch m.Status {
+		case "active", "provisioning", "stopping", "releasing", "failing":
+			agents++
+			if m.Slot == SlotWorkers {
+				workers++
+			}
+		}
+	}
+	if workers >= maxWorkersB {
+		return deny("a stage B run has at most %d workers", maxWorkersB)
+	}
+	if agents >= maxAgentsB {
+		return deny("a team has at most %d agents", maxAgentsB)
+	}
+	return nil
+}
+
+var _ teamsvc.MemberAddPolicy = Ceilings{}
+
 // ManagesLifecycle reports that only Stage B runs are reaped (deadline, all stopped).
 func (c Ceilings) ManagesLifecycle(t teams.Team) bool { return c.Policy != nil && isStageB(t) }
 

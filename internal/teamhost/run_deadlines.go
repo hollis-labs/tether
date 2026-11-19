@@ -2,6 +2,7 @@ package teamhost
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -40,6 +41,21 @@ func (h *Host) RequestRunEnd(ctx context.Context, runID, reason string) (bool, e
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// GetRunDeadline returns the hard-stop time of an open run; false when the run
+// has no open row.
+func (h *Host) GetRunDeadline(ctx context.Context, runID string) (time.Time, bool, error) {
+	var raw string
+	err := h.db.QueryRowContext(ctx, `SELECT deadline FROM team_run_deadlines WHERE run_id=? AND closed=0`, runID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	at, err := time.Parse(deadlineLayout, raw)
+	return at, err == nil, err
 }
 
 // OpenRuns lists runs that have not been closed, soonest deadline first.

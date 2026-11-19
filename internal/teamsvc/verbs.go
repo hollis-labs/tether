@@ -69,7 +69,14 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 			}
 			// A person/service owner is a governance participant, not a provisioned
 			// worker. It acquires no session, spawn capability or provider resources.
-			r.Members = append(r.Members, teams.Member{ID: serviceKey(scope) + "-owner", Slot: slot, Actor: p.ID, Kind: p.Kind, Status: "active", Governance: teams.Owner, JoinedAt: s.deps.Clock.Now()})
+			owner := teams.Member{ID: serviceKey(scope) + "-owner", Slot: slot, Actor: p.ID, Kind: p.Kind, Status: "active", Governance: teams.Owner, JoinedAt: s.deps.Clock.Now()}
+			if s.managesLifecycle(req.Team) {
+				// The owner seat carries the run's resolved ceilings so a
+				// member added later inherits them (see AddMember). It still
+				// launches no session.
+				owner.Limits, owner.Budget, owner.SpawnCapable = limits, limits.Budget, true
+			}
+			r.Members = append(r.Members, owner)
 			return nil
 		})
 		if err == nil && s.managesLifecycle(req.Team) {
@@ -97,11 +104,15 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 
 func (s *Service) AddMember(ctx context.Context, req AddMemberRequest) (Result, error) {
 	return s.call(ctx, string(mesh.MemberAdd), req.Key, req, func(ctx context.Context, p Principal, scope Scope, _ Record) (Result, error) {
-		t, _, err := s.run(ctx, req.RunID, p)
+		t, actor, err := s.run(ctx, req.RunID, p)
 		if err != nil {
 			return Result{}, err
 		}
-		member, err := teams.Spawn(ctx, t, s.deps.Roster, s.deps.Provisioner, s.deps.Trust, s.deps.Approvals, req.RunID, p.ID, req.Slot, serviceKey(scope), req.Limits, s.deps.Defaults)
+		t, limits, defaults, err := s.addMemberLimits(ctx, t, actor, req)
+		if err != nil {
+			return Result{}, err
+		}
+		member, err := teams.Spawn(ctx, t, s.deps.Roster, s.deps.Provisioner, s.deps.Trust, s.deps.Approvals, req.RunID, p.ID, req.Slot, serviceKey(scope), limits, defaults)
 		view := memberView(member)
 		return Result{Member: &view}, err
 	})

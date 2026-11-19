@@ -303,3 +303,37 @@ func TestCeilingTimeoutMustBeADuration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAdmitMemberAddCaps(t *testing.T) {
+	c := ceilingsFor(t, bPolicy)
+	team, _ := bTeam(3)
+	member := func(slot, status string) teams.Member {
+		return teams.Member{ID: slot + status, Slot: slot, Status: status, Governance: teams.MemberRole}
+	}
+	owner := teams.Member{ID: "owner", Slot: "coordinator", Status: "active", Governance: teams.Owner}
+	base := []teams.Member{owner, member("orchestrator", "active"), member("reviewer", "active"), member("workers", "active")}
+	if err := c.AdmitMemberAdd(team, teams.Roster{Members: base}, "workers"); err != nil {
+		t.Fatalf("add to a small team refused: %v", err)
+	}
+	three := append(append([]teams.Member{}, base...), member("workers", "provisioning"), member("workers", "stopping"))
+	for name, tc := range map[string]struct {
+		members []teams.Member
+		slot    string
+	}{
+		"fourth worker":     {three, "workers"},
+		"not a worker slot": {base, "reviewer"},
+		"sixth agent":       {append(append([]teams.Member{}, base...), member("workers", "active"), member("workers", "active"), member("orchestrator", "active")), "workers"},
+	} {
+		if err := c.AdmitMemberAdd(team, teams.Roster{Members: tc.members}, tc.slot); !errors.Is(err, teamsvc.ErrDenied) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	// A stopped worker frees its seat; a Stage A team is not constrained here.
+	freed := append(append([]teams.Member{}, base...), member("workers", "active"), member("workers", "stopped"))
+	if err := c.AdmitMemberAdd(team, teams.Roster{Members: freed}, "workers"); err != nil {
+		t.Fatalf("stopped member still counted: %v", err)
+	}
+	if err := c.AdmitMemberAdd(stageATeamFor(sol, codex), teams.Roster{}, "reviewer"); err != nil {
+		t.Fatalf("stage A add constrained: %v", err)
+	}
+}

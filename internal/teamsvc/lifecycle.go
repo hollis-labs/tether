@@ -15,6 +15,8 @@ import (
 // dissolves inline on a final result and never reaps by timeout.
 type RunDeadlines interface {
 	RecordRunDeadline(ctx context.Context, runID string, deadline time.Time) error
+	// GetRunDeadline reports false when the run has no open row.
+	GetRunDeadline(ctx context.Context, runID string) (time.Time, bool, error)
 	// RequestRunEnd reports false when the run has no open row.
 	RequestRunEnd(ctx context.Context, runID, reason string) (bool, error)
 	OpenRuns(ctx context.Context, limit int) ([]RunDeadline, error)
@@ -29,6 +31,13 @@ type LifecyclePolicy interface {
 	// ManagesLifecycle reports whether the daemon reaps runs of this team
 	// (deadline, all-stopped). Teams it does not manage behave as before.
 	ManagesLifecycle(t teams.Team) bool
+}
+
+// MemberAddPolicy is an optional Ceilings extension. For a lifecycle-managed
+// team it decides whether one more member may be added to a run with this
+// roster (shape and size caps); a nil error admits it.
+type MemberAddPolicy interface {
+	AdmitMemberAdd(t teams.Team, roster teams.Roster, slot string) error
 }
 
 const runDissolved mesh.TaskState = "dissolved"
@@ -195,4 +204,52 @@ func (s *Service) finishOnResult(ctx context.Context, t teams.Team, runID string
 func (s *Service) managesLifecycle(t teams.Team) bool {
 	policy, ok := s.deps.Ceilings.(LifecyclePolicy)
 	return ok && s.deps.Deadlines != nil && policy.ManagesLifecycle(t)
+}
+
+// addMemberLimits returns the team, request limits and defaults a member add
+// spawns under. Unmanaged (Stage A) runs are unchanged. A managed run adds
+// under the ceilings recorded on its owner seat at formation and the run's
+// deadline: the member's timeout is what remains of the run's, never more. The
+// owner is the only seat that may spawn, and only into the slots the policy
+// admits; the spawn grant is synthesized here for that one call and is not part
+// of the stored team, so no member holds it.
+func (s *Service) addMemberLimits(ctx context.Context, t teams.Team, actor teams.Member, req AddMemberRequest) (teams.Team, mesh.Limits, mesh.Limits, error) {
+	if !s.managesLifecycle(t) {
+		return t, req.Limits, s.deps.Defaults, nil
+	}
+	fail := func(err error) (teams.Team, mesh.Limits, mesh.Limits, error) {
+		return t, mesh.Limits{}, mesh.Limits{}, err
+	}
+	if actor.Governance != teams.Owner {
+		return fail(ErrDenied)
+	}
+	roster, err := s.deps.Roster.Snapshot(ctx, req.RunID)
+	if err != nil {
+		return fail(err)
+	}
+	if admit, ok := s.deps.Ceilings.(MemberAddPolicy); ok {
+		if err = admit.AdmitMemberAdd(t, roster, req.Slot); err != nil {
+			return fail(err)
+		}
+	}
+	if err = actor.Limits.Validate(); err != nil {
+		return fail(fmt.Errorf("%w: run has no recorded ceilings", ErrUnavailable))
+	}
+	limits := req.Limits
+	at, found, err := s.deps.Deadlines.GetRunDeadline(ctx, req.RunID)
+	if err != nil {
+		return fail(err)
+	}
+	if found {
+		remaining := at.Sub(s.deps.Clock.Now())
+		if remaining <= 0 {
+			return fail(fmt.Errorf("%w: run is past its deadline", ErrUnavailable))
+		}
+		if limits.Timeout == 0 || limits.Timeout > remaining {
+			limits.Timeout = remaining
+		}
+	}
+	grants := append([]teams.Grant(nil), t.Authority.Grants...)
+	t.Authority.Grants = append(grants, teams.Grant{FromActor: actor.Actor, Verb: teams.MaySpawn, ToSlot: req.Slot})
+	return t, limits, actor.Limits, nil
 }

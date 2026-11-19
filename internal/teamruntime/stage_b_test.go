@@ -433,3 +433,96 @@ func TestStageBServiceAdmission(t *testing.T) {
 		t.Fatalf("listed service refused: %v", err)
 	}
 }
+
+// A worker added to a Stage B run inherits the run's ceilings and deadline,
+// respects the worker and agent caps, and keeps the worker grants.
+func TestStageBMemberAddInheritsRunCeilingsAndCaps(t *testing.T) {
+	f, host, _ := newStageBFixture(t, stageBPolicy)
+	svc := serviceContext(t, dispatcher)
+	formed, err := f.svc.Form(svc, teamsvc.FormRequest{Key: "grow", Team: stageBTeam(f.registerWorkers("w1", "w2", "w3")), Launch: teams.LaunchRequest{Counts: map[string]int{"workers": 2}}})
+	check(t, err)
+	run := formed.Run.ID
+	owner := func() teams.Member {
+		roster, err := f.storage.Snapshot(ctx, run)
+		check(t, err)
+		for _, m := range roster.Members {
+			if m.Governance == teams.Owner {
+				return m
+			}
+		}
+		t.Fatal("no owner")
+		return teams.Member{}
+	}()
+	if owner.Limits.Timeout != 4*time.Hour || owner.Limits.MaxRounds != 200 || owner.Limits.Budget != 2000 {
+		t.Fatalf("owner seat did not record the run's ceilings: %+v", owner.Limits)
+	}
+	rows, err := host.OpenRuns(ctx, 10)
+	check(t, err)
+	deadline := rows[0].Deadline
+
+	added, err := f.svc.AddMember(svc, teamsvc.AddMemberRequest{Key: "add-1", RunID: run, Slot: "workers"})
+	check(t, err)
+	if f.effects.launched != 5 {
+		t.Fatalf("added worker was not launched: %d", f.effects.launched)
+	}
+	roster, err := f.storage.Snapshot(ctx, run)
+	check(t, err)
+	var w3 teams.Member
+	for _, m := range roster.Members {
+		if m.ID == added.Member.ID {
+			w3 = m
+		}
+	}
+	if w3.Slot != "workers" || w3.Limits.Budget != owner.Limits.Budget || w3.Limits.MaxRounds != owner.Limits.MaxRounds || w3.Limits.MaxStalls != owner.Limits.MaxStalls ||
+		w3.Limits.MaxDepth > owner.Limits.MaxDepth || w3.Limits.Timeout < 3*time.Hour {
+		t.Fatalf("added worker did not inherit the run ceilings (not the 5 minute defaults): %+v", w3.Limits)
+	}
+	// Its timeout is what remains of the run's: it ends no later than the run.
+	if end := time.Now().Add(w3.Limits.Timeout); end.After(deadline.Add(time.Second)) {
+		t.Fatalf("member outlives the run deadline: %s > %s", end, deadline)
+	}
+	rows, err = host.OpenRuns(ctx, 10)
+	check(t, err)
+	if len(rows) != 1 || !rows[0].Deadline.Equal(deadline) {
+		t.Fatalf("deadline changed or duplicated: %+v", rows)
+	}
+
+	// The worker cap (three) and the agent cap (five) both refuse another.
+	if _, err = f.svc.AddMember(svc, teamsvc.AddMemberRequest{Key: "add-4", RunID: run, Slot: "workers"}); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("fourth worker accepted: %v", err)
+	}
+	if _, err = f.svc.AddMember(svc, teamsvc.AddMemberRequest{Key: "add-rev", RunID: run, Slot: "reviewer"}); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("sixth agent (a second reviewer) accepted: %v", err)
+	}
+	// Only the owner adds members.
+	orch := memberBySlot(t, f, host, run, "orchestrator", 0)
+	if _, err = f.svc.AddMember(asMember(orch), teamsvc.AddMemberRequest{Key: "orch-add", RunID: run, Slot: "workers"}); err == nil {
+		t.Fatal("the orchestrator added a member")
+	}
+	// The added worker reaches only the orchestrator.
+	w1 := memberBySlot(t, f, host, run, "workers", 0)
+	rev := memberBySlot(t, f, host, run, "reviewer", 0)
+	for label, addr := range map[string]string{"peer": string(w1.Actor), "reviewer": string(rev.Actor), "workers slot": "@workers", "all": "@all"} {
+		if _, err = f.svc.Address(asMember(w3), teamsvc.MessageRequest{Key: "w3-" + label, RunID: run, Address: addr, Body: "hi"}); !errors.Is(err, teamsvc.ErrDenied) {
+			t.Fatalf("added worker reached %s: %v", label, err)
+		}
+	}
+	if _, err = f.svc.Address(asMember(w3), teamsvc.MessageRequest{Key: "w3-orch", RunID: run, Address: "@orchestrator", Body: "hi"}); err != nil {
+		t.Fatalf("added worker cannot message the orchestrator: %v", err)
+	}
+}
+
+// Stage A runs keep the old behavior: no reaper row, and the operator seat is
+// not a spawner, so a member add is refused exactly as before.
+func TestStageAMemberAddUnchanged(t *testing.T) {
+	f, count := newPolicyFixture(t, stageAPolicy)
+	op := operatorContext(t)
+	formed, err := f.svc.Form(op, teamsvc.FormRequest{Key: "a", Team: stageATeam()})
+	check(t, err)
+	if count("team_run_deadlines") != 0 {
+		t.Fatal("a stage A run got a reaper row")
+	}
+	if _, err = f.svc.AddMember(op, teamsvc.AddMemberRequest{Key: "add", RunID: formed.Run.ID, Slot: "workers"}); err == nil {
+		t.Fatalf("stage A member add changed: %v", err)
+	}
+}

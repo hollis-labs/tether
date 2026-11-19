@@ -54,6 +54,14 @@ func (d *deadlines) OpenRuns(context.Context, int) ([]RunDeadline, error) {
 	}
 	return out, nil
 }
+func (d *deadlines) GetRunDeadline(_ context.Context, id string) (time.Time, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if r := d.open[id]; r != nil {
+		return r.Deadline, true, nil
+	}
+	return time.Time{}, false, nil
+}
 func (d *deadlines) CloseRun(_ context.Context, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
