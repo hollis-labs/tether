@@ -16,8 +16,11 @@
 package chatbackend
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 
 	"github.com/hollis-labs/libs/ui/ui-go/chatstream"
@@ -45,6 +48,21 @@ type Turn struct {
 	RunID string
 	// Text is the user's input, delivered as one message.
 	Text string
+	// Context is app-owned per-turn JSON, delivered only to the agent, never as a chat event.
+	Context json.RawMessage
+}
+
+// InputText renders the Claude input without changing the public user text.
+// Invalid context is refused before any input is delivered.
+func (t Turn) InputText() (string, error) {
+	if len(t.Context) == 0 {
+		return t.Text, nil
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, t.Context); err != nil {
+		return "", fmt.Errorf("chatbackend: invalid app context: %w", err)
+	}
+	return "<app-context>" + compact.String() + "</app-context>\n" + t.Text, nil
 }
 
 // Run is one turn's event stream.

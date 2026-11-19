@@ -254,7 +254,7 @@ func (r *Runner) Start(ctx context.Context, turn chat.Turn) (chat.Run, error) {
 		return nil, err
 	}
 	b.wait(ctx)
-	out, err := b.backend.Submit(ctx, chatbackend.Turn{RunID: turn.RunID, Text: turn.Text})
+	out, err := b.backend.Submit(ctx, chatbackend.Turn{RunID: turn.RunID, Text: turn.Text, Context: turn.Context})
 	if err != nil {
 		return nil, err
 	}
