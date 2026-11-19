@@ -49,7 +49,7 @@ func peerPID(socket *net.UnixConn) (int, error) {
 	var pid int
 	var inner error
 	err = raw.Control(func(fd uintptr) {
-		cred, e := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+		cred, e := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) //nolint:gosec // G115: fd is the socket descriptor syscall.RawConn.Control passes, small and non-negative, so it fits int
 		inner = e
 		if e == nil {
 			if int64(cred.Uid) != int64(os.Getuid()) {
@@ -79,7 +79,7 @@ func authenticatedProcess(c *Client, expectedPID int) (*processHandle, error) {
 	fd := -1
 	var inner error
 	err = raw.Control(func(socketFD uintptr) {
-		fd, inner = getPeerPIDFD(int(socketFD))
+		fd, inner = getPeerPIDFD(int(socketFD)) //nolint:gosec // G115: socketFD is the socket descriptor syscall.RawConn.Control passes, small and non-negative, so it fits int
 	})
 	if err != nil {
 		return nil, err

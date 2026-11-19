@@ -132,16 +132,19 @@ func (e *Engine) DeliverInbox(ctx context.Context, deliver DeliveryHandler) erro
 		return nil
 	}
 	p, err := deliver(ctx, observed)
-	if err != nil {
-		return err
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.poisoned {
 		return fail("checkpoint_unknown")
 	}
+	// The handler can reject its frozen candidate because the reader advanced
+	// before the store checked it. Classify that race before its stale error,
+	// just as when the reader advances after a successful handler call.
 	if e.state.Revision != observed.Revision {
 		return fail("delivery_changed")
+	}
+	if err != nil {
+		return err
 	}
 	if e.state.Revision == math.MaxUint64 {
 		return fail("counter_exhausted")

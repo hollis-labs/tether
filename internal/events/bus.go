@@ -353,7 +353,7 @@ func (b *memBus) Subscribe(ctx context.Context, f Filter) (<-chan Event, func(),
 	// Replay reads outlive the Subscribe call; the subscriber's lifetime is its
 	// cancel func and eviction, as before, not the caller's context. They stop
 	// when the subscriber does.
-	s.ctx, s.stop = context.WithCancel(context.WithoutCancel(ctx))
+	s.ctx, s.stop = context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // G118: s.stop is the subscriber's cancel; evict and the replay abandon path call it
 	if b.paged != nil {
 		earliest, head, err := b.paged.StreamBoundsContext(ctx)
 		if err != nil {
@@ -450,7 +450,8 @@ func (b *memBus) catchUp(s *subscriber) bool {
 		covered := s.drops.Load()
 		earliest, head, err := b.paged.StreamBoundsContext(s.ctx)
 		if err != nil {
-			return b.replayFailed(s, err)
+			b.replayFailed(s, err)
+			return false
 		}
 		if s.cursor > 0 && earliest > 0 && s.cursor+1 < earliest {
 			if !s.gap(GapPayload{Reason: "trimmed", LastSeq: s.cursor, EarliestAvailable: earliest, HighWater: head}) {
@@ -464,7 +465,8 @@ func (b *memBus) catchUp(s *subscriber) bool {
 		}
 		page, err := b.paged.EventsPageContext(s.ctx, s.filter, s.cursor, head, b.replayPage)
 		if err != nil {
-			return b.replayFailed(s, err)
+			b.replayFailed(s, err)
+			return false
 		}
 		for _, e := range page {
 			if s.filter.matches(e) && !b.sendStalled(s, e) {
@@ -497,16 +499,16 @@ func (b *memBus) gapAt(s *subscriber, p GapPayload) bool {
 	return s.gap(p)
 }
 
-func (b *memBus) replayFailed(s *subscriber, err error) bool {
+// replayFailed tells a live subscriber its replay failed and evicts it; the caller then stops (false).
+func (b *memBus) replayFailed(s *subscriber, err error) {
 	select {
 	case <-s.done:
-		return false
+		return
 	default:
 	}
 	log.Printf("events: replay for subscriber %d failed: %v", s.id, err)
 	b.gapAt(s, GapPayload{Reason: "replay_error", LastSeq: s.cursor})
 	b.evict(s)
-	return false
 }
 
 // runSubscriber first catches up on history, then follows the live channel,
