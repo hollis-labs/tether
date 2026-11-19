@@ -371,6 +371,39 @@ URLs, and share collision and metadata findings with status. Failed initializati
 reports its redacted error and an unexamined inventory instead of claiming an
 observed empty tool set.
 
+### Upstream resources
+
+The gateway and its stdio forwarder relay `resources/list`,
+`resources/templates/list`, and `resources/read` for connected upstreams that
+advertise resources. Native documentation resources remain available. Resource
+URIs are preserved, including `ui://` references in MCP Apps tool `_meta.ui`;
+resource definitions, HTML MIME types, content and `_meta` pass through.
+The host still needs MCP Apps rendering support.
+
+Resource discovery observes the caller's origin grant and every profile floor
+in both flat and search modes. A profile with tool allow/deny rules can access
+only UI resource URIs referenced by an eligible tool's `_meta.ui.resourceUri`
+(or the legacy `_meta["ui/resourceUri"]`). Other resources and general templates
+are hidden under such a profile; a concrete UI URI can still match a template.
+Read-only profiles can read general resources; UI resources referenced only by
+excluded tools remain unavailable, including tools lacking a read-only annotation.
+
+A read resolves its URI against the live resource and template inventories.
+Unknown URIs and URIs owned by more than one admitted origin fail closed; the
+gateway never fetches arbitrary URLs or guesses an upstream. Inventory errors
+also fail closed. Discovery consumes at most 100 pages per origin and 10,000
+entries per aggregate request. Aggregate page cursors expire when the visible
+inventory or policy changes. List-result metadata is retained by origin and
+upstream page under `_meta["tether/upstream"]`; item and read-result metadata
+retain their original shape.
+
+Reads, including denials, emit canonical audit receipts named `resources/read`
+with server `gateway`. Receipts include outcome, policy selection and byte
+counts, but omit resource URIs and contents. The resource capability advertises
+neither subscriptions nor list-change notifications. Prompt passthrough is not
+implemented: prompt discovery and invocation need their own naming and policy
+boundary. The existing protocol pin and session lifecycle are unchanged.
+
 ### Named gateway profiles
 
 Select a profile with `tether mcp --proxy --profile reader` or
