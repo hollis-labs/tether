@@ -24,6 +24,7 @@ import (
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/terminalattach"
 )
 
 // tetherVersion labels daemon.started events. Bumped per release.
@@ -38,8 +39,12 @@ type Config struct {
 	TeamsEnabled   bool
 	// ChatWire is daemon.chat_wire.enabled: serve the chat wire for this
 	// daemon's seats at /chat/v1 (CW-20261118-0011). Default off.
-	ChatWire     bool
-	IdentityMode identity.Mode
+	ChatWire bool
+	// TerminalAttachments is daemon.terminal_attachments.enabled: serve
+	// /terminal-attachments over the chat host the chat wire uses
+	// (CW-20261118-0012). Default off.
+	TerminalAttachments bool
+	IdentityMode        identity.Mode
 	// IdentityPoints overrides IdentityMode per enforcement point (CW-20261010-0268).
 	IdentityPoints map[string]identity.Mode
 	// ServiceTokenRequest is identity.service_request: "auto" issues a session's request
@@ -146,6 +151,9 @@ type Server struct {
 	// ChatWire is the chat wire's handler (internal/chatwire, CW-20261118-0011),
 	// mounted at /chat/v1. Set only when Config.ChatWire is on.
 	ChatWire http.Handler
+	// TerminalHost serves /terminal-attachments (internal/chatwire.NewTerminalHost,
+	// CW-20261118-0012). Set only when Config.TerminalAttachments is on.
+	TerminalHost terminalattach.Host
 	// Registry is optional; when set, /registry/* federation directory
 	// endpoints are mounted. Populated by app.Service.Registry at daemon
 	// startup.
@@ -679,6 +687,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,
 			ChatWire:            s.ChatWire,
+			TerminalHost:        s.TerminalHost,
 			ProxyEvents:         s.ProxyEvents,
 			Registry:            s.Registry,
 			Settings:            s.Settings,
@@ -1120,6 +1129,9 @@ func (s *Server) apiMounts() []apiMount {
 		{"/chat/agents/", hasService && s.Catalog != nil},
 		// The chat wire (CW-20261118-0011), only when daemon.chat_wire is on.
 		{"/chat/v1/", s.ChatWire != nil},
+		// Terminal attachments (CW-20261118-0012), only when daemon.terminal_attachments is on.
+		{"/terminal-attachments", s.TerminalHost != nil},
+		{"/terminal-attachments/", s.TerminalHost != nil},
 
 		// "/registry/" is a subtree pattern -- it already covers
 		// /registry/bindings* and /registry/scoped-bindings* (T07, T08)

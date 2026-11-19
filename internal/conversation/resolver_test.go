@@ -55,4 +55,15 @@ func TestResolverByConversationAndBySession(t *testing.T) {
 	if err != nil || current || old != got {
 		t.Fatalf("superseded session = %+v current=%v err=%v; want %+v, not current", old, current, err, got)
 	}
+	if _, err := r.Resolve(ctx, "s1"); !errors.Is(err, ErrStale) {
+		t.Fatalf("Resolve(superseded session) = %v, want ErrStale", err)
+	}
+	for _, target := range []string{first.ConversationID, "s2"} {
+		if res, err := r.Resolve(ctx, target); err != nil || res != got {
+			t.Fatalf("Resolve(%s) = %+v, %v; want %+v", target, res, err, got)
+		}
+	}
+	if _, err := r.Resolve(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Resolve(missing) = %v", err)
+	}
 }
