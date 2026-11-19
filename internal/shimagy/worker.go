@@ -107,7 +107,14 @@ func Run(ctx context.Context, c Config, input io.Reader, output, stderr io.Write
 			result := done
 			previous := native
 			go func() {
-				next, err := runTurn(turnCtx, c, prompt, previous, uuid.NewString(), output, stderr)
+				id := uuid.NewString()
+				next, err := runTurn(turnCtx, c, prompt, previous, id, output, stderr)
+				if err != nil {
+					failure := map[string]any{"event": "result", "uuid": id, "result": map[string]string{"status": "ERROR", "error": "hosted AGY turn failed"}}
+					if writeErr := json.NewEncoder(output).Encode(failure); writeErr != nil {
+						err = writeErr
+					}
+				}
 				result <- completion{next, err}
 			}()
 		}
@@ -260,7 +267,6 @@ func runTurn(ctx context.Context, c Config, prompt, native, id string, output, s
 	}
 	adapter := gop.NewAntigravityAdapter()
 	if readErr != nil || waitErr != nil || adapter.IsSessionLost(tail.tail) || adapter.IsNotAuthenticated(tail.tail) || observed == "" || terminal == nil {
-		_ = json.NewEncoder(output).Encode(map[string]any{"event": "result", "uuid": id, "result": map[string]string{"status": "ERROR", "error": "hosted AGY turn failed"}})
 		return "", errors.New("hosted AGY turn did not complete under its native conversation")
 	}
 	var result struct {
