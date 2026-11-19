@@ -97,6 +97,38 @@ when its selected runtime executable and installed unit provenance verify;
 an unverified managed-launch hint reports `none`. Ordinary foreground startup
 keeps `foreground`. No host inventory or private paths enter the descriptor.
 
+## Hook binary permissions
+
+The activity hooks and the Stop-hook reply gate run the worker binary on every
+Claude hook of every session, so anyone who can replace that binary runs code
+in every session. Before planting them the worker checks two things:
+
+1. **The binary**: an absolute, shell-safe path to a regular file (not a
+   symlink) that is not group- or other-writable.
+2. **Its directory** (the immediate parent only): not group- or other-writable,
+   unless it has the sticky bit.
+
+A release directory must therefore be **0755**. A directory created under a
+`002` umask is 0775 and is refused: the session launches without the hooks
+(they fail open) and `stop-gate.disabled` / `agent-events.disabled` in the
+session workspace name the directory and the fix. A group-writable directory is
+refused even when the group is the owner's private group: proving it has no
+other members would mean reading every NSS source, and membership can change
+after the hooks are armed.
+
+Install an outpost release with explicit modes rather than relying on the umask:
+
+```sh
+rel="$HOME/.local/share/outpost/releases/<YYYYMMDD>-<sha>"
+install -d -m 0755 "$rel"
+install -m 0755 tether-worker "$rel/"
+sha256sum "$rel/tether-worker"   # compare with the release's checksums.txt
+```
+
+To fix an installed release, `chmod 755 "$rel"` (and `chmod go-w` on the binary
+if it is group- or other-writable), then restart the sessions that should get
+the hooks (CW-20261114-0057).
+
 ## Session hosts across a worker restart
 
 Each session leaves a host directory under `<worker root>/hosts/`. On start the
