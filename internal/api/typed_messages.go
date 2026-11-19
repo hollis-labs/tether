@@ -354,17 +354,19 @@ func (s *Server) refusesAck(e envelope.Envelope, parent *envelope.Parent) bool {
 	if !ackfilter.IsAck(e.Body) {
 		return false
 	}
-	if parent != nil && parent.Envelope != nil {
-		switch parent.Envelope.Kind {
-		case envelope.KindUpdate, envelope.KindMessage:
-		default:
-			return false // the parent asked something: an ack may be the answer
-		}
-		if parent.Envelope.Awaiting != "" && parent.Envelope.Awaiting == e.From {
-			return false
-		}
-	} else {
+	if parent == nil || parent.Envelope == nil {
 		return false // untyped or unknown parent: let it through
+	}
+	pe := parent.Envelope
+	switch pe.Kind {
+	case envelope.KindUpdate, envelope.KindMessage:
+	default:
+		return false // the parent asked something: an ack may be the answer
+	}
+	// An answer to a free-text ask is never refused: the parent asks (a '?'),
+	// awaits anyone, or is addressed to the replier with an awaiting.
+	if strings.Contains(pe.Body, "?") || strings.Contains(pe.Subject, "?") || strings.TrimSpace(pe.Awaiting) != "" {
+		return false
 	}
 	if s.Catalog != nil {
 		if cat, err := s.Catalog.Load(); err == nil && cat != nil && !cat.Global.AckFilterEnabled() {

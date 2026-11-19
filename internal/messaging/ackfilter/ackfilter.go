@@ -16,15 +16,12 @@ const maxWords = 10
 // phrases are the acknowledgement vocabulary, as lower-case word sequences. A
 // body is an acknowledgement only when it is entirely a sequence of these.
 var phrases = [][]string{
-	{"noted"}, {"ack"}, {"acked"}, {"acknowledged"}, {"received"}, {"understood"},
-	{"thanks"}, {"thx"}, {"ty"}, {"thank", "you"}, {"many", "thanks"}, {"much", "appreciated"},
-	{"ok"}, {"okay"}, {"k"}, {"roger"}, {"copy"}, {"got", "it"}, {"will", "do"},
-	{"sounds", "good"}, {"great"}, {"perfect"}, {"cool"}, {"fine"}, {"appreciated"},
+	{"noted"}, {"ack"}, {"acked"}, {"acknowledged"},
+	{"thanks"}, {"thx"}, {"ty"}, {"thank", "you"}, {"many", "thanks"}, {"much", "appreciated"}, {"appreciated"},
 	{"no", "reply", "needed"}, {"no", "reply", "necessary"}, {"no", "reply", "required"},
 	{"no", "response", "needed"}, {"no", "response", "required"},
 	{"no", "action", "needed"}, {"no", "action", "required"}, {"no", "action", "necessary"},
-	{"nothing", "further"}, {"nothing", "more", "needed"},
-	{"all", "good"}, {"and"}, {"for", "the", "update"}, {"for", "the", "info"}, {"the", "update"},
+	{"and"}, {"for", "the", "update"}, {"for", "the", "info"}, {"the", "update"},
 }
 
 // IsAck reports whether body is nothing but an acknowledgement. A question mark
@@ -55,9 +52,8 @@ func covers(words []string) bool {
 	return false
 }
 
-var anchors = map[string]bool{"noted": true, "ack": true, "acked": true, "acknowledged": true, "received": true,
-	"understood": true, "thanks": true, "thx": true, "ty": true, "thank": true, "ok": true, "okay": true, "k": true,
-	"roger": true, "copy": true, "got": true, "will": true, "sounds": true, "no": true, "appreciated": true}
+var anchors = map[string]bool{"noted": true, "ack": true, "acked": true, "acknowledged": true,
+	"thanks": true, "thx": true, "ty": true, "thank": true, "no": true, "appreciated": true}
 
 func anchored(words []string) bool {
 	for _, w := range words {

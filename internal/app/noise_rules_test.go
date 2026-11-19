@@ -104,3 +104,14 @@ func TestBurstWithOneAskWakesOnce(t *testing.T) {
 		}
 	}
 }
+
+// A recipient that is no catalog seat (registry-only agent) keeps its old wake
+// behavior: the attention:none rule is for catalog seats.
+func TestAttentionNoneWakesNonCatalogRecipient(t *testing.T) {
+	r := newTriageRig(t)
+	r.tri.policy = func(messaging.Address) seatPolicy { return seatPolicy{} }
+	e := r.send(peer, messaging.MsgKindNotice, envelope.ContentType, noneUpdate("@worker"), nil)
+	if reason := r.wake(e); reason != "" || r.rt.sendCallCount("live") != 1 {
+		t.Fatalf("non-catalog recipient: reason %q, %d turns; want the old wake", reason, r.rt.sendCallCount("live"))
+	}
+}

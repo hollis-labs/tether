@@ -129,9 +129,9 @@ is marked read; untyped fyi stays unread for the inbox.
   Wake outcome reason: `attention-none` (triage off) or `triaged-read` (triage on).
 - **Acknowledgement replies are refused at send.** `POST /messages/post` (`tether_reply` /
   `tether_message_post`) rejects a reply of kind `update` or `message` whose body is only
-  acknowledgement words (`Noted. No reply needed.`, `Thanks`, `ack`, `Got it, thank you`),
+  acknowledgement words (`Noted. No reply needed.`, `Thanks`, `ack`; answer-like words such as ok, will do, got it are not in the list),
   with no answer, status, evidence, options or `?`, and whose typed parent was an `update` or
-  `message` that did not await the replier. The sender gets `invalid_request` on field `body`
+  `message` that has no `?` and awaits no one. The sender gets `invalid_request` on field `body`
   saying to send nothing. Anything else passes (replies to a question or request, untyped
   parents, any body with a word outside the list, more than 10 words). Detector:
   `internal/messaging/ackfilter`. Off switch: `catalog.defaults.mail_triage.ack_filter: false`.

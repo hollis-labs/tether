@@ -118,7 +118,7 @@ func (m *mailTriage) gate(ctx context.Context, env messaging.Envelope) triageDec
 		// attention:none never wakes a seat, triaged or not (CW-20261118-0050):
 		// it stays unread and visible, and the next real wake's unread count
 		// carries it. Triaged seats get the same through the Read class below.
-		if m.quietNone(ctx, env, pol) {
+		if pol.seat != "" && m.quietNone(ctx, env, pol) {
 			return triageDecision{class: triage.Read, reason: "attention-none"}
 		}
 		return triageDecision{wake: true}

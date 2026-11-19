@@ -500,3 +500,37 @@ func TestMessagePostRefusesPureAcknowledgements(t *testing.T) {
 		t.Fatalf("ack with the filter off: %d %s", code, raw)
 	}
 }
+
+// An answer to a free-text ask is never refused; an ack of a plain update still is.
+func TestAckFilterNeverRefusesAnswersToFreeTextAsks(t *testing.T) {
+	h := newTypedHarness(t)
+	post := func(as, body string) (int, []byte) { return h.do(t, http.MethodPost, "/messages/post?as="+as, body) }
+	send := func(body string) string {
+		code, raw := post(meURN, body)
+		var out MessagePostResponse
+		if code != http.StatusCreated || json.Unmarshal(raw, &out) != nil || len(out.IDs) != 1 {
+			t.Fatalf("send: %d %s", code, raw)
+		}
+		return out.IDs[0]
+	}
+	reply := func(parent, text string) int {
+		code, _ := post(archieURN, `{"kind":"message","to":["@photon-tether"],"in_reply_to":"`+parent+`","body":"`+text+`"}`)
+		return code
+	}
+	ask1 := send(`{"kind":"message","to":["@archie"],"body":"Can you take the deploy tomorrow?"}`)
+	if c := reply(ask1, "Will do"); c != http.StatusCreated {
+		t.Fatalf("Will do to a question: %d", c)
+	}
+	ask2 := send(`{"kind":"message","to":["@archie"],"body":"ok to proceed?"}`)
+	if c := reply(ask2, "OK"); c != http.StatusCreated {
+		t.Fatalf("OK to a question: %d", c)
+	}
+	ask3 := send(`{"kind":"message","to":["@archie"],"awaiting":"@archie","body":"Tell me when the deploy is done."}`)
+	if c := reply(ask3, "Thanks"); c != http.StatusCreated {
+		t.Fatalf("ack to an awaited message: %d", c)
+	}
+	upd := send(`{"kind":"update","to":["@archie"],"subject":"status","body":"build green"}`)
+	if c := reply(upd, "Noted. No reply needed."); c != http.StatusBadRequest {
+		t.Fatalf("ack to a plain update: %d, want refused", c)
+	}
+}
