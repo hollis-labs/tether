@@ -55,6 +55,7 @@ func (s *Store) GetReplacementLineage(ctx context.Context, id string) (*Replacem
 		return nil, err
 	}
 	var a, b struct {
+		LogicalAgentID        string `json:"logical_agent_id"`
 		TeamMember            bool   `json:"team_member"`
 		RecoveryActorURI      string `json:"recovery_actor_uri"`
 		ResumeSourceSessionID string `json:"resume_source_session_id"`
@@ -66,7 +67,7 @@ func (s *Store) GetReplacementLineage(ctx context.Context, id string) (*Replacem
 	r.Kind = "retained_team_v1"
 	r.LogicalAgentID = destAgent
 	r.ReplacementActorURI = b.RecoveryActorURI
-	if r.SourceSessionID == "" || r.SourceSessionID == id || r.ReplacementSessionID != id || sourceAgent == "" || sourceAgent != destAgent || sourceWorker != "" || destWorker != "" || parent != r.SourceSessionID || intent != "resume" || b.ResumeSourceSessionID != r.SourceSessionID || r.IntentKey == "" || r.ActorURI == "" || r.SourceActorURI != r.ActorURI || r.ReplacementActorURI != r.ActorURI || enrolledActor != r.ActorURI || enrollmentPayloadActor != r.ActorURI || bindingActor != r.ActorURI || r.BindingID == "" || r.BindingGeneration <= 0 || generation != r.BindingGeneration || a.RecoveryActorURI != "" && a.RecoveryActorURI != r.ActorURI {
+	if r.SourceSessionID == "" || r.SourceSessionID == id || r.ReplacementSessionID != id || sourceAgent == "" || sourceAgent != destAgent || a.LogicalAgentID == "" || b.LogicalAgentID == "" || a.LogicalAgentID != sourceAgent || b.LogicalAgentID != destAgent || sourceWorker != "" || destWorker != "" || parent != r.SourceSessionID || intent != "resume" || b.ResumeSourceSessionID != r.SourceSessionID || r.IntentKey == "" || r.ActorURI == "" || r.SourceActorURI != r.ActorURI || r.ReplacementActorURI != r.ActorURI || enrolledActor != r.ActorURI || enrollmentPayloadActor != r.ActorURI || bindingActor != r.ActorURI || r.BindingID == "" || r.BindingGeneration <= 0 || generation != r.BindingGeneration || a.RecoveryActorURI != "" && a.RecoveryActorURI != r.ActorURI {
 		return nil, fmt.Errorf("replacement lineage conflicts with saved identities")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, r.CommittedAt); err != nil {

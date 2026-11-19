@@ -164,3 +164,48 @@ func TestWorkerLineageCannotBeSuppliedInPlanJSON(t *testing.T) {
 		t.Fatalf("generic lineage minted proof: %+v %v", r, err)
 	}
 }
+
+func TestWorkerLineageAckEligibilityIsSeparateFromReadSettlement(t *testing.T) {
+	for _, acknowledged := range []bool{false, true} {
+		db, _, ack := workerLineageFixture(t, true)
+		if err := db.UpdateSessionState("source", "running", 4, nil); err != nil {
+			t.Fatal(err)
+		}
+		stamp := ""
+		if acknowledged {
+			// Do not add a new launch rejection for an unsettled parent. This is
+			// historical exact acknowledgement evidence, not current UI eligibility.
+			if err := db.RecordWorkerLineageAck(context.Background(), ack); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.DB().QueryRow(`SELECT acknowledged_at FROM worker_lineage_receipts WHERE session_id='child'`).Scan(&stamp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.UpdateSessionState("child", "running", 7, nil); err != nil {
+			t.Fatal(err)
+		}
+		for _, state := range []string{"running", "detached", "orphaned"} {
+			if err := db.UpdateSessionState("source", state, 4, nil); err != nil {
+				t.Fatal(err)
+			}
+			if r, err := db.GetWorkerLineage(context.Background(), "child"); err != nil || r != nil {
+				t.Fatalf("unsettled source projected: %+v %v", r, err)
+			}
+		}
+		if err := db.UpdateSessionState("source", "completed", 0, nil); err != nil {
+			t.Fatal(err)
+		}
+		r, err := db.GetWorkerLineage(context.Background(), "child")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if acknowledged {
+			if r == nil || r.AcknowledgedAt != stamp {
+				t.Fatalf("settlement lost earned ack: %+v", r)
+			}
+		} else if r != nil {
+			t.Fatalf("settlement invented ack: %+v", r)
+		}
+	}
+}

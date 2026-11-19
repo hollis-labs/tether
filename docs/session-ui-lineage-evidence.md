@@ -29,7 +29,8 @@ neither can satisfy the native continuation API's `native_admission` requirement
 The projection reads existing immutable `session_replacements`, not user input.
 It verifies source/replacement IDs, same nonempty logical agent, both local
 placements, explicit parent/resume, the source plan's committed digest, both
-plans' team marker, and the destination's saved recovery actor/source. The
+plans' team marker and exact nonempty logical-agent match to their rows, and
+the destination's saved recovery actor/source. The
 source actor comes from the original session-port request, independently checked
 against the enrollment's acquired/payload actor and retained binding actor and
 generation. A nonempty source recovery actor must agree too. An initial source
@@ -64,10 +65,13 @@ authenticated launch-command acknowledgement; otherwise:
 ```
 
 Migration 0110 records explicit `continuity=relaunch` provenance in the same
-transaction as an ordinary worker session create. Source/replacement IDs,
+transaction as an ordinary worker session create. The already-supported
+opt-in Claude logical-resume path stamps the same transient server-owned
+provenance only after its existing admission checks; a generic resume row
+or serialized plan cannot supply it. Source/replacement IDs,
 logical agent and both placements come from daemon rows. An empty source worker
 means the source was local; `worker_id` must be nonempty. Native-only and team
-recovery do not synthesize this ordinary-create provenance.
+recovery do not synthesize this ordinary-worker provenance.
 
 Only the hub's authenticated `launch:<replacement>` result path writes the
 immutable receipt, after checking exact `launched` type, session and command

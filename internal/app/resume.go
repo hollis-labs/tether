@@ -278,6 +278,14 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		plan.BootPrompt = pack.prompt(plan.BootPrompt)
 	}
 
+	// This ordinary worker resume has passed the existing opt-in, exact source,
+	// placement and native-mapping checks above. Stamp creation-time UI lineage
+	// provenance only; it changes neither admission nor the resume grant basis.
+	// Generic resume rows/JSON cannot supply this transient server-owned stamp.
+	if workerID != "" && !opts.NativeOnly {
+		plan.Continuity = "relaunch"
+	}
+
 	providerKind := "cli"
 	if workerID == "" {
 		factory, ok := s.factories[plan.ProviderID]
