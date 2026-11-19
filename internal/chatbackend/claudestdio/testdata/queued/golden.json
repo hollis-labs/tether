@@ -1,0 +1,465 @@
+[
+ {
+  "run_id": "run-1",
+  "observed": false,
+  "text": "Write a 200-word poem about rivers.",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "model": "claude-sonnet-5-5",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/work",
+      "session_id": "00000000-0000-4000-8000-000000000003",
+      "tools": [
+       "Read"
+      ],
+      "mcp_servers": [],
+      "model": "claude-sonnet-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.327",
+      "output_style": "default",
+      "uuid": "4503d679-1470-4d3b-95b5-be20532bbd2a"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.status",
+    "value": {
+     "type": "system",
+     "subtype": "status",
+     "status": "requesting",
+     "session_id": "00000000-0000-4000-8000-000000000003",
+     "uuid": "61c2d9d5-1fa3-4fb9-a0f9-2b4bef4c1db3"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "**Rivers**\n\nFrom mountain springs where silver whispers start"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": ",\na thread of water wakes and finds its way,"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "\nthrough stones and moss, through every hidden part,\nbeginning what will"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": " travel night and day.\n\nIt carves the valleys slowly, grain by grain,\npat"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "ient as time, unhurried, deep, and w"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "ise.\nIt sings in summer, drums in autumn rain,\nand m"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "irrors back the changing of the skies.\n\nPast slee"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "ping villages and fields of wheat,\nbeneath old bridges arched in weathered stone,\nit gre"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "ets the herons wading on swift feet\nand carries seeds to"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": " places yet unknown.\n\nCities rise along its curving shore"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": ",\nbuilt on the gift of what it gives away.\nBoats drift down as"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": " they have done before,\ntheir lanterns trembling in the evening's gray.\n\nAnd though it bends, and though it splits in"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": " two,\nit never doubts the pull toward the sea.\nEach dr"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "op remembers what it once outgrew,\nand rushes on"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": " toward vast eternity.\n\nAt last it opens wide, lets go,"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": " and merges,\nsalt and sweet in one embracing tide,\nthen rises up"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": " as mist, and so it surges\nback to the hills, where r"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "text": "ivers are reborn and glide."
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q:0",
+    "final": {
+     "text": "**Rivers**\n\nFrom mountain springs where silver whispers start,\na thread of water wakes and finds its way,\nthrough stones and moss, through every hidden part,\nbeginning what will travel night and day.\n\nIt carves the valleys slowly, grain by grain,\npatient as time, unhurried, deep, and wise.\nIt sings in summer, drums in autumn rain,\nand mirrors back the changing of the skies.\n\nPast sleeping villages and fields of wheat,\nbeneath old bridges arched in weathered stone,\nit greets the herons wading on swift feet\nand carries seeds to places yet unknown.\n\nCities rise along its curving shore,\nbuilt on the gift of what it gives away.\nBoats drift down as they have done before,\ntheir lanterns trembling in the evening's gray.\n\nAnd though it bends, and though it splits in two,\nit never doubts the pull toward the sea.\nEach drop remembers what it once outgrew,\nand rushes on toward vast eternity.\n\nAt last it opens wide, lets go, and merges,\nsalt and sweet in one embracing tide,\nthen rises up as mist, and so it surges\nback to the hills, where rivers are reborn and glide."
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAqGfxeqJJjAr1pPaF8Q"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "raw",
+    "raw": {
+     "dialect": "claude.stream-json",
+     "type": "rate_limit_event",
+     "payload": {
+      "type": "rate_limit_event",
+      "rate_limit_info": {
+       "status": "allowed",
+       "resetsAt": 1795402800,
+       "rateLimitType": "seven_day",
+       "overageStatus": "rejected",
+       "overageDisabledReason": "out_of_credits",
+       "isUsingOverage": false,
+       "unifiedWindows": {
+        "seven_day": {
+         "utilization": 0.4,
+         "resetsAt": 1795402800,
+         "status": "allowed"
+        }
+       }
+      },
+      "uuid": "bd6dab5f-c205-4937-bb0c-920f390a1e7f",
+      "session_id": "00000000-0000-4000-8000-000000000003"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-1",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 2,
+     "cache_read": 2656,
+     "cache_write": 671,
+     "output": 377,
+     "total": 3706
+    },
+    "ext": {
+     "claude": {
+      "duration_ms": 6957,
+      "num_turns": 1,
+      "stop_reason": "end_turn",
+      "subtype": "success",
+      "terminal_reason": "completed",
+      "total_cost_usd": 0.0067236
+     }
+    }
+   }
+  ]
+ },
+ {
+  "run_id": "run-2",
+  "observed": true,
+  "text": "Reply with only the word: second",
+  "source": "stdin",
+  "origin": "send_turn",
+  "turn_ref": "ab6c5dda-7e17-42c3-9d50-72d1bc6b85e4",
+  "events": [
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.start",
+    "provider": "claude",
+    "model": "claude-sonnet-5-5",
+    "ext": {
+     "claude": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/work",
+      "session_id": "00000000-0000-4000-8000-000000000003",
+      "tools": [
+       "Read"
+      ],
+      "mcp_servers": [],
+      "model": "claude-sonnet-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.327",
+      "output_style": "default",
+      "uuid": "ab6c5dda-7e17-42c3-9d50-72d1bc6b85e4"
+     }
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "activity",
+    "kind": "claude.system.status",
+    "value": {
+     "type": "system",
+     "subtype": "status",
+     "status": "requesting",
+     "session_id": "00000000-0000-4000-8000-000000000003",
+     "uuid": "47c6e2bb-42c1-4c87-a20b-2bc4d89bf9bc"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.start",
+    "step_id": "msg_011ChAqHBY9WKXngHsP6AhKd"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.start",
+    "message_id": "msg_011ChAqHBY9WKXngHsP6AhKd",
+    "role": "assistant"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.start",
+    "part_id": "msg_011ChAqHBY9WKXngHsP6AhKd:0",
+    "kind": "text"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.delta",
+    "part_id": "msg_011ChAqHBY9WKXngHsP6AhKd:0",
+    "text": "second"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "part.end",
+    "part_id": "msg_011ChAqHBY9WKXngHsP6AhKd:0",
+    "final": {
+     "text": "second"
+    }
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "message.end",
+    "message_id": "msg_011ChAqHBY9WKXngHsP6AhKd"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "step.finish",
+    "step_id": "msg_011ChAqHBY9WKXngHsP6AhKd"
+   },
+   {
+    "v": "1",
+    "seq": 0,
+    "run_id": "run-2",
+    "time": "0001-01-01T00:00:00Z",
+    "verb": "run.finish",
+    "reason": "stop",
+    "raw_reason": "end_turn",
+    "usage": {
+     "scope": "final",
+     "uncached_input": 4,
+     "cache_read": 2920,
+     "cache_write": 794,
+     "output": 3,
+     "total": 3721
+    },
+    "ext": {
+     "claude": {
+      "duration_ms": 1424,
+      "num_turns": 1,
+      "stop_reason": "end_turn",
+      "subtype": "success",
+      "terminal_reason": "completed",
+      "total_cost_usd": 0.0102296
+     }
+    }
+   }
+  ]
+ }
+]

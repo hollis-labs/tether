@@ -30,11 +30,20 @@ func TestClassify(t *testing.T) {
 		{"no attention set is fyi for an update", typed(envelope.Envelope{Kind: envelope.KindUpdate}), FYI, "envelope_fyi", false},
 		{"question", typed(envelope.Envelope{Kind: envelope.KindQuestion, Attention: envelope.AttentionAgent}), Action, "envelope_kind", false},
 		{"handoff", typed(envelope.Envelope{Kind: envelope.KindHandoff, Attention: envelope.AttentionAgent}), Action, "envelope_kind", false},
+		{"request", typed(envelope.Envelope{Kind: envelope.KindRequest, Attention: envelope.AttentionAgent}), Action, "envelope_kind", false},
 		{"update", typed(envelope.Envelope{Kind: envelope.KindUpdate, Attention: envelope.AttentionAgent}), FYI, "envelope_fyi", false},
 		{"update awaiting me", typed(envelope.Envelope{Kind: envelope.KindUpdate, Attention: envelope.AttentionAgent, Awaiting: "@me"}), Action, "awaiting_recipient", false},
 		{"untyped request", Input{Kind: messaging.MsgKindRequest}, Action, "transport_kind", false},
 		{"untyped request very-low stays action", Input{Kind: messaging.MsgKindRequest, Urgency: "very-low"}, Action, "transport_kind", false},
 		{"untyped notice", Input{Kind: messaging.MsgKindNotice}, FYI, "transport_fyi", false},
+		{"untyped response replying to my mail", Input{Kind: messaging.MsgKindResponse, ReplyToOwn: true}, Action, "reply_to_own", false},
+		{"untyped very-low response replying to my mail", Input{Kind: messaging.MsgKindResponse, Urgency: "very-low", ReplyToOwn: true}, Action, "reply_to_own", false},
+		{"typed attention-none update replying to my mail", func() Input {
+			in := typed(envelope.Envelope{Kind: envelope.KindUpdate, Attention: envelope.AttentionNone})
+			in.ReplyToOwn = true
+			return in
+		}(), Action, "reply_to_own", false},
+		{"untyped response not to my mail", Input{Kind: messaging.MsgKindResponse}, FYI, "transport_fyi", false},
 		{"untyped notice high", Input{Kind: messaging.MsgKindNotice, Urgency: "high"}, Action, "urgency_high", false},
 		{"untyped notice very-low", Input{Kind: messaging.MsgKindNotice, Urgency: "very-low"}, Read, "urgency_very_low", false},
 		{"untyped notice high beats very-low order", Input{Kind: messaging.MsgKindNotice, Urgency: "high"}, Action, "urgency_high", false},

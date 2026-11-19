@@ -21,6 +21,11 @@ func sessionResponseFor(r *http.Request, dto SessionDTO) SessionDTO {
 	if identity.IsRemote(r.Context()) && dto.Workspace != "" {
 		dto.Workspace = sessionPathRef("workspace", dto.ID)
 	}
+	if identity.IsRemote(r.Context()) && dto.NativeAdmission != nil {
+		receipt := *dto.NativeAdmission
+		receipt.Workroot = sessionPathRef("workroot", receipt.SourceSessionID)
+		dto.NativeAdmission = &receipt
+	}
 	return dto
 }
 

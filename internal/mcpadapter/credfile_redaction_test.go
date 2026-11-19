@@ -184,7 +184,8 @@ func TestFileCredentialURL_IsRedactedFromStatusAndLogs(t *testing.T) {
 		t.Logf("Start: %v", err)
 	}
 	t.Cleanup(pool.Shutdown)
-	st := awaitStatus(t, pool, "remote", func(s ServerStatus) bool { return s.Status == "failed" })
+	// Down: failed, then recovering while it waits out its retry (CW-20261114-0182).
+	st := awaitStatus(t, pool, "remote", func(s ServerStatus) bool { return s.Status == "failed" || s.Status == "recovering" })
 
 	if strings.Contains(st.Error, secretPath) {
 		t.Fatalf("ServerStatus.Error exposes the url secret: %q", st.Error)

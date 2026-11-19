@@ -358,3 +358,47 @@ func TestEventsStream_NotRegisteredWithoutBus(t *testing.T) {
 		t.Errorf("status = %d, want 404", rr.Code)
 	}
 }
+
+// historyEventsStore records the bounded history read the handlers prefer.
+type historyEventsStore struct {
+	fakeEventsStore
+	page     store.EventPage
+	filters  []store.EventFilter
+	deadline time.Duration
+}
+
+func (h *historyEventsStore) QueryEventHistory(ctx context.Context, f store.EventFilter) (store.EventPage, error) {
+	h.filters = append(h.filters, f)
+	if d, ok := ctx.Deadline(); ok {
+		h.deadline = time.Until(d)
+	}
+	return h.page, nil
+}
+
+// CW-20261114-0166: GET /events and GET /sessions/{id}/events read history
+// through the bounded read, with a deadline of at most HistoryDeadline, and a
+// read that ran out says so with its cursor.
+func TestEventHistoryReadsAreBoundedAndReportPartial(t *testing.T) {
+	h := &historyEventsStore{page: store.EventPage{Events: []events.Event{{Seq: 9, Kind: "k"}}, NextCursor: 9, Partial: true}}
+	handler := newEventsTestHandler(nil, h, &fakeLaunchService{})
+	for _, path := range []string{"/events?kind=k&limit=5", "/sessions/s1/events?limit=5"} {
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		var resp EventListResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil || rr.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, rr.Code, rr.Body)
+		}
+		if !resp.Partial || resp.NextCursor != 9 || len(resp.Events) != 1 {
+			t.Fatalf("%s: %+v", path, resp)
+		}
+		if h.deadline <= 0 || h.deadline > store.HistoryDeadline {
+			t.Fatalf("%s: deadline %s", path, h.deadline)
+		}
+	}
+	if len(h.filters) != 2 || h.filters[0].Kinds[0] != "k" || h.filters[1].SessionID != "s1" || h.filters[1].Limit != 5 {
+		t.Fatalf("filters = %+v", h.filters)
+	}
+	if len(h.calls) != 0 {
+		t.Fatalf("the unbounded read was used: %v", h.calls)
+	}
+}

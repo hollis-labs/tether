@@ -15,8 +15,8 @@ func (s *Store) GetSeatStatus(ctx context.Context, agentURN string) (seatstatus.
 	var d seatstatus.Declared
 	var state, since, updated string
 	var expires sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT agent_urn,state,reason,ref,owner,since,expires_at,set_by,updated_at FROM seat_status WHERE agent_urn=?`, agentURN).
-		Scan(&d.AgentURN, &state, &d.Reason, &d.Ref, &d.Owner, &since, &expires, &d.SetBy, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT agent_urn,state,reason,ref,owner,since,expires_at,set_by,set_by_verification,set_by_principal,updated_at FROM seat_status WHERE agent_urn=?`, agentURN).
+		Scan(&d.AgentURN, &state, &d.Reason, &d.Ref, &d.Owner, &since, &expires, &d.SetBy, &d.SetByVerification, &d.SetByPrincipal, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, false, nil
 	}
@@ -56,9 +56,9 @@ func (s *Store) PutSeatStatus(ctx context.Context, d seatstatus.Declared) (seats
 	if !d.ExpiresAt.IsZero() {
 		expires = d.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO seat_status(agent_urn,state,reason,ref,owner,since,expires_at,set_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
- ON CONFLICT(agent_urn) DO UPDATE SET state=excluded.state,reason=excluded.reason,ref=excluded.ref,owner=excluded.owner,since=excluded.since,expires_at=excluded.expires_at,set_by=excluded.set_by,updated_at=excluded.updated_at`,
-		d.AgentURN, string(d.State), d.Reason, d.Ref, d.Owner, d.Since.UTC().Format(time.RFC3339Nano), expires, d.SetBy, d.UpdatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO seat_status(agent_urn,state,reason,ref,owner,since,expires_at,set_by,set_by_verification,set_by_principal,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+ ON CONFLICT(agent_urn) DO UPDATE SET state=excluded.state,reason=excluded.reason,ref=excluded.ref,owner=excluded.owner,since=excluded.since,expires_at=excluded.expires_at,set_by=excluded.set_by,set_by_verification=excluded.set_by_verification,set_by_principal=excluded.set_by_principal,updated_at=excluded.updated_at`,
+		d.AgentURN, string(d.State), d.Reason, d.Ref, d.Owner, d.Since.UTC().Format(time.RFC3339Nano), expires, d.SetBy, d.SetByVerification, d.SetByPrincipal, d.UpdatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 		return d, false, err
 	}
 	return d, changed, tx.Commit()

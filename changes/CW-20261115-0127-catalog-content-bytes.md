@@ -1,0 +1,1 @@
+- Preserve file content whitespace in MCP catalog plans and draft validation so planned SHA-256 hashes match submitted bytes (CW-20261115-0127).

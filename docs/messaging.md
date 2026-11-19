@@ -192,9 +192,10 @@ Notify response fields:
 | `wake_error` | In-band wake failure; the durable message still exists. |
 
 The default wake text is a pointer: it names the latest message (id, sender, kind,
-urgency) and tells the agent to read it from its inbox, and, if nothing needs Chrispian,
-to mark it read and end the turn silently. A mail check is not a turn to report on. The
-mail does not interrupt current work unless it is urgent. The hub's notify path and the
+urgency) and tells the agent: "Read and handle these. Reply to anything that asked you
+something. If nothing needs action, end the turn without producing any message." (CW-20261117-0002). For a seat with
+mail triage on, the wake also lists the seat's other pending mail (see
+[mail-triage.md](mail-triage.md)). The hub's notify path and the
 sweep's retried wakes share one formatter (`wakeintent.DefaultWakeText`).
 
 ### One delivery path per hosted session

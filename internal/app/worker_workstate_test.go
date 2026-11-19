@@ -71,9 +71,9 @@ func TestWorkerStateFramesRecordWorkStateBeforeNormalization(t *testing.T) {
 
 	// A restart loses the in-memory value. The last recorded event says processing,
 	// so an unchanged frame announces nothing and the next change names it as from.
-	s.workerIngestMu.Lock()
+	s.workerStateMu.Lock()
 	s.workStates = nil
-	s.workerIngestMu.Unlock()
+	s.workerStateMu.Unlock()
 	frame("running") // unchanged vs the recorded processing: no event
 	if after, _ := workStateEvents(t, s, "s1"); len(after) != len(want) {
 		t.Fatalf("a restart re-announced an unchanged work-state: %+v", after)
@@ -97,9 +97,9 @@ func TestWorkerExitRecordsNoWorkState(t *testing.T) {
 	if len(got) != 1 || got[0].To != "processing" {
 		t.Fatalf("exit recorded a work-state: %+v", got)
 	}
-	s.workerIngestMu.Lock()
+	s.workerStateMu.Lock()
 	_, kept := s.workStates["s1"]
-	s.workerIngestMu.Unlock()
+	s.workerStateMu.Unlock()
 	if kept {
 		t.Fatal("an ended session kept its in-memory work-state")
 	}

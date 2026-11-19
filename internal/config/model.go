@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/operatorattest"
 )
 
 type Global struct {
@@ -31,6 +32,12 @@ type Global struct {
 	// behavior identical to pre-federation Tether. See internal/federation
 	// and docs/messaging-federation.md.
 	Federation federation.Config `yaml:"federation"`
+	// OperatorAttestation is the trust root for operator-attested replies
+	// (CW-20261114-0152, docs/operator-attested-replies.md): Tangent's public
+	// keys. Privileged: changed only by an operator-approved catalog plan, and
+	// a reload that finds a block other than the approved one is refused. Nil
+	// leaves the feature off.
+	OperatorAttestation *operatorattest.RawConfig `yaml:"operator_attestation,omitempty"`
 }
 
 // TeamsConfig controls optional team surfaces and host activation.
@@ -262,6 +269,9 @@ type DaemonConfig struct {
 	// EventIngest turns on POST /events, the generic publish route for apps.
 	// Off unless enabled.
 	EventIngest EventIngestConfig `yaml:"event_ingest,omitempty"`
+	// ChatWire serves the chat wire (libs/agent/chat) for this daemon's seats
+	// at /chat/v1 (CW-20261118-0011). Off unless enabled.
+	ChatWire ChatWireConfig `yaml:"chat_wire,omitempty"`
 	// RemoteListener adds an enforce-only loopback TCP listener beside listen_addr.
 	RemoteListener RemoteListenerConfig `yaml:"remote_listener,omitempty"`
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
@@ -283,6 +293,11 @@ type DaemonConfig struct {
 	// proxy_events, ai_events, identity_audit and terminal a2a_tasks.
 	// Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
+}
+
+// ChatWireConfig is daemon.chat_wire.
+type ChatWireConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
 }
 
 // EventIngestConfig configures POST /events (CW-20261020-0010). Unknown kinds
@@ -670,6 +685,16 @@ func EffectiveStopGate(g Global, a Agent) bool {
 type MailTriageDefaults struct {
 	Enabled        bool   `yaml:"enabled,omitempty"`
 	ActionInterval string `yaml:"action_interval,omitempty"`
+	// AckFilter refuses pure acknowledgement replies at send time
+	// (CW-20261118-0050). On unless set false.
+	AckFilter *bool `yaml:"ack_filter,omitempty"`
+}
+
+// AckFilterEnabled reports whether the hub refuses pure acknowledgement
+// replies at send time: on unless catalog.defaults.mail_triage.ack_filter is false.
+func (g Global) AckFilterEnabled() bool {
+	f := g.Catalog.Defaults.MailTriage.AckFilter
+	return f == nil || *f
 }
 
 // DefaultMailTriageActionInterval caps action wakes when no interval is set.

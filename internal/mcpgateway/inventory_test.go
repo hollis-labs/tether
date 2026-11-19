@@ -4,6 +4,7 @@ import (
 	"context"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -140,5 +141,21 @@ func TestKnownFailedOriginIsUnavailableNotIncomplete(t *testing.T) {
 	snapshot.Origins[1].Status = "excluded"
 	if res, _ = svc.List(Request{}); !res.Complete {
 		t.Fatal("an excluded origin made the inventory incomplete")
+	}
+}
+
+// CW-20261114-0182: a remote upstream waiting out its retry backoff
+// ("recovering", possibly for hours) is unavailable, not incomplete: a gap that
+// long must not hold complete=false.
+func TestRecoveringOriginIsUnavailableNotIncomplete(t *testing.T) {
+	unavailable, ids, incomplete, reasons := availability(Snapshot{Origins: []OriginStatus{
+		{ID: "tangent", Status: "recovering", Error: "connect refused"},
+		{ID: "hadron", Status: "starting"},
+	}})
+	if !unavailable["tangent"] || !slices.Contains(ids, "tangent") || slices.Contains(incomplete, "tangent") {
+		t.Fatalf("recovering: unavailable %v incomplete %v", unavailable, incomplete)
+	}
+	if reasons["tangent"] != "recovering: connect refused" || !slices.Equal(incomplete, []string{"hadron"}) {
+		t.Fatalf("reasons %v incomplete %v", reasons, incomplete)
 	}
 }

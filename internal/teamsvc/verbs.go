@@ -57,6 +57,13 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		// A retry of a formation that was torn down gets the launcher's recorded
+		// run back; never seat an owner on, or report success for, a dead run.
+		if current, gerr := s.deps.Runs.GetRun(ctx, run.ID); gerr != nil {
+			return Result{Run: &run}, gerr
+		} else if runEnded(current.Status) {
+			return Result{Run: &run}, fmt.Errorf("%w: this formation was torn down after a failure; use a new key", ErrConflict)
+		}
 		err = s.deps.Roster.Mutate(ctx, run.ID, func(r *teams.Roster) error {
 			for i, m := range r.Members {
 				if m.Actor == p.ID {
@@ -69,11 +76,23 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 			}
 			// A person/service owner is a governance participant, not a provisioned
 			// worker. It acquires no session, spawn capability or provider resources.
-			r.Members = append(r.Members, teams.Member{ID: serviceKey(scope) + "-owner", Slot: slot, Actor: p.ID, Kind: p.Kind, Status: "active", Governance: teams.Owner, JoinedAt: s.deps.Clock.Now()})
+			owner := teams.Member{ID: serviceKey(scope) + "-owner", Slot: slot, Actor: p.ID, Kind: p.Kind, Status: "active", Governance: teams.Owner, JoinedAt: s.deps.Clock.Now()}
+			if s.managesLifecycle(req.Team) {
+				// The owner seat carries the run's resolved ceilings so a
+				// member added later inherits them (see AddMember). It still
+				// launches no session.
+				owner.Limits, owner.Budget, owner.SpawnCapable = limits, limits.Budget, true
+			}
+			r.Members = append(r.Members, owner)
 			return nil
 		})
+		if err == nil && s.managesLifecycle(req.Team) {
+			err = s.deps.Deadlines.RecordRunDeadline(ctx, run.ID, s.deps.Clock.Now().Add(limits.Timeout))
+		}
 		if err != nil {
-			return Result{Run: &run}, err
+			// Members are already launched: tear them down rather than leave a
+			// run with live sessions, no owner seat or no reaper row.
+			return Result{Run: &run}, errors.Join(err, s.abortFormation(ctx, run.ID))
 		}
 		out := Result{Run: &run, Self: p.ID, Coordinator: p.ID, Channel: run.Channel}
 		if snapshot, serr := s.deps.Roster.Snapshot(ctx, run.ID); serr == nil {
@@ -92,11 +111,15 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 
 func (s *Service) AddMember(ctx context.Context, req AddMemberRequest) (Result, error) {
 	return s.call(ctx, string(mesh.MemberAdd), req.Key, req, func(ctx context.Context, p Principal, scope Scope, _ Record) (Result, error) {
-		t, _, err := s.run(ctx, req.RunID, p)
+		t, actor, err := s.run(ctx, req.RunID, p)
 		if err != nil {
 			return Result{}, err
 		}
-		member, err := teams.Spawn(ctx, t, s.deps.Roster, s.deps.Provisioner, s.deps.Trust, s.deps.Approvals, req.RunID, p.ID, req.Slot, serviceKey(scope), req.Limits, s.deps.Defaults)
+		t, limits, defaults, err := s.addMemberLimits(ctx, t, actor, req)
+		if err != nil {
+			return Result{}, err
+		}
+		member, err := teams.Spawn(ctx, t, s.deps.Roster, s.deps.Provisioner, s.deps.Trust, s.deps.Approvals, req.RunID, p.ID, req.Slot, serviceKey(scope), limits, defaults)
 		view := memberView(member)
 		return Result{Member: &view}, err
 	})
@@ -325,15 +348,17 @@ func deliveryKey(run, key, member string) string {
 
 func (s *Service) ReportResult(ctx context.Context, req ReportResultRequest) (Result, error) {
 	return s.call(ctx, string(mesh.ReportResult), req.Key, req, func(ctx context.Context, p Principal, _ Scope, _ Record) (Result, error) {
-		t, _, err := s.run(ctx, req.RunID, p)
+		t, reporter, err := s.run(ctx, req.RunID, p)
 		if err != nil {
 			return Result{}, err
 		}
 		if req.DelegateKey == "" || req.Body == "" {
 			return Result{}, ErrInvalidRequest
 		}
-		err = s.router.ReplyResult(ctx, t, req.RunID, req.DelegateKey, p.ID, req.Body)
-		return Result{}, err
+		if err = s.router.ReplyResult(ctx, t, req.RunID, req.DelegateKey, p.ID, req.Body); err != nil {
+			return Result{}, err
+		}
+		return Result{}, s.finishOnResult(ctx, t, req.RunID, reporter)
 	})
 }
 
@@ -492,6 +517,9 @@ func (s *Service) Dissolve(ctx context.Context, req RunRequest) (Result, error) 
 		err := teams.EndRun(ctx, req.RunID, guardedRoster{RosterStore: s.deps.Roster, team: t, plan: plan, provisioner: s.deps.Provisioner}, s.deps.Provisioner, s.deps.Routing)
 		if err == nil {
 			err = s.deps.Runs.MarkDissolved(ctx, req.RunID)
+		}
+		if err == nil && s.deps.Deadlines != nil {
+			err = s.deps.Deadlines.CloseRun(ctx, req.RunID)
 		}
 		return Result{}, err
 	})

@@ -23,7 +23,9 @@ type issuedRig struct {
 	issuer *authissuer.Issuer
 }
 
-func newIssuedRig(t *testing.T) *issuedRig {
+func newIssuedRig(t *testing.T) *issuedRig { return newIssuedRigWithTransport(t, false) }
+
+func newIssuedRigWithTransport(t *testing.T, unix bool) *issuedRig {
 	t.Helper()
 	root := t.TempDir()
 	keys, err := authissuer.OpenKeyStore(filepath.Join(root, "auth"), time.Hour)
@@ -35,7 +37,7 @@ func newIssuedRig(t *testing.T) *issuedRig {
 		t.Fatal(err)
 	}
 	issuer := authissuer.New("tether-test", keys, state)
-	f := newTransportFixtureWithIssuer(t, false, false, time.Minute, issuer)
+	f := newTransportFixtureWithIssuer(t, unix, false, time.Minute, issuer)
 	for _, sid := range []string{"s-rot", "s-other"} {
 		if err := f.db.CreateSession(store.SessionRow{ID: sid, LaunchID: "l", ProjectID: "p", LogicalAgentID: "agent", ProviderID: "x", ProviderKind: "cli", Workspace: "/w", State: "running"}, nil); err != nil {
 			t.Fatal(err)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/events"
@@ -74,29 +75,40 @@ func TestTelemetryHTTPKeepsPresentedCredentialIdentity(t *testing.T) {
 			}
 			deadline := time.Now().Add(10 * time.Second)
 			for {
+				// The event log carries the canonical pair; the completed call's
+				// attribution is in proxy_events (CW-20261113-0009).
 				rows, err := f.db.EventsSince(0)
 				if err != nil {
 					t.Fatal(err)
 				}
 				var start, end bool
 				for _, row := range rows {
-					if row.Kind != events.EventTypeToolCallStart && row.Kind != events.EventTypeToolCallEnd {
+					if row.Kind == events.EventTypeToolCallStart || row.Kind == events.EventTypeToolCallEnd {
+						t.Fatalf("legacy %s logged", row.Kind)
+					}
+					if row.Kind != catalog.KindToolCallStarted && row.Kind != catalog.KindToolCallFinished {
 						continue
 					}
-					var call events.ToolCallEvent
-					if err := json.Unmarshal([]byte(row.PayloadJSON), &call); err != nil {
+					var payload struct {
+						Tool string `json:"tool"`
+					}
+					if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
 						t.Fatal(err)
 					}
-					if call.ToolName != tool {
+					if payload.Tool != tool {
 						continue
 					}
-					if call.Attribution != want {
-						t.Fatalf("MCP credential attribution = %+v, want %+v", call.Attribution, want)
-					}
-					start = start || row.Kind == events.EventTypeToolCallStart
-					end = end || row.Kind == events.EventTypeToolCallEnd
+					start = start || row.Kind == catalog.KindToolCallStarted
+					end = end || row.Kind == catalog.KindToolCallFinished
 				}
-				if start && end {
+				proxied, err := f.db.QueryProxyEvents(store.ProxyEventFilter{ToolName: tool})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(proxied) > 0 && proxied[0].Attribution != want {
+					t.Fatalf("MCP credential attribution = %+v, want %+v", proxied[0].Attribution, want)
+				}
+				if start && end && len(proxied) > 0 {
 					return
 				}
 				if time.Now().After(deadline) {
@@ -106,17 +118,13 @@ func TestTelemetryHTTPKeepsPresentedCredentialIdentity(t *testing.T) {
 			}
 		})
 	}
-	rows, err := f.db.EventsSince(0)
+	proxied, err := f.db.QueryProxyEvents(store.ProxyEventFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, row := range rows {
-		if row.Kind == events.EventTypeToolCallStart || row.Kind == events.EventTypeToolCallEnd {
-			var call events.ToolCallEvent
-			_ = json.Unmarshal([]byte(row.PayloadJSON), &call)
-			if call.Attribution.PrincipalID == "" {
-				t.Fatal("anonymous MCP call bypassed strict admission")
-			}
+	for _, row := range proxied {
+		if row.Attribution.PrincipalID == "" {
+			t.Fatal("anonymous MCP call bypassed strict admission")
 		}
 	}
 }

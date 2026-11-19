@@ -1,0 +1,1 @@
+- CW-20261115-0084: `tether_session_launch` takes `continuity=relaunch` as an assertion that the created session is a continuation (intent resume plus parent) and refuses a fresh one; session create now logs the requesting principal and the continuity it asked for.

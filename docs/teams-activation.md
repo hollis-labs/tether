@@ -1,8 +1,11 @@
-# Teams activation policy (Stage A)
+# Teams activation policy (Stage A and Stage B)
 
 Teams are built but formation is refused until the operator provisions an
-activation policy. This page describes the Stage A policy: who may form a team,
-what shape it may take, and how to pause it. Nothing here starts a team by
+activation policy. This page describes the policy: who may form a team, what
+shape it may take, and how to pause it. Stage A (operator, coordinator seat,
+conservative limits) still works unchanged apart from the ceilings; Stage B adds
+an agent orchestrator, formation by a service, generous ceilings and automatic
+dissolve. See [Stage B](#stage-b-orchestrator-led-teams) below. Nothing here starts a team by
 itself; `teams.enabled: true` in `global.yaml` only mounts the verbs.
 
 ## Prerequisites
@@ -47,9 +50,9 @@ capability only; a definition declaring any other capability is rejected.
 
 ## What Stage A allows
 
-- **Who:** only the local operator, authenticated over the Unix socket (verified
-  operator principal). Services, sessions, interactive users and TCP callers are
-  refused.
+- **Who:** the local operator, authenticated over the Unix socket (verified
+  operator principal), and any service listed under `services:` (Stage B).
+  Unlisted services, sessions, interactive users and TCP callers are refused.
 - **Shape:** exactly three slots named `coordinator`, `workers`, `reviewer`.
   - `coordinator`: fresh, 0..1 members. The operator holds this seat as run
     owner (a governance seat with no session of its own); an agent coordinator is
@@ -58,15 +61,14 @@ capability only; a definition declaring any other capability is rejected.
     pre-enrolled agents (the library requires a pool for concurrent members).
   - `reviewer`: fresh, exactly 1 member.
   - Every slot's definition must be an allowlisted exact pin.
-- **Reviewer runtime:** when the allowlist contains more than one runtime, the
-  reviewer must run on a different runtime than the workers. With a single
-  runtime it is only a preference.
-- **Ceilings:** `teamsvc.ConservativePolicy()` with `MaxDepth` 1 (fan-out 4,
-  budget 1, five-minute timeout, 16 rounds, 4 stalls), three slots, `may_message`,
-  `may_assign` and `may_delegate` as the only grantable permissions, strict
-  authority. A verb only works when the team's grants allow the sender's slot to
-  reach the recipient's slot (the example grants coordinator to workers and
-  reviewer, workers to reviewer).
+- **Reviewer runtime:** see [Reviewer pairing](#reviewer-pairing).
+- **Ceilings:** `teamsvc.ConservativePolicy()` with depth 1 (fan-out 4, budget 1,
+  five-minute timeout, 16 rounds, 4 stalls), unchanged for Stage A teams; the
+  [Stage B ceilings](#ceilings) apply only to teams with an orchestrator slot.
+  `may_message`, `may_assign` and `may_delegate` as
+  the only grantable permissions, strict authority. A verb only works when the
+  team's grants allow the sender's slot to reach the recipient's slot (the
+  example grants coordinator to workers and reviewer, workers to reviewer).
 
 A refused formation writes nothing: no definition, run, enrollment, binding or
 session.
@@ -172,3 +174,137 @@ suspended (no messages) until the run owner re-adopts it explicitly.
 
 Adopted members are never spawn-capable, and adoption does not touch Torque
 claims or task assignment.
+
+## Stage B: orchestrator-led teams
+
+Stage B is shaped for the unit-of-work model: Torque's dispatcher forms a small
+team, the team does the task and the run dissolves itself. It is selected by the
+shape of the request: a team with an `orchestrator` slot is Stage B, anything
+else must be Stage A shaped. Nothing about identity changes: the `teams`
+identity point may stay at `observe`; the service is trusted as presented (a
+valid credential, listed in the policy), and no identity feature is added.
+
+### Shape
+
+Four slots, exactly:
+
+| Slot | Resolution | Size | Notes |
+| --- | --- | --- | --- |
+| `coordinator` | fresh | 0, no member | The owner's governance seat. The forming operator or service holds it as run owner; it launches no session. It can dissolve the run and receives the result. |
+| `orchestrator` | fresh | exactly 1 | An agent. Runs the team and owns upward communication. |
+| `workers` | fresh (1) or pool | 1..3 | A pool needs pre-registered agent identities (the library requires a pool for more than one concurrent member). |
+| `reviewer` | fresh | exactly 1 | Independent code reviewer. |
+
+So a team is the orchestrator, one to three workers and the reviewer: three to
+five agents, never more than five (the owner seat is not an agent). The
+coordinator slot is not the orchestrator on purpose: a slot's members share its
+grants and its address, and the owner seat must not receive messages meant for
+the orchestrator. Stage A shapes keep working as they were.
+
+### Authority
+
+A Stage B team may carry only these grants; any other grant (a worker to a
+worker, a worker to the reviewer, an actor grant, `may_spawn`, `may_admin`, ...)
+is refused at formation:
+
+- `coordinator` to `orchestrator`: `may_message`, `may_assign`, `may_delegate`
+  (the owner hands over the task; the orchestrator's report returns to it).
+- `orchestrator` to `workers` and to `reviewer`: `may_message`, `may_assign`,
+  `may_delegate`.
+- `workers` to `orchestrator`: `may_message` only.
+- `reviewer` to `orchestrator`: `may_message` only.
+
+Workers therefore cannot message each other, the reviewer, the owner or anyone
+but the orchestrator (`internal/teamruntime/stage_b_test.go` proves this through
+the real service: peers by URN, slots, `@all`, self, the service and every verb).
+A member reporting the result of a delegation does not need a reverse grant.
+
+### Ceilings
+
+`ceilings:` in `teams-policy.yaml` sets a `max` (hard cap) and a `default` (fills
+what a request leaves unset). A team's `policy.spawn` and the launch request's
+`limits` may only tighten them; asking for more than `max` is refused. Omitted
+fields take the built-ins:
+
+| Limit | Default | Max |
+| --- | --- | --- |
+| `timeout` (run lifetime) | 4h | 12h |
+| `max_rounds` | 200 | 500 |
+| `max_stalls` | 20 | 40 |
+| `max_depth` | 2 | 3 |
+| `max_children` / `fan_out` | 6 | 8 |
+| `budget` | 2000 | 10000 |
+
+These apply only to Stage B teams; Stage A teams keep the conservative limits,
+the original reviewer rule (a different runtime or model whenever more than one
+runtime is allowlisted; `reviewer_pairing` does not relax it) and are not reaped.
+A `timeout` must be a duration string such as `4h`; a bare number or a value
+under one second is refused. A default the file leaves unset is clamped to a lowered max; a default set above
+the max is an error. Max members per slot is 3, initial members at most six
+(five agents and the owner), slots at most four.
+
+### Formation by a service
+
+```yaml
+services:
+  - msg://service/torque/dispatcher
+```
+
+A listed service that presents a valid credential (carrying `team.write`) may
+form teams and dissolve the runs it owns over the authenticated daemon
+transport, with identity in `observe` or `off` as well as `enforce`. Below
+`enforce` nothing else checks scopes, so the listed service's credential must
+carry `team.write` itself or it is refused. The URN
+must be a service principal (`msg://service/<a>/<b>`). Unlisted services, an
+unverified credential, an asserted header and every other principal kind are
+refused. The service is the run owner, so it holds the governance seat and uses
+`tether_team_delegate` to hand the task to `@orchestrator`. An absent policy
+file still denies everything, and the admission pause file still refuses
+formation for services and the operator alike.
+
+### Per-slot model and runtime
+
+Each slot's definition pin resolves to exactly one allowlisted launch, so a role
+maps to a model by naming the launch's pin: add several launches per runtime
+(`claude`, `codex`, `antigravity`), give each its own definition file and pin and
+an optional `model:`, then put the orchestrator and reviewer on the Astra pin
+and workers on Sol or Agy. The launches must exist in the catalog.
+
+### Reviewer pairing
+
+The reviewer should differ from the workers by runtime, or by model when both
+launches name one. With `reviewer_pairing: require` (the default) it is refused
+when the allowlist holds two launches that differ and the request does not use
+them; when no two launches differ (for example one launch) it is a preference:
+the formation proceeds and the fallback is logged and recorded on the formation
+result. `reviewer_pairing: prefer` makes it a preference always.
+
+### Lifecycle
+
+The run ends, and every member session stops, when:
+
+- the orchestrator reports a result (`tether_team_report_result`; the owner's
+  delegation to the orchestrator is what it answers). The run is marked to end
+  and the daemon's team loop (every `TETHER_TEAMS_LOOP_INTERVAL`, 5s default)
+  dissolves it, so the reporting call returns first. A worker's or reviewer's
+  report does not end the run. If the run has no open deadline row (or there is
+  no deadline store) the run is dissolved inline instead.
+- the `timeout` ceiling passes, or
+- no non-owner member is live any more (all stopped, failed or released).
+
+The owner can still dissolve explicitly (`tether_team_dissolve`). A dissolved run
+is closed; a failed dissolve is retried on the next pass. `tether_team_member_add` on a Stage B run (owner only) adds a worker under the
+run's recorded ceilings, with a timeout of what remains until the run's
+deadline, at most three workers and five agents; the added worker has the
+workers grants (it can message only the orchestrator). Stage A runs keep the
+old member-add behavior.
+A formation that fails after members launched tears them down. Only Stage B runs
+get a deadline row and are reaped. Deadlines live in
+`team_run_deadlines` (migration 0108); runs formed before it have none and are
+dissolved with the verbs. Limits other than `timeout` (`max_rounds`, `max_stalls`,
+budget, depth) are passed to the library and member launches as before; Tether
+does not itself count rounds or stalls.
+
+Example files: [teams-policy-stage-b.yaml](../examples/teams/teams-policy-stage-b.yaml)
+and [team-form-stage-b.json](../examples/teams/team-form-stage-b.json) (an
+orchestrator, two workers and a reviewer).

@@ -42,6 +42,13 @@ func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, 
 	if intent.NoWake {
 		return api.WakeOutcome{Reason: "no-wake"}
 	}
+	// A duplicate send of an already admitted message reports that message's
+	// stored wake outcome (CW-20261118-0024): triage and session resolution
+	// would otherwise answer for a second wake that admission never allows.
+	if prior, ok := storedRecipientWake(ctx, st, env.ID); ok {
+		delegated = true
+		return prior
+	}
 	if d := rt.triage.gate(ctx, env); !d.wake {
 		return api.WakeOutcome{Reason: d.reason}
 	}
@@ -56,10 +63,13 @@ func recipientWake(ctx context.Context, st *store.Store, reg *registry.Service, 
 	if text == "" {
 		text = sweepWakeText(env)
 	}
+	// Coalesced wake (CW-20261117-0002): the turn lists the seat's other pending mail.
+	text, commitDigest := rt.triage.withDigest(ctx, env, text)
 	delegated = true
 	out = attemptRecipientWake(ctx, st, reg, rt, env.ID, env.To, sessionID, text)
 	if out.Delivered {
 		rt.triage.woke(ctx, env)
+		commitDigest()
 	}
 	return out
 }
@@ -86,4 +96,24 @@ func attemptRecipientWake(ctx context.Context, st *store.Store, reg *registry.Se
 		out.Detail = "wake outcome persistence failed: " + err.Error()
 	}
 	return out
+}
+
+// storedRecipientWake returns the wake outcome recorded for an admitted
+// message: the first send's outcome, or the latest sweep retry's. An admission
+// whose outcome was never written (a crash mid-attempt) answers
+// wake-outcome-unknown, as attemptRecipientWake does. ok is false when the
+// message was never admitted, or the lookup failed.
+func storedRecipientWake(ctx context.Context, st *store.Store, id string) (api.WakeOutcome, bool) {
+	if st == nil || id == "" {
+		return api.WakeOutcome{}, false
+	}
+	raw, found, err := st.RecipientWakeOutcome(ctx, id)
+	if err != nil || !found {
+		return api.WakeOutcome{}, false
+	}
+	var prior api.WakeOutcome
+	if raw == "" || json.Unmarshal([]byte(raw), &prior) != nil {
+		return api.WakeOutcome{Reason: "wake-outcome-unknown"}, true
+	}
+	return prior, true
 }

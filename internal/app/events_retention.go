@@ -98,9 +98,13 @@ func (s *Service) eventsDebugRetention() time.Duration {
 // eventRetentionKinds are the kinds admitted to a retention class
 // (CW-20261114-0019). Raw provider output is debug: it is about 98% of event
 // rows, and its useful content already lands in session.turn_output and the
-// session log. Every other kind stays unclassified (held on the main window).
+// session log. A kind not listed stays unclassified (held on the main window).
 var eventRetentionKinds = map[string]eventretention.Class{
 	"session.output": eventretention.Debug,
+	// Tool-call observations are activity (CW-20261113-0009). The class has no
+	// window of its own yet, so they stay on the main window.
+	"tool.call.started":  eventretention.Activity,
+	"tool.call.finished": eventretention.Activity,
 }
 
 // AdmitEventRetentionClasses installs eventRetentionKinds under the default

@@ -812,8 +812,11 @@ func TestProviderChatPassesExtensionsAndTranslatesProvenance(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
+	// The server's own client, not http.DefaultClient: a parallel test's httptest.Server.Close closes the default
+	// transport's idle connections, which broke this request mid-flight under load (CW-20261115-0074).
 	p := New(Config{
 		BaseURL:       srv.URL + "/v1/",
+		HTTPClient:    srv.Client(),
 		ResolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
 		OpenRouter: &OpenRouterExtension{
 			Provider: map[string]any{"order": []string{"Anthropic"}},

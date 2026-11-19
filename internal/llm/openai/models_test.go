@@ -26,7 +26,7 @@ func TestDiscoverModels(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	ids, err := DiscoverModels(context.Background(), DiscoveryConfig{BaseURL: srv.URL + "/v1/", APIKey: "sk-test"})
+	ids, err := DiscoverModels(context.Background(), DiscoveryConfig{HTTPClient: srv.Client(), BaseURL: srv.URL + "/v1/", APIKey: "sk-test"})
 	if err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestDiscoverModelsNoKeySendsNoAuthorization(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if _, err := DiscoverModels(context.Background(), DiscoveryConfig{BaseURL: srv.URL}); err != nil {
+	if _, err := DiscoverModels(context.Background(), DiscoveryConfig{HTTPClient: srv.Client(), BaseURL: srv.URL}); err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
 	}
 	if gotAuth != "" {
@@ -67,7 +67,7 @@ func TestDiscoverModelsEmptyList(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	ids, err := DiscoverModels(context.Background(), DiscoveryConfig{BaseURL: srv.URL})
+	ids, err := DiscoverModels(context.Background(), DiscoveryConfig{HTTPClient: srv.Client(), BaseURL: srv.URL})
 	if err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestDiscoverModelsErrors(t *testing.T) {
 			srv := httptest.NewServer(tc.handler)
 			t.Cleanup(srv.Close)
 
-			ids, err := DiscoverModels(context.Background(), DiscoveryConfig{BaseURL: srv.URL})
+			ids, err := DiscoverModels(context.Background(), DiscoveryConfig{HTTPClient: srv.Client(), BaseURL: srv.URL})
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
 			}
@@ -137,7 +137,7 @@ func TestDiscoverModelsTimeout(t *testing.T) {
 	})
 
 	start := time.Now()
-	_, err := DiscoverModels(context.Background(), DiscoveryConfig{BaseURL: srv.URL, Timeout: 50 * time.Millisecond})
+	_, err := DiscoverModels(context.Background(), DiscoveryConfig{HTTPClient: srv.Client(), BaseURL: srv.URL, Timeout: 50 * time.Millisecond})
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want timeout", err)
 	}

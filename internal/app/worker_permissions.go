@@ -35,10 +35,10 @@ func (s *Service) workerPermissionSource(row *store.SessionRow) bool {
 // Raw protocol bytes remain in the existing session log. Persist only spans
 // for a split line, so restart can rebuild stdout without mixing in stderr or
 // copying params/secrets into a second database representation.
-func (s *Service) workerPermissionOutput(row *store.SessionRow, f workerwire.Frame, log *os.File, offset int64) error {
-	if f.Stream != "stdout" || !s.workerPermissionSource(row) {
-		return nil
-	}
+//
+// workerPermissionSpans runs for a permission source's stdout frame
+// (workerPermissionSource), after the frame is written and synced.
+func (s *Service) workerPermissionSpans(row *store.SessionRow, f workerwire.Frame, log *os.File, offset int64) error {
 	ctx := context.Background()
 	state, err := s.Store.WorkerPermissionParser(ctx, row.ID)
 	if err != nil {

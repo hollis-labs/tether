@@ -113,7 +113,9 @@ func (a *Adapter) handleCatalogPlan(ctx context.Context, args map[string]any) (a
 				return nil, toolError("invalid_argument", fmt.Sprintf("files[%d] must be an object with path and content", i))
 			}
 			del, _ := m["delete"].(bool)
-			req.Files = append(req.Files, catalogapply.File{Path: str(m, "path"), Content: str(m, "content"), Delete: del})
+			// File bodies are opaque bytes; str trims identifiers and paths.
+			content, _ := m["content"].(string)
+			req.Files = append(req.Files, catalogapply.File{Path: str(m, "path"), Content: content, Delete: del})
 		}
 	}
 	if req.RollbackOf == "" && (req.Name == "" || len(req.Files) == 0) {
@@ -171,7 +173,9 @@ func (a *Adapter) handleCatalogValidate(ctx context.Context, args map[string]any
 				return nil, toolError("invalid_argument", fmt.Sprintf("files[%d] must be an object with path and content", i))
 			}
 			del, _ := m["delete"].(bool)
-			files = append(files, catalogapply.File{Path: str(m, "path"), Content: str(m, "content"), Delete: del})
+			// File bodies are opaque bytes; str trims identifiers and paths.
+			content, _ := m["content"].(string)
+			files = append(files, catalogapply.File{Path: str(m, "path"), Content: content, Delete: del})
 		}
 	}
 	report, err := a.client.CatalogApply().Validate(ctx, files)

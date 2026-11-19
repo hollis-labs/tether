@@ -704,6 +704,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
 	turnOutput := s.newSessionTurnOutput(*row, plan)
 	turnOutput.wire(rt, &startOpts)
+	stdioTap := s.installStdioTap(sessionID, plan.ProviderBrand, rt, &startOpts)
 	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
 	startOpts.AutoPlantBootDir = false
@@ -796,6 +797,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 	if err != nil {
 		s.turnOutputs.Delete(sessionID)
+		s.dropStdioTap(sessionID, stdioTap)
 		if s.shouldFlushSessionOutput(launchCtx, sessionID) {
 			turnOutput.flush()
 		}
@@ -812,6 +814,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, s.retainShimStartFailure(sessionID, err)
 	}
 	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), sessionID, launchEvidence)
+	s.watchStdioTap(sessionID, stdioTap)
 	launched = true
 	if scratch != nil {
 		go s.releaseScratchAfterCompletion(context.WithoutCancel(ctx), scratch)
@@ -1270,6 +1273,7 @@ func (s *Service) closeCreatedSession(id string) (bool, error) {
 	if s.Registry != nil {
 		_, _ = s.Registry.RevokeSessionBindings(context.Background(), id)
 	}
+	s.publishSessionEnded(id, row.LogicalAgentID, row.State, string(session.StateKilled), &exit, EndReasonNeverStarted)
 	return true, nil
 }
 

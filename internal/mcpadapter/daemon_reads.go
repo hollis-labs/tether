@@ -19,24 +19,33 @@ import (
 // readsViaDaemon). The daemon's DTOs are mapped back onto the store's types,
 // so a tool's result has the same shape whichever way it was read.
 
-func (a *Adapter) sessionEvents(ctx context.Context, sessionID string, limit int, cursor int64) ([]events.Event, error) {
+// historyDeadline bounds an in-process history read (store.HistoryDeadline;
+// tests shorten it).
+var historyDeadline = store.HistoryDeadline
+
+// sessionEvents returns one page of a session's history, with its cursor and
+// whether the read ran out of time (CW-20261114-0166): a partial page is never
+// reported as "no events".
+func (a *Adapter) sessionEvents(ctx context.Context, sessionID string, limit int, cursor int64) (store.EventPage, error) {
 	if !a.readsViaDaemon() {
-		evs, err := a.svc.Store.ListEventsBySession(sessionID, limit, cursor)
+		readCtx, cancel := context.WithTimeout(ctx, historyDeadline)
+		defer cancel()
+		page, err := a.svc.Store.QueryEventHistory(readCtx, store.EventFilter{SessionID: sessionID, Limit: limit, Cursor: cursor})
 		if err != nil {
-			return nil, toolError("internal_error", "list events: "+err.Error())
+			return store.EventPage{}, toolError("internal_error", "list events: "+err.Error())
 		}
-		return evs, nil
+		return page, nil
 	}
 	res, err := a.client.SessionEvents(ctx, sessionID, limit, cursor)
 	if err != nil {
-		return nil, daemonReadError(err, sessionID)
+		return store.EventPage{}, daemonReadError(err, sessionID)
 	}
 	out := make([]events.Event, 0, len(res.Events))
 	for _, e := range res.Events {
 		at, _ := time.Parse(time.RFC3339Nano, e.At)
 		out = append(out, events.Event{Seq: e.Seq, At: at, Scope: e.Scope, SessionID: e.SessionID, Kind: e.Kind, PayloadJSON: e.PayloadJSON})
 	}
-	return out, nil
+	return store.EventPage{Events: out, NextCursor: res.NextCursor, Partial: res.Partial}, nil
 }
 
 // sessionCheckpoints lists the checkpoints of sessionID's logical agent. Read
