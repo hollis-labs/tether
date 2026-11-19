@@ -2,7 +2,6 @@ package chatwire
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	chat "github.com/hollis-labs/libs/agent/chat"
@@ -39,7 +38,7 @@ func newTestRunner(t *testing.T, rt Runtime) (*Runner, *env, *fakeSessions) {
 
 // The runner over each Claude backend against the runner rules of the wire.
 func TestRunnerConformance(t *testing.T) {
-	for _, rt := range []Runtime{RuntimeClaudePTY, RuntimeClaudeStdio} {
+	for _, rt := range []Runtime{RuntimeClaudePTY, RuntimeClaudeStdio, RuntimeCodexAppServer} {
 		t.Run(string(rt), func(t *testing.T) {
 			chattest.RunnerConformance(t, chattest.RunnerHarness{
 				New: func(t *testing.T) chat.Runner {
@@ -55,23 +54,13 @@ func TestRunnerConformance(t *testing.T) {
 }
 
 func TestRunnerInfo(t *testing.T) {
-	for _, rt := range []Runtime{RuntimeClaudePTY, RuntimeClaudeStdio} {
+	for _, rt := range []Runtime{RuntimeClaudePTY, RuntimeClaudeStdio, RuntimeCodexAppServer} {
 		r, e, _ := newTestRunner(t, rt)
 		info, err := r.Info(context.Background(), "conv_conformance")
 		target, _ := e.resolver.BySeat(context.Background(), "seat")
-		if err != nil || info.Deltas != (rt == RuntimeClaudeStdio) || info.Approvals || info.RunnerRef != "s1/"+target.AttemptID {
+		if err != nil || info.Deltas != rt.Deltas() || info.Approvals || info.RunnerRef != "s1/"+target.AttemptID {
 			t.Errorf("%s: Info = %+v, %v", rt, info, err)
 		}
-	}
-}
-
-// A codex app-server session is refused with a typed error until CW-20261118-0009 lands its backend.
-func TestRunnerCodexUnsupported(t *testing.T) {
-	r, _, _ := newTestRunner(t, RuntimeCodexAppServer)
-	_, err := r.Start(context.Background(), chat.Turn{ConversationID: "c", RunID: "run_1", Text: "hi"})
-	var ue *UnsupportedRuntimeError
-	if !errors.Is(err, ErrUnsupportedRuntime) || !errors.As(err, &ue) || ue.Runtime != RuntimeCodexAppServer || ue.SessionID != "s1" {
-		t.Fatalf("Start = %v", err)
 	}
 }
 

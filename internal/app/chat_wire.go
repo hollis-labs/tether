@@ -64,8 +64,7 @@ func (s *Service) ChatBackend(id string, rt chatwire.Runtime) (chatwire.Backend,
 	case chatwire.RuntimeClaudePTY:
 		return s.claudePTYBackend(id)
 	case chatwire.RuntimeCodexAppServer:
-		// TODO(CW-20261118-0009): the codex app-server chat backend.
-		return nil, &chatwire.UnsupportedRuntimeError{SessionID: id, Runtime: rt, Reason: "the codex app-server backend is CW-20261118-0009"}
+		return s.codexChatBackend(id)
 	}
 	return nil, &chatwire.UnsupportedRuntimeError{SessionID: id, Runtime: rt, Reason: "no chat backend for this runtime"}
 }

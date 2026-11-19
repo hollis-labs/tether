@@ -228,11 +228,19 @@ func (s *Service) reattachCodexShim(ctx context.Context, tracked store.SessionSh
 	opts := agentsessions.StartOptions{JsonRpcRequestHook: jsonRPCRequestHook(row.ID), Workdir: plan.EffectiveWorkRoot(), WorkspaceDir: row.Workspace, LogPath: filepath.Join(row.Workspace, "logs", "session.log"), AttachEnabled: true, OnSessionID: func(id string) { _ = s.Store.UpsertSessionProviderMapping(row.ID, "tether", row.ProviderID, id) }}
 	output := s.newSessionTurnOutput(*row, plan)
 	output.wire(rt, &opts)
+	codexTap := s.installCodexTap(row.ID, plan.ProviderBrand, rt, &opts)
+	// The resumed reader starts after the checkpoint cursor, so an already
+	// accepted turn/started will not be replayed. Seed its private boundary
+	// before Manager.Start can deliver the remaining stdout.
+	if codexTap != nil {
+		codexTap.Restore(state.ThreadID, state.ActiveTurn, state.Partial)
+	}
 	s.turnOutputs.Store(row.ID, output)
 	if err = s.Manager.Start(ctx, agentsessions.StartRequest{ID: row.ID, Runtime: rt, Options: opts, SessionMeta: map[string]string{"logical_agent_id": row.LogicalAgentID, "provider_id": row.ProviderID, "launch_id": row.LaunchID, "project_id": row.ProjectID}}); err != nil {
 		s.turnOutputs.CompareAndDelete(row.ID, output)
 		return err
 	}
+	s.watchCodexTap(row.ID, codexTap)
 	s.finalizeSessionOutput(ctx, row.ID, output)
 	s.watchSessionBindings(row.ID)
 	host, err := s.shimHost()

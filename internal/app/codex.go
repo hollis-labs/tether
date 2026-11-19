@@ -18,6 +18,13 @@ const tetherClientVersion = "v005-07"
 // work-root projection; the shared layer owns initialize/thread/start caching
 // and turn/start framing.
 func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
+	if tap := s.codexTap(id); tap != nil {
+		return tap.Input(text, "send_turn", false, func() error { return s.sendTurnJSONRPCRaw(ctx, id, text) })
+	}
+	return s.sendTurnJSONRPCRaw(ctx, id, text)
+}
+
+func (s *Service) sendTurnJSONRPCRaw(ctx context.Context, id, text string) error {
 	if s.Store != nil {
 		plan, err := s.Store.GetLaunchPlan(id)
 		if err != nil {
