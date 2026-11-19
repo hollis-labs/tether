@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	gop "github.com/hollis-labs/libs/harness/core/adapters/provider"
 	"github.com/hollis-labs/libs/harness/core/agentlaunch"
@@ -106,5 +108,34 @@ func TestWorkerInvalidInputDoesNotStartProvider(t *testing.T) {
 	var output bytes.Buffer
 	if err := Run(context.Background(), cfg, strings.NewReader("not a user frame\n"), &output, nil); err == nil || output.Len() != 0 {
 		t.Fatal("invalid input started a turn")
+	}
+}
+
+type cancelAtRead struct {
+	cancel context.CancelFunc
+	sent   bool
+}
+
+func (r *cancelAtRead) Read(p []byte) (int, error) {
+	if r.sent {
+		return 0, io.EOF
+	}
+	r.sent = true
+	r.cancel()
+	return copy(p, `{"type":"control_request","request_id":"stop","request":{"subtype":"interrupt"}}`+"\n"), nil
+}
+func TestWorkerCancellationAtInputBoundary(t *testing.T) {
+	cfg := workerFixture(t, "exit 99")
+	for range 100 {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { defer close(done); _ = Run(ctx, cfg, &cancelAtRead{cancel: cancel}, io.Discard, io.Discard) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("worker hung at canceled input boundary")
+		}
+		cancel()
 	}
 }

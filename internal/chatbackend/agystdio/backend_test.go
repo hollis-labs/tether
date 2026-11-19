@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/libs/ui/ui-go/chatstream"
 	"github.com/hollis-labs/tether/internal/chatbackend"
 	"github.com/hollis-labs/tether/internal/chatbackend/agystdio"
+	"github.com/hollis-labs/tether/internal/chatbackend/claudestdio"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
@@ -280,5 +281,19 @@ func TestReplacedNativeConversationIsNotSuccess(t *testing.T) {
 	last := evs[len(evs)-1]
 	if last.Verb != chatstream.VerbRunError || last.Code != "process_error" {
 		t.Fatalf("replaced conversation reported as success: %+v", evs)
+	}
+}
+
+func TestHostedPartialObservedTurnIsBusy(t *testing.T) {
+	tap := claudestdio.NewTap()
+	defer tap.Close()
+	e := agystdio.NewHostedExecutor(agystdio.HostedConfig{Tap: tap, Busy: func() bool { return false }, Send: func(context.Context, []byte) error {
+		t.Fatal("input delivered during observed partial turn")
+		return nil
+	}})
+	defer func() { _ = e.Close() }()
+	_, _ = tap.Write([]byte(`{"event":"step_update","step_update":{"step_index":1,"step_type":"agent_response","state":"ACTIVE","text_delta":"partial"}}` + "\n"))
+	if _, err := e.StartTurn(context.Background(), "new", func([]byte) {}); !errors.Is(err, chatbackend.ErrBusy) {
+		t.Fatalf("partial observed turn: %v", err)
 	}
 }

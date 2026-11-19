@@ -51,7 +51,8 @@ func NewHostedExecutor(cfg HostedConfig) *HostedExecutor {
 			} // control responses are not model events
 			e.mu.Lock()
 			defer e.mu.Unlock()
-			if h.Event == "init" && e.pending == 0 {
+			// Reattach can begin with a partial turn after its init was acknowledged.
+			if h.Event != "result" && e.pending == 0 {
 				e.pending = 1
 			}
 			if e.line != nil {

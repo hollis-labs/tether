@@ -78,6 +78,7 @@ func Run(ctx context.Context, c Config, input io.Reader, output, stderr io.Write
 			select {
 			case frames <- f:
 			case <-ctx.Done():
+				scanErr <- ctx.Err()
 				return
 			}
 		}
