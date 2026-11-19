@@ -90,3 +90,20 @@ not raw credentials. See also `docs/trusted-session-context.md`.
 Native MCP verified callers now use their own idempotency namespace rather than
 sharing anonymous native keys. Existing anonymous records are not adopted or
 relabeled: their historical creator cannot be verified retroactively.
+
+## Non-UI plan/history reconciliation boundary
+
+Conversation generation alone does not move a Tachyon plan. Whole-unit review
+identified the additional non-UI boot/Agent Ops and retained-team read boundary.
+Tether now exposes the narrow authenticated item-only `replacement_lineage` and
+`worker_lineage` evidence described in
+[session-ui-lineage-evidence.md](session-ui-lineage-evidence.md). The first
+projects a committed retained local-team replacement and independently checks
+stored actors; the second requires explicit relaunch provenance plus an exact
+authenticated worker launch acknowledgement. Neither is native proof.
+
+The Tachyon orchestrator owns canonical explicit-resume discovery, complete-chain
+validation and atomic association before plan/history/thread reads (#806 draft,
+following merged #804/#805). Tether does not call Tachyon on an agent's behalf.
+Until producer/consumer exact-head review and those changes land, this inventory
+is not a claim of whole-unit plan/history completion or live acceptance.

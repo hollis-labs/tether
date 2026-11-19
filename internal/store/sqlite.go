@@ -356,6 +356,9 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution, row.RouteJSON, row.WorkerID, row.TaskID, row.App, row.RequestingPrincipal); err != nil {
 		return err
 	}
+	if err := recordRelaunchProvenanceTx(context.Background(), tx, row, plan, now); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`INSERT INTO launch_plans (session_id, plan_json) VALUES (?, ?)`, row.ID, string(pb)); err != nil {
 		return err
 	}

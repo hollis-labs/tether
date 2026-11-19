@@ -284,6 +284,11 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		}
 		return nil, fmt.Errorf("%s: %w", launchFailedPrefix, err)
 	}
+	// Only an exact authenticated launch verdict can confirm placement. A state
+	// frame or a response for another session/command must leave it uncertain.
+	if result.T != "launched" || result.Session != row.ID || result.CmdID != "launch:"+row.ID {
+		return nil, fmt.Errorf("worker launch acknowledgement identity unconfirmed; attempt remains launching")
+	}
 	if p.NativeResumeOnly {
 		if result.NativeContext == nil || result.NativeContext.Session != row.ID || result.NativeContext.Generation == "" || result.NativeContext.Actor != spec.Actor || result.NativeContext.Thread != p.ResumeProviderSessionID || result.NativeContext.Workroot != p.WorkRoot {
 			return nil, nativeOnlyError("worker readiness identity unconfirmed; attempt remains launching")
@@ -299,6 +304,9 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		}); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.Store.RecordWorkerLineageAck(context.WithoutCancel(ctx), store.WorkerLaunchAcknowledgement{SessionID: row.ID, WorkerID: row.WorkerID, CommandID: "launch:" + row.ID, ReplyKind: result.T, ReplySessionID: result.Session, ReplyCommandID: result.CmdID}); err != nil {
+		return nil, err
 	}
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err

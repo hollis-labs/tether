@@ -567,6 +567,21 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id str
 			return
 		}
 	}
+	if reader, ok := s.Service.(interface {
+		GetReplacementLineage(context.Context, string) (*store.ReplacementLineage, error)
+		GetWorkerLineage(context.Context, string) (*store.WorkerLineage, error)
+	}); ok {
+		dto.ReplacementLineage, err = reader.GetReplacementLineage(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "replacement lineage lookup failed")
+			return
+		}
+		dto.WorkerLineage, err = reader.GetWorkerLineage(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "worker lineage lookup failed")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, sessionResponseFor(r, dto))
 }
 

@@ -396,6 +396,8 @@ type ListSessionsResponse struct {
 }
 
 type SessionDTO struct {
+	ReplacementLineage *store.ReplacementLineage `json:"replacement_lineage"`
+	WorkerLineage      *store.WorkerLineage      `json:"worker_lineage"`
 	// NativeAdmission is null unless the hub durably confirmed native readiness.
 	NativeAdmission *store.WorkerNativeAdmission `json:"native_admission"`
 	ID              string                       `json:"id"`
