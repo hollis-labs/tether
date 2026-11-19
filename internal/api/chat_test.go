@@ -154,7 +154,7 @@ func TestChatSendLaunchesWhenNoRunningSession(t *testing.T) {
 				t.Fatalf("creates = %+v", svc.createInputs)
 			}
 			in := svc.createInputs[0]
-			if in.LaunchID != "pm-launch" || in.Worker != "agent-os" || in.PromptAppend != "start here" || in.IdempotencyKey != "chat:pm-launch:k9" {
+			if in.LaunchID != "pm-launch" || in.Worker != "agent-os" || in.PromptAppend != "start here" || in.IdempotencyKey != "chat:pm-launch:k9" || in.Continuity != "relaunch" {
 				t.Fatalf("create input = %+v", in)
 			}
 			if len(svc.launchIDs) != 1 || svc.launchIDs[0] != "new" || len(svc.inputLog) != 0 {
@@ -361,4 +361,21 @@ func (r *chatRecordingLauncher) LaunchChatSession(ctx context.Context, id string
 		r.chat = p.ID
 	}
 	return LaunchResult{SessionID: id}, nil
+}
+
+func TestChatSendUncertainSessionNeverCreatesReplacement(t *testing.T) {
+	for _, state := range []string{"running", "created", "launching", "detached", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			svc := &fakeLaunchService{listRes: []store.SessionRow{{ID: "s", LaunchID: "pm-launch", State: state}}}
+			rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"continue","idempotency_key":"uncertain"}`)
+			if rr.Code < 400 || len(svc.createInputs) != 0 || len(svc.launchIDs) != 0 {
+				t.Fatalf("uncertain %s created a replacement: code=%d inputs=%+v", state, rr.Code, svc.createInputs)
+			}
+		})
+	}
+	svc := &fakeLaunchService{listRes: []store.SessionRow{{ID: "s", LaunchID: "pm-launch", State: "running"}}, runtimeHealthOK: map[string]bool{"s": true}, inputErr: errors.New("lost response")}
+	rr := chatSend(chatHandler(svc), "pm-launch", `{"text":"continue","idempotency_key":"lost"}`)
+	if rr.Code != http.StatusBadGateway || len(svc.createInputs) != 0 {
+		t.Fatalf("uncertain send created a replacement: code=%d inputs=%+v", rr.Code, svc.createInputs)
+	}
 }

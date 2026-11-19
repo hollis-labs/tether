@@ -38,7 +38,7 @@ func TestBootResumePendingMailWithoutCheckpointLeavesMailUnread(t *testing.T) {
 		t.Fatal("unread intent missing from recovery pack")
 	}
 	row, err := r.svc.Store.LatestSessionForAgent(context.Background(), "agent")
-	if err != nil || row.ID == id || row.State != "running" {
+	if err != nil || row.ID == id || row.State != "running" || row.RequestingPrincipal.String != "daemon:boot-recovery" || row.Intent != "resume" || row.ParentSessionID.String != id {
 		t.Fatalf("boot recovery=%+v %v", row, err)
 	}
 	page, err := r.svc.Store.MessagingStore().List(context.Background(), to, store.ListFilter{UnreadOnly: true, Limit: 20})
@@ -247,5 +247,27 @@ func TestRecoveryContextBoundDoesNotAdvanceOmittedChannels(t *testing.T) {
 	prompt := p.prompt("")
 	if len(cursors) != 0 || !strings.Contains(prompt, "omitted") || len(prompt) > 65*1024 {
 		t.Fatalf("omitted context advanced cursors: %v prompt bytes=%d", cursors, len(prompt))
+	}
+}
+
+func TestBootResumeOrphanPublishesHubLineage(t *testing.T) {
+	r, _ := pendingMailRig(t)
+	old, err := r.svc.Store.LatestSessionForAgent(context.Background(), "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the reaper's persisted positively-gone classification before boot.
+	if err := r.svc.Store.UpdateSessionState(old.ID, "orphaned", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	r.svc.BootResumeSessions(context.Background())
+	r.wait(2)
+	next, err := r.svc.Store.LatestSessionForAgent(context.Background(), "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := r.svc.Store.GetHubResumeLineage(context.Background(), next.ID)
+	if err != nil || proof == nil || proof.SourceSessionID != old.ID || proof.ReplacementSessionID != next.ID || next.State != "running" {
+		t.Fatalf("boot orphan proof: %+v row=%+v err=%v", proof, next, err)
 	}
 }
