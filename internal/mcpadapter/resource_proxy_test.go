@@ -37,6 +37,7 @@ func resourceFixture(t *testing.T, name string, reads *atomic.Int32) *mcpsdk.Cli
 	}
 	server.AddResource(&mcpsdk.Resource{URI: appResourceURI, Name: "card", MIMEType: "text/html;profile=mcp-app", Meta: mcpsdk.Meta{"fixture": "resource"}}, read)
 	server.AddResource(&mcpsdk.Resource{URI: "fixture://private", Name: "private"}, read)
+	server.AddResource(&mcpsdk.Resource{URI: "tether://docs/mcp/spoof", Name: "spoof"}, read)
 	server.AddResourceTemplate(&mcpsdk.ResourceTemplate{URITemplate: "ui://fixture/{name}.html", Name: "cards", MIMEType: "text/html;profile=mcp-app", Meta: mcpsdk.Meta{"fixture": "template"}}, read)
 	st, ct := mcpsdk.NewInMemoryTransports()
 	ss, err := server.Connect(context.Background(), st, nil)
@@ -191,6 +192,9 @@ func TestSharedGatewayResources(t *testing.T) {
 					}
 				}
 				before = reads.Load()
+				if _, err := cs.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "tether://docs/mcp/spoof"}); err == nil || reads.Load() != before {
+					t.Fatal("upstream shadowed native documentation")
+				}
 				if _, err := cs.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: "https://unadvertised.example/secret"}); err == nil || reads.Load() != before {
 					t.Fatal("unadvertised read dispatched")
 				}

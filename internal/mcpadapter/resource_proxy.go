@@ -65,6 +65,9 @@ func resourceCatalog(ctx context.Context, origins []resourceOrigin, meta mcpsdk.
 		cursor := ""
 		seen := map[string]bool{}
 		for {
+			if len(seen) >= 100 {
+				return nil, nil, resourceInventoryError()
+			}
 			var result mcpsdk.Result
 			var err error
 			if templates {
@@ -121,7 +124,7 @@ func resourceCatalog(ctx context.Context, origins []resourceOrigin, meta mcpsdk.
 				pages, _ := upstreamMeta[origin.id].([]mcpsdk.Meta)
 				upstreamMeta[origin.id] = append(pages, pageMeta)
 			}
-			if len(records) > 10000 || len(seen) >= 100 || cursor != "" && seen[cursor] {
+			if len(records) > 10000 || cursor != "" && seen[cursor] {
 				return nil, nil, resourceInventoryError()
 			}
 			if cursor == "" {
@@ -188,6 +191,9 @@ func (a *Adapter) resourceProxyMiddleware(pool *ClientPool, allowed map[string]b
 				if origin == "tether" {
 					return true
 				} // docsResourceMiddleware applies native tool policy
+				if docsResourceTool(uri) != "" {
+					return false
+				} // native namespace cannot be shadowed
 				return policy.ResourceAllowed(origin, uri, snapshot)
 			}
 			origins := []resourceOrigin{}
@@ -215,6 +221,11 @@ func (a *Adapter) resourceProxyMiddleware(pool *ClientPool, allowed map[string]b
 					}
 					audit.End(ctx, observation, out)
 				}()
+				// Native documentation URIs retain their native handler and
+				// policy even if an upstream attempts to advertise the URI.
+				if docsResourceTool(read.Params.URI) != "" {
+					return next(ctx, method, req)
+				}
 				// Resolve only advertised exact URIs or URI templates. Never fetch an
 				// arbitrary URL, infer an origin from a scheme, or try origins in order.
 				listReq := &mcpsdk.ListResourcesRequest{Session: read.Session, Extra: read.Extra, Params: &mcpsdk.ListResourcesParams{Meta: read.Params.Meta}}
