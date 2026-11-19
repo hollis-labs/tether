@@ -326,6 +326,50 @@ func TestApplyCatalogIdentityIgnoresTeamMembersAndOverrides(t *testing.T) {
 	if member.IdentityURN != "" {
 		t.Fatal("team member took the base agent's stable URN")
 	}
+	if !slices.Equal(member.MCPScopes, []string{"message.write"}) {
+		t.Fatalf("team member scopes = %v, want the catalog agent's declared scopes", member.MCPScopes)
+	}
+	if len(member.EditableAgents) != 0 {
+		t.Fatal("team member took the base agent's editable agents")
+	}
+}
+
+// A team member launched by the team host (internal, origin team, bounded by the
+// forming caller's recorded grant) carries the scopes its catalog agent declares,
+// including team.write, and nothing beyond them. An ordinary launch of the same
+// agent is bounded by its launcher exactly as before.
+func TestWorkerTeamMemberCredentialCarriesDeclaredTeamScope(t *testing.T) {
+	r := newIdentityRig(t, workerwire.FeatureSessionCred)
+	r.svc.Catalog = &config.Catalog{Agents: map[string]config.Agent{"team-orchestrator": {ID: "team-orchestrator", MCPScopes: []string{"message.write", "team.write"}}}}
+	member := func(ctx context.Context, id string) workerwire.LaunchSpec {
+		t.Helper()
+		plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "team-orchestrator#abc", CatalogAgentID: "team-orchestrator", TeamMember: true, ProviderID: "claude", ProviderBrand: "claude"}
+		r.svc.applyCatalogIdentity(plan)
+		row := store.SessionRow{ID: id, WorkerID: r.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: plan.LogicalAgentID, ProviderID: "claude", ProviderKind: "cli", Workspace: t.TempDir(), State: "created"}
+		if err := r.db.CreateSession(row, plan); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.svc.launchWorkerSession(ctx, &row, plan); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case spec := <-r.specs:
+			return spec
+		case <-time.After(3 * time.Second):
+			t.Fatal("worker never received the launch")
+			return workerwire.LaunchSpec{}
+		}
+	}
+	// Formed by the operator: the recorded grant is the operator's scopes.
+	spec := member(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, Grant: &LaunchGrant{Principal: identity.OperatorID, Scopes: []string{"*"}}}), "team-member")
+	if !slices.Equal(spec.MCPScopes, []string{"message.write", "team.write"}) {
+		t.Fatalf("team member scopes = %v, want exactly the declared scopes", spec.MCPScopes)
+	}
+	// A grant that lacks team.write still bounds the member: nothing is widened.
+	spec = member(withLaunchOrigin(context.Background(), InternalLaunch{Kind: OriginTeam, Grant: &LaunchGrant{Principal: "msg://service/x", Scopes: []string{"message.write"}}}), "team-member-narrow")
+	if !slices.Equal(spec.MCPScopes, []string{"message.write"}) {
+		t.Fatalf("narrow-grant team member scopes = %v", spec.MCPScopes)
+	}
 }
 
 func toJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
