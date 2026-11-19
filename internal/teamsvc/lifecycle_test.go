@@ -266,3 +266,54 @@ func TestFinalResultWithoutDeadlineRowStillDissolves(t *testing.T) {
 	reportFinal(t, f)
 	noLiveMembers(t, f)
 }
+
+// trackedRuns remembers which runs were dissolved.
+type trackedRuns struct {
+	runs
+	mu        sync.Mutex
+	dissolved map[string]bool
+}
+
+func (r *trackedRuns) GetRun(ctx context.Context, id string) (teams.TeamRun, error) {
+	run, err := r.runs.GetRun(ctx, id)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err == nil && r.dissolved[id] {
+		run.Status = "dissolved"
+	}
+	return run, err
+}
+func (r *trackedRuns) MarkDissolved(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dissolved[id] = true
+	return nil
+}
+
+// A retry with the same key after a failed, torn-down formation must not
+// report success with a dead run.
+func TestRetryAfterTeardownDoesNotSucceedWithDeadRun(t *testing.T) {
+	f := fixtureNew(t)
+	f.svc.deps.Ceilings = finalByWorkers{ceilings{policy: policy()}}
+	f.svc.deps.Runs = &trackedRuns{runs: runs{f.run}, dissolved: map[string]bool{}}
+	bad := failingDeadlines{newDeadlines()}
+	f.svc.deps.Deadlines = bad
+	p := verified(ownerURN)
+	team := formationDefinition(p)
+	team.ID = "formation"
+	req := FormRequest{Key: "retry", Team: team, Launch: teams.LaunchRequest{Counts: map[string]int{"workers": 2}}}
+	if _, err := f.svc.Form(caller(p), req); err == nil {
+		t.Fatal("injected failure ignored")
+	}
+	noSessionLeft(t, f)
+	healthy := newDeadlines()
+	f.svc.deps.Deadlines = healthy
+	_, err := f.svc.Form(caller(p), req)
+	if err == nil {
+		t.Fatal("retry returned success with a torn-down run")
+	}
+	if len(healthy.open) != 0 {
+		t.Fatal("retry recorded a deadline for a dead run")
+	}
+	noSessionLeft(t, f)
+}

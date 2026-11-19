@@ -9,3 +9,6 @@
   `team_run_deadlines` table, migration 0108). See `docs/teams-activation.md`.
   Stage B limits, pairing and the reaper apply only to teams with an
   orchestrator slot; a listed service must carry `team.write` below enforce.
+  A formation that fails after members launched now tears them down for every
+  team, Stage A included (a retry with the same key is refused; use a new key);
+  member add on a Stage B run needs an open deadline with at least 30s left.

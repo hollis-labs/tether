@@ -206,6 +206,10 @@ func (s *Service) managesLifecycle(t teams.Team) bool {
 	return ok && s.deps.Deadlines != nil && policy.ManagesLifecycle(t)
 }
 
+// minMemberLife is the least run time that must remain for a member add; a
+// worker spawned with less would be dead before it started.
+const minMemberLife = 30 * time.Second
+
 // addMemberLimits returns the team, request limits and defaults a member add
 // spawns under. Unmanaged (Stage A) runs are unchanged. A managed run adds
 // under the ceilings recorded on its owner seat at formation and the run's
@@ -240,14 +244,17 @@ func (s *Service) addMemberLimits(ctx context.Context, t teams.Team, actor teams
 	if err != nil {
 		return fail(err)
 	}
-	if found {
-		remaining := at.Sub(s.deps.Clock.Now())
-		if remaining <= 0 {
-			return fail(fmt.Errorf("%w: run is past its deadline", ErrUnavailable))
-		}
-		if limits.Timeout == 0 || limits.Timeout > remaining {
-			limits.Timeout = remaining
-		}
+	if !found {
+		// A managed run always has an open deadline row; without one it is
+		// closed, dissolved or unrecorded, and a member must not outlive it.
+		return fail(fmt.Errorf("%w: run has no open deadline", ErrUnavailable))
+	}
+	remaining := at.Sub(s.deps.Clock.Now())
+	if remaining < minMemberLife {
+		return fail(fmt.Errorf("%w: only %s of the run's deadline remains (a new member needs at least %s)", ErrUnavailable, max(remaining, 0).Round(time.Second), minMemberLife))
+	}
+	if limits.Timeout == 0 || limits.Timeout > remaining {
+		limits.Timeout = remaining
 	}
 	grants := append([]teams.Grant(nil), t.Authority.Grants...)
 	t.Authority.Grants = append(grants, teams.Grant{FromActor: actor.Actor, Verb: teams.MaySpawn, ToSlot: req.Slot})

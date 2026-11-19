@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -524,5 +526,40 @@ func TestStageAMemberAddUnchanged(t *testing.T) {
 	}
 	if _, err = f.svc.AddMember(op, teamsvc.AddMemberRequest{Key: "add", RunID: formed.Run.ID, Slot: "workers"}); err == nil {
 		t.Fatalf("stage A member add changed: %v", err)
+	}
+}
+
+// A member add fails closed when the run has no open deadline (closed or
+// missing) and when too little of the deadline remains to be useful.
+func TestStageBMemberAddNeedsAnOpenDeadlineWithTimeLeft(t *testing.T) {
+	setup := func(t *testing.T) (*stageBFixture, string, context.Context) {
+		f, _, _ := newStageBFixture(t, stageBPolicy)
+		svc := serviceContext(t, dispatcher)
+		formed, err := f.svc.Form(svc, teamsvc.FormRequest{Key: "dl", Team: stageBTeam(f.registerWorkers("w1", "w2", "w3")), Launch: teams.LaunchRequest{Counts: map[string]int{"workers": 2}}})
+		check(t, err)
+		return f, formed.Run.ID, svc
+	}
+	for name, tc := range map[string]struct{ query, want string }{
+		"closed row":        {`UPDATE team_run_deadlines SET closed=1 WHERE run_id=?`, ""},
+		"missing row":       {`DELETE FROM team_run_deadlines WHERE run_id=?`, ""},
+		"under the floor":   {`UPDATE team_run_deadlines SET deadline=strftime('%Y-%m-%dT%H:%M:%fZ','now','+10 seconds') WHERE run_id=?`, "remains"},
+		"past the deadline": {`UPDATE team_run_deadlines SET deadline=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 minutes') WHERE run_id=?`, "remains"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, run, svc := setup(t)
+			_, err := f.dbExec(tc.query, run)
+			check(t, err)
+			before := f.effects.launched
+			_, err = f.svc.AddMember(svc, teamsvc.AddMemberRequest{Key: "late", RunID: run, Slot: "workers"})
+			if !errors.Is(err, teamsvc.ErrUnavailable) {
+				t.Fatalf("member add did not fail closed: %v", err)
+			}
+			if tc.want != "" && !strings.Contains(fmt.Sprint(errors.Unwrap(err)), tc.want) {
+				t.Fatalf("unclear error: %v", errors.Unwrap(err))
+			}
+			if f.effects.launched != before {
+				t.Fatal("a worker was launched")
+			}
+		})
 	}
 }

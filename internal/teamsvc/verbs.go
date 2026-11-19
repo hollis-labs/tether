@@ -57,6 +57,13 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		// A retry of a formation that was torn down gets the launcher's recorded
+		// run back; never seat an owner on, or report success for, a dead run.
+		if current, gerr := s.deps.Runs.GetRun(ctx, run.ID); gerr != nil {
+			return Result{Run: &run}, gerr
+		} else if runEnded(current.Status) {
+			return Result{Run: &run}, fmt.Errorf("%w: this formation was torn down after a failure; use a new key", ErrConflict)
+		}
 		err = s.deps.Roster.Mutate(ctx, run.ID, func(r *teams.Roster) error {
 			for i, m := range r.Members {
 				if m.Actor == p.ID {
