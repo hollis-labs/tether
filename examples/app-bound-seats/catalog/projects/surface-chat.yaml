@@ -1,0 +1,9 @@
+id: surface-chat
+name: Surface app chat
+repo_root: ~/Projects-apps/surface
+workspace:
+  default_mode: hybrid
+  session_root: ~/tether/workspaces/surface-chat
+# Project grants take precedence over launch and agent grants.
+mcp:
+  servers: [surface]
