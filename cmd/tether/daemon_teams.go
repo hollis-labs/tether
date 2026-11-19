@@ -99,9 +99,7 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 		Definitions: storage, Roster: storage, Ledger: storage, Signals: storage,
 		Provisioner: host, Adopter: adopter, Workflows: host, Triggers: host, Sender: host,
 		Routing: host, Trust: host, Approvals: host, Clock: host, IDs: host,
-		// Defaults bound later member adds; the policy's maximum, not the old
-		// conservative five-minute limits.
-		Defaults: policy.MaxLimits(), Deadlines: host,
+		Defaults: teamsvc.ConservativePolicy().Limits, Deadlines: host,
 	})
 	if err != nil {
 		return nil, noop, err

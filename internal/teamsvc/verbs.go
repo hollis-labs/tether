@@ -72,13 +72,13 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 			r.Members = append(r.Members, teams.Member{ID: serviceKey(scope) + "-owner", Slot: slot, Actor: p.ID, Kind: p.Kind, Status: "active", Governance: teams.Owner, JoinedAt: s.deps.Clock.Now()})
 			return nil
 		})
-		if err != nil {
-			return Result{Run: &run}, err
+		if err == nil && s.managesLifecycle(req.Team) {
+			err = s.deps.Deadlines.RecordRunDeadline(ctx, run.ID, s.deps.Clock.Now().Add(limits.Timeout))
 		}
-		if s.deps.Deadlines != nil {
-			if err = s.deps.Deadlines.RecordRunDeadline(ctx, run.ID, s.deps.Clock.Now().Add(limits.Timeout)); err != nil {
-				return Result{Run: &run}, err
-			}
+		if err != nil {
+			// Members are already launched: tear them down rather than leave a
+			// run with live sessions, no owner seat or no reaper row.
+			return Result{Run: &run}, errors.Join(err, s.abortFormation(ctx, run.ID))
 		}
 		out := Result{Run: &run, Self: p.ID, Coordinator: p.ID, Channel: run.Channel}
 		if snapshot, serr := s.deps.Roster.Snapshot(ctx, run.ID); serr == nil {

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -220,6 +221,9 @@ func Parse(raw []byte) (*Policy, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
+		if strings.Contains(err.Error(), "time.Duration") {
+			return nil, fmt.Errorf("invalid yaml: %w (a timeout must be a duration string such as 4h, not a bare number)", err)
+		}
 		return nil, fmt.Errorf("invalid yaml: %w", err)
 	}
 	var extra yaml.Node
@@ -311,6 +315,11 @@ func resolveCeilings(c *ceilingsFile) (maxL, defL mesh.Limits, err error) {
 	var spec ceilingsFile
 	if c != nil {
 		spec = *c
+	}
+	for name, d := range map[string]time.Duration{"default": spec.Default.Timeout, "max": spec.Max.Timeout} {
+		if d != 0 && d < time.Second {
+			return maxL, defL, fmt.Errorf("%s timeout %s is below 1s (a bare number is read as nanoseconds): use a duration such as 4h", name, d)
+		}
 	}
 	maxL = mergeLimits(spec.Max, builtinMax)
 	defL = mergeLimits(spec.Default, builtinDefault)
@@ -458,11 +467,32 @@ func (p *Policy) StageB() teamsvc.FormationPolicy {
 	}
 }
 
+// FormationCeilings are the Stage A ceilings (the conservative limits). A
+// Stage B request gets the policy's limits through FormationCeilingsFor.
 func (c Ceilings) FormationCeilings(_ context.Context, p teamsvc.Principal) (teamsvc.FormationPolicy, error) {
 	if err := c.gate(p); err != nil {
 		return teamsvc.FormationPolicy{}, err
 	}
-	f := c.Policy.StageB()
+	f := StageA()
+	f.AllowAdoptedSlots = c.Policy.adoption
+	return f, nil
+}
+
+var _ teamsvc.ShapedCeilings = Ceilings{}
+
+// isStageB reports whether the team uses the orchestrator slot.
+func isStageB(t teams.Team) bool {
+	return slices.ContainsFunc(t.Slots, func(s teams.Slot) bool { return s.Name == SlotOrchestrator })
+}
+
+// FormationCeilingsFor gives a Stage B team (one with an orchestrator slot) the
+// policy's Stage B ceilings and every other team the Stage A ceilings.
+func (c Ceilings) FormationCeilingsFor(ctx context.Context, p teamsvc.Principal, req teamsvc.FormRequest) (teamsvc.FormationPolicy, error) {
+	f, err := c.FormationCeilings(ctx, p)
+	if err != nil || !isStageB(req.Team) {
+		return f, err
+	}
+	f = c.Policy.StageB()
 	f.AllowAdoptedSlots = c.Policy.adoption
 	return f, nil
 }
@@ -484,8 +514,11 @@ func (c Ceilings) AdmitAdoption(_ context.Context, p teamsvc.Principal, _ teams.
 // the run dissolves and every member session stops. Only Stage B teams (those
 // with an orchestrator slot) end this way.
 func (c Ceilings) DissolvesOnResult(t teams.Team, reporterSlot string) bool {
-	return c.Policy != nil && reporterSlot == SlotOrchestrator && slices.ContainsFunc(t.Slots, func(s teams.Slot) bool { return s.Name == SlotOrchestrator })
+	return c.Policy != nil && reporterSlot == SlotOrchestrator && isStageB(t)
 }
+
+// ManagesLifecycle reports that only Stage B runs are reaped (deadline, all stopped).
+func (c Ceilings) ManagesLifecycle(t teams.Team) bool { return c.Policy != nil && isStageB(t) }
 
 var _ teamsvc.LifecyclePolicy = Ceilings{}
 
@@ -588,7 +621,7 @@ func (c Ceilings) admitStageA(req teamsvc.FormRequest, slots map[string]teams.Sl
 	if err := admitOwner(req, slots); err != nil {
 		return err
 	}
-	return c.admitPairing(req.Key, launches[SlotWorkers], launches[SlotReviewer])
+	return c.admitStageAPairing(req.Key, launches[SlotWorkers], launches[SlotReviewer])
 }
 
 // stageBGrants is every grant a Stage B team may carry, and nothing else.
@@ -658,7 +691,27 @@ func (c Ceilings) admitStageB(req teamsvc.FormRequest, slots map[string]teams.Sl
 	return c.admitPairing(req.Key, launches[SlotWorkers], launches[SlotReviewer])
 }
 
-// admitPairing applies the reviewer rule: the reviewer runs on a different
+// admitStageAPairing is the Stage A reviewer rule, unchanged: a different
+// runtime (or model when both name one) whenever more than one runtime is
+// allowlisted, otherwise only a preference.
+func (c Ceilings) admitStageAPairing(key string, workers, reviewer Launch) error {
+	pairing := ReviewerPairing{WorkerRuntime: workers.Runtime, WorkerModel: workers.Model, ReviewerRuntime: reviewer.Runtime, ReviewerModel: reviewer.Model}
+	pairing.Different = launchesDiffer(workers, reviewer)
+	if !pairing.Different {
+		distinct := map[string]bool{}
+		for _, l := range c.Policy.launches {
+			distinct[l.Runtime] = true
+		}
+		if len(distinct) > 1 {
+			return deny("reviewer must run on a different runtime or model than the workers (%s)", pairing.WorkerRuntime)
+		}
+		log.Printf("teams: reviewer pairing fallback for run %q: only runtime %q is allowlisted, reviewer shares runtime/model with workers", key, pairing.WorkerRuntime)
+	}
+	c.Policy.recordPairing(key, pairing)
+	return nil
+}
+
+// admitPairing applies the Stage B reviewer rule: the reviewer runs on a different
 // runtime or model than the workers. It is required when the allowlist can
 // satisfy it and the policy says "require" (the default); when the allowlist
 // has no two launches that differ, or the policy says "prefer", the formation

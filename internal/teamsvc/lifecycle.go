@@ -15,7 +15,8 @@ import (
 // dissolves inline on a final result and never reaps by timeout.
 type RunDeadlines interface {
 	RecordRunDeadline(ctx context.Context, runID string, deadline time.Time) error
-	RequestRunEnd(ctx context.Context, runID, reason string) error
+	// RequestRunEnd reports false when the run has no open row.
+	RequestRunEnd(ctx context.Context, runID, reason string) (bool, error)
 	OpenRuns(ctx context.Context, limit int) ([]RunDeadline, error)
 	CloseRun(ctx context.Context, runID string) error
 }
@@ -25,6 +26,9 @@ type RunDeadlines interface {
 // result: the run then dissolves and every member session stops.
 type LifecyclePolicy interface {
 	DissolvesOnResult(t teams.Team, reporterSlot string) bool
+	// ManagesLifecycle reports whether the daemon reaps runs of this team
+	// (deadline, all-stopped). Teams it does not manage behave as before.
+	ManagesLifecycle(t teams.Team) bool
 }
 
 const runDissolved mesh.TaskState = "dissolved"
@@ -76,6 +80,17 @@ func (s *Service) endRunAsOwner(ctx context.Context, runID string) error {
 	}
 	if err == nil && s.deps.Deadlines != nil {
 		err = s.deps.Deadlines.CloseRun(ctx, runID)
+	}
+	return err
+}
+
+// abortFormation tears down a run whose formation failed after members were
+// launched: every member session is stopped and the run closed, so nothing is
+// left running without an owner or a reaper row. Best effort; errors are joined.
+func (s *Service) abortFormation(ctx context.Context, runID string) error {
+	err := teams.EndRun(ctx, runID, s.deps.Roster, s.deps.Provisioner, s.deps.Routing)
+	if err == nil {
+		err = s.deps.Runs.MarkDissolved(ctx, runID)
 	}
 	return err
 }
@@ -166,7 +181,18 @@ func (s *Service) finishOnResult(ctx context.Context, t teams.Team, runID string
 		return nil
 	}
 	if s.deps.Deadlines != nil {
-		return s.deps.Deadlines.RequestRunEnd(ctx, runID, EndResult)
+		found, err := s.deps.Deadlines.RequestRunEnd(ctx, runID, EndResult)
+		if err != nil || found {
+			return err
+		}
+		// No open reaper row (never recorded, or closed): a final result
+		// must still dissolve the run, so end it directly.
 	}
 	return s.endRunAsOwner(ctx, runID)
+}
+
+// managesLifecycle reports whether a formed run of t gets a reaper deadline.
+func (s *Service) managesLifecycle(t teams.Team) bool {
+	policy, ok := s.deps.Ceilings.(LifecyclePolicy)
+	return ok && s.deps.Deadlines != nil && policy.ManagesLifecycle(t)
 }

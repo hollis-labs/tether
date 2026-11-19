@@ -17,6 +17,13 @@ type Ceilings interface {
 	FormationCeilings(context.Context, Principal) (FormationPolicy, error)
 }
 
+// ShapedCeilings is an optional Ceilings extension that picks the ceilings from
+// the request itself (for example by team shape). When implemented it is used
+// instead of FormationCeilings.
+type ShapedCeilings interface {
+	FormationCeilingsFor(context.Context, Principal, FormRequest) (FormationPolicy, error)
+}
+
 // FormationAdmitter is an optional Ceilings extension that sees the whole
 // request before any definition write, for rules that span slots (shape,
 // runtime pairing). A non-nil error refuses the formation.
@@ -66,7 +73,12 @@ func (s *Service) formationPolicy(ctx context.Context, p Principal, req FormRequ
 	if err != nil {
 		return mesh.Limits{}, "", err
 	}
-	policy, err := s.deps.Ceilings.FormationCeilings(ctx, p)
+	var policy FormationPolicy
+	if shaped, ok := s.deps.Ceilings.(ShapedCeilings); ok {
+		policy, err = shaped.FormationCeilingsFor(ctx, p, req)
+	} else {
+		policy, err = s.deps.Ceilings.FormationCeilings(ctx, p)
+	}
 	if err != nil {
 		return mesh.Limits{}, "", err
 	}

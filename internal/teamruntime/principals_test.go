@@ -197,7 +197,10 @@ func TestDevModeAdmitsOnlyVerifiedLocalOperator(t *testing.T) {
 func TestPrincipalsAdmitPolicyListedServiceWithoutEnforcement(t *testing.T) {
 	db, _, _ := dbFixture(t, filepath.Join(t.TempDir(), "identity"))
 	auth := identity.NewStore(db.DB())
-	listed, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/dispatcher", Kind: "service", Display: "Dispatcher"})
+	listed, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/dispatcher", Kind: "service", Display: "Dispatcher", Scopes: []string{"team.write"}})
+	check(t, err)
+	// Listed in services: but minted without the teams scope.
+	scopeless, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/dispatcher", Kind: "service", Display: "Dispatcher no scope", Scopes: []string{"session.write"}})
 	check(t, err)
 	other, err := auth.Mint(ctx, identity.Principal{ID: "msg://service/torque/other", Kind: "service", Display: "Other"})
 	check(t, err)
@@ -212,6 +215,8 @@ func TestPrincipalsAdmitPolicyListedServiceWithoutEnforcement(t *testing.T) {
 		{"observe listed", identity.Observe, listed, services, nil},
 		{"off listed", identity.Off, listed, services, nil},
 		{"enforce listed", identity.Enforce, listed, services, nil},
+		{"observe listed without team.write", identity.Observe, scopeless, services, teamsvc.ErrUnauthenticated},
+		{"off listed without team.write", identity.Off, scopeless, services, teamsvc.ErrUnauthenticated},
 		{"observe unlisted", identity.Observe, other, services, teamsvc.ErrUnauthenticated},
 		{"observe no list", identity.Observe, listed, nil, teamsvc.ErrUnauthenticated},
 		{"observe bad credential", identity.Observe, "asserted-token", services, teamsvc.ErrUnauthenticated},

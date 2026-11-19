@@ -62,9 +62,10 @@ capability only; a definition declaring any other capability is rejected.
   - `reviewer`: fresh, exactly 1 member.
   - Every slot's definition must be an allowlisted exact pin.
 - **Reviewer runtime:** see [Reviewer pairing](#reviewer-pairing).
-- **Ceilings:** the policy's limits (see [Ceilings](#ceilings); Stage A used
-  `teamsvc.ConservativePolicy()` with depth 1, budget 1, five minutes, 16 rounds
-  and 4 stalls, now replaced), `may_message`, `may_assign` and `may_delegate` as
+- **Ceilings:** `teamsvc.ConservativePolicy()` with depth 1 (fan-out 4, budget 1,
+  five-minute timeout, 16 rounds, 4 stalls), unchanged for Stage A teams; the
+  [Stage B ceilings](#ceilings) apply only to teams with an orchestrator slot.
+  `may_message`, `may_assign` and `may_delegate` as
   the only grantable permissions, strict authority. A verb only works when the
   team's grants allow the sender's slot to reach the recipient's slot (the
   example grants coordinator to workers and reviewer, workers to reviewer).
@@ -234,7 +235,11 @@ fields take the built-ins:
 | `max_children` / `fan_out` | 6 | 8 |
 | `budget` | 2000 | 10000 |
 
-A default the file leaves unset is clamped to a lowered max; a default set above
+These apply only to Stage B teams; Stage A teams keep the conservative limits,
+the original reviewer rule (a different runtime or model whenever more than one
+runtime is allowlisted; `reviewer_pairing` does not relax it) and are not reaped.
+A `timeout` must be a duration string such as `4h`; a bare number or a value
+under one second is refused. A default the file leaves unset is clamped to a lowered max; a default set above
 the max is an error. Max members per slot is 3, initial members at most six
 (five agents and the owner), slots at most four.
 
@@ -247,7 +252,9 @@ services:
 
 A listed service that presents a valid credential (carrying `team.write`) may
 form teams and dissolve the runs it owns over the authenticated daemon
-transport, with identity in `observe` or `off` as well as `enforce`. The URN
+transport, with identity in `observe` or `off` as well as `enforce`. Below
+`enforce` nothing else checks scopes, so the listed service's credential must
+carry `team.write` itself or it is refused. The URN
 must be a service principal (`msg://service/<a>/<b>`). Unlisted services, an
 unverified credential, an asserted header and every other principal kind are
 refused. The service is the run owner, so it holds the governance seat and uses
@@ -280,12 +287,14 @@ The run ends, and every member session stops, when:
   delegation to the orchestrator is what it answers). The run is marked to end
   and the daemon's team loop (every `TETHER_TEAMS_LOOP_INTERVAL`, 5s default)
   dissolves it, so the reporting call returns first. A worker's or reviewer's
-  report does not end the run. Without a deadline store the dissolve is inline.
+  report does not end the run. If the run has no open deadline row (or there is
+  no deadline store) the run is dissolved inline instead.
 - the `timeout` ceiling passes, or
 - no non-owner member is live any more (all stopped, failed or released).
 
 The owner can still dissolve explicitly (`tether_team_dissolve`). A dissolved run
-is closed; a failed dissolve is retried on the next pass. Deadlines live in
+is closed; a failed dissolve is retried on the next pass. A formation that fails after members launched tears them down. Only Stage B runs
+get a deadline row and are reaped. Deadlines live in
 `team_run_deadlines` (migration 0108); runs formed before it have none and are
 dissolved with the verbs. Limits other than `timeout` (`max_rounds`, `max_stalls`,
 budget, depth) are passed to the library and member launches as before; Tether

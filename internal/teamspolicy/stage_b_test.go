@@ -243,3 +243,63 @@ func TestPolicyCeilingsAndServicesParse(t *testing.T) {
 		}
 	}
 }
+
+func stageATeamFor(workers, reviewer mesh.DefinitionRef) teams.Team {
+	fresh := func(name string, pin mesh.DefinitionRef, lo, hi int) teams.Slot {
+		return teams.Slot{Name: name, Definition: pin, Resolution: teams.Fresh, Activation: teams.Singleton, Min: lo, Max: hi}
+	}
+	return teams.Team{ID: "a", Name: "A", Version: 1,
+		Slots:     []teams.Slot{fresh("coordinator", astra, 0, 1), fresh("workers", workers, 1, 1), fresh("reviewer", reviewer, 1, 1)},
+		Phases:    []teams.Phase{{ID: "work", Kind: "flex", ActiveSlots: []string{"coordinator", "workers", "reviewer"}, OwnerSlot: "coordinator", ExitTrigger: teams.Trigger{Kind: "manual", Spec: map[string]string{"signal": "done"}}}},
+		Authority: teams.Authority{Mode: teams.Strict, Grants: []teams.Grant{{FromSlot: "coordinator", Verb: teams.MayMessage, ToSlot: "workers"}}},
+		Routing:   teams.Routing{CoordinatorSlot: "coordinator"}}
+}
+
+// Stage A teams keep the conservative ceilings, the original pairing rule and
+// no reaper; only a team with an orchestrator slot gets the Stage B behavior.
+func TestStageAIsUnchangedByStageB(t *testing.T) {
+	c := ceilingsFor(t, bPolicy)
+	ctx := context.Background()
+	a := teamsvc.FormRequest{Key: "a", Team: stageATeamFor(sol, codex)}
+	got, err := c.FormationCeilings(ctx, svcPrincipal())
+	if err != nil || got.Limits.MaxDepth != 1 || got.MaxSlots != 3 || got.Limits.Timeout != 5*time.Minute || got.DefaultLimits != (mesh.Limits{}) {
+		t.Fatalf("stage A ceilings: %+v %v", got, err)
+	}
+	if got, err = c.FormationCeilingsFor(ctx, svcPrincipal(), a); err != nil || got.Limits.MaxDepth != 1 || got.Limits.Timeout != 5*time.Minute {
+		t.Fatalf("stage A request ceilings: %+v %v", got, err)
+	}
+	b, launch := bTeam(2)
+	if got, err = c.FormationCeilingsFor(ctx, svcPrincipal(), teamsvc.FormRequest{Key: "b", Team: b, Launch: launch}); err != nil || got.Limits.MaxDepth != 3 || got.DefaultLimits.Timeout != 4*time.Hour {
+		t.Fatalf("stage B ceilings: %+v %v", got, err)
+	}
+	if c.ManagesLifecycle(a.Team) || !c.ManagesLifecycle(b) {
+		t.Fatal("only stage B runs are reaped")
+	}
+	// The original rule: two runtimes allowlisted, same runtime and model is
+	// refused, and reviewer_pairing: prefer does not relax it for stage A.
+	same := teamsvc.FormRequest{Key: "same", Team: stageATeamFor(astra, astra)}
+	for _, raw := range []string{bPolicy, strings.Replace(bPolicy, "services:", "reviewer_pairing: prefer\nservices:", 1)} {
+		if err := ceilingsFor(t, raw).AdmitFormation(ctx, svcPrincipal(), same); !errors.Is(err, teamsvc.ErrDenied) {
+			t.Fatalf("stage A same-runtime reviewer accepted: %v", err)
+		}
+	}
+	// Same runtime, different model: stage A (as before) accepts it.
+	if err := c.AdmitFormation(ctx, svcPrincipal(), teamsvc.FormRequest{Key: "model", Team: stageATeamFor(sol, astra)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCeilingTimeoutMustBeADuration(t *testing.T) {
+	for _, raw := range []string{"ceilings:\n  max: {timeout: 14400}\n", "ceilings:\n  default: {timeout: 3600}\n"} {
+		_, err := Parse([]byte(bPolicy + raw))
+		if err == nil || !strings.Contains(err.Error(), "duration string such as 4h") {
+			t.Fatalf("bare number accepted or unclear error: %v", err)
+		}
+	}
+	if _, err := Parse([]byte(bPolicy + "ceilings:\n  max: {timeout: 1ns}\n")); err == nil || !strings.Contains(err.Error(), "use a duration such as 4h") {
+		t.Fatalf("sub-second duration accepted: %v", err)
+	}
+	if _, err := Parse([]byte(bPolicy + "ceilings:\n  max: {timeout: 4h}\n")); err != nil {
+		t.Fatal(err)
+	}
+}

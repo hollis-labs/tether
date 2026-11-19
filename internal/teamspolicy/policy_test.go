@@ -100,8 +100,8 @@ func TestCeilingsGateOperatorAndPause(t *testing.T) {
 	}
 	c := Ceilings{Policy: p}
 	got, err := c.FormationCeilings(context.Background(), operator())
-	if err != nil || got.Limits.MaxDepth != 3 || got.DefaultLimits.MaxDepth != 2 || got.MaxSlots != 4 || !slices.Equal(got.AllowedPermissions, []teams.Permission{teams.MayMessage, teams.MayAssign, teams.MayDelegate}) {
-		t.Fatalf("stage B ceilings: %+v %v", got, err)
+	if err != nil || got.Limits.MaxDepth != 1 || got.MaxSlots != 3 || !slices.Equal(got.AllowedPermissions, []teams.Permission{teams.MayMessage, teams.MayAssign, teams.MayDelegate}) {
+		t.Fatalf("stage A ceilings: %+v %v", got, err)
 	}
 	for name, mutate := range map[string]func(*teamsvc.Principal){
 		"unverified": func(p *teamsvc.Principal) { p.Verified = false },

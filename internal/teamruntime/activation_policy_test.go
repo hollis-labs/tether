@@ -183,7 +183,7 @@ func TestStageAFormationDenialsHaveNoSideEffects(t *testing.T) {
 		}, want: teamsvc.ErrDenied},
 		"non-allowlisted launch": {raw: stageAPolicy, mutate: func(tm *teams.Team) { tm.Slots[1].Definition = rogue }, want: teamsvc.ErrDenied},
 		"same-runtime reviewer":  {raw: stageAPolicy, mutate: func(tm *teams.Team) { tm.Slots[2].Definition = claudePin }, want: teamsvc.ErrDenied},
-		"depth above ceiling":    {raw: stageAPolicy, mutate: func(tm *teams.Team) { tm.Policy.Spawn.MaxDepth = 99 }, want: nil},
+		"depth above ceiling":    {raw: stageAPolicy, mutate: func(tm *teams.Team) { tm.Policy.Spawn.MaxDepth = 2 }, want: nil},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -174,7 +174,7 @@ func newStageBFixture(t *testing.T, raw string) (*stageBFixture, *teamhost.Host,
 
 func serviceContext(t *testing.T, id string) context.Context {
 	t.Helper()
-	return identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: id, Kind: "service"})
+	return identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: id, Kind: "service", Scopes: []string{"team.write"}})
 }
 
 func stageBTeam(ids []mesh.URN) teams.Team {
@@ -409,6 +409,10 @@ func TestStageBServiceAdmission(t *testing.T) {
 	}
 	if err := form(serviceContext(t, "msg://service/torque/other"), "unlisted"); err == nil {
 		t.Fatal("unlisted service formed a team")
+	}
+	scopeless := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: dispatcher, Kind: "service", Scopes: []string{"session.write"}})
+	if err := form(scopeless, "scopeless"); err == nil {
+		t.Fatal("listed service without team.write formed a team")
 	}
 	unverified := identity.WithPrincipal(context.Background(), identity.Principal{Verified: false, ID: dispatcher, Kind: "service"})
 	if err := form(unverified, "unverified"); err == nil {

@@ -27,14 +27,19 @@ func (h *Host) RecordRunDeadline(ctx context.Context, runID string, deadline tim
 	return err
 }
 
-// RequestRunEnd asks the reaper to dissolve the run on its next pass. The first
-// reason wins.
-func (h *Host) RequestRunEnd(ctx context.Context, runID, reason string) error {
+// RequestRunEnd asks the reaper to dissolve the run on its next pass; the first
+// reason wins. It reports false when the run has no open row (never recorded or
+// already closed), so the caller can end the run directly instead.
+func (h *Host) RequestRunEnd(ctx context.Context, runID, reason string) (bool, error) {
 	if runID == "" || reason == "" {
-		return errors.New("run end: run id and reason required")
+		return false, errors.New("run end: run id and reason required")
 	}
-	_, err := h.db.ExecContext(ctx, `UPDATE team_run_deadlines SET end_reason=? WHERE run_id=? AND end_reason='' AND closed=0`, reason, runID)
-	return err
+	res, err := h.db.ExecContext(ctx, `UPDATE team_run_deadlines SET end_reason=CASE WHEN end_reason='' THEN ? ELSE end_reason END WHERE run_id=? AND closed=0`, reason, runID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // OpenRuns lists runs that have not been closed, soonest deadline first.

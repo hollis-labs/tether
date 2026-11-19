@@ -36,6 +36,11 @@ func (p Principals) ResolvePrincipal(ctx context.Context) (teamsvc.Principal, er
 		return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
 	}
 	listedService := caller.Kind == "service" && p.Services != nil && p.Services(caller.ID)
+	// Without enforcement nothing else checks scopes, so a listed service must
+	// carry the teams scope itself.
+	if listedService && p.Mode != identity.Enforce && !identity.ScopeGranted(caller.Scopes, "team.write") {
+		return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
+	}
 	if p.Mode != identity.Enforce && caller.Kind != "operator" && !listedService {
 		return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
 	}

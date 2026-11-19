@@ -2,6 +2,9 @@ package teamsvc
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 type finalByWorkers struct{ ceilings }
 
 func (finalByWorkers) DissolvesOnResult(_ teams.Team, slot string) bool { return slot == "workers" }
+func (finalByWorkers) ManagesLifecycle(teams.Team) bool                 { return true }
 
 type deadlines struct {
 	mu   sync.Mutex
@@ -29,13 +33,17 @@ func (d *deadlines) RecordRunDeadline(_ context.Context, id string, at time.Time
 	}
 	return nil
 }
-func (d *deadlines) RequestRunEnd(_ context.Context, id, reason string) error {
+func (d *deadlines) RequestRunEnd(_ context.Context, id, reason string) (bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if r := d.open[id]; r != nil && r.EndReason == "" {
+	r := d.open[id]
+	if r == nil {
+		return false, nil
+	}
+	if r.EndReason == "" {
 		r.EndReason = reason
 	}
-	return nil
+	return true, nil
 }
 func (d *deadlines) OpenRuns(context.Context, int) ([]RunDeadline, error) {
 	d.mu.Lock()
@@ -144,4 +152,109 @@ func TestFormationDefaultsFillUnspecifiedLimitsAndRequestsOnlyTighten(t *testing
 	if _, err = teams.ResolveLimits(withDefaults(mesh.Limits{Timeout: 13 * time.Hour}, def), ceiling, ceiling); err == nil {
 		t.Fatal("a request widened the maximum timeout")
 	}
+}
+
+// failingRoster fails the Mutate that would seat the forming owner.
+type failingRoster struct{ teams.RosterStore }
+
+func (r failingRoster) Mutate(ctx context.Context, run string, fn func(*teams.Roster) error) error {
+	before, err := r.Snapshot(ctx, run)
+	if err != nil {
+		return r.RosterStore.Mutate(ctx, run, fn) // run not seeded yet
+	}
+	probe := before
+	probe.Members = append([]teams.Member(nil), before.Members...)
+	if err = fn(&probe); err != nil {
+		return err
+	}
+	for _, m := range probe.Members {
+		if m.Governance == teams.Owner {
+			owned := false
+			for _, old := range before.Members {
+				owned = owned || (old.ID == m.ID && old.Governance == teams.Owner)
+			}
+			if !owned {
+				return errors.New("injected owner mutate failure")
+			}
+		}
+	}
+	return r.RosterStore.Mutate(ctx, run, fn)
+}
+
+type failingDeadlines struct{ *deadlines }
+
+func (failingDeadlines) RecordRunDeadline(context.Context, string, time.Time) error {
+	return errors.New("injected deadline failure")
+}
+
+func noSessionLeft(t *testing.T, f *fixture) {
+	t.Helper()
+	provisioned := f.host.Provisioned()
+	if len(provisioned) == 0 {
+		t.Fatal("nothing was launched; the test proves nothing")
+	}
+	for _, m := range provisioned {
+		if m.Status == "active" || m.Status == "provisioning" {
+			t.Fatalf("member %s left %s after a failed formation", m.ID, m.Status)
+		}
+	}
+}
+
+func TestFailedFormationLeavesNoSessionRunning(t *testing.T) {
+	for _, mode := range []string{"deadline", "owner mutate"} {
+		t.Run(mode, func(t *testing.T) {
+			f := fixtureNew(t)
+			f.svc.deps.Ceilings = finalByWorkers{ceilings{policy: policy()}}
+			f.svc.deps.Deadlines = newDeadlines()
+			if mode == "deadline" {
+				f.svc.deps.Deadlines = failingDeadlines{newDeadlines()}
+			} else {
+				f.svc.deps.Roster = failingRoster{f.host}
+				f.svc.launcher.Roster = failingRoster{f.host}
+			}
+			p := verified(ownerURN)
+			team := formationDefinition(p)
+			team.ID = "formation"
+			_, err := f.svc.Form(caller(p), FormRequest{Key: "fail", Team: team, Launch: teams.LaunchRequest{Counts: map[string]int{"workers": 2}}})
+			if err == nil || !strings.Contains(fmt.Sprint(errors.Unwrap(err), err), "injected") && !errors.Is(err, ErrNotFound) {
+				t.Fatalf("injected failure not reached: %v", err)
+			}
+			var typed *Error
+			if errors.As(err, &typed) && typed.Cause != nil && !strings.Contains(typed.Cause.Error(), "injected") {
+				t.Fatalf("failed for another reason: %v", typed.Cause)
+			}
+			noSessionLeft(t, f)
+		})
+	}
+}
+
+// The deadline row is written for lifecycle-managed teams only; others behave
+// exactly as before (no reaper row, no timeout stop).
+func TestOnlyManagedTeamsGetDeadlines(t *testing.T) {
+	for _, managed := range []bool{true, false} {
+		f := fixtureNew(t)
+		d := newDeadlines()
+		f.svc.deps.Deadlines = d
+		if managed {
+			f.svc.deps.Ceilings = finalByWorkers{ceilings{policy: policy()}}
+		}
+		p := verified(ownerURN)
+		team := formationDefinition(p)
+		team.ID = "formation"
+		_, err := f.svc.Form(caller(p), FormRequest{Key: "rows", Team: team})
+		must(t, err)
+		if got := len(d.open) == 1; got != managed {
+			t.Fatalf("managed=%v rows=%d", managed, len(d.open))
+		}
+	}
+}
+
+// A final result with no reaper row (never recorded or already closed) still
+// dissolves the run.
+func TestFinalResultWithoutDeadlineRowStillDissolves(t *testing.T) {
+	f := fixtureNew(t)
+	f.svc.deps.Ceilings = finalByWorkers{ceilings{policy: policy()}}
+	f.svc.deps.Deadlines = newDeadlines() // empty: RequestRunEnd finds no row
+	reportFinal(t, f)
+	noLiveMembers(t, f)
 }
