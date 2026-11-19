@@ -264,7 +264,31 @@ func TestWireIntegration(t *testing.T) {
 
 	// Attaching again works, at the new generation, and the next turn runs on the new session.
 	ctl2 := attach("controller")
-	sc, _ := c.stream(convID, ctl2, strconv.FormatUint(ga[len(ga)-1].ID, 10))
+	sc, _ := c.stream(convID, ctl2, "0")
+	// The replacement keeps the same durable conversation history. Reattaching
+	// at cursor zero replays the durable completed events with their original IDs
+	// (transient deltas are omitted; part.end retains the complete final),
+	// before the replacement receives any new turn.
+	replayed := until(t, sc, finished)
+	var originalRun, replayRun []sseEvent
+	for _, ev := range ea {
+		if ev.Ev.RunID == receipt["run_id"] && ev.Ev.Verb != chatstream.VerbPartDelta {
+			originalRun = append(originalRun, ev)
+		}
+	}
+	for _, ev := range replayed {
+		if ev.Ev.RunID == receipt["run_id"] && ev.Ev.Verb != chatstream.VerbPartDelta {
+			replayRun = append(replayRun, ev)
+		}
+	}
+	if len(originalRun) == 0 || len(replayRun) != len(originalRun) {
+		t.Fatalf("history after replacement: original=%d replay=%d", len(originalRun), len(replayRun))
+	}
+	for i := range originalRun {
+		if originalRun[i].ID != replayRun[i].ID || originalRun[i].Raw != replayRun[i].Raw {
+			t.Fatalf("history changed at event %d", i)
+		}
+	}
 	status, receipt = c.do(http.MethodPost, "/chat/v1/conversations/"+convID+"/turns", map[string]string{"attachment": ctl2, "text": "hello again"})
 	if status != http.StatusAccepted {
 		t.Fatalf("submit after reattach = %d %v", status, receipt)
