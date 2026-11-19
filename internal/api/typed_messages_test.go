@@ -453,3 +453,50 @@ func TestMessagePostOnBehalfOf(t *testing.T) {
 		}
 	}
 }
+
+// CW-20261118-0050: a pure acknowledgement reply to a status update is refused
+// with an explanation; real content, answers to an ask and the off switch pass.
+func TestMessagePostRefusesPureAcknowledgements(t *testing.T) {
+	post := func(h *typedHarness, as, body string) (int, []byte) {
+		return h.do(t, http.MethodPost, "/messages/post?as="+as, body)
+	}
+	h := newTypedHarness(t)
+	_, raw := post(h, meURN, `{"kind":"update","to":["@archie"],"subject":"status","body":"build green","attention":"none"}`)
+	var upd MessagePostResponse
+	if err := json.Unmarshal(raw, &upd); err != nil || len(upd.IDs) != 1 {
+		t.Fatalf("update: %s", raw)
+	}
+	ack := func(parent, body string) string {
+		return `{"kind":"message","to":["@photon-tether"],"in_reply_to":"` + parent + `","body":"` + body + `"}`
+	}
+	code, raw := post(h, archieURN, ack(upd.IDs[0], "Noted. No reply needed."))
+	if code != http.StatusBadRequest || errorField(t, raw) != "body" || !strings.Contains(string(raw), "Send nothing") {
+		t.Fatalf("ack to an update: %d %s", code, raw)
+	}
+	// Real content passes.
+	if code, raw = post(h, archieURN, ack(upd.IDs[0], "Noted. I will rerun the suite on main tonight.")); code != http.StatusCreated {
+		t.Fatalf("real content: %d %s", code, raw)
+	}
+	// A reply that answers an ask is never refused, even when short.
+	_, raw = post(h, meURN, `{"kind":"request","to":["@archie"],"subject":"Ship it","body":"Ship now","deliverable":"A yes or no"}`)
+	var q MessagePostResponse
+	if err := json.Unmarshal(raw, &q); err != nil || len(q.IDs) != 1 {
+		t.Fatalf("question: %s", raw)
+	}
+	if code, raw = post(h, archieURN, ack(q.IDs[0], "Ok")); code != http.StatusCreated {
+		t.Fatalf("ack answering a question: %d %s", code, raw)
+	}
+	// Off switch.
+	off := false
+	cat := &config.Catalog{Agents: map[string]config.Agent{"photon-tether": {ID: "photon-tether", URN: meURN}, "archie": {ID: "archie", URN: archieURN}}}
+	cat.Global.Catalog.Defaults.MailTriage.AckFilter = &off
+	h2 := newTypedHarness(t)
+	h2.srv.Config.Handler = NewHandler(Deps{Service: &fakeLaunchService{}, MessageStore: h2.db.MessagingStore(), Seats: h2.db, Catalog: fixedCatalog{cat}})
+	_, raw = post(h2, meURN, `{"kind":"update","to":["@archie"],"subject":"status","body":"build green","attention":"none"}`)
+	if err := json.Unmarshal(raw, &upd); err != nil || len(upd.IDs) != 1 {
+		t.Fatalf("update: %s", raw)
+	}
+	if code, raw = post(h2, archieURN, ack(upd.IDs[0], "Noted. No reply needed.")); code != http.StatusCreated {
+		t.Fatalf("ack with the filter off: %d %s", code, raw)
+	}
+}

@@ -117,3 +117,29 @@ is marked read; untyped fyi stays unread for the inbox.
   (they were `session_turn`), so Tachyon can fold them.
 - Tables: `wake_triage` (one row per triaged message: class, reason, state,
   not_before) and `seat_wake_clock` (each seat's last action wake).
+
+## Noise rules (CW-20261118-0050)
+
+- **attention:none never wakes, triage on or off.** A typed envelope whose sender set
+  `attention: none` is recorded and stays unread and visible, but no wake path (send,
+  notify, sweep) wakes the seat for it, even a seat without `mail_triage`. The same action
+  overrides apply (operator sender, `urgency: high`, a reply to mail the seat sent,
+  `on_behalf_of`). With triage on it is also marked read and rides along in the next wake's
+  digest; without triage it waits in the inbox and the next real wake's unread count names it.
+  Wake outcome reason: `attention-none` (triage off) or `triaged-read` (triage on).
+- **Acknowledgement replies are refused at send.** `POST /messages/post` (`tether_reply` /
+  `tether_message_post`) rejects a reply of kind `update` or `message` whose body is only
+  acknowledgement words (`Noted. No reply needed.`, `Thanks`, `ack`, `Got it, thank you`),
+  with no answer, status, evidence, options or `?`, and whose typed parent was an `update` or
+  `message` that did not await the replier. The sender gets `invalid_request` on field `body`
+  saying to send nothing. Anything else passes (replies to a question or request, untyped
+  parents, any body with a word outside the list, more than 10 words). Detector:
+  `internal/messaging/ackfilter`. Off switch: `catalog.defaults.mail_triage.ack_filter: false`.
+- **Wakes are coalesced.** One wake per seat per `action_interval` lists everything pending
+  (see above); `TestBurstWithOneAskWakesOnce` pins a burst of 16 notices plus one ask to one wake.
+- **Empty turns.** The wake text tells an agent with nothing to do to end the turn without
+  producing any message (no acknowledgement), and never says to end silently when action is needed.
+
+Measuring on a pilot: count `wake.outcome` events with `delivered: true` per seat, and
+`mail.triaged` by `class`/`reason`, over equal windows before and after; the burst signature
+is several delivered wakes within seconds to different seats from `attention: none` updates.

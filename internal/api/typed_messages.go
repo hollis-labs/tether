@@ -15,6 +15,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/messaging/ackfilter"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/seatstatus"
@@ -292,6 +293,10 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeError(w, err)
 		return
 	}
+	if s.refusesAck(e, parent) {
+		writeEnvelopeError(w, &envelope.Error{Field: "body", Reason: ackfilter.Refusal})
+		return
+	}
 	body, err := json.Marshal(e)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -332,6 +337,41 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// refusesAck reports whether e is a pure acknowledgement reply the hub refuses
+// (CW-20261118-0050): a reply of kind update or message that carries no answer,
+// status, evidence or options, whose body is acknowledgement words only, to a
+// parent that is no ask of the replier. The catalog switch
+// defaults.mail_triage.ack_filter: false turns it off.
+func (s *Server) refusesAck(e envelope.Envelope, parent *envelope.Parent) bool {
+	if e.InReplyTo == "" || (e.Kind != envelope.KindUpdate && e.Kind != envelope.KindMessage) {
+		return false
+	}
+	if e.Answer != nil || e.Status != "" || len(e.Evidence) > 0 || len(e.Options) > 0 || e.Deliverable != "" {
+		return false
+	}
+	if !ackfilter.IsAck(e.Body) {
+		return false
+	}
+	if parent != nil && parent.Envelope != nil {
+		switch parent.Envelope.Kind {
+		case envelope.KindUpdate, envelope.KindMessage:
+		default:
+			return false // the parent asked something: an ack may be the answer
+		}
+		if parent.Envelope.Awaiting != "" && parent.Envelope.Awaiting == e.From {
+			return false
+		}
+	} else {
+		return false // untyped or unknown parent: let it through
+	}
+	if s.Catalog != nil {
+		if cat, err := s.Catalog.Load(); err == nil && cat != nil && !cat.Global.AckFilterEnabled() {
+			return false
+		}
+	}
+	return true
 }
 
 // replyAsker is the @handle of the sender of p, the message a reply from
