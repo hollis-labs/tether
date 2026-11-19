@@ -1660,3 +1660,14 @@ func buildTokenIssuer(ctx context.Context, svc *app.Service, dir string) (*authi
 func (a *serviceAdapter) GetWorkerNativeAdmission(id string) (*store.WorkerNativeAdmission, error) {
 	return a.svc.GetWorkerNativeAdmission(id)
 }
+
+func (a *serviceAdapter) GetReplacementLineage(ctx context.Context, id string) (*store.ReplacementLineage, error) {
+	return a.svc.Store.GetReplacementLineage(ctx, id)
+}
+func (a *serviceAdapter) GetWorkerLineage(ctx context.Context, id string) (*store.WorkerLineage, error) {
+	return a.svc.Store.GetWorkerLineage(ctx, id)
+}
+
+func (a *serviceAdapter) GetHubResumeLineage(ctx context.Context, id string) (*store.HubResumeLineage, error) {
+	return a.svc.Store.GetHubResumeLineage(ctx, id)
+}

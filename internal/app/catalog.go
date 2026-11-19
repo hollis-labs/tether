@@ -127,3 +127,21 @@ func (s *Service) ResolveCompositionSnapshot(ctx context.Context, in launchprofi
 	resolver := launchprofile.NewResolver(s.cat())
 	return resolver.ResolveSnapshot(ctx, in)
 }
+
+// DefaultWorkerForLaunch reads placement from the same refreshed catalog used
+// to build a launch. Native MCP daemon views use it before invoking create;
+// a lookup error must not silently place a requested worker launch on the hub.
+func (s *Service) DefaultWorkerForLaunch(launchID string) (string, error) {
+	cat, err := s.launchCatalog(launchID)
+	if err != nil {
+		return "", err
+	}
+	if cat == nil {
+		return "", launch.ErrLaunchNotFound
+	}
+	l, ok := cat.Launches[launchID]
+	if !ok {
+		return "", launch.ErrLaunchNotFound
+	}
+	return l.Worker, nil
+}

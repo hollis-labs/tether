@@ -34,6 +34,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -104,6 +105,10 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 	}
 	req.TaskID = taskID
 
+	principal := store.IdempotencyPrincipalAnonymous
+	if caller, ok := identity.FromContext(r.Context()); ok && caller.Verified && caller.ID != "" {
+		principal = caller.ID
+	}
 	created := false
 	if _, err := s.SessionBootstrap.GetSession(req.SessionID); err != nil {
 		if !errors.Is(err, store.ErrSessionNotFound) {
@@ -115,11 +120,12 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			intent = "preassigned"
 		}
 		row := store.SessionRow{
-			ID:             req.SessionID,
-			LogicalAgentID: req.LogicalAgentID,
-			State:          "external",
-			Intent:         intent,
-			Publication:    req.Publication,
+			ID:                  req.SessionID,
+			RequestingPrincipal: sql.NullString{String: principal, Valid: true},
+			LogicalAgentID:      req.LogicalAgentID,
+			State:               "external",
+			Intent:              intent,
+			Publication:         req.Publication,
 			// A later bootstrap of an existing session never reaches this literal, so a
 			// second claim cannot rebind the task (CW-20261012-0062a).
 			TaskID: sql.NullString{String: req.TaskID, Valid: req.TaskID != ""},
