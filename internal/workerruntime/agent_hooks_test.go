@@ -319,3 +319,33 @@ func TestStopGatePlanting(t *testing.T) {
 		}
 	})
 }
+
+// CW-20261114-0057: a release dir created 0775 under the user's umask made the Stop gate refuse to arm with a
+// reason that did not say where or how to fix it. Both markers now name the directory and the chmod.
+func TestHookRefusalInAGroupWritableDirSaysHowToFixIt(t *testing.T) {
+	bin := hookBinary(t, 0o755)
+	dir := filepath.Dir(bin)
+	if err := os.Chmod(dir, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	e := &Executor{Binary: bin, HubMCPURL: "https://hub.example/mcp", Tokens: &TokenMinter{}}
+	ws := t.TempDir()
+	spec := workerwire.LaunchSpec{Session: "s1", AgentEvents: true, StopGate: true, MCPPolicy: true, AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether"}}}
+	if got := e.agentHookArgs(ws, spec); got != nil {
+		t.Fatalf("hooks planted from a group-writable dir: %v", got)
+	}
+	for _, marker := range []string{"stop-gate.disabled", "agent-events.disabled"} {
+		raw, err := os.ReadFile(filepath.Join(ws, marker))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"hook binary directory " + dir + " is group- or other-writable (mode 0775)", "fix: chmod 755 " + dir, "install -d -m 0755"} {
+			if !strings.Contains(string(raw), want) {
+				t.Fatalf("%s = %q, want it to contain %q", marker, raw, want)
+			}
+		}
+	}
+	if err := checkHookBinary(hookBinary(t, 0o775)); err == nil || !strings.Contains(err.Error(), "fix: chmod go-w ") {
+		t.Fatalf("group-writable binary: %v", err)
+	}
+}
