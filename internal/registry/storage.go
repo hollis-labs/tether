@@ -406,10 +406,13 @@ func (s *Storage) AttachExternalID(ctx context.Context, urn, substrate, external
 	defer tx.Rollback() //nolint:errcheck
 	// Check both the external pair and the existing per-substrate slot in the
 	// same transaction as the insert. Never replace or steal a mapping.
+	// Legacy rows can duplicate a pair, so prioritize every conflicting row
+	// over the requested mapping before deciding a repeat is a no-op.
 	var existingURN, existingID string
 	err = tx.QueryRowContext(ctx, `SELECT urn, external_id FROM registry_external_ids
 		WHERE (substrate = ? AND external_id = ?) OR (urn = ? AND substrate = ?)
-		LIMIT 1`, substrate, externalID, urn, substrate).Scan(&existingURN, &existingID)
+		ORDER BY CASE WHEN urn = ? AND external_id = ? THEN 1 ELSE 0 END
+		LIMIT 1`, substrate, externalID, urn, substrate, urn, externalID).Scan(&existingURN, &existingID)
 	switch {
 	case err == nil:
 		if existingURN != urn || existingID != externalID {
