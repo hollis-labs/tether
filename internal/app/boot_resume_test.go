@@ -38,7 +38,7 @@ func TestBootResumePendingMailWithoutCheckpointLeavesMailUnread(t *testing.T) {
 		t.Fatal("unread intent missing from recovery pack")
 	}
 	row, err := r.svc.Store.LatestSessionForAgent(context.Background(), "agent")
-	if err != nil || row.ID == id || row.State != "running" {
+	if err != nil || row.ID == id || row.State != "running" || row.RequestingPrincipal.String != "daemon:boot-recovery" || row.Intent != "resume" || row.ParentSessionID.String != id {
 		t.Fatalf("boot recovery=%+v %v", row, err)
 	}
 	page, err := r.svc.Store.MessagingStore().List(context.Background(), to, store.ListFilter{UnreadOnly: true, Limit: 20})

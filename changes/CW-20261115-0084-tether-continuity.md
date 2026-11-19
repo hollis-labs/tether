@@ -1,0 +1,1 @@
+- CW-20261115-0084: Carry lineage on chat-send relaunches and refuse uncertain replacement; persist server-selected creator provenance across session creation and recovery; refuse a relaunch when its parent lookup fails.

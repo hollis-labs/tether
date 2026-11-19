@@ -9,10 +9,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"github.com/hollis-labs/tether/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -263,5 +266,22 @@ func TestSessionBootstrap_NotConfigured_404(t *testing.T) {
 	resp, _ := postBootstrap(t, srv.URL, map[string]any{"session_id": "x"})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestSessionBootstrapCreatorIsVerifiedAndNotRebound(t *testing.T) {
+	_, db := newSessionBootstrapServer(t)
+	h := NewHandler(Deps{SessionBootstrap: db})
+	for _, caller := range []string{"creator-a", "creator-b"} {
+		ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: caller, Kind: "operator", Verified: true})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/sessions/bootstrap", strings.NewReader(`{"session_id":"external","requesting_principal":"forged"}`)).WithContext(ctx))
+		if w.Code != http.StatusOK {
+			t.Fatalf("bootstrap=%d %s", w.Code, w.Body.String())
+		}
+		row, err := db.GetSession("external")
+		if err != nil || row.RequestingPrincipal.String != "creator-a" {
+			t.Fatalf("creator changed: %+v %v", row, err)
+		}
 	}
 }

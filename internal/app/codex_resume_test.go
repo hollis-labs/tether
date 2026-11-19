@@ -326,12 +326,16 @@ func TestCodexExec_LogicalAgentResumeContinuesNativeThreadAcrossBoots(t *testing
 	}
 	r.ended(a)
 	// Native mapping is sufficient; no checkpoint is required.
-	res, err := r.svc.ResumeLogicalAgent("agent", api.ResumeOptions{})
+	res, err := r.svc.ResumeLogicalAgent("agent", api.ResumeOptions{IdempotencyPrincipal: "resume-requester"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.SessionID == a {
 		t.Fatal("ordinary resume reused canonical session")
+	}
+	row, err := r.svc.Store.GetSession(res.SessionID)
+	if err != nil || row.RequestingPrincipal.String != "resume-requester" || row.ParentSessionID.String != a {
+		t.Fatalf("resume provenance: %+v %v", row, err)
 	}
 	c2 := r.wait(2)
 	if c2.home == c1.home || c2.resumeID() != thread {

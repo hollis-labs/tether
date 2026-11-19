@@ -58,12 +58,30 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, err := svc.Store.GetSession(res.ID)
-	if err != nil || !row.TaskID.Valid || row.TaskID.String != id {
+	if err != nil || !row.TaskID.Valid || row.TaskID.String != id || row.RequestingPrincipal.String != identity.OperatorID {
 		t.Fatalf("session row task = %+v err=%v, want %q", row.TaskID, err, id)
 	}
 	plan, err := svc.Store.GetLaunchPlan(res.ID)
 	if err != nil || plan.TaskID != id || plan.Env[app.TaskIDEnv] != id {
 		t.Fatalf("stored plan task = %q env = %q err=%v", plan.TaskID, plan.Env[app.TaskIDEnv], err)
+	}
+	// An unkeyed, bare create must also preserve the verified creator through
+	// the daemon adapter, then a relaunch must retain its lineage and creator.
+	bare, err := c.CreateSession(context.Background(), launchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bareRow, err := svc.Store.GetSession(bare.ID)
+	if err != nil || bareRow.RequestingPrincipal.String != identity.OperatorID || bareRow.Intent != "fresh" {
+		t.Fatalf("bare create provenance: %+v %v", bareRow, err)
+	}
+	continued, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, Continuity: "relaunch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuedRow, err := svc.Store.GetSession(continued.ID)
+	if err != nil || continuedRow.RequestingPrincipal.String != identity.OperatorID || continuedRow.Intent != "resume" || continuedRow.ParentSessionID.String != bare.ID {
+		t.Fatalf("relaunch provenance: %+v %v", continuedRow, err)
 	}
 	// Without a task id nothing is stamped.
 	plain, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, PromptAppend: "x"})

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -218,12 +219,15 @@ func (s *Store) Close() error {
 func (s *Store) DB() *sql.DB { return s.db }
 
 type SessionRow struct {
-	ID             string
-	LaunchID       string
-	ProjectID      string
-	LogicalAgentID string
-	ProviderID     string
-	WorkerID       string
+	// RequestingPrincipal is server-set creator provenance, not a credential or grant.
+	// NULL on historical rows. Never inherited from the source on continuation.
+	RequestingPrincipal sql.NullString
+	ID                  string
+	LaunchID            string
+	ProjectID           string
+	LogicalAgentID      string
+	ProviderID          string
+	WorkerID            string
 	// ProviderKind is the runtime family ("cli" | "api"). Added in migration
 	// 0012 (ADR 0022 G3); empty for rows created before the migration.
 	ProviderKind string
@@ -343,11 +347,11 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app, requesting_principal)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
 		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt,
-		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution, row.RouteJSON, row.WorkerID, row.TaskID, row.App); err != nil {
+		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution, row.RouteJSON, row.WorkerID, row.TaskID, row.App, row.RequestingPrincipal); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO launch_plans (session_id, plan_json) VALUES (?, ?)`, row.ID, string(pb)); err != nil {
@@ -372,6 +376,9 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 		return err
 	}
 	s.noteConversationMoved(moved)
+	if row.RequestingPrincipal.Valid {
+		log.Printf("store: session %s created by principal %q (intent %q, parent %q)", row.ID, row.RequestingPrincipal.String, row.Intent, row.ParentSessionID.String)
+	}
 	return nil
 }
 
@@ -537,7 +544,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("launch_id = ?", opts.LaunchID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app FROM sessions` + where + ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app, requesting_principal FROM sessions` + where + ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -548,7 +555,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID, &r.App); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID, &r.App, &r.RequestingPrincipal); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -562,8 +569,8 @@ func (s *Store) GetSession(id string) (*SessionRow, error) {
 
 func (s *Store) GetSessionContext(ctx context.Context, id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID, &r.App)
+	err := s.db.QueryRowContext(ctx, `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, app, requesting_principal FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON, &r.WorkerID, &r.TaskID, &r.App, &r.RequestingPrincipal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}

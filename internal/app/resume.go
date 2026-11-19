@@ -315,15 +315,16 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	}
 
 	row := store.SessionRow{
-		ID:             sessID,
-		LaunchID:       plan.LaunchID,
-		ProjectID:      plan.ProjectID,
-		LogicalAgentID: plan.LogicalAgentID,
-		ProviderID:     plan.ProviderID,
-		ProviderKind:   providerKind,
-		WorkerID:       workerID,
-		Workspace:      ws.Root,
-		State:          string(session.StateCreated),
+		ID:                  sessID,
+		RequestingPrincipal: sql.NullString{String: idempotencyPrincipal(opts.IdempotencyPrincipal), Valid: true},
+		LaunchID:            plan.LaunchID,
+		ProjectID:           plan.ProjectID,
+		LogicalAgentID:      plan.LogicalAgentID,
+		ProviderID:          plan.ProviderID,
+		ProviderKind:        providerKind,
+		WorkerID:            workerID,
+		Workspace:           ws.Root,
+		State:               string(session.StateCreated),
 		// Canonical-session lineage (T02, messaging vNext). Before this,
 		// Tether had no session->session lineage at all: the only backward
 		// pointer was checkpoint.SourceSessionID (which session PRODUCED

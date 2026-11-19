@@ -168,6 +168,7 @@ func nativeContinuationRig(t *testing.T) (*identityRig, context.Context, store.S
 
 func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
 	r, ctx, source, options, policy := nativeContinuationRig(t)
+	options.IdempotencyPrincipal = "native-requester"
 	s := r.svc
 	bad := options
 	bad.WorkerSourceGeneration = "stale"
@@ -186,7 +187,7 @@ func TestWorkerNativeContinuationPublicAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if child.WorkerID != source.WorkerID || child.ParentSessionID.String != source.ID || child.Intent != "resume" || child.State != "running" {
+	if child.RequestingPrincipal.String != "native-requester" || child.WorkerID != source.WorkerID || child.ParentSessionID.String != source.ID || child.Intent != "resume" || child.State != "running" {
 		t.Fatalf("wrong child %+v", child)
 	}
 	mapping, err := r.db.GetSessionProviderMapping(child.ID, "tether", source.ProviderID)
@@ -401,5 +402,30 @@ func TestWorkerNativeAdmissionRejectsWrongReadiness(t *testing.T) {
 				t.Fatalf("false admission: %+v %v", receipt, err)
 			}
 		})
+	}
+}
+
+func TestWorkerCreateRelaunchPersistsCreator(t *testing.T) {
+	r, ctx, source, _, _ := nativeContinuationRig(t)
+	in := CreateSessionInput{LaunchID: "seat", Worker: "fake-worker", Continuity: "relaunch", IdempotencyPrincipal: "worker-creator", IdempotencyKey: "worker-create"}
+	child, err := r.svc.CreateSessionWithInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := r.db.GetSession(child.SessionID)
+	if err != nil || row.WorkerID != source.WorkerID || row.Intent != "resume" || row.ParentSessionID.String != source.ID || row.RequestingPrincipal.String != "worker-creator" {
+		t.Fatalf("worker create=%+v %v", row, err)
+	}
+	before, _, err := r.db.ConversationForSession(ctx, child.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := r.svc.CreateSessionWithInput(in)
+	if err != nil || !replay.Replayed || replay.SessionID != child.SessionID {
+		t.Fatalf("replay=%+v %v", replay, err)
+	}
+	after, _, err := r.db.ConversationForSession(ctx, child.SessionID)
+	if err != nil || after.ID != before.ID || after.Generation != before.Generation {
+		t.Fatalf("replay moved conversation: before=%+v after=%+v %v", before, after, err)
 	}
 }

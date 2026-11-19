@@ -190,8 +190,8 @@ func TestLaunchTaskStampPolicy(t *testing.T) {
 				return
 			}
 			if tc.taskID == "" {
-				// Dropped: the request is a plain launch, not a tier-2 create carrying a stamp.
-				if len(svc.createInputs) != 0 || len(svc.createIDs) != 1 {
+				// Dropped: provenance still reaches the input path, without a task stamp.
+				if len(svc.createInputs) != 1 || svc.createInputs[0].TaskID != "" || len(svc.createIDs) != 1 {
 					t.Fatalf("dropped task id still reached the service: inputs=%+v ids=%v", svc.createInputs, svc.createIDs)
 				}
 				return

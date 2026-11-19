@@ -117,3 +117,15 @@ func TestIdempotencyPrincipalIgnoresUnverified(t *testing.T) {
 		t.Fatal("unverified remote device accepted")
 	}
 }
+
+func TestUnkeyedCreateKeepsVerifiedCreator(t *testing.T) {
+	for _, body := range []string{`{"launch":"demo","requesting_principal":"forged"}`, `{"launch":"demo","boot_prompt":"custom","idempotency_principal":"forged"}`, `{"launch":"demo","continuity":"relaunch"}`} {
+		svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "s"}}
+		ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "verified-creator", Kind: "operator", Verified: true})
+		w := httptest.NewRecorder()
+		newTestHandler(svc).ServeHTTP(w, httptest.NewRequest("POST", "/sessions", strings.NewReader(body)).WithContext(ctx))
+		if w.Code != 201 || len(svc.createInputs) != 1 || svc.createInputs[0].IdempotencyPrincipal != "verified-creator" {
+			t.Fatalf("create lost provenance: status=%d input=%+v", w.Code, svc.createInputs)
+		}
+	}
+}

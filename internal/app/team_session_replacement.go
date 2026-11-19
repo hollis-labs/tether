@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -59,6 +60,7 @@ func (s *Service) replaceRetainedTeamExecution(ctx context.Context, key string, 
 	if err != nil {
 		return err
 	}
+	log.Printf("app: team replacement %s of %s created by principal %q", id, row.ID, store.IdempotencyPrincipalTeam)
 	// the replacement event was written as an outbox row on that transaction
 	s.Store.EventsCommitted()
 	// Retry after any crash must read the same persisted destination. Failed
