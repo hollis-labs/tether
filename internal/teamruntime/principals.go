@@ -19,10 +19,15 @@ type SessionActors interface {
 // Principals is the only team authentication adapter. Under Enforce any verified
 // principal kind is admitted. Under Off/Observe (dev mode) only the verified
 // local operator is (credential plus accepted Unix socket, never a request
-// field). Agents, services and remote callers are refused until Enforce.
+// field). Agents, services and remote callers are refused until Enforce, except
+// a verified service the policy lists in Services (Torque's dispatcher): it is
+// trusted as presented, with identity enforcement left where it is.
 type Principals struct {
 	Mode     identity.Mode
 	Sessions SessionActors
+	// Services reports whether a service principal id is policy-listed. Nil
+	// lists none.
+	Services func(id string) bool
 }
 
 func (p Principals) ResolvePrincipal(ctx context.Context) (teamsvc.Principal, error) {
@@ -30,7 +35,13 @@ func (p Principals) ResolvePrincipal(ctx context.Context) (teamsvc.Principal, er
 	if !verified {
 		return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
 	}
-	if p.Mode != identity.Enforce && caller.Kind != "operator" {
+	listedService := caller.Kind == "service" && p.Services != nil && p.Services(caller.ID)
+	// Without enforcement nothing else checks scopes, so a listed service must
+	// carry the teams scope itself.
+	if listedService && p.Mode != identity.Enforce && !identity.ScopeGranted(caller.Scopes, "team.write") {
+		return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
+	}
+	if p.Mode != identity.Enforce && caller.Kind != "operator" && !listedService {
 		return teamsvc.Principal{}, teamsvc.ErrUnauthenticated
 	}
 	out := teamsvc.Principal{ID: mesh.URN(caller.ID), Verified: caller.Verified}

@@ -88,12 +88,17 @@ func (h *Host) reserve(ctx context.Context, req teams.ProvisionRequest) (intent,
 			if err := decode(payload, &roster); err != nil {
 				return err
 			}
+			// A spawning parent is an active member with a session, or the run
+			// owner: a governance seat that launches no session of its own (a
+			// Stage B owner adding a worker). The member then has no parent
+			// session.
+			seated := false
 			for _, m := range roster.Members {
-				if m.ID == req.Parent && m.Status == "active" {
-					parent = m.SessionID
+				if m.ID == req.Parent && m.Status == "active" && (m.SessionID != "" || m.Governance == teams.Owner) {
+					parent, seated = m.SessionID, true
 				}
 			}
-			if parent == "" {
+			if !seated {
 				return teams.ErrUnavailable
 			}
 		}
