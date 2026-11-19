@@ -694,6 +694,16 @@ func EffectiveStopGate(g Global, a Agent) bool {
 type MailTriageDefaults struct {
 	Enabled        bool   `yaml:"enabled,omitempty"`
 	ActionInterval string `yaml:"action_interval,omitempty"`
+	// AckFilter refuses pure acknowledgement replies at send time
+	// (CW-20261118-0050). On unless set false.
+	AckFilter *bool `yaml:"ack_filter,omitempty"`
+}
+
+// AckFilterEnabled reports whether the hub refuses pure acknowledgement
+// replies at send time: on unless catalog.defaults.mail_triage.ack_filter is false.
+func (g Global) AckFilterEnabled() bool {
+	f := g.Catalog.Defaults.MailTriage.AckFilter
+	return f == nil || *f
 }
 
 // DefaultMailTriageActionInterval caps action wakes when no interval is set.

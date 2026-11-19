@@ -476,6 +476,9 @@ var daemonRunCmd = &cobra.Command{
 		}
 		if mcpHandler != nil {
 			server.MCP = mcpHandler
+			if mcpHandler.backend != nil {
+				server.MCPBackend = mcpHandler.backend
+			}
 			server.MCPShutdown = mcpHandler.Close
 			server.MCPDrain = mcpHandler.Drain
 		}

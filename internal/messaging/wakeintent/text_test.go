@@ -10,7 +10,7 @@ import (
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 )
 
-func TestDefaultWakeTextIsAPointerThatEndsSilently(t *testing.T) {
+func TestDefaultWakeTextIsAPointerThatEndsEmpty(t *testing.T) {
 	env := messaging.Envelope{
 		ID:   "m1",
 		From: messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "archie"},
@@ -18,7 +18,7 @@ func TestDefaultWakeTextIsAPointerThatEndsSilently(t *testing.T) {
 		Kind: messaging.MsgKindNotice,
 	}
 	got := DefaultWakeText(env, 2, "high", false)
-	for _, want := range []string{"**Mailbox wake (daemon-injected)**", "2 unread message(s)", "`m1`", "urgency `high`", "Reply to anything that asked you something", "End silently only if nothing needs action"} {
+	for _, want := range []string{"**Mailbox wake (daemon-injected)**", "2 unread message(s)", "`m1`", "urgency `high`", "Reply to anything that asked you something", "If nothing needs action, end the turn without producing any message"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("wake text missing %q:\n%s", want, got)
 		}
@@ -59,7 +59,13 @@ func TestWakeGuidanceNeverUnconditionallySilent(t *testing.T) {
 	if strings.Contains(WakeGuidance, "end the turn silently") {
 		t.Fatalf("guidance still carries the unconditional silent-end instruction: %q", WakeGuidance)
 	}
-	if !strings.Contains(WakeGuidance, "End silently only if nothing needs action") {
+	if strings.Contains(strings.ToLower(WakeGuidance), "silently") {
+		t.Fatalf("guidance still says silently: %q", WakeGuidance)
+	}
+	if !strings.Contains(WakeGuidance, "Reply to anything that asked you something") {
+		t.Fatalf("guidance lost the reply instruction: %q", WakeGuidance)
+	}
+	if !strings.Contains(WakeGuidance, "If nothing needs action, end the turn without producing any message") {
 		t.Fatalf("guidance lost the conditional: %q", WakeGuidance)
 	}
 }

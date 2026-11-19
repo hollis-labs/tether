@@ -48,6 +48,9 @@ func NewVerifiedAdapterWith(ctx context.Context, svc *app.Service, dc *client.Cl
 	a := NewWithDaemon(svc, dc, "verified-principal", p.Scopes)
 	a.principal = &p
 	a.connectionContext = identity.WithConnectionContext(context.Background(), ctx)
+	if identity.IsRemote(ctx) {
+		a.connectionContext = identity.WithRemoteContext(a.connectionContext)
+	}
 	a.SessionID = p.SessionID
 	return a, nil
 }
@@ -57,6 +60,9 @@ func NewVerifiedAdapterWith(ctx context.Context, svc *app.Service, dc *client.Cl
 // neither an SDK metadata claim nor a cached stdio lookup establishes identity.
 func (a *Adapter) verifiedCallerContext(ctx context.Context) context.Context {
 	ctx = identity.WithConnectionContext(ctx, a.connectionContext)
+	if a.connectionContext != nil && identity.IsRemote(a.connectionContext) {
+		ctx = identity.WithRemoteContext(ctx)
+	}
 	ctx = identity.WithPrincipal(ctx, *a.principal)
 	ctx = callcontext.WithClaimedSession(ctx, a.principal.SessionID)
 	var sessions api.CallerSessionLookup

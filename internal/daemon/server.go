@@ -225,6 +225,8 @@ type Server struct {
 	// MCP is the injected daemon-owned Streamable HTTP/UDS gateway. Its
 	// lifecycle closes sessions/streams and upstreams before HTTP/store drain.
 	MCP http.Handler
+	// MCPBackend is the co-located gateway admission/native seam, Unix socket only.
+	MCPBackend http.Handler
 	// RemoteMCPSessions looks up a worker session for the remote /mcp gate; it defaults to Service when that
 	// implements GetSession. Without a lookup, an issuer or an MCP handler, /mcp stays unavailable remotely.
 	RemoteMCPSessions sessionLookup
@@ -637,6 +639,11 @@ func (s *Server) handler(remote bool) http.Handler {
 		// answers 404 from the mux and never reaches the handler.
 		for _, path := range []string{api.TokenPath, api.ServiceTokensPath, api.ServiceTokensPath + "/revoke", api.ServiceTokensPath + "/rotate-key", api.ServiceTokenRequestPath, api.DenyListPath, api.JWKSPath, api.WorkloadTrustPath} {
 			router.Handle(path, issuerHandler)
+		}
+	}
+	if s.MCPBackend != nil && !remote && strings.HasPrefix(s.Config.ListenAddr, "unix:") {
+		for _, path := range []string{"/gateway/mcp/admit", "/gateway/mcp/remote/admit", "/gateway/mcp/native", "/gateway/mcp/remote/native"} {
+			router.Handle(path, s.MCPBackend)
 		}
 	}
 	if s.MCP != nil && !remote {

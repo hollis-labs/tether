@@ -193,7 +193,7 @@ Notify response fields:
 
 The default wake text is a pointer: it names the latest message (id, sender, kind,
 urgency) and tells the agent: "Read and handle these. Reply to anything that asked you
-something. End silently only if nothing needs action." (CW-20261117-0002). For a seat with
+something. If nothing needs action, end the turn without producing any message." (CW-20261117-0002). For a seat with
 mail triage on, the wake also lists the seat's other pending mail (see
 [mail-triage.md](mail-triage.md)). The hub's notify path and the
 sweep's retried wakes share one formatter (`wakeintent.DefaultWakeText`).

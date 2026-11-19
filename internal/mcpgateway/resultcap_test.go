@@ -158,6 +158,89 @@ func TestCapTrimsStructuredContentTheSameWay(t *testing.T) {
 	}
 }
 
+// CW-20261118-0033: a cut result carries the marker in StructuredContent too,
+// so a client that shows only StructuredContent sees the cut and the cursor.
+func TestCapPutsTheMarkerInStructuredContent(t *testing.T) {
+	p := NewResultPager()
+	res := bigResult(300, "data")
+	var tree any
+	_ = json.Unmarshal([]byte(res.Content[0].(*mcpsdk.TextContent).Text), &tree)
+	res.StructuredContent = tree
+	out, rep := p.Cap("t", true, res, 8<<10)
+	if !rep.Truncated || rep.DeliveredBytes > 8<<10 {
+		t.Fatalf("report=%+v", rep)
+	}
+	if _, ok := tree.(map[string]any)[StructuredMarkerKey]; ok {
+		t.Fatal("the original StructuredContent must not be mutated")
+	}
+	raw, _ := json.Marshal(out.StructuredContent)
+	var sc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &sc); err != nil {
+		t.Fatal(err)
+	}
+	var m pageMarker
+	if err := json.Unmarshal(sc[StructuredMarkerKey], &m); err != nil {
+		t.Fatalf("no %s in StructuredContent: %v (%s)", StructuredMarkerKey, err, raw)
+	}
+	if m != markerOf(t, out) {
+		t.Fatalf("structured marker %+v differs from text marker %+v", m, markerOf(t, out))
+	}
+	if !m.Truncated || m.Path != "data" || m.From != 0 || m.Returned != rep.Returned || m.Total != 300 || m.Cursor == "" || !strings.Contains(m.HowToContinue, m.Cursor) {
+		t.Fatalf("marker=%+v", m)
+	}
+	if _, _, err := p.Next(m.Cursor, 8<<10); err != nil {
+		t.Fatalf("structured cursor must resume: %v", err)
+	}
+}
+
+// Results under the cap are returned as the same pointer, byte for byte,
+// including StructuredContent: no marker key is added (CW-20261118-0033).
+func TestCapLeavesUnderCapStructuredContentUnchanged(t *testing.T) {
+	p := NewResultPager()
+	res := bigResult(3, "data")
+	var tree any
+	_ = json.Unmarshal([]byte(res.Content[0].(*mcpsdk.TextContent).Text), &tree)
+	res.StructuredContent = tree
+	before, _ := json.Marshal(res)
+	got, rep := p.Cap("t", true, res, 32<<10)
+	after, _ := json.Marshal(got)
+	if got != res || rep.Truncated || string(before) != string(after) {
+		t.Fatal("an under-cap result must be returned untouched")
+	}
+}
+
+// CW-20261118-0033: catalog plan reads default to unlimited, a profile's own
+// per-tool value still wins, and the plan-shaped fixture is cut without it.
+func TestCatalogPlanReadsAreUncappedByDefault(t *testing.T) {
+	var none *ResultCap
+	for _, tool := range []string{"tether_catalog_plan", "tether_catalog_plan_get", "tether_catalog_validate"} {
+		if got := none.For(tool, DefaultResultCapBytes); got != 0 {
+			t.Errorf("For(%q) = %d, want 0 (unlimited)", tool, got)
+		}
+		if got := (&ResultCap{DefaultBytes: 4096}).For(tool, DefaultResultCapBytes); got != 0 {
+			t.Errorf("profile default must not re-cap %q: %d", tool, got)
+		}
+	}
+	if got := (&ResultCap{Tools: map[string]int{"tether_catalog_plan_get": 2048}}).For("tether_catalog_plan_get", DefaultResultCapBytes); got != 2048 {
+		t.Fatalf("a profile per-tool value must win, got %d", got)
+	}
+
+	files := make([]any, 5)
+	for i := range files {
+		files[i] = map[string]any{"path": fmt.Sprintf("agents/a%d.yaml", i), "action": "replace"}
+	}
+	raw, _ := json.Marshal(map[string]any{"ok": true, "data": map[string]any{"plan_id": "cp_x", "diff": strings.Repeat("+ line\n", (40<<10)/7), "files": files}})
+	res := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: string(raw)}}}
+	p := NewResultPager()
+	if got, rep := p.Cap("tether_catalog_plan_get", true, res, none.For("tether_catalog_plan_get", DefaultResultCapBytes)); got != res || rep.Truncated {
+		t.Fatal("tether_catalog_plan_get must be delivered whole")
+	}
+	// The same result through a generic tool is cut to one file: the bug.
+	if _, rep := p.Cap("other_read", true, res, none.For("other_read", DefaultResultCapBytes)); !rep.Truncated || rep.Returned != 1 || rep.Total != 5 {
+		t.Fatalf("control: report=%+v", rep)
+	}
+}
+
 func TestCapDeliversWholeWhenThereIsNothingToCut(t *testing.T) {
 	p := NewResultPager()
 	text := &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: strings.Repeat("plain text ", 3000)}}}
