@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,9 @@ func start(t *testing.T, binary string, mode string) harness {
 	t.Helper()
 	dir := t.TempDir()
 	if binary == "" {
+		if runtime.GOOS == "windows" {
+			t.Skip("fake agy requires sh")
+		}
 		binary = filepath.Join(dir, "agy")
 		if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 			t.Fatal(err)
@@ -131,6 +135,21 @@ func TestFakeAgyCases(t *testing.T) {
 				t.Fatal(err)
 			}
 			evs := collect(t, r)
+			if tc.text == "text" {
+				var text strings.Builder
+				finals := 0
+				for _, ev := range evs {
+					if ev.Verb == chatstream.VerbPartDelta {
+						text.WriteString(ev.Text)
+					}
+					if ev.Verb == chatstream.VerbPartEnd && string(ev.Final) == `"hello"` {
+						finals++
+					}
+				}
+				if text.String() != "hello" || finals != 1 {
+					t.Fatalf("text=%q finals=%d events=%+v", text.String(), finals, evs)
+				}
+			}
 			if got := evs[len(evs)-1].Verb; got != tc.verb {
 				t.Errorf("terminal %s want %s", got, tc.verb)
 			}
@@ -240,10 +259,15 @@ func TestRealAgy(t *testing.T) {
 		t.Fatal(err)
 	}
 	evs := collect(t, r)
+	var text strings.Builder
 	for _, ev := range evs {
 		if ev.Verb == chatstream.VerbPartDelta {
+			text.WriteString(ev.Text)
 			t.Logf("text: %s", ev.Text)
 		}
+	}
+	if strings.TrimSpace(text.String()) != "AGY_BACKEND_OK" {
+		t.Fatalf("unexpected real response %q", text.String())
 	}
 	last := evs[len(evs)-1]
 	t.Logf("terminal=%s code=%s events=%d", last.Verb, last.Code, len(evs))
