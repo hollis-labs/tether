@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,14 +195,46 @@ func TestClientWaitsForAHubWhoseIngestIsNotEnabledYet(t *testing.T) {
 	}
 }
 
+type confRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f confRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestClientHonoursRateLimitRetryAfter(t *testing.T) {
-	hub := newConfHub(t, identity.Off, nil, eventingest.Config{RatePerSecond: 5, Burst: 2}, true)
-	c := newConfClient(t, hub.srv.URL, func(cfg *eventbus.Config) { cfg.BatchSize = 1 })
+	// Freeze the bucket clock so slow requests cannot refill it before the
+	// third event. Only release tokens after the client observes a real 429.
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	hub := newConfHub(t, identity.Off, nil, eventingest.Config{
+		RatePerSecond: 5, Burst: 2,
+		Now: func() time.Time { return time.Unix(0, clock.Load()) },
+	}, true)
+	var retryAt atomic.Int64
+	c := newConfClient(t, hub.srv.URL, func(cfg *eventbus.Config) {
+		cfg.BatchSize = 1
+		cfg.Client = &http.Client{Transport: confRoundTripper(func(r *http.Request) (*http.Response, error) {
+			if at := retryAt.Load(); at != 0 && time.Since(time.Unix(0, at)) < time.Second {
+				t.Error("client retried before the hub's one-second Retry-After")
+			}
+			resp, err := http.DefaultTransport.RoundTrip(r)
+			if err == nil && resp.StatusCode == http.StatusTooManyRequests {
+				if got := resp.Header.Get("Retry-After"); got != "1" {
+					t.Errorf("Retry-After = %q, want 1", got)
+				}
+				retryAt.Store(time.Now().UnixNano())
+			}
+			return resp, err
+		})}
+	})
 	var items []eventbus.Item
 	for i := 0; i < 4; i++ {
 		items = append(items, confEvent(t, "cerberus", "alert.raised"))
 		c.Publish(items[i])
 	}
+	waitFor(t, "429 retry after exhausting burst", func() bool { return c.Stats().Retries > 0 })
+	if s := c.Stats(); s.Sent != 2 {
+		t.Fatalf("frozen bucket should deliver only its burst: %+v", s)
+	}
+	clock.Add(int64(time.Second)) // refill the burst for the two remaining events
 	waitFor(t, "all 4 delivered despite 429s", func() bool { return c.Stats().Sent == 4 })
 	if c.Stats().Retries == 0 {
 		t.Error("expected at least one 429 retry with burst 2")
