@@ -46,6 +46,7 @@ type BreakglassWindow struct {
 	OperatorDigest string    `json:"operator_digest"`
 }
 type ApproverView struct {
+	Approval       string                     `json:"approval"`
 	LegacyDefaults map[string]PrincipalPolicy `json:"legacy_defaults,omitempty"`
 	Policy         ApproverPolicy             `json:"policy"`
 	Breakglass     *BreakglassWindow          `json:"breakglass,omitempty"`
@@ -568,6 +569,9 @@ func (e *Engine) Breakglass(principal, reason string, duration time.Duration, pa
 	return &windowCopy, nil
 }
 func (e *Engine) Approvers() (ApproverView, error) {
+	if e.ApprovalOff {
+		return ApproverView{Approval: "off"}, nil
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	p, l, err := e.policyLocked()
@@ -577,7 +581,7 @@ func (e *Engine) Approvers() (ApproverView, error) {
 	if err = e.windowLocked(p, e.now().UTC()); err != nil {
 		return ApproverView{}, err
 	}
-	v := ApproverView{Policy: p, LegacyTachyon: l && contains(e.DelegatedApps, "tachyon")}
+	v := ApproverView{Approval: "on", Policy: p, LegacyTachyon: l && contains(e.DelegatedApps, "tachyon")}
 	if l {
 		v.LegacyDefaults = map[string]PrincipalPolicy{}
 		for _, app := range e.DelegatedApps {

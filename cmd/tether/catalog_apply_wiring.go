@@ -30,7 +30,8 @@ func catalogApplyPaths(cat *config.Catalog) (approverFile, backupRoot string) {
 func newCatalogApplyEngine(svc *app.Service, issuers ...*authissuer.Issuer) *catalogapply.Engine {
 	approverFile, backupRoot := catalogApplyPaths(svc.Catalog)
 	engine := &catalogapply.Engine{
-		Root: svc.CatalogRoot,
+		Root:        svc.CatalogRoot,
+		ApprovalOff: strings.EqualFold(strings.TrimSpace(os.Getenv("TETHER_CATALOG_APPROVAL")), "off"),
 		Preflight: func(root string) []catalogcheck.Result {
 			cat, err := config.LoadLayered(root)
 			if err != nil {
@@ -87,6 +88,11 @@ func newCatalogApplyEngine(svc *app.Service, issuers ...*authissuer.Issuer) *cat
 			}
 			return ids, nil
 		},
+	}
+	if engine.ApprovalOff {
+		slog.Warn("catalog approval: off; temporary development window", "approved_by", "approval-disabled")
+	} else {
+		slog.Info("catalog approval: on")
 	}
 	if len(issuers) > 0 && issuers[0] != nil {
 		engine.WindowTrust = issuers[0].Keys

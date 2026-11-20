@@ -1,0 +1,1 @@
+- CW-20261120-0169: Add the temporary daemon `TETHER_CATALOG_APPROVAL=off` switch, autoapproval audit attribution and HTTP/MCP/CLI plan-and-apply while preserving catalog integrity checks and default approval policy.
