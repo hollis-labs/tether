@@ -53,3 +53,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts \
 The Python fixture verifies WAL capture, source immutability, sparse batch IDs,
 owner/provider isolation, explicit values, unknown sessions, idempotence and
 refusal to overwrite existing files.
+
+For the documented output retention and summary proposal, see
+[Session output retention and summaries](session-output-retention.md).

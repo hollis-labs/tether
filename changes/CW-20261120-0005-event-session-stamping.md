@@ -1,1 +1,2 @@
 - CW-20261120-0005: Fill missing event task, workstream, team-linked run and provider session attribution from persisted session records, including background and transactional producers; add copy-only historical backfill tooling.
+- CW-20261120-0005: Document session.output retention and a future summary/coverage policy without enabling deletion or changing retention settings.
