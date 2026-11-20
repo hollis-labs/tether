@@ -333,6 +333,11 @@ func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
 	ok := mcprecovery.Run(ctx, func(attempt context.Context) (bool, error) {
 		return r.reinitializeAttempt(attempt, init)
 	}) == nil
+	if ok {
+		// The recovery deadline bounds the handshake, not the replacement's
+		// notification stream. Keep that stream on the downstream lifetime.
+		r.restartStandaloneStream(ctx)
+	}
 	r.reinitMu.Lock()
 	pending.ok = ok
 	r.reinitPending = nil
@@ -390,7 +395,6 @@ func (r *HTTPRelay) reinitializeAttempt(ctx context.Context, init []byte) (bool,
 	}
 	r.mu.Unlock()
 	r.completeHandshake(ctx)
-	r.restartStandaloneStream(ctx)
 	r.logf("hub session expired; started a new one")
 	return false, nil
 }

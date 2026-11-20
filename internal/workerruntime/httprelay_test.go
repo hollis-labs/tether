@@ -880,3 +880,50 @@ func TestHTTPRelayRetriesUnsentMutationOnce(t *testing.T) {
 	}
 	g.finish()
 }
+
+func TestHTTPRelayReplacementStreamOutlivesRecoveryHandshake(t *testing.T) {
+	opened, ended := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			close(opened)
+			<-r.Context().Done()
+			close(ended)
+		case http.MethodPost:
+			raw, _ := io.ReadAll(r.Body)
+			if isInitialize(raw) {
+				w.Header().Set("Mcp-Session-Id", "replacement")
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, `{"jsonrpc":"2.0","id":"internal","result":{"protocolVersion":"2025-03-26"}}`)
+			} else {
+				w.WriteHeader(http.StatusAccepted)
+			}
+		}
+	}))
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "token")
+	if err := tokenfile.Write(file, tokenOne); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	relay := &HTTPRelay{URL: server.URL, TokenFile: file, session: "old", initMsg: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`), out: io.Discard}
+	if !relay.reinitialize(ctx, "old") {
+		t.Fatal("replacement failed")
+	}
+	select {
+	case <-opened:
+	case <-time.After(time.Second):
+		t.Fatal("replacement stream not opened")
+	}
+	select {
+	case <-ended:
+		t.Error("recovery handshake canceled the long-lived notification stream")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	relay.streamWG.Wait()
+}
