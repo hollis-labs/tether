@@ -172,13 +172,13 @@ func withBrowserShim(providerBrand, workspaceRoot string, env []string) ([]strin
 
 // withAgyAllowlist gives an agy launch its own HOME carrying an MCP allowlist
 // (CW-20261024-0111), so a headless run can call the Tether gateway's tools
-// instead of having every MCP call auto-denied. It is OFF unless
-// TETHER_AGY_MCP_ALLOWLIST=1 (in the launch's own env or the daemon's) and leaves
+// instead of having every MCP call auto-denied. It is enabled by standalone
+// gateway opt-in or TETHER_AGY_MCP_ALLOWLIST=1 (launch or daemon env), and leaves
 // every other provider's env untouched. The logic is shared with the worker, which
 // runs worker-hosted agy launches; see antigravity.ApplyAllowlist.
-func withAgyAllowlist(providerBrand, bootDir, workspaceRoot string, env []string, getenv func(string) string, userHome func() (string, error)) ([]string, error) {
+func withAgyAllowlist(providerBrand, bootDir, workspaceRoot string, env []string, getenv func(string) string, userHome func() (string, error), standaloneGateway bool) ([]string, error) {
 	if providerBrand != "antigravity" {
 		return env, nil
 	}
-	return antigravity.ApplyAllowlist(antigravity.AllowlistOptions{BootDir: bootDir, WorkspaceRoot: workspaceRoot, Env: env, Flag: getenv, UserHome: userHome, Logf: log.Printf})
+	return antigravity.ApplyAllowlist(antigravity.AllowlistOptions{StandaloneGateway: standaloneGateway, BootDir: bootDir, WorkspaceRoot: workspaceRoot, Env: env, Flag: getenv, UserHome: userHome, Logf: log.Printf})
 }

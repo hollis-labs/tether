@@ -24,6 +24,7 @@ import (
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/requestflow"
 	"github.com/hollis-labs/tether/internal/terminalattach"
 )
 
@@ -61,8 +62,9 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
-	Forums  api.ForumService
-	Workers *workerhub.Hub
+	Requests requestflow.Backend
+	Forums   api.ForumService
+	Workers  *workerhub.Hub
 	// EventIdentity reports sanitized startup/readiness coordinates and counts.
 	EventIdentity func() *environmentstream.IdentityHealth
 	// Environment is the cached public descriptor composed from selected
@@ -324,6 +326,9 @@ type ReplySweeper interface {
 // can shrink it.
 var replySweepInterval = 2 * time.Second
 
+// Request deadlines live in Torque; this is only the retry cadence.
+var requestSweepInterval = 5 * time.Second
+
 // wakeSweepInterval bounds how often the background pump retries ready
 // deliveries. Short enough that a busy session's queued wake is retried
 // promptly once it goes idle; long enough not to hammer an offline actor.
@@ -493,6 +498,10 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.WakeSweeper != nil {
 		go s.runWakeSweepLoop(ctx)
 	}
+	if s.Requests != nil && s.MessageStore != nil {
+		alerts := requestflow.Alerts{Backend: s.Requests, Sender: s.MessageStore}
+		go runPeriodic(ctx, requestSweepInterval, "request acknowledgment sweep", alerts.Sweep)
+	}
 	if s.ReplySweeper != nil {
 		go s.runReplySweepLoop(ctx)
 	}
@@ -659,6 +668,7 @@ func (s *Server) handler(remote bool) http.Handler {
 	}
 	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || s.EventIngest != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
+			Requests:            s.Requests,
 			Forums:              s.Forums,
 			EnvironmentStream:   s.EnvironmentStream,
 			Docs:                s.Docs,

@@ -53,6 +53,9 @@ const FeatureAgentToken = "agent-token"
 // FeatureProviderProcess supports native Codex/AGY launch projection and framed turns.
 const FeatureProviderProcess = "provider-process"
 
+// FeatureStandaloneGateway promises provider entries and tmpfs JWT refresh.
+const FeatureStandaloneGateway = "standalone-gateway-v1"
+
 // FeatureExecutionRunToken promises nonpersistent execution-token handoff.
 const FeatureExecutionRunToken = "execution-run-token-v1"
 

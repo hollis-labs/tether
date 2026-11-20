@@ -18,6 +18,7 @@ const auditFile = "apply-audit.jsonl"
 // AuditRecord is one applied change: what, by whom, when, and the backup that
 // undoes it.
 type AuditRecord struct {
+	ApprovedBy      string     `json:"approved_by,omitempty"`
 	Reason          string     `json:"reason,omitempty"`
 	WindowExpiresAt *time.Time `json:"window_expires_at,omitempty"`
 	Event           string     `json:"event,omitempty"`

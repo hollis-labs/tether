@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/runtoken"
 	"log"
 	"net/http"
@@ -240,6 +241,9 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string, delayed ..
 	if runSecret != "" {
 		spec.Env[runtoken.TokenEnv] = runSecret
 	}
+	if delay {
+		spec.Env[gatewaylaunch.URLenv] = "https://gateway.example/mcp"
+	}
 	spec.Env[runtoken.IDEnv] = "worker-execution"
 	if torque != "" {
 		spec.Env["TETHER_RUN_ID"] = torque
@@ -261,6 +265,37 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string, delayed ..
 				_ = delayedChild.Process.Signal(syscall.SIGTERM)
 			}
 		})
+		launch, err := shim.ReadLaunch(delayedDescriptor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gatewayPath := valueInEnv(launch.Env, gatewaylaunch.TokenFileEnv)
+		checkGateway := func() {
+			t.Helper()
+			if gatewayPath == "" {
+				t.Fatal("missing gateway handoff")
+			}
+			if _, err := os.Stat(gatewayPath); err != nil {
+				t.Fatal("submitted worker lost gateway bearer", err)
+			}
+			if got, err := gatewaylaunch.ReadRunToken(gatewaylaunch.RunTokenPath(gatewayPath), ""); err != nil || got != runSecret {
+				t.Fatal("submitted worker lost gateway run proof")
+			}
+		}
+		checkGateway()
+		defer func() {
+			_ = delayedChild.Process.Signal(syscall.SIGTERM)
+			deadline := time.Now().Add(6 * time.Second)
+			for {
+				if _, err := os.Stat(filepath.Dir(gatewayPath)); os.IsNotExist(err) {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("retired child retained gateway lease")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}()
 		if len(delayed) > 1 && delayed[1] {
 			if err := delayedChild.Process.Kill(); err != nil {
 				t.Fatal(err)
@@ -295,6 +330,7 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string, delayed ..
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+		checkGateway()
 		descriptor, err := shim.ReadLaunch(delayedDescriptor)
 		if err != nil {
 			t.Fatal(err)

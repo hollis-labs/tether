@@ -104,6 +104,12 @@ func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 	}
 	response, err := t.base.RoundTrip(r)
+	// A run-token gateway can retire its view with 401 after admission or
+	// bearer rotation. Retire the retained client session, without reposting
+	// this request. The forwarder may reconnect a read once; mutations surface.
+	if response != nil && response.StatusCode == http.StatusUnauthorized && t.runToken != "" && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
+		t.onSessionMissing()
+	}
 	if response != nil && response.StatusCode == http.StatusNotFound && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
 		// A generic route 404 is not proof of expiry. Preserve the response for
 		// the SDK while recognizing only the daemon/SDK's explicit expiry bodies.

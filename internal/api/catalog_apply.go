@@ -63,6 +63,7 @@ func (s *Server) registerCatalogApplyRoutes(router *http.ServeMux) {
 // CatalogPlanRequest is the POST /catalog/plans body. Exactly one of Files or
 // RollbackOf is set.
 type CatalogPlanRequest struct {
+	Apply      bool                `json:"apply,omitempty"`
 	Name       string              `json:"name"`
 	TaskID     string              `json:"task_id,omitempty"`
 	Files      []catalogapply.File `json:"files,omitempty"`
@@ -160,6 +161,11 @@ func (s *Server) catalogDelegatedApprover(r *http.Request) (string, []string, bo
 	return principal, protected, ok && d.DelegatedApprover(principal)
 }
 
+func (s *Server) catalogApprovalOff() bool {
+	e, ok := s.CatalogApply.(interface{ ApprovalDisabled() bool })
+	return ok && e.ApprovalDisabled()
+}
+
 func (s *Server) handleCatalogPlans(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -172,6 +178,10 @@ func (s *Server) handleCatalogPlans(w http.ResponseWriter, r *http.Request) {
 	var req CatalogPlanRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.Apply && !s.catalogApprovalOff() {
+		writeError(w, http.StatusForbidden, CodeForbidden, "plan+apply requires catalog approval off")
 		return
 	}
 	opt := catalogapply.Options{ProtectedPaths: s.callerDefinitionPaths(r), Caller: s.callerOf(r)}
@@ -191,6 +201,15 @@ func (s *Server) handleCatalogPlans(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
+	}
+	if req.Apply {
+		res, applyErr := s.CatalogApply.Apply(r.Context(), plan.ID)
+		if applyErr != nil {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": ErrorDetail{Code: CodeConflict, Message: applyErr.Error()}, "plan": plan, "result": res})
+			return
+		}
+		plan, _ = s.CatalogApply.Get(plan.ID)
+		plan.Result = res
 	}
 	writeJSON(w, http.StatusOK, plan)
 }
@@ -241,7 +260,7 @@ func (s *Server) handleCatalogApprove(w http.ResponseWriter, r *http.Request, id
 	delegated := false
 	var principal string
 	var protected []string
-	if !catalogApprover(r) {
+	if !s.catalogApprovalOff() && !catalogApprover(r) {
 		var allowed bool
 		principal, protected, allowed = s.catalogDelegatedApprover(r)
 		if !allowed {
@@ -405,7 +424,7 @@ func (s *Server) handleCatalogApproveBatch(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !catalogApprover(r) {
+	if !s.catalogApprovalOff() && !catalogApprover(r) {
 		writeError(w, http.StatusForbidden, CodeForbidden, "batch approval requires the local operator on the daemon's own socket and the operator passphrase")
 		return
 	}

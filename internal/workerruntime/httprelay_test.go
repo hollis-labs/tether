@@ -613,3 +613,131 @@ func TestHTTPRelayDoesNotLoopWhenTheHubKeepsForgettingTheSession(t *testing.T) {
 	}
 	g.finish()
 }
+
+type retireViewTransport struct {
+	base          http.RoundTripper
+	retired       atomic.Bool
+	calls         atomic.Int32
+	run           string
+	rotate        func()
+	oldGETStarted chan struct{}
+	releaseOldGET chan struct{}
+	newGET        chan struct{}
+	oldOnce       sync.Once
+	newOnce       sync.Once
+}
+
+func (r *retireViewTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("X-Run-Token") != r.run {
+		return nil, fmt.Errorf("run correlation missing")
+	}
+	if req.Method == http.MethodGet && r.oldGETStarted != nil {
+		if req.Header.Get("Mcp-Session-Id") == "sess-1" {
+			r.oldOnce.Do(func() { close(r.oldGETStarted) })
+			select {
+			case <-r.releaseOldGET:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			return &http.Response{StatusCode: 401, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":"unauthorized"}}`)), Request: req}, nil
+		}
+	}
+	if req.Method == http.MethodPost {
+		data, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewReader(data))
+		method := methodName(data)
+		if method == "tools/list" || method == "tools/call" {
+			r.calls.Add(1)
+			if r.retired.CompareAndSwap(false, true) {
+				if r.rotate != nil {
+					r.rotate()
+				}
+				return &http.Response{StatusCode: 401, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":"unauthorized"}}`)), Request: req}, nil
+			}
+		}
+	}
+	resp, err := r.base.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusOK && req.Method == http.MethodGet && req.Header.Get("Mcp-Session-Id") == "sess-2" {
+		r.newOnce.Do(func() { close(r.newGET) })
+	}
+	return resp, err
+}
+func TestHTTPRelayReconnectAfter401PreservesRunTokenAndDoesNotReplayMutation(t *testing.T) {
+	for _, method := range []string{"tools/list", "tools/call"} {
+		t.Run(method, func(t *testing.T) {
+			hub := &fakeHub{}
+			transport := &retireViewTransport{base: http.DefaultTransport, run: "synthetic-run", oldGETStarted: make(chan struct{}), releaseOldGET: make(chan struct{}), newGET: make(chan struct{})}
+			g := newRunRelayRig(t, hub, transport, transport.run)
+			transport.rotate = func() {
+				if err := tokenfile.Write(g.file, tokenTwo); err != nil {
+					t.Error(err)
+				}
+				hub.mu.Lock()
+				hub.current = tokenTwo
+				hub.mu.Unlock()
+				hub.evict()
+			}
+			defer g.finish()
+			g.handshake()
+			select {
+			case <-transport.oldGETStarted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("initial gateway stream did not open")
+			}
+
+			g.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":%q,"params":{"name":"mutate","arguments":{}}}`, method))
+			for {
+				msg := g.recv()
+				if msg["id"] != float64(2) {
+					continue
+				}
+				if method == "tools/call" && msg["error"] == nil {
+					t.Fatal("mutation refusal hidden")
+				}
+				if method == "tools/list" && msg["result"] == nil {
+					t.Fatal("read did not reconnect")
+				}
+				break
+			}
+			want := int32(2)
+			if method == "tools/call" {
+				want = 1
+			}
+			if transport.calls.Load() != want {
+				t.Fatal("incorrect replay count", transport.calls.Load())
+			}
+			if hub.count("initialize") != 2 {
+				t.Fatal("view not replaced")
+			}
+			// The replacement response proves reinitialize has already attempted
+			// to restart the stream while the old GET is still in flight.
+			close(transport.releaseOldGET)
+			select {
+			case <-transport.newGET:
+			case <-time.After(5 * time.Second):
+				t.Fatal("old view's delayed 401 retired the replacement stream")
+			}
+
+			// Consume the replacement stream's notification before closing stdin.
+			// The rig uses an unbuffered stdout pipe: leaving this unread can
+			// block emit (and shutdown) if the later POST response wins the race.
+			if msg := g.recv(); msg["method"] != "notifications/tools/list_changed" {
+				t.Fatal("replacement stream did not deliver its notification")
+			}
+
+			g.send(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
+			for {
+				msg := g.recv()
+				if msg["id"] == float64(3) {
+					if msg["result"] == nil {
+						t.Fatal("subsequent read failed")
+					}
+					break
+				}
+			}
+		})
+	}
+}

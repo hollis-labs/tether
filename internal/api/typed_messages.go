@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/tether/internal/messaging/ackfilter"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/requestflow"
 	"github.com/hollis-labs/tether/internal/seatstatus"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -256,6 +257,8 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var parent *envelope.Parent
+	parentRecipient := ""
+	parentSender := ""
 	threadID := ""
 	if e.InReplyTo != "" {
 		p, err := s.MessageStore.Get(ctx, e.InReplyTo)
@@ -266,6 +269,8 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 			writeEnvelopeError(w, &envelope.Error{Field: "in_reply_to", Reason: "no such message among yours"})
 			return
 		}
+		parentRecipient = canonicalAddress(p.To)
+		parentSender = canonicalAddress(p.From)
 		threadID = p.ThreadID
 		if threadID == "" {
 			threadID = p.ID
@@ -301,6 +306,25 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeError(w, &envelope.Error{Field: "body", Reason: ackfilter.Refusal})
 		return
 	}
+	trackedReply := s.Requests != nil && e.Status != "" && parent != nil && parent.Envelope != nil && parent.Envelope.Kind == envelope.KindRequest && parent.Envelope.TaskID != ""
+	if s.Requests != nil && (e.Kind == envelope.KindRequest || trackedReply) && stub.Metadata["tether.message_id"] == "" {
+		writeEnvelopeError(w, &envelope.Error{Field: "idempotency_key", Reason: "required for tracked request submissions and final replies"})
+		return
+	}
+	if trackedReply && (len(urns) != 1 || s.canonicalSeat(ctx, s.canonicalAlias(ctx, urns[0])) != s.canonicalSeat(ctx, s.canonicalAlias(ctx, parentSender))) {
+		writeEnvelopeError(w, &envelope.Error{Field: "to", Reason: "a final request reply must go only to the original requester"})
+		return
+	}
+	if s.Requests != nil && e.Kind == envelope.KindRequest && len(urns) != 1 {
+		writeEnvelopeError(w, &envelope.Error{Field: "to", Reason: "a tracked request requires exactly one recipient"})
+		return
+	}
+	if s.Requests != nil {
+		if err := s.settleRequest(ctx, &e, parent, from, parentRecipient, false); err != nil {
+			writeError(w, http.StatusBadGateway, CodeInternalError, "request lifecycle: "+err.Error())
+			return
+		}
+	}
 	body, err := json.Marshal(e)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -321,6 +345,35 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 			meta["tether.message_id"] = fmt.Sprintf("%s:%d", key, i)
 		}
 		scopeIdempotencyKey(meta)
+		if trackedReply {
+			// One final response per request, even when a caller changes its
+			// retry key. A conflicting summary/status fails mail dedupe BEFORE
+			// Torque can be mutated. The transport also scopes this by From.
+			meta["tether.message_id"] = "request-final:" + parent.Envelope.TaskID
+		}
+		var tracked requestflow.Request
+		if s.Requests != nil && e.Kind == envelope.KindRequest {
+			to, err = messaging.ParseURN(s.canonicalSeat(ctx, s.canonicalAlias(ctx, to.URN())))
+			if err != nil {
+				writeEnvelopeError(w, err)
+				return
+			}
+			if err = s.refuseDeprecatedRecipient(ctx, to); err != nil {
+				writeError(w, http.StatusConflict, CodeInvalidRequest, err.Error())
+				return
+			}
+			tracked, err = s.submitRequest(ctx, &e, stub.From, to, meta)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, CodeInternalError, "request lifecycle: "+err.Error())
+				return
+			}
+			body, err = json.Marshal(e)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			resp.Envelope = e
+		}
 		msg := messaging.Envelope{From: stub.From, To: to, Kind: envelope.TransportKind(e.Kind), ThreadID: resp.ThreadID, InReplyTo: e.InReplyTo,
 			Payload: body, ContentType: envelope.ContentType, Metadata: meta}
 		sent, err := s.sendMessage(ctx, msg)
@@ -333,6 +386,18 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.IDs = append(resp.IDs, sent.ID)
+		if s.Requests != nil {
+			if err := s.settleRequest(ctx, &e, parent, from, parentRecipient, true); err != nil {
+				writeError(w, http.StatusBadGateway, CodeInternalError, fmt.Sprintf("reply sent as %s but lifecycle update failed; retry with the same idempotency key: %v", sent.ID, err))
+				return
+			}
+		}
+		if tracked.TaskID != "" {
+			if err := s.requestSent(ctx, tracked, sent.ID); err != nil {
+				writeError(w, http.StatusBadGateway, CodeInternalError, fmt.Sprintf("request %s sent as %s but lifecycle attachment failed; retry with the same idempotency key: %v", tracked.TaskID, sent.ID, err))
+				return
+			}
+		}
 		if resp.ThreadID == "" {
 			resp.ThreadID = sent.ThreadID
 			if resp.ThreadID == "" {

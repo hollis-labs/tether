@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/libs/harness/core/adapters/sessionkit"
 	"github.com/hollis-labs/libs/harness/core/adapters/turn"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	"github.com/hollis-labs/libs/harness/core/agentlaunch/sessionshim"
 	"github.com/hollis-labs/libs/harness/core/sandbox"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
@@ -26,6 +27,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
@@ -562,6 +564,37 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	if err != nil {
 		return nil, fmt.Errorf("mint run context: %w", err)
 	}
+
+	var gatewayServer *agentlaunch.MCPServerSpec
+	var gatewayTokenPath string
+	stopGateway := func() {}
+	if endpoint := plan.Env[gatewaylaunch.URLenv]; endpoint != "" {
+		if rt.Kind() == acp.Kind || plan.NativeResumeOnly {
+			return nil, fmt.Errorf("gateway wiring requires a freshly planted CLI launch")
+		}
+		path, stop, gatewayErr := s.startGatewayCredential(endpoint, sessionID, token, runEnv[runtoken.TokenEnv])
+		if gatewayErr != nil {
+			return nil, gatewayErr
+		}
+		stopGateway = stop
+		gatewayTokenPath = path
+		profile, gatewayErr = gatewaylaunch.ReadableProfile(profile, path, plan.EffectiveWorkRoot())
+		if gatewayErr != nil {
+			stop()
+			return nil, gatewayErr
+		}
+		server := gatewaylaunch.Server(tetherCommandPath(), endpoint, path)
+		gatewayServer = &server
+	}
+	defer func() {
+		if !launched {
+			if !s.shimSessionRetained(sessionID) {
+				stopGateway()
+			} else if gatewayServer != nil {
+				go s.finishGatewayAfterSettlement(context.WithoutCancel(ctx), sessionID, stopGateway)
+			}
+		}
+	}()
 	var startOpts agentsessions.StartOptions
 	if rt.Kind() == acp.Kind {
 		// An ACP agent (CW-20260930-0106 stage 1). go-agent-wrapper's ACP
@@ -631,6 +664,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		prepared, err := s.prepareSharedLaunch(artifactCtx, plan, ws.Root, plantContextInput{
 			ArtifactAdmission: artifactAdmission,
+			GatewayServer:     gatewayServer,
 			DaemonOwned:       ownership == config.MCPUpstreamsDaemon,
 			TetherCommand:     mcpCommand,
 			TetherArgs:        mcpArgs,
@@ -691,7 +725,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, err
 		}
-		startOpts.Env, err = withAgyAllowlist(plan.ProviderBrand, prepared.PlantedBootDir, ws.Root, startOpts.Env, antigravity.FlagLookup(plan.Env, os.Getenv), os.UserHomeDir)
+		startOpts.Env, err = withAgyAllowlist(plan.ProviderBrand, prepared.PlantedBootDir, ws.Root, startOpts.Env, antigravity.FlagLookup(plan.Env, os.Getenv), os.UserHomeDir, gatewayServer != nil)
 		if err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
@@ -785,6 +819,26 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, err
 	}
 
+	if gatewayServer != nil {
+		policy, policyErr := agentsessions.PreparedSandboxPolicy(startOpts.PreparedExecution, startOpts.Workdir)
+		if policyErr != nil {
+			return nil, policyErr
+		}
+		if err := gatewaylaunch.CheckResolvedPolicy(policy); err != nil {
+			return nil, err
+		}
+		if err := gatewaylaunch.CheckResolvedPolicy(startOpts.SandboxPolicy); err != nil {
+			return nil, err
+		}
+		// Control-plane protection may have added constraints after planting.
+		path := gatewayTokenPath
+		if _, err := gatewaylaunch.ReadableProfile(startOpts.Profile, path, startOpts.Workdir); err != nil {
+			return nil, err
+		}
+		if err := gatewaylaunch.CheckHidden(startOpts.HiddenPaths, path, startOpts.Workdir); err != nil {
+			return nil, err
+		}
+	}
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
 
 	// A subprocess runtime writes no session.log and drops stderr unless
@@ -881,6 +935,9 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	s.watchStdioTap(sessionID, stdioTap)
 	s.watchCodexTap(sessionID, codexTap)
 	launched = true
+	if gatewayServer != nil {
+		go func() { _, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID); stopGateway() }()
+	}
 	if scratch != nil {
 		go s.releaseScratchAfterCompletion(context.WithoutCancel(ctx), scratch)
 	}

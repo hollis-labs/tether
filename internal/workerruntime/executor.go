@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core"
 	"github.com/hollis-labs/libs/security/secrets/redact"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/provider"
@@ -53,12 +54,13 @@ type execution struct {
 	Carry         []byte `json:"carry,omitempty"`
 	// AgentTokens/AuthDir persist what a restarted outpost needs to resume
 	// refreshing the session's token files.
-	AgentTokens []workerwire.AgentTokenSpec `json:"agent_tokens,omitempty"`
-	AuthDir     string                      `json:"auth_dir,omitempty"`
-	stopTokens  func()
-	client      *shim.Client
-	outputs     []outputRecord
-	pending     map[string]chan shim.Frame
+	AgentTokens      []workerwire.AgentTokenSpec `json:"agent_tokens,omitempty"`
+	AuthDir          string                      `json:"auth_dir,omitempty"`
+	GatewayTokenFile string                      `json:"gateway_token_file,omitempty"`
+	stopTokens       func()
+	client           *shim.Client
+	outputs          []outputRecord
+	pending          map[string]chan shim.Frame
 	// stderrTail is the last complete-or-partial stderr line, kept so a bare
 	// non-zero exit can be reported with a reason. secrets are the launch
 	// environment values redacted from it.
@@ -313,6 +315,47 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			return nil, err
 		}
 	}
+
+	stopGateway := func() {}
+	// The endpoint is catalog opt-in; the token path is executor-owned. Never
+	// accept a caller-supplied path as launcher credential authority.
+	gatewayEnv := make(map[string]string, len(spec.Env))
+	for k, v := range spec.Env {
+		if k != gatewaylaunch.TokenFileEnv {
+			gatewayEnv[k] = v
+		}
+	}
+	spec.Env = gatewayEnv
+	if spec.Env[gatewaylaunch.URLenv] != "" {
+		if spec.ResumeSessionID != "" {
+			return nil, resumeUnavailable("gateway wiring requires fresh provider config")
+		}
+		path, stop, gatewayErr := e.startGatewayCredential(spec)
+		if gatewayErr != nil {
+			return nil, gatewayErr
+		}
+		stopGateway = stop
+		if spec.Sandbox != nil {
+			profile, profileErr := gatewaylaunch.ReadableProfile(*spec.Sandbox, path, cwd)
+			if profileErr != nil {
+				stop()
+				return nil, profileErr
+			}
+			spec.Sandbox = &profile
+		}
+		spec.Env[gatewaylaunch.TokenFileEnv] = path
+	}
+	gatewayStarted := false
+	var gatewayPending func()
+	defer func() {
+		if !gatewayStarted {
+			if gatewayPending != nil {
+				gatewayPending()
+			} else {
+				stopGateway()
+			}
+		}
+	}()
 	args := append([]string(nil), spec.Args...)
 	if spec.Provider == "claude" && spec.ResumeSessionID != "" {
 		args = withResume(args, spec.ResumeSessionID)
@@ -348,8 +391,8 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		if spec.Provider == "antigravity" {
 			// A worker-hosted agy launch gets the same private HOME and MCP allowlist as a
 			// hub-local one (CW-20261024-0111). Off unless the launch or this worker's env
-			// sets TETHER_AGY_MCP_ALLOWLIST=1.
-			env, err := antigravity.ApplyAllowlist(antigravity.AllowlistOptions{BootDir: prepared.PlantedBootDir, WorkspaceRoot: ws.Root, Env: cmd.Env, Flag: antigravity.FlagLookup(spec.Env, os.Getenv), UserHome: os.UserHomeDir, Logf: log.Printf})
+			// sets TETHER_AGY_MCP_ALLOWLIST=1, or opts into the standalone gateway.
+			env, err := antigravity.ApplyAllowlist(antigravity.AllowlistOptions{StandaloneGateway: spec.Env[gatewaylaunch.URLenv] != "", BootDir: prepared.PlantedBootDir, WorkspaceRoot: ws.Root, Env: cmd.Env, Flag: antigravity.FlagLookup(spec.Env, os.Getenv), UserHome: os.UserHomeDir, Logf: log.Printf})
 			if err != nil {
 				return nil, err
 			}
@@ -444,6 +487,11 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		_ = logFile.Close()
 	}
+	if possiblySubmitted && spec.Env[gatewaylaunch.TokenFileEnv] != "" {
+		gatewayPending = func() {
+			go retainGatewayUntilExit(filepath.Join(launchSpec.ControlDir, "control.sock"), secret, spec.Session, childExited, stopGateway)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -472,8 +520,9 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}
 	possiblySubmitted = false
+	gatewayStarted = true
 	started = true
-	s := &execution{AgentTokens: spec.AgentTokens, AuthDir: authDir, stopTokens: stopTokens, secrets: envSecrets(spec.Env), ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
+	s := &execution{GatewayTokenFile: spec.Env[gatewaylaunch.TokenFileEnv], AgentTokens: spec.AgentTokens, AuthDir: authDir, stopTokens: func() { stopTokens(); stopGateway() }, secrets: envSecrets(spec.Env), ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
 	if child != nil {
 		s.PID = child.Process.Pid
 		s.HostPID = child.Process.Pid
@@ -790,4 +839,51 @@ func sessionAgentURN(spec workerwire.LaunchSpec) string {
 		return spec.AgentURN
 	}
 	return spec.Actor
+}
+
+// Cancellation does not revoke an already submitted shim. Keep its lease until
+// the child is reaped or the authenticated journal proves the agent exited.
+// A disconnected observer is not evidence of exit; reconnect and replay.
+func retainGatewayUntilExit(socket, secret, session string, childExited <-chan struct{}, stop func()) {
+	defer stop()
+	for {
+		select {
+		case <-childExited:
+			return
+		default:
+		}
+		observer, err := shimhost.Connect(context.Background(), socket, secret, session, "urn:instance:worker", "1", "observer", "", false)
+		if err == nil {
+			_ = observer.Replay(session, "")
+			retired := false
+		reading:
+			for {
+				select {
+				case <-childExited:
+					retired = true
+					break reading
+				case frame, ok := <-observer.Frames:
+					if !ok {
+						break reading
+					}
+					var body struct {
+						Event mesh.Event `json:"event"`
+					}
+					if frame.Type == "event" && json.Unmarshal(frame.Body, &body) == nil && body.Event.Kind == "shim.exit" {
+						retired = true
+						break reading
+					}
+				}
+			}
+			_ = observer.Close()
+			if retired {
+				return
+			}
+		}
+		select {
+		case <-childExited:
+			return
+		case <-time.After(time.Second):
+		}
+	}
 }

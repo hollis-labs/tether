@@ -57,6 +57,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
+	"github.com/hollis-labs/tether/internal/requestflow"
 	"github.com/hollis-labs/tether/internal/secretsetup"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/terminalattach"
@@ -378,6 +379,7 @@ var daemonRunCmd = &cobra.Command{
 			}
 		}
 		server := &daemon.Server{
+			Requests:                 requestflow.FromEnvironment(),
 			Environment:              environmentDescriptor,
 			EnvironmentReport:        environmentReport,
 			EnvironmentStream:        environmentStream,

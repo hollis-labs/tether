@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"os"
@@ -210,6 +211,28 @@ func (e *Executor) restoreOne(path string) error {
 			s.stopTokens = stop
 		} else {
 			fmt.Fprintf(os.Stderr, "tether-worker: session %s agent tokens not resumed: %v\n", s.ID, err)
+		}
+	}
+	if s.State != "exited" && s.GatewayTokenFile != "" && e.Tokens != nil {
+		var scopes []string
+		for _, spec := range s.AgentTokens {
+			if spec.Aud == "tether" {
+				scopes = spec.Scopes
+			}
+		}
+		if len(scopes) > 0 {
+			stop, err := gatewaylaunch.Resume(s.GatewayTokenFile, e.gatewayMint(s.ID, scopes))
+			if err == nil {
+				prior := s.stopTokens
+				s.stopTokens = func() {
+					if prior != nil {
+						prior()
+					}
+					stop()
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "tether-worker: session %s gateway refresh not resumed\n", s.ID)
+			}
 		}
 	}
 	go e.follow(&s)

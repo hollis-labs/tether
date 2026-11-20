@@ -19,6 +19,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm"
 	"github.com/hollis-labs/tether/internal/llm/router"
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
+	"github.com/hollis-labs/tether/internal/requestflow"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/terminalattach"
 )
@@ -39,7 +40,8 @@ type SessionUsageStore interface {
 // http.Handler back. Each field is optional — handlers whose
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
-	Forums ForumService
+	Requests requestflow.Backend
+	Forums   ForumService
 	// Teams is populated only when the host enables teams; nil leaves routes absent.
 	Teams        TeamOps
 	Docs         DocsService
@@ -190,6 +192,7 @@ type Deps struct {
 // Server carries the dependencies required by handlers. Tests construct
 // it directly; production code goes through NewHandler.
 type Server struct {
+	Requests            requestflow.Backend
 	Forums              ForumService
 	Teams               TeamOps
 	Docs                DocsService
@@ -259,6 +262,7 @@ func NewHandler(deps Deps) http.Handler {
 		slog.Warn("initialize session ref rejection counter", "error", err)
 	}
 	s := &Server{
+		Requests:            deps.Requests,
 		refSourceAssertions: refAssertions,
 		Forums:              deps.Forums,
 		Teams:               deps.Teams,
