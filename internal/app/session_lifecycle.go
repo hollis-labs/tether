@@ -154,6 +154,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 		return nil, err
 	}
 	stampTaskID(plan, in.TaskID)
+	stampWorkstreamID(plan, in.WorkstreamID)
 	stampRunID(plan, in.RunID)
 	plan.App = in.App
 	plan.Continuity = in.Continuity
@@ -194,6 +195,19 @@ func stampTaskID(plan *launch.Plan, taskID string) {
 		plan.Env = map[string]string{}
 	}
 	plan.Env[TaskIDEnv] = taskID
+}
+
+// stampWorkstreamID seals the opaque workstream after environment merges.
+func stampWorkstreamID(plan *launch.Plan, id string) {
+	plan.WorkstreamID = id
+	if id == "" {
+		delete(plan.Env, "TETHER_WORKSTREAM_ID")
+		return
+	}
+	if plan.Env == nil {
+		plan.Env = make(map[string]string)
+	}
+	plan.Env["TETHER_WORKSTREAM_ID"] = id
 }
 
 // stampRunID seals the launcher-owned run after every environment merge.
@@ -270,6 +284,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		ProviderKind:   providerKind,
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
+		WorkstreamID:   nullableTaskID(plan.WorkstreamID),
 		TaskID:         nullableTaskID(plan.TaskID),
 		RunID:          nullableTaskID(plan.RunID),
 		App:            nullableApp(plan.App),

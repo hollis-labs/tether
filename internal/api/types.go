@@ -146,6 +146,13 @@ type LaunchResult struct {
 // Request / response payloads for the HTTP API. JSON tags are the public
 // contract; rename with care.
 
+// SessionLaunchRequest optionally asserts the correlation fixed at session creation.
+// It never restamps an existing session or its idempotency record.
+type SessionLaunchRequest struct {
+	TaskID       string `json:"task_id,omitempty"`
+	WorkstreamID string `json:"workstream_id,omitempty"`
+}
+
 type LaunchRequest struct {
 	Worker string `json:"worker,omitempty"`
 	// RequireWorker refuses the create with worker_not_configured when no
@@ -195,6 +202,8 @@ type LaunchRequest struct {
 	// launcher may assert it (403 task_id_not_permitted otherwise); it is set at creation
 	// and never changed; there is no existence check against Torque.
 	TaskID string `json:"task_id,omitempty"`
+	// WorkstreamID is an opaque launcher-asserted external reference, fixed at create.
+	WorkstreamID string `json:"workstream_id,omitempty"`
 	// RunID is the optional Torque runs.id asserted by the same launcher.
 	RunID string `json:"run_id,omitempty"`
 
@@ -266,6 +275,8 @@ type CreateSessionInput struct {
 	IdempotencyPrincipal string
 	// TaskID is the validated, launcher-asserted task id. See LaunchRequest.TaskID.
 	TaskID string
+	// WorkstreamID is the validated operator-asserted external workstream reference.
+	WorkstreamID string
 	// RunID is the validated launcher-asserted Torque run.
 	RunID string
 	// App is the validated, operator-asserted app. See LaunchRequest.App.

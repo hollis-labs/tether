@@ -1,0 +1,1 @@
+- CW-20261120-0135: Add operator-only `tether launch --workstream` and HTTP/MCP create-time task/workstream inputs, accepting opaque external ULIDs and existing UUIDv7 IDs. Persist stamps before the existing run-token mint, preserve replay bindings, and allow matching operator assertions on split launch.

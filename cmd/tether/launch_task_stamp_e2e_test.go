@@ -53,7 +53,7 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	c := client.New("tcp:"+srv.URL[len("http://"):], client.WithToken(token))
 
 	const id = "CW-20261016-0155"
-	res, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42"})
+	res, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42", WorkstreamID: "01M7VQ2QWYB5RZR86W2BWG8PW3", IdempotencyKey: "workstream-create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +64,21 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	plan, err := svc.Store.GetLaunchPlan(res.ID)
 	if err != nil || plan.RunID != "42" || plan.Env[app.RunIDEnv] != "42" || plan.TaskID != id || plan.Env[app.TaskIDEnv] != id {
 		t.Fatalf("stored plan task = %q env = %q err=%v", plan.TaskID, plan.Env[app.TaskIDEnv], err)
+	}
+	if row.WorkstreamID.String != "01M7VQ2QWYB5RZR86W2BWG8PW3" || plan.WorkstreamID != row.WorkstreamID.String {
+		t.Fatal("external workstream not stamped")
+	}
+	replay, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42", WorkstreamID: row.WorkstreamID.String, IdempotencyKey: "workstream-create"})
+	if err != nil || !replay.Replayed || replay.ID != res.ID {
+		t.Fatalf("create replay: %+v %v", replay, err)
+	}
+	_, err = c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42", WorkstreamID: "019a9e45-6789-7123-8123-0123456789ab", IdempotencyKey: "workstream-create"})
+	if err == nil {
+		t.Fatal("changed workstream replay accepted")
+	}
+	after, err := svc.Store.GetSession(res.ID)
+	if err != nil || after.WorkstreamID != row.WorkstreamID {
+		t.Fatal("replay changed stamp")
 	}
 	// An unkeyed, bare create must also preserve the verified creator through
 	// the daemon adapter, then a relaunch must retain its lineage and creator.
@@ -88,7 +103,7 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prow, err := svc.Store.GetSession(plain.ID); err != nil || prow.TaskID.Valid || prow.RunID.Valid {
+	if prow, err := svc.Store.GetSession(plain.ID); err != nil || prow.TaskID.Valid || prow.RunID.Valid || prow.WorkstreamID.Valid {
 		t.Fatalf("unstamped session task = %+v err=%v", prow.TaskID, err)
 	}
 }

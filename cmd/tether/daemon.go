@@ -1062,6 +1062,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		IdempotencyPrincipal: in.IdempotencyPrincipal,
 		ReplaceIdempotency:   in.ReplaceIdempotency,
 		TaskID:               in.TaskID,
+		WorkstreamID:         in.WorkstreamID,
 		RunID:                in.RunID,
 		App:                  in.App,
 		Continuity:           in.Continuity,

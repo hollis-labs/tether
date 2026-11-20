@@ -291,6 +291,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.TaskID = taskID
+	workstreamID, workstreamOK := s.workstreamStamp(w, r, req.WorkstreamID)
+	if !workstreamOK {
+		return
+	}
+	req.WorkstreamID = workstreamID
 	runID, runOK := s.runStamp(w, r, req.RunID)
 	if !runOK {
 		return
@@ -337,6 +342,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		ReplaceIdempotency:   req.ReplaceIdempotency,
 		IdempotencyPrincipal: idemPrincipal,
 		TaskID:               req.TaskID,
+		WorkstreamID:         req.WorkstreamID,
 		RunID:                req.RunID,
 		App:                  req.App,
 		Continuity:           req.Continuity,
@@ -434,6 +440,37 @@ func writeIdempotencyConflict(w http.ResponseWriter, err error) bool {
 // leg of the split. Returns 200 on successful transition to running,
 // 409 when the session is not in 'created' state, 404 when not found.
 func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id string) {
+	var req SessionLaunchRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid session launch request")
+			return
+		}
+	}
+	task, ok := s.taskStamp(w, r, req.TaskID)
+	if !ok {
+		return
+	}
+	workstream, ok := s.workstreamStamp(w, r, req.WorkstreamID)
+	if !ok {
+		return
+	}
+	if task != "" || workstream != "" {
+		row, err := s.Service.GetSession(id)
+		if errors.Is(err, store.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "session lookup failed")
+			return
+		}
+		if (task != "" && task != row.TaskID.String) || (workstream != "" && workstream != row.WorkstreamID.String) {
+			writeError(w, http.StatusConflict, CodeConflict, "task_id/workstream_id must match the stamps fixed at session creation")
+			return
+		}
+	}
+
 	var res LaunchResult
 	var err error
 	if contextual, ok := s.Service.(interface {

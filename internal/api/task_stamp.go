@@ -38,6 +38,14 @@ func (s *Server) taskStamp(w http.ResponseWriter, r *http.Request, taskID string
 	return s.launchCorrelationStamp(w, r, taskID, "task")
 }
 
+// workstreamStamp uses the same operator boundary and bounded opaque syntax as task ids.
+func (s *Server) workstreamStamp(w http.ResponseWriter, r *http.Request, id string) (string, bool) {
+	return s.launchCorrelationStamp(w, r, id, "workstream")
+}
+
+// ValidLaunchCorrelationID accepts opaque identifiers without consulting their owner.
+func ValidLaunchCorrelationID(id string) bool { return taskIDPattern.MatchString(id) }
+
 // runStamp applies the task-stamp caller boundary to an optional Torque run.
 // It validates only bounded identifier syntax, never invents or rewrites an ID.
 func (s *Server) runStamp(w http.ResponseWriter, r *http.Request, runID string) (string, bool) {

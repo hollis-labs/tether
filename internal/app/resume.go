@@ -219,6 +219,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		// A resume continues the same work, so it keeps the launcher's task stamp
 		// (CW-20261012-0062a); only the original launch ever asserts one.
 		stampRunID(plan, parent.RunID.String)
+		stampWorkstreamID(plan, parent.WorkstreamID.String)
 		if parent.TaskID.Valid {
 			stampTaskID(plan, parent.TaskID.String)
 		}
@@ -342,6 +343,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		// the existing checkpoint-driven --resume decision above.
 		Intent:          "resume",
 		ParentSessionID: sql.NullString{String: sourceID, Valid: sourceID != ""},
+		WorkstreamID:    nullableTaskID(plan.WorkstreamID),
 		TaskID:          nullableTaskID(plan.TaskID),
 		RunID:           nullableTaskID(plan.RunID),
 	}

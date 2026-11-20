@@ -1,4 +1,4 @@
-# Launch-time task stamp
+# Launch-time task and workstream stamps
 
 A session can carry the Torque task it was launched for. The stamp is one opaque string on the session row,
 `sessions.task_id` (migration 0079), so cost and activity can be tied to a task without regexes over transcripts.
@@ -35,8 +35,9 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
 - `tether launch --task <id>` stamps that task; without it, `--torque-task <id>` stamps its task when exactly one is given
   (several tasks: no single task, no stamp). An explicit `--task` wins.
   The CLI presents `operator.token`, so the daemon accepts it.
-- The MCP `tether_session_create` tool deliberately has no `task_id`: agents are the usual MCP callers and would only be
-  refused, so the stamp is set by the operator CLI (and later Torque's service principal), never through MCP.
+- MCP `tether_session_create` accepts optional `task_id` and `workstream_id` for operator callers.
+  Native MCP views use the transport-verified operator credential; agent/session credentials, narrow tokens,
+  legacy labels and claimed context cannot stamp identifiers. Forwarded MCP calls use the HTTP trust boundary.
 - Torque's own launches wait for a Torque service principal (see the TODO in `internal/api/task_stamp.go`).
 
 ## Event propagation and source acceptance
@@ -58,3 +59,35 @@ workstream on an external row stays missing rather than being inferred from a ta
 Source acceptance covers these propagation paths and focused synthetic checks. Owner live activation and rollback
 verification are separate deployment evidence. No historical task inference/backfill or new service-principal
 credential/issuer authority is part of this change; Torque service launch authorization remains held as above.
+
+## External workstream reference
+
+`tether launch --launch <profile> --task <task-id> --workstream <workstream-id>`
+sets both stamps before starting the process. `POST /sessions` (HTTP) and
+`tether_session_create` (MCP) accept the same optional `workstream_id` alongside
+`task_id`. Omission keeps the existing unstamped behavior; explicit empty CLI
+values are rejected. Workstream IDs use the same opaque syntax as task IDs:
+1–64 ASCII letters, digits, `.`, `_`, `-`, beginning with a letter or digit.
+Registry ULIDs and Tether UUIDv7 IDs are accepted unchanged. Tether makes no
+Registry call, local workstream lookup or existence check for this stamp.
+
+The workstream uses the task stamp's operator trust boundary: agent/session
+HTTP callers get `403 workstream_id_not_permitted`; other non-operator HTTP
+callers have the field dropped (with `workstream_id_dropped` audit for identified
+callers). Native MCP rejects non-operator stamping. Ordinary agent launches
+without these fields remain supported.
+
+`sessions.workstream_id`, the launch plan and `TETHER_WORKSTREAM_ID` carry the
+stamp on hub and Outpost paths. The existing run-token mint reads the persisted
+session row, so its `workstream` claim and `task` claim describe the created
+session before execution. Token signing, header, issuer and audience are unchanged.
+A resume inherits the reference. The reference may belong to an external service;
+its presence does not create a local Tether workstream record.
+
+Stamps are fixed at create. Optional `task_id`/`workstream_id` on
+`POST /sessions/{id}/launch` and MCP `tether_session_launch` are operator-only
+assertions: a mismatch returns conflict before starting, and never restamps the
+session. Existing bodyless launch requests work unchanged. Idempotency replays
+retain the original stamps; changing either field with the same key conflicts.
+CLI `--idempotency-key auto` distinguishes nonempty workstream references while
+retaining the previous key derivation when `--workstream` is omitted.
