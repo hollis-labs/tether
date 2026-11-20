@@ -133,10 +133,11 @@ func (r *SharedUpstreams) publish(refresh ToolRefreshResult) {
 // UpstreamView has explicit grants: nil and [] both mean zero. The caller's
 // verified principal resolver supplies servers, never an HTTP client flag.
 type UpstreamView struct {
-	runtime    *SharedUpstreams
-	servers    map[string]bool
-	isExternal func(string) bool
-	Service    *mcpgateway.Service
+	runtime     *SharedUpstreams
+	liveServers func() ([]string, error)
+	servers     map[string]bool
+	isExternal  func(string) bool
+	Service     *mcpgateway.Service
 }
 
 func (r *SharedUpstreams) OpenView(owner string, servers []string, selection mcpgateway.Selection) (*UpstreamView, error) {
@@ -241,14 +242,27 @@ func (v *UpstreamView) namingDiagnostics() ([]mcpgateway.NameFinding, []mcpgatew
 
 // Refresh cannot select or expose an origin outside this view's grants.
 func (v *UpstreamView) Refresh(ctx context.Context, server string) ([]ToolRefreshResult, error) {
+	allowed := v.servers
+	if v.liveServers != nil {
+		ids, err := v.liveServers()
+		if err != nil {
+			return nil, err
+		}
+		allowed = map[string]bool{}
+		for _, id := range ids {
+			if v.servers[id] {
+				allowed[id] = true
+			}
+		}
+	}
 	ids := []string{}
 	if server != "" {
-		if !v.includes(server) {
+		if !allowed[server] || !v.includes(server) {
 			return nil, fmt.Errorf("unknown or excluded MCP origin")
 		}
 		ids = append(ids, server)
 	} else {
-		for id := range v.servers {
+		for id := range allowed {
 			if !v.includes(id) {
 				continue
 			}

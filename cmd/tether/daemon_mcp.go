@@ -45,6 +45,7 @@ func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, id
 		},
 		Resolver: mcptransport.CallerResolver{
 			Catalog:         cache.Load,
+			OnNarrow:        svc.MCPGrantNotifier(),
 			Session:         svc.Store.SessionMCPPolicy,
 			RecoverySession: svc.Store.RecoverySessionMCPPolicy,
 		},

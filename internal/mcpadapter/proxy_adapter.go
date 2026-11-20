@@ -235,6 +235,11 @@ type ProxyOptions struct {
 	// ServerFilter is a strict upstream restriction in both discovery modes.
 	// Nil selects enabled catalog entries; an explicitly empty slice selects none.
 	ServerFilter []string
+	// StaleServers names removed origins from a validated saved policy. These
+	// remain unavailable, but do not invalidate profile references during recovery.
+	StaleServers []config.MCPGrantIssue
+	// LiveServers can only narrow an existing view; errors hide all external origins.
+	LiveServers func() ([]string, error)
 	// MachineAccess is the caller's machine access (launch.MachineAccessReadOnly
 	// or ReadWrite) for daemon-owned gateway views, which cannot read the
 	// per-agent env. Empty means read-only.

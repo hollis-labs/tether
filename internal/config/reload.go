@@ -9,6 +9,8 @@ import (
 type ReloadReport struct {
 	// Reloaded is true when the new catalog is now the one launches use.
 	Reloaded bool `json:"reloaded"`
+	// MCPGrantImpacts is computed against the candidate before the catalog swap.
+	MCPGrantImpacts []SessionMCPGrantImpact `json:"mcp_grant_impacts,omitempty"`
 	// Added, Removed and Changed list entity ids per kind (agents, launches,
 	// projects, providers, sandbox_profiles).
 	Added   map[string][]string `json:"added,omitempty"`
@@ -22,7 +24,7 @@ type ReloadReport struct {
 
 // Empty reports whether the reload changed nothing.
 func (r ReloadReport) Empty() bool {
-	return len(r.Added) == 0 && len(r.Removed) == 0 && len(r.Changed) == 0 && len(r.RestartRequired) == 0
+	return len(r.Added) == 0 && len(r.Removed) == 0 && len(r.Changed) == 0 && len(r.RestartRequired) == 0 && len(r.MCPGrantImpacts) == 0
 }
 
 // DiffCatalogs compares the entity maps of two catalogs. GlobalChanged is

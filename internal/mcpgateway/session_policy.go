@@ -9,6 +9,8 @@ import (
 	"slices"
 )
 
+var ErrSessionMCPIdentity = errors.New("session MCP identity mismatch; resume or relaunch the session")
+
 var ErrInvalidSessionMCPPolicy = errors.New("invalid session MCP policy")
 
 // SessionPolicy is the secret-free authority snapshot captured by the daemon

@@ -37,7 +37,7 @@ func (s *Service) cat() *config.Catalog { return s.CurrentCatalog() }
 // daemon read at start (listener, identity, AI providers, MCP gateway, modules)
 // are not swapped: the running values are kept and the report names the edit
 // under RestartRequired.
-func (s *Service) ReloadCatalog(_ context.Context) (*config.ReloadReport, error) {
+func (s *Service) ReloadCatalog(ctx context.Context) (*config.ReloadReport, error) {
 	s.catalogState.reloadMu.Lock()
 	defer s.catalogState.reloadMu.Unlock()
 
@@ -60,7 +60,12 @@ func (s *Service) ReloadCatalog(_ context.Context) (*config.ReloadReport, error)
 		s.auditAttestation(context.Background(), AuditOperatorAttestationRefused, map[string]any{"phase": "reload", "reason": err.Error()})
 		return nil, fmt.Errorf("reload refused (nothing changed; the previous attestation keys stay in force): %w", err)
 	}
+	impacts, err := s.MCPGrantImpacts(ctx, fresh)
+	if err != nil {
+		return nil, fmt.Errorf("reload refused, running session MCP preflight unavailable (nothing changed): %w", err)
+	}
 	report := config.DiffCatalogs(old, fresh)
+	report.MCPGrantImpacts = impacts
 	if config.GlobalDiffers(old, fresh) {
 		report.RestartRequired = append(report.RestartRequired,
 			"global.yaml changed: daemon, identity, AI, MCP gateway and module settings are read at start and still need a restart")

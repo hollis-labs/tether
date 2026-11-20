@@ -55,13 +55,13 @@ func (s *Store) SessionMCPPolicy(ctx context.Context, id string) (mcpgateway.Ses
 	}
 	var policy mcpgateway.SessionPolicy
 	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
-		return policy, fmt.Errorf("invalid stored session MCP policy")
+		return policy, fmt.Errorf("%w: malformed stored snapshot; resume or relaunch the session", mcpgateway.ErrInvalidSessionMCPPolicy)
 	}
 	if err := policy.Validate(); err != nil {
 		return policy, err
 	}
 	if policy.SessionID != id || policy.AgentID != agent {
-		return policy, fmt.Errorf("stored session MCP policy identity mismatch")
+		return policy, mcpgateway.ErrSessionMCPIdentity
 	}
 	return policy, nil
 }

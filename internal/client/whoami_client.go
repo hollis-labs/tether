@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/registry"
 )
 
@@ -17,11 +18,12 @@ import (
 // type here (rather than importing internal/api) to preserve this
 // package's existing no-cycle boundary with internal/api.
 type WhoamiResult struct {
-	URN         string                   `json:"urn"`
-	Profile     *registry.Profile        `json:"profile,omitempty"`
-	ExternalIDs []registry.ExternalID    `json:"external_ids,omitempty"`
-	Groups      []registry.Profile       `json:"groups,omitempty"`
-	Binding     *registry.RuntimeBinding `json:"binding,omitempty"`
+	MCPGrant    *config.SessionMCPGrantImpact `json:"mcp_grant,omitempty"`
+	URN         string                        `json:"urn"`
+	Profile     *registry.Profile             `json:"profile,omitempty"`
+	ExternalIDs []registry.ExternalID         `json:"external_ids,omitempty"`
+	Groups      []registry.Profile            `json:"groups,omitempty"`
+	Binding     *registry.RuntimeBinding      `json:"binding,omitempty"`
 	// CanonicalURN and Aliases are set when the address has alias rows
 	// (CW-20261114-0067): where its mail is stored, and its other names.
 	CanonicalURN string   `json:"canonical_urn,omitempty"`

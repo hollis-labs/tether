@@ -43,6 +43,13 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	for id, enabled := range r.known {
 		known[id] = enabled
 	}
+	// The in-process recovery origin is independent of external catalog entries.
+	known["tether"] = true
+	stale := map[string]bool{}
+	for _, issue := range opts.StaleServers {
+		known[issue.Server] = true
+		stale[issue.Server] = true
+	}
 	grant := append([]string{}, opts.ServerFilter...)
 	// Origins the grant names that the running daemon does not have yet (a server a catalog apply added after
 	// the daemon started) degrade that origin, not the whole view: they are reported as pending a reload
@@ -98,7 +105,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	}
 	running := selected[:0:0]
 	for _, id := range selected {
-		if external(id) || slices.Contains(pending, id) {
+		if id == "tether" || external(id) || slices.Contains(pending, id) {
 			continue
 		}
 		running = append(running, id)
@@ -109,6 +116,25 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		return nil, err
 	}
 	upstreams.isExternal = external
+	// Resource dispatch and refresh must obey both live grants and live ownership.
+	currentPoolServers := func() ([]string, error) {
+		ids := selected
+		if opts.LiveServers != nil {
+			var err error
+			ids, err = opts.LiveServers()
+			if err != nil {
+				return nil, err
+			}
+		}
+		allowed := []string{}
+		for _, id := range ids {
+			if upstreams.includes(id) {
+				allowed = append(allowed, id)
+			}
+		}
+		return allowed, nil
+	}
+	upstreams.liveServers = currentPoolServers
 	a.upstreams = upstreams
 	registry := NewToolRegistry()
 	for _, entry := range r.pool.entries {
@@ -217,6 +243,24 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	fullSnapshot := gateway.Snapshot
 	gateway.Snapshot = func() mcpgateway.Snapshot {
 		full := fullSnapshot()
+		if opts.LiveServers != nil {
+			ids, err := opts.LiveServers()
+			if err != nil {
+				ids = nil
+			}
+			for i := range full.Origins {
+				origin := &full.Origins[i]
+				if origin.ID != "tether" && !slices.Contains(ids, origin.ID) {
+					origin.Status = "grant_stale"
+					origin.AvailableTools = 0
+					origin.Error = "server removed or disabled; resume or relaunch after correcting the catalog"
+				}
+			}
+		}
+		for _, issue := range opts.StaleServers {
+			full.Origins = append(full.Origins, mcpgateway.OriginStatus{ID: issue.Server, Status: "grant_stale", Error: issue.Reason + "; resume or relaunch after correcting the catalog"})
+		}
+
 		_, collisions, _ := upstreams.namingDiagnostics()
 		full.Collisions = append(full.Collisions, collisions...)
 		entries := []mcpgateway.Entry{}
@@ -248,13 +292,19 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		full.Collisions = visibleCollisions
 		origins := []mcpgateway.OriginStatus{}
 		for _, origin := range full.Origins {
-			if origin.ID == "tether" || upstreams.includes(origin.ID) {
+			if origin.ID == "tether" || (!external(origin.ID) && (upstreams.includes(origin.ID) || stale[origin.ID])) {
 				origins = append(origins, origin)
 			}
 		}
 		for _, id := range pending {
 			if external(id) {
 				continue
+			}
+			if opts.LiveServers != nil {
+				ids, err := opts.LiveServers()
+				if err != nil || !slices.Contains(ids, id) {
+					continue
+				}
 			}
 			origins = append(origins, mcpgateway.OriginStatus{ID: id, Status: "pending_restart",
 				Error: "added to the catalog after the daemon started; reload the daemon to start it"})
@@ -276,12 +326,24 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err := gateway.Policy.ValidateNames(gateway.Snapshot()); err != nil {
 		return nil, err
 	}
+	// Previously registered SDK handlers survive ownership changes. Refuse them
+	// before the generic unknown-target fallback can dispatch cached inventory.
+	s.SDKServer().AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			if call, ok := req.(*mcpsdk.CallToolRequest); ok {
+				if tool, found := registry.Lookup(call.Params.Name); found && tool.ServerID != "" && !upstreams.includes(tool.ServerID) {
+					return errorResult("unknown or excluded MCP origin"), nil
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
 	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
 	if !opts.Only {
 		a.registerDocsResources(s)
 		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
 	}
-	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(r.pool, upstreams.servers, gateway, opts.Publisher))
+	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(r.pool, upstreams.servers, gateway, opts.Publisher, currentPoolServers))
 	// Outermost: a denied machine call is audited and never reaches the upstream
 	// or the call logger. The access mode is the caller's (ProxyOptions), not
 	// the daemon's env; unset is read-only.

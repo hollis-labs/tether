@@ -175,7 +175,7 @@ func resourcePage[T any](items []T, cursor string, policy *mcpgateway.Policy) ([
 	return items[offset:end], continuation, nil
 }
 
-func (a *Adapter) resourceProxyMiddleware(pool *ClientPool, allowed map[string]bool, gateway *mcpgateway.Service, publisher events.Publisher) mcpsdk.Middleware {
+func (a *Adapter) resourceProxyMiddleware(pool *ClientPool, allowed map[string]bool, gateway *mcpgateway.Service, publisher events.Publisher, liveServers ...func() ([]string, error)) mcpsdk.Middleware {
 	return func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (result mcpsdk.Result, err error) {
 			if method != "resources/list" && method != "resources/templates/list" && method != "resources/read" {
@@ -187,6 +187,18 @@ func (a *Adapter) resourceProxyMiddleware(pool *ClientPool, allowed map[string]b
 				policy = &mcpgateway.Policy{}
 			}
 			snapshot := gateway.Snapshot()
+			liveAllowed := allowed
+			if len(liveServers) > 0 && liveServers[0] != nil {
+				ids, err := liveServers[0]()
+				liveAllowed = map[string]bool{}
+				if err == nil {
+					for _, id := range ids {
+						if allowed[id] {
+							liveAllowed[id] = true
+						}
+					}
+				}
+			}
 			permits := func(origin, uri string) bool {
 				if origin == "tether" {
 					return true
@@ -194,10 +206,10 @@ func (a *Adapter) resourceProxyMiddleware(pool *ClientPool, allowed map[string]b
 				if docsResourceTool(uri) != "" {
 					return false
 				} // native namespace cannot be shadowed
-				return policy.ResourceAllowed(origin, uri, snapshot)
+				return (liveAllowed == nil || liveAllowed[origin]) && policy.ResourceAllowed(origin, uri, snapshot)
 			}
 			origins := []resourceOrigin{}
-			for _, origin := range pool.resourceOrigins(allowed) {
+			for _, origin := range pool.resourceOrigins(liveAllowed) {
 				if policy.ResourceOriginAllowed(origin.id) {
 					origins = append(origins, origin)
 				}

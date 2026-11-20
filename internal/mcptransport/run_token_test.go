@@ -21,11 +21,21 @@ import (
 
 func runFixture(t *testing.T) (*transportFixture, string, ed25519.PrivateKey, runtoken.Claims) {
 	t.Helper()
+	return runFixtureWithServers(t, []string{})
+}
+
+func runFixtureWithServers(t *testing.T, servers []string) (*transportFixture, string, ed25519.PrivateKey, runtoken.Claims) {
+	t.Helper()
 	f := newTransportFixture(t, false, false)
+	f.catMu.Lock()
+	for _, id := range servers {
+		f.cat.MCPServerEnabled[id] = true
+	}
+	f.catMu.Unlock()
 	if err := f.db.CreateSession(store.SessionRow{ID: "run-session", LogicalAgentID: "run-agent", State: "running"}, &launch.Plan{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.SaveSessionMCPPolicy(context.Background(), mcpgateway.SessionPolicy{SessionID: "run-session", AgentID: "run-agent", Servers: []string{}}.Seal()); err != nil {
+	if err := f.db.SaveSessionMCPPolicy(context.Background(), mcpgateway.SessionPolicy{SessionID: "run-session", AgentID: "run-agent", Servers: servers}.Seal()); err != nil {
 		t.Fatal(err)
 	}
 	bearer, err := f.ids.Mint(context.Background(), identity.Principal{ID: "msg://session/local/run-session", Kind: "session", SessionID: "run-session"})
@@ -53,7 +63,10 @@ func runHeader(token string) map[string][]string {
 }
 
 func TestRunTokenAdmissionAndViewBinding(t *testing.T) {
-	f, bearer, key, c := runFixture(t)
+	f, bearer, key, c := runFixtureWithServers(t, []string{"keep", "removed", "tether"})
+	f.catMu.Lock()
+	f.cat.MCPServerEnabled["tether"] = false
+	f.catMu.Unlock()
 	token := signRun(t, key, c)
 	response := f.request(t, http.MethodPost, "/mcp", bearer, "", runHeader(token))
 	id := response.Header.Get("Mcp-Session-Id")
@@ -67,6 +80,18 @@ func TestRunTokenAdmissionAndViewBinding(t *testing.T) {
 	closeResponse(response)
 	if status != 200 {
 		t.Fatalf("same run: %d", status)
+	}
+	// Catalog narrowing preserves the saved-policy fingerprint while the signed
+	// execution context remains bound to this already established connection.
+	f.catMu.Lock()
+	delete(f.cat.MCPServerEnabled, "removed")
+	f.cat.MCPServerEnabled["keep"] = false
+	f.catMu.Unlock()
+	response = f.request(t, http.MethodPost, "/mcp", bearer, id, runHeader(token))
+	status = response.StatusCode
+	closeResponse(response)
+	if status != 200 {
+		t.Fatalf("same run after grant narrowing: %d", status)
 	}
 	other := c
 	other.RunID = "run-two"
