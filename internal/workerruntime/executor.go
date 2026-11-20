@@ -336,15 +336,24 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		stopGateway = stop
 		if spec.Sandbox != nil {
-			profile := gatewaylaunch.ReadableProfile(*spec.Sandbox, path)
+			profile, profileErr := gatewaylaunch.ReadableProfile(*spec.Sandbox, path, cwd)
+			if profileErr != nil {
+				stop()
+				return nil, profileErr
+			}
 			spec.Sandbox = &profile
 		}
 		spec.Env[gatewaylaunch.TokenFileEnv] = path
 	}
 	gatewayStarted := false
+	var gatewayPending func()
 	defer func() {
 		if !gatewayStarted {
-			stopGateway()
+			if gatewayPending != nil {
+				gatewayPending()
+			} else {
+				stopGateway()
+			}
 		}
 	}()
 	args := append([]string(nil), spec.Args...)
@@ -477,6 +486,11 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			possiblySubmitted = true
 		}
 		_ = logFile.Close()
+	}
+	if possiblySubmitted && spec.Env[gatewaylaunch.TokenFileEnv] != "" {
+		gatewayPending = func() {
+			go retainGatewayUntilExit(filepath.Join(launchSpec.ControlDir, "control.sock"), secret, spec.Session, childExited, stopGateway)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -825,4 +839,51 @@ func sessionAgentURN(spec workerwire.LaunchSpec) string {
 		return spec.AgentURN
 	}
 	return spec.Actor
+}
+
+// Cancellation does not revoke an already submitted shim. Keep its lease until
+// the child is reaped or the authenticated journal proves the agent exited.
+// A disconnected observer is not evidence of exit; reconnect and replay.
+func retainGatewayUntilExit(socket, secret, session string, childExited <-chan struct{}, stop func()) {
+	defer stop()
+	for {
+		select {
+		case <-childExited:
+			return
+		default:
+		}
+		observer, err := shimhost.Connect(context.Background(), socket, secret, session, "urn:instance:worker", "1", "observer", "", false)
+		if err == nil {
+			_ = observer.Replay(session, "")
+			retired := false
+		reading:
+			for {
+				select {
+				case <-childExited:
+					retired = true
+					break reading
+				case frame, ok := <-observer.Frames:
+					if !ok {
+						break reading
+					}
+					var body struct {
+						Event mesh.Event `json:"event"`
+					}
+					if frame.Type == "event" && json.Unmarshal(frame.Body, &body) == nil && body.Event.Kind == "shim.exit" {
+						retired = true
+						break reading
+					}
+				}
+			}
+			_ = observer.Close()
+			if retired {
+				return
+			}
+		}
+		select {
+		case <-childExited:
+			return
+		case <-time.After(time.Second):
+		}
+	}
 }

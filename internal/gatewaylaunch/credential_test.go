@@ -148,3 +148,56 @@ func TestGatewayRunHandoffAndWorkerRefreshResume(t *testing.T) {
 		t.Fatal("missing explicit run handoff used ambient token")
 	}
 }
+
+func TestResumeRetriesWithoutDestroyingRunProof(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires tmpfs")
+	}
+	dir, err := memoryDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "gateway.token")
+	if err := tokenfile.Write(path, "old-bearer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := BindRunToken(path, "fixed-run-proof"); err != nil {
+		t.Fatal(err)
+	}
+	var healthy atomic.Bool
+	stop, err := Resume(path, func(context.Context) (Credential, error) {
+		if !healthy.Load() {
+			return Credential{}, errors.New("issuer unavailable")
+		}
+		return Credential{Token: "recovered-bearer", ExpiresAt: time.Now().Add(time.Minute)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("unverified old bearer retained")
+	}
+	if got, err := ReadRunToken(RunTokenPath(path), ""); err != nil || got != "fixed-run-proof" {
+		t.Fatal("restore destroyed run proof")
+	}
+	healthy.Store(true)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := tokenfile.Read(path)
+		if err == nil && got == "recovered-bearer" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("restore never retried")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got, err := ReadRunToken(RunTokenPath(path), ""); err != nil || got != "fixed-run-proof" {
+		t.Fatal("renewal changed run proof")
+	}
+	stop()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("retired restored lease retained")
+	}
+}

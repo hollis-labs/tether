@@ -65,8 +65,20 @@ func Resume(path string, mint Mint) (func(), error) {
 	if err := validateMemoryPath(path); err != nil {
 		return nil, err
 	}
-	_, stop, err := startAt(path, mint)
-	return stop, err
+	if _, err := ReadRunToken(RunTokenPath(path), ""); err != nil {
+		return nil, err
+	}
+	first, err := mint(context.Background())
+	if err == nil {
+		err = write(path, first)
+	}
+	if err != nil {
+		// An unavailable issuer must not destroy the fixed launch proof.
+		// Remove the unverified old bearer and keep retrying fail-closed.
+		_ = os.Remove(path)
+		first = Credential{}
+	}
+	return maintain(path, mint, first), nil
 }
 func startAt(path string, mint Mint) (string, func(), error) {
 	dir := filepath.Dir(path)
@@ -78,12 +90,17 @@ func startAt(path string, mint Mint) (string, func(), error) {
 		_ = os.RemoveAll(dir)
 		return "", nil, errors.New("gateway session credential unavailable")
 	}
+	return path, maintain(path, mint, first), nil
+}
+
+func maintain(path string, mint Mint, first Credential) func() {
+	dir := filepath.Dir(path)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		current := first
-		delay := time.Until(current.ExpiresAt) / 2
+		delay := max(time.Duration(0), time.Until(current.ExpiresAt)/2)
 		for {
 			timer := time.NewTimer(delay)
 			select {
@@ -112,7 +129,7 @@ func startAt(path string, mint Mint) (string, func(), error) {
 	}()
 	var once sync.Once
 	stop := func() { once.Do(func() { cancel(); <-done; _ = os.RemoveAll(dir) }) }
-	return path, stop, nil
+	return stop
 }
 func write(path string, c Credential) error {
 	if c.Token == "" || time.Until(c.ExpiresAt) <= 0 {

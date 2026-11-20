@@ -73,3 +73,14 @@ working issuer. Fresh planting is required; ACP and native continuation paths
 that reuse existing provider configuration reject the opt-in. Existing provider
 login storage and the preexisting Tether connection's credential handoff are
 outside this gateway credential mechanism.
+
+Gateway admission rejects hide/deny rules that conceal either credential (including
+ancestor and symlink paths). Required resolved sandbox policies are also rejected:
+the pinned builder mounts private `/dev` after its access grants. Existing sandbox
+constraints are preserved; this opt-in does not relax them.
+
+A cancelled worker launch that may already have submitted its shim retains the
+lease until child exit or a replayed `shim.exit` proves retirement. Worker restore
+retries a transient issuer failure while preserving the fixed run proof; it removes
+the unverified old bearer until renewal succeeds. Neither retry extends run-token
+authority.

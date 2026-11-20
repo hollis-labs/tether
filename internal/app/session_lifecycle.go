@@ -566,6 +566,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 
 	var gatewayServer *agentlaunch.MCPServerSpec
+	var gatewayTokenPath string
 	stopGateway := func() {}
 	if endpoint := plan.Env[gatewaylaunch.URLenv]; endpoint != "" {
 		if rt.Kind() == acp.Kind || plan.NativeResumeOnly {
@@ -576,7 +577,12 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			return nil, gatewayErr
 		}
 		stopGateway = stop
-		profile = gatewaylaunch.ReadableProfile(profile, path)
+		gatewayTokenPath = path
+		profile, gatewayErr = gatewaylaunch.ReadableProfile(profile, path, plan.EffectiveWorkRoot())
+		if gatewayErr != nil {
+			stop()
+			return nil, gatewayErr
+		}
 		server := gatewaylaunch.Server(tetherCommandPath(), endpoint, path)
 		gatewayServer = &server
 	}
@@ -813,6 +819,26 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, err
 	}
 
+	if gatewayServer != nil {
+		policy, policyErr := agentsessions.PreparedSandboxPolicy(startOpts.PreparedExecution, startOpts.Workdir)
+		if policyErr != nil {
+			return nil, policyErr
+		}
+		if err := gatewaylaunch.CheckResolvedPolicy(policy); err != nil {
+			return nil, err
+		}
+		if err := gatewaylaunch.CheckResolvedPolicy(startOpts.SandboxPolicy); err != nil {
+			return nil, err
+		}
+		// Control-plane protection may have added constraints after planting.
+		path := gatewayTokenPath
+		if _, err := gatewaylaunch.ReadableProfile(startOpts.Profile, path, startOpts.Workdir); err != nil {
+			return nil, err
+		}
+		if err := gatewaylaunch.CheckHidden(startOpts.HiddenPaths, path, startOpts.Workdir); err != nil {
+			return nil, err
+		}
+	}
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
 
 	// A subprocess runtime writes no session.log and drops stderr unless
