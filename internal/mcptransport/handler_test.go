@@ -824,8 +824,9 @@ func TestTransportRevocationCancelsInflightCallAndDrainWaits(t *testing.T) {
 func TestTransportPerPrincipalLimitDoesNotLockOthersOut(t *testing.T) {
 	f := newTransportFixture(t, true, false)
 	f.handler.cfg.MaxViews = 128
+	f.handler.cfg.MaxPrincipalViews = 16 // the mechanism under test, independent of the production default
 	a, b := f.token(t, "abusive", nil), f.token(t, "other", nil)
-	for i := 0; i < 16; i++ {
+	for i := 0; i < f.handler.cfg.MaxPrincipalViews; i++ {
 		r := f.request(t, http.MethodPost, "/mcp", a, "", nil)
 		if r.StatusCode != 200 {
 			t.Fatal(i, r.StatusCode)
@@ -847,6 +848,7 @@ func TestTransportPerPrincipalLimitDoesNotLockOthersOut(t *testing.T) {
 func TestTransportManyHealthyViewsRetainSessionIDs(t *testing.T) {
 	f := newTransportFixture(t, true, false)
 	f.handler.cfg.MaxViews = 128
+	f.handler.cfg.MaxPrincipalViews = 16 // the mechanism under test, independent of the production default
 	type binding struct{ token, id string }
 	// These are healthy, active clients, not idle-expiry subjects. Sequential
 	// native-view initialization can outlast SessionTimeout under race/coverage
