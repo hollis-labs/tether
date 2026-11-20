@@ -42,6 +42,20 @@ lost still returns an error because its outcome may be unknown.
   `plugin-mcp` v0.6.0 client reconnects synchronously without a backoff budget;
   Tether cannot retrofit that behavior into a different process.
 
+The Lead Orchestrator's sanitized live trace (mail
+`01a1fb0e-8bac-7d58-9170-a5d733a7ad51`) identifies the deployed Basalisk as
+Surface Desk, `hollis-labs/surface` commit `b1b526c`, release `v0.4.1`, using
+`module/tetherlink.Stdio` and its process pool. Its child command is:
+
+```text
+/var/lib/fabric/bin/tether --catalog /var/lib/fabric/tether/catalog --token-file <file> mcp --forward-daemon --daemon-address unix:/var/lib/fabric/tether/run/tetherd.sock
+```
+
+That deployed path uses the patched forwarder; the older Basalisk repository is
+not the live client. The coordinator owns verification with the actual Surface
+Stdio client against an isolated restarted UDS server. The trace establishes
+routing coverage; it does not establish that the patched binary is deployed.
+
 No shared daemon, outpost or gateway restart is needed to run the regression
 suite. End-to-end Basalisk, Claude kit and native Codex restart verification must
 be coordinated separately with the Lead Orchestrator.
@@ -50,8 +64,8 @@ The forwarder also negotiates `2025-03-26` for Basalisk-shaped stdio clients.
 A raw JSON-RPC regression retains the same downstream connection across a real
 upstream restart and checks successful tools/call results before and after it,
 with one execution per call. The worker HTTP relay restart regression likewise
-uses a 2025-03-26 handshake and tools/call. This establishes bridge behavior;
-Basalisk's live child-process argv remains deployment evidence to verify.
+uses a 2025-03-26 handshake and tools/call. This establishes bridge behavior; the live child-process trace above confirms
+the named deployed client uses that bridge.
 
 Graceful-stop `503 mcp_stopping` responses are recoverable; generic route, auth,
 and protocol failures are terminal. Each replacement handshake is capped at
@@ -62,3 +76,6 @@ Explicit JSON-RPC `mcp_initialize_required` and `session_expired` errors in eith
 JSON or SSE POST responses enter the same recovery path. SSE interception is
 limited to the active request ID before its terminal response has been emitted;
 unrelated or standalone stream errors never authorize a tool retry.
+
+Replacement relay sessions become visible only after `notifications/initialized`
+is accepted. Transient initialized refusals retry within the same recovery budget.
