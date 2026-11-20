@@ -1,0 +1,1 @@
+- CW-20261120-0098: Add scoped catalog approver policy with per-principal path/action allowlists, privilege controls, rate limits and audited operator-only breakglass windows verified across restart by existing issuer trust; add approver visibility commands and preserve Tachyon defaults.

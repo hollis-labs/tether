@@ -461,17 +461,17 @@ func TestDelegatedApproval(t *testing.T) {
 		t.Fatal("DelegatedApprover matched the wrong principals")
 	}
 	plain, _ := e.PlanBundle(ctx, Bundle{Name: "plain", Files: []File{{Path: "agents/x.yaml", Content: "id: x\n"}}}, Options{})
-	if _, err := e.Approve(ApprovalRequest{PlanID: plain.ID, Digest: plain.Digest, Delegated: true}); err != nil {
+	if _, err := e.Approve(ApprovalRequest{PlanID: plain.ID, Digest: plain.Digest, Delegated: true, Principal: "msg://service/tachyon/dev"}); err != nil {
 		t.Fatalf("delegated approval of a non-privileged plan: %v", err)
 	}
 	priv, _ := e.PlanBundle(ctx, Bundle{Name: "perm", Files: []File{
 		{Path: "agents/general.yaml", Content: "id: general\nname: General\npermissions:\n  permission_mode: bypass\n"},
 	}}, Options{})
-	if _, err := e.Approve(ApprovalRequest{PlanID: priv.ID, Digest: priv.Digest, Delegated: true, AckPrivileged: true}); err == nil || !strings.Contains(err.Error(), "only the operator") {
+	if _, err := e.Approve(ApprovalRequest{PlanID: priv.ID, Digest: priv.Digest, Delegated: true, Principal: "msg://service/tachyon/dev", AckPrivileged: true}); err == nil || !strings.Contains(err.Error(), "only the operator") {
 		t.Fatalf("delegated approval of a privileged plan: %v", err)
 	}
 	e.DelegatedPrivileged = true // the single widening switch
-	if _, err := e.Approve(ApprovalRequest{PlanID: priv.ID, Digest: priv.Digest, Delegated: true, AckPrivileged: true}); err != nil {
+	if _, err := e.Approve(ApprovalRequest{PlanID: priv.ID, Digest: priv.Digest, Delegated: true, Principal: "msg://service/tachyon/dev", AckPrivileged: true}); err != nil {
 		t.Fatalf("widened delegation: %v", err)
 	}
 }

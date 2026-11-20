@@ -56,6 +56,8 @@ func (s *Server) registerCatalogApplyRoutes(router *http.ServeMux) {
 	router.HandleFunc("/catalog/validate", s.handleCatalogValidate)
 	router.HandleFunc("/catalog/files", s.handleCatalogFiles)
 	router.HandleFunc("/catalog/audit", s.handleCatalogAudit)
+	router.HandleFunc("/catalog/approvers", s.handleCatalogApprovers)
+	router.HandleFunc("/catalog/breakglass", s.handleCatalogBreakglass)
 }
 
 // CatalogPlanRequest is the POST /catalog/plans body. Exactly one of Files or
@@ -103,16 +105,59 @@ func catalogApprover(r *http.Request) bool {
 	return identity.IsOperatorCredential(p)
 }
 
-// catalogDelegatedApprover reports whether the caller is a service principal that
-// holds catalog.write and is named in the delegated-approver list. It is checked
-// only after catalogApprover refuses; the engine still refuses privileged plans.
-func (s *Server) catalogDelegatedApprover(r *http.Request) bool {
+// catalogDelegatedApprover resolves only authenticated local approval principals.
+// Agent JWT subjects identify sessions, so resolve their current catalog seat;
+// caller-controlled addresses and registry aliases never establish authority.
+func (s *Server) catalogDelegatedApprover(r *http.Request) (string, []string, bool) {
 	p, ok := identity.FromContext(r.Context())
-	if !ok || p.Kind != "service" || p.TokenID == "" || !identity.ScopeGranted(p.Scopes, catalogWriteScope) {
-		return false
+	if identity.IsRemote(r.Context()) || !ok || !p.Verified || p.TokenID == "" {
+		return "", nil, false
 	}
-	d, ok := s.CatalogApply.(interface{ DelegatedApprover(principalID string) bool })
-	return ok && d.DelegatedApprover(p.ID)
+	principal := p.ID
+	var protected []string
+	switch p.Kind {
+	case "service":
+		if !strings.HasPrefix(p.ID, "msg://service/") {
+			return "", nil, false
+		}
+	case "agent":
+		if !identity.IsBoundAgentToken(p) || s.Service == nil || s.Catalog == nil {
+			return "", nil, false
+		}
+		row, err := s.Service.GetSession(p.SessionID)
+		if err != nil || row == nil || row.LogicalAgentID == "" {
+			return "", nil, false
+		}
+		cat, err := s.Catalog.Load()
+		if err != nil || cat == nil {
+			return "", nil, false
+		}
+		agent, ok := cat.Agents[row.LogicalAgentID]
+		if !ok {
+			return "", nil, false
+		}
+		principal = agent.URN
+		if principal == "" {
+			principal = logicalAgentPrefix + row.LogicalAgentID
+		}
+		if !strings.HasPrefix(principal, "msg://agent/") {
+			return "", nil, false
+		}
+		protected = []string{"agents/" + row.LogicalAgentID + ".yaml", "agents/" + row.LogicalAgentID + ".yml"}
+		if row.LaunchID != "" {
+			protected = append(protected, "launches/"+row.LaunchID+".yaml", "launches/"+row.LaunchID+".yml")
+		}
+	default:
+		return "", nil, false
+	}
+	if !identity.ScopeGranted(p.Scopes, catalogapply.ApproveScope) {
+		legacy, ok := s.CatalogApply.(interface{ LegacyDelegatedApprover(string) bool })
+		if p.Kind != "service" || !ok || !legacy.LegacyDelegatedApprover(principal) || !identity.ScopeGranted(p.Scopes, catalogWriteScope) {
+			return "", nil, false
+		}
+	}
+	d, ok := s.CatalogApply.(interface{ DelegatedApprover(string) bool })
+	return principal, protected, ok && d.DelegatedApprover(principal)
 }
 
 func (s *Server) handleCatalogPlans(w http.ResponseWriter, r *http.Request) {
@@ -194,13 +239,18 @@ func (s *Server) handleCatalogPlanItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCatalogApprove(w http.ResponseWriter, r *http.Request, id string) {
 	delegated := false
+	var principal string
+	var protected []string
 	if !catalogApprover(r) {
-		if !s.catalogDelegatedApprover(r) {
-			writeError(w, http.StatusForbidden, CodeForbidden, "a plan is approved by the local operator on the daemon's own socket, not by a session, a device or a remote caller")
+		var allowed bool
+		principal, protected, allowed = s.catalogDelegatedApprover(r)
+		if !allowed {
+			writeError(w, http.StatusForbidden, CodeForbidden, "approval requires the local operator or a configured scoped delegate")
 			return
 		}
 		delegated = true
 	}
+
 	var req CatalogApproveRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
@@ -209,6 +259,7 @@ func (s *Server) handleCatalogApprove(w http.ResponseWriter, r *http.Request, id
 	plan, err := s.CatalogApply.Approve(catalogapply.ApprovalRequest{
 		PlanID: id, Digest: req.Digest, Passphrase: req.Passphrase,
 		AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning, Delegated: delegated,
+		Principal: principal, ProtectedPaths: protected,
 	})
 	switch {
 	case err == nil:
@@ -320,7 +371,7 @@ func (s *Server) handleCatalogAudit(w http.ResponseWriter, r *http.Request) {
 // change.
 func (s *Server) callerDefinitionPaths(r *http.Request) []string {
 	p, ok := identity.FromContext(r.Context())
-	if !ok || p.Kind != "session" || p.SessionID == "" || s.Service == nil {
+	if !ok || (p.Kind != "session" && p.Kind != "agent") || p.SessionID == "" || s.Service == nil {
 		return nil
 	}
 	row, err := s.Service.GetSession(p.SessionID)
