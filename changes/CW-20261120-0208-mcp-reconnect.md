@@ -1,3 +1,4 @@
 - Recover daemon MCP forwarders and worker HTTP relays across server restarts with replacement handshake backoff from 1s to 30s and a 60s recovery budget; retry safe requests once while preserving uncertain tool outcomes. (CW-20261120-0208)
 - Negotiate MCP 2025-03-26 on the daemon stdio forwarder and verify Basalisk-shaped clients keep their connection and recover tools/call across an isolated server restart. (CW-20261120-0208)
 - Recover explicit graceful-stop MCP rejections, cap each handshake within the shared recovery budget, and preserve mutation safety when a notification/resume GET fails. (CW-20261120-0208)
+- Recover matching MCP session rejections delivered as SSE responses, with the same bounded retry path as JSON responses and no retry after a terminal tool response. (CW-20261120-0208)

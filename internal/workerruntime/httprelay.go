@@ -539,19 +539,16 @@ func (r *HTTPRelay) post(ctx context.Context, msg []byte, token string) (int, st
 	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(resp.Header.Get("Content-Type"), ";", 2)[0]))
 	switch mediaType {
 	case "text/event-stream":
-		r.readSSE(resp.Body)
+		if code := r.readSSECall(resp.Body, requestID(msg)); code != "" {
+			return http.StatusBadRequest, code, false
+		}
 	default:
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRelayLine+1))
 		if err != nil || len(body) > maxRelayLine {
 			return -1, "bad_response", false
 		}
-		var rpc struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(body, &rpc) == nil && (rpc.Error.Message == "mcp_initialize_required" || rpc.Error.Message == "session_expired") {
-			return http.StatusBadRequest, rpc.Error.Message, false
+		if code := relayRPCRejection(body, requestID(msg)); code != "" {
+			return http.StatusBadRequest, code, false
 		}
 		r.captureProtocol(msg, body)
 		r.emit(body)
@@ -580,27 +577,69 @@ func (r *HTTPRelay) captureProtocol(req, resp []byte) {
 	}
 }
 
-// readSSE forwards each `data:` event of a stream response to the agent.
-func (r *HTTPRelay) readSSE(body io.Reader) {
+// relayRPCRejection recognizes only an explicit rejection of this request.
+// Unrelated stream messages cannot authorize retrying a tool.
+func relayRPCRejection(payload []byte, id json.RawMessage) string {
+	var rpc struct {
+		ID    json.RawMessage `json:"id"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if len(id) == 0 || json.Unmarshal(payload, &rpc) != nil || !bytes.Equal(bytes.TrimSpace(rpc.ID), bytes.TrimSpace(id)) || rpc.Error == nil {
+		return ""
+	}
+	switch rpc.Error.Message {
+	case "mcp_initialize_required", "session_expired":
+		return rpc.Error.Message
+	default:
+		return ""
+	}
+}
+
+// readSSE forwards standalone stream messages without associating them with a call.
+func (r *HTTPRelay) readSSE(body io.Reader) { r.readSSECall(body, nil) }
+
+// readSSECall withholds an explicit rejection of the current request so post's
+// normal recovery path can replace the session. Once its terminal response has
+// been forwarded, a later stream message cannot cause the operation to repeat.
+func (r *HTTPRelay) readSSECall(body io.Reader, id json.RawMessage) string {
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64<<10), maxRelayLine)
 	var data bytes.Buffer
-	flush := func() {
+	completed := false
+	flush := func() string {
 		if data.Len() == 0 {
-			return
+			return ""
 		}
 		payload := bytes.TrimSpace(data.Bytes())
 		data.Reset()
 		if len(payload) > 0 && json.Valid(payload) {
+			if !completed {
+				if code := relayRPCRejection(payload, id); code != "" {
+					return code
+				}
+				var response struct {
+					ID     json.RawMessage `json:"id"`
+					Result json.RawMessage `json:"result"`
+					Error  json.RawMessage `json:"error"`
+				}
+				if len(id) > 0 && json.Unmarshal(payload, &response) == nil && bytes.Equal(bytes.TrimSpace(response.ID), bytes.TrimSpace(id)) && (len(response.Result) > 0 || len(response.Error) > 0) {
+					completed = true
+				}
+			}
 			r.captureProtocolFromStream(payload)
 			r.emit(payload)
 		}
+		return ""
 	}
 	for sc.Scan() {
 		line := sc.Text()
 		switch {
 		case line == "":
-			flush()
+			if code := flush(); code != "" {
+				return code
+			}
 		case strings.HasPrefix(line, "data:"):
 			if data.Len() > 0 {
 				data.WriteByte('\n')
@@ -608,7 +647,7 @@ func (r *HTTPRelay) readSSE(body io.Reader) {
 			data.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		}
 	}
-	flush()
+	return flush()
 }
 
 // captureProtocolFromStream handles an initialize result delivered as an SSE event.

@@ -57,3 +57,8 @@ Graceful-stop `503 mcp_stopping` responses are recoverable; generic route, auth,
 and protocol failures are terminal. Each replacement handshake is capped at
 15 seconds within the single 60-second recovery budget. Concurrent HTTP relay
 waiters share that budget and its result, and can cancel independently.
+
+Explicit JSON-RPC `mcp_initialize_required` and `session_expired` errors in either
+JSON or SSE POST responses enter the same recovery path. SSE interception is
+limited to the active request ID before its terminal response has been emitted;
+unrelated or standalone stream errors never authorize a tool retry.
