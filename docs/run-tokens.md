@@ -21,8 +21,8 @@ The daemon lazily creates an Ed25519 signing key in the credential-protected
 state DB's singleton `run_signing_key` table and caches it in memory. Tokens are
 never stored in that table or launch plans. The same key survives restart;
 verification needs only local material, the authenticated principal and the
-existing server session row, with no Registry/Tesseract calls. Key replacement
-invalidates outstanding tokens and must be coordinated with session restart;
+existing server session row, with no Registry/Tesseract calls. Key replacement takes effect on daemon restart,
+invalidates outstanding tokens, and must be coordinated with session restart;
 there is no automatic key rotation or run-token refresh in this version.
 
 `X-Run-Token` must be a single nonempty header of at most 4096 bytes. Missing
