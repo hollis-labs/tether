@@ -1,0 +1,1 @@
+- Add opt-in standalone MCP gateway entries for local and worker Claude, Codex and agy launches, with session-bound JWTs refreshed in private tmpfs and the execution run token forwarded by the stdio relay. Reconnect rejected run-token views after HTTP 401 without replaying mutations. (CW-20261120-0094)

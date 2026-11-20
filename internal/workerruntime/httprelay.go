@@ -234,6 +234,16 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 			}
 			break
 		}
+		if status == http.StatusUnauthorized && used != "" && !reinitialized && !isInitialize(msg) {
+			reinitialized = true
+			// A rejected view may be replaced with the current bearer/run token.
+			// Never repost a mutation: only discovery and ping are safe to retry.
+			if r.reinitialize(ctx, used) && relayReadOnly(msg) {
+				attempt--
+				continue
+			}
+			break
+		}
 		if !retry {
 			break
 		}
@@ -711,5 +721,16 @@ func (r *HTTPRelay) closeSession() {
 	req.Header.Set("Mcp-Session-Id", session)
 	if resp, err := r.client().Do(req); err == nil {
 		_ = resp.Body.Close()
+	}
+}
+
+// relayReadOnly is deliberately narrow. tools/call can mutate even if its
+// name sounds read-only; notifications and unknown methods are not replayed.
+func relayReadOnly(msg []byte) bool {
+	switch methodName(msg) {
+	case "ping", "tools/list", "resources/list", "resources/templates/list", "prompts/list":
+		return true
+	default:
+		return false
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/workerruntime"
 	"github.com/spf13/cobra"
@@ -53,13 +54,18 @@ func main() {
 	}}
 	relayCmd.Flags().StringVar(&relayToken, "token-file", "", "0600 file holding the session credential")
 	cmd.AddCommand(relayCmd)
-	var httpURL, httpToken string
+	var httpURL, httpToken, httpRunToken string
 	httpRelayCmd := &cobra.Command{Use: "mcp-http-relay", Hidden: true, SilenceUsage: true, Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
-		r := &workerruntime.HTTPRelay{URL: httpURL, TokenFile: httpToken, RunToken: os.Getenv("TETHER_RUN_TOKEN"), Stderr: os.Stderr}
+		token, err := gatewaylaunch.ReadRunToken(httpRunToken, os.Getenv("TETHER_RUN_TOKEN"))
+		if err != nil {
+			return err
+		}
+		r := &workerruntime.HTTPRelay{URL: httpURL, TokenFile: httpToken, RunToken: token, Stderr: os.Stderr}
 		return r.Run(c.Context(), os.Stdin, os.Stdout)
 	}}
 	httpRelayCmd.Flags().StringVar(&httpURL, "url", "", "hub streamable-HTTP MCP endpoint (https)")
 	httpRelayCmd.Flags().StringVar(&httpToken, "token-file", "", "0600 file holding the session's current issuer token (re-read for every request)")
+	httpRelayCmd.Flags().StringVar(&httpRunToken, "run-token-file", "", "protected execution-token handoff")
 	cmd.AddCommand(httpRelayCmd)
 	cmd.AddCommand(newHookCommand())
 	var hub, code, label, mcpSource string

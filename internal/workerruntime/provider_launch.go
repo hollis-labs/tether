@@ -12,6 +12,7 @@ import (
 	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	"github.com/hollis-labs/libs/harness/core/agentlaunch/launcher"
 	"github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchartifacts"
 	"github.com/hollis-labs/tether/internal/workerwire"
@@ -72,6 +73,12 @@ func (e *Executor) prepareProvider(ctx context.Context, spec workerwire.LaunchSp
 	// native provider planter owns the provider-specific config and argv.
 	prepared.PlantContext.MCPServers = []agentlaunch.MCPServerSpec{{Name: "tether", Command: e.Binary,
 		Args: []string{"mcp-http-relay", "--url", e.HubMCPURL, "--token-file", TokenFilePath(filepath.Join(root, "auth"), "tether")}}}
+	if endpoint := spec.Env[gatewaylaunch.URLenv]; endpoint != "" {
+		if spec.Env[gatewaylaunch.TokenFileEnv] == "" {
+			return nil, fmt.Errorf("gateway credential handoff missing")
+		}
+		prepared.PlantContext.MCPServers = append(prepared.PlantContext.MCPServers, gatewaylaunch.Server(e.Binary, endpoint, spec.Env[gatewaylaunch.TokenFileEnv]))
+	}
 	if reason := e.hubHTTPUnavailable(spec); reason != "" {
 		return nil, fmt.Errorf("provider launch requires the session MCP gateway: %s", reason)
 	}
