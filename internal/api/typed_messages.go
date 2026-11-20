@@ -247,6 +247,10 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 	from := canonicalAddress(stub.From)
 	e.Normalize()
 	e.From = s.handleFor(ctx, from)
+	if identity.ServiceEventsRequest(ctx) {
+		// A mutable mailbox alias cannot rename the authenticated service sender.
+		e.From = s.handleForAddress(ctx, from)
+	}
 	if e.From == "" {
 		e.From = from
 	}

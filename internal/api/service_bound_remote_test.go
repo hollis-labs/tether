@@ -159,6 +159,11 @@ func TestBoundServiceRemoteMail(t *testing.T) {
 			if _, _, err := db.AddAddressAlias(t.Context(), bound.URN, other.URN, identity.OperatorID); err != nil {
 				t.Fatal(err)
 			}
+			aliasTypedRaw := call("POST", "/messages/post", issued.Token.Token, `{"kind":"message","to":["@other"],"body":"literal sender after alias"}`, 201)
+			var aliasTyped MessagePostResponse
+			if err := json.Unmarshal(aliasTypedRaw, &aliasTyped); err != nil || aliasTyped.Envelope.From != "@bound" {
+				t.Fatal("alias renamed typed service sender", err)
+			}
 			aliasSpoof := send(other.URN, other.URN, issued.Token.Token, wantSpoof)
 			if mode == identity.Observe && aliasSpoof.Metadata[MetaFromVerification] != "unverified" {
 				t.Fatal("alias widened sender grant")
