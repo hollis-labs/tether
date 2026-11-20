@@ -509,14 +509,31 @@ func (c *Client) CreateSession(ctx context.Context, launchID string) (api.Launch
 // LaunchSession POSTs /sessions/{id}/launch to transition a created
 // session to running. Returns the launched metadata.
 func (c *Client) LaunchSession(ctx context.Context, sessionID string) (api.LaunchResponse, error) {
+	return c.LaunchSessionWithInput(ctx, sessionID, api.SessionLaunchRequest{})
+}
+
+// LaunchSessionWithInput fills absent correlation stamps before starting a session.
+func (c *Client) LaunchSessionWithInput(ctx context.Context, sessionID string, input api.SessionLaunchRequest) (api.LaunchResponse, error) {
+	var body io.Reader
+	if input.TaskID != "" || input.WorkstreamID != "" {
+		raw, err := json.Marshal(input)
+		if err != nil {
+			return api.LaunchResponse{}, err
+		}
+		body = bytes.NewReader(raw)
+	}
+
 	// Drop the 5s transport timeout — spawning an agent process can take
 	// longer than 5 seconds depending on provider startup time.
 	longClient := *c.http
 	longClient.Timeout = 0
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/sessions/"+url.PathEscape(sessionID)+"/launch", nil)
+		c.baseURL+"/sessions/"+url.PathEscape(sessionID)+"/launch", body)
 	if err != nil {
 		return api.LaunchResponse{}, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := longClient.Do(req)
 	if err != nil {

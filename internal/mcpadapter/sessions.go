@@ -74,6 +74,8 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 			gomcp.StringProp("prompt_append", "Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt.", false),
 			gomcp.StringProp("worker", "Optional. Place the session on this connected outpost (label or id). Defaults to the launch's `worker:` when it declares one. Fails with worker_unavailable when the worker is not enrolled or offline.", false),
 			gomcp.BooleanProp("require_worker", "Optional. Refuse with worker_not_configured when no worker resolves (none passed and the launch declares no `worker:`) instead of running the session on the hub.", false),
+			gomcp.StringProp("task_id", "Optional operator-only task stamp, fixed at create.", false),
+			gomcp.StringProp("workstream_id", "Optional operator-only opaque external workstream id (1-64 safe characters; ULID/UUID accepted), fixed at create.", false),
 			gomcp.StringProp("idempotency_key", "Optional. Makes the create idempotent: a retry with the same key and the same request returns the session the first one created (replayed=true); the same key with a different request fails with idempotency_conflict. Keys are scoped to the authenticated caller, so another caller's identical key never collides with yours.", false),
 			gomcp.StringProp("continuity", "Optional: fresh (default) or relaunch. relaunch records this session as a continuation of the logical agent's newest earlier session (intent resume, parent_session_id set); it changes lineage records only and resumes no provider conversation. Any other value fails with invalid_request. Fixed at create; tether_session_launch can only assert it.", false),
 			gomcp.StringProp("injection", "Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.", false),
@@ -86,6 +88,8 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 		Description: "Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID returned by tether_session_create", true),
+			gomcp.StringProp("task_id", "Optional operator-only task id: fill an absent stamp before launch, or match an existing stamp. Conflicting or post-launch additions are refused.", false),
+			gomcp.StringProp("workstream_id", "Optional operator-only opaque workstream id: fill an absent stamp before launch, or match an existing stamp. Conflicting or post-launch additions are refused.", false),
 			gomcp.StringProp("continuity", "Optional: relaunch asserts the created session is a continuation (intent resume with a parent_session_id, set by tether_session_create continuity=relaunch) and refuses to start a fresh one with invalid_request, so a restart cannot silently lose its lineage. It changes nothing on the session. fresh or omitted: no check.", false),
 		),
 		Handler: a.handleSessionLaunch,
@@ -292,7 +296,8 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		return nil, toolError("invalid_request", `continuity must be "fresh" or "relaunch"`)
 	}
 	// A keyed request always takes the input path, where the key is recorded.
-	withInput := requireWorker || worker != "" || idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != "" || continuity != ""
+	taskID, workstreamID := correlationArg(args, "task_id"), correlationArg(args, "workstream_id")
+	withInput := taskID != "" || workstreamID != "" || requireWorker || worker != "" || idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != "" || continuity != ""
 
 	if a.client != nil {
 		// Daemon-routed path (production "tether mcp"): the daemon owns session
@@ -300,6 +305,8 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		// app would race against the daemon's session store.
 		creq := api.LaunchRequest{
 			Launch:          launchID,
+			TaskID:          taskID,
+			WorkstreamID:    workstreamID,
 			Worker:          worker,
 			RequireWorker:   requireWorker,
 			BootPrompt:      bootPrompt,
@@ -348,6 +355,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		}), nil
 	}
 
+	if err := a.validateCorrelationStamps(taskID, workstreamID); err != nil {
+		return nil, err
+	}
 	// Native daemon views bypass HTTP; retain its placement refusal semantics.
 	if a.svc == nil {
 		return nil, toolError("daemon_unavailable", "session creation needs the daemon service")
@@ -366,6 +376,8 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 	res, err := a.svc.CreateSessionWithInput(app.CreateSessionInput{
 		Worker:               worker,
 		LaunchID:             launchID,
+		TaskID:               taskID,
+		WorkstreamID:         workstreamID,
 		BootPromptOverride:   bootPrompt,
 		AgentFile:            agentFile,
 		AgentInline:          agentInline,
@@ -408,6 +420,13 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) 
 	if err := a.checkScope(ScopeSessionWrite); err != nil {
 		return nil, err
 	}
+	if a.client == nil {
+		task, workstream := correlationArg(args, "task_id"), correlationArg(args, "workstream_id")
+		if err := a.validateCorrelationStamps(task, workstream); err != nil {
+			return nil, err
+		}
+	}
+
 	id := str(args, "session_id")
 	if id == "" {
 		return nil, toolError("invalid_request", "session_id required")
@@ -440,7 +459,7 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) 
 		}
 	}
 	if a.client != nil {
-		res, err := a.client.LaunchSession(ctx, id)
+		res, err := a.client.LaunchSessionWithInput(ctx, id, api.SessionLaunchRequest{TaskID: correlationArg(args, "task_id"), WorkstreamID: correlationArg(args, "workstream_id")})
 		if err != nil {
 			if isDaemonUnreachable(err) {
 				return nil, daemonUnreachableError(err)
@@ -457,12 +476,16 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) 
 			"logical_agent_id": res.LogicalAgentID,
 		}), nil
 	}
-	res, err := a.svc.LaunchSessionWithContext(ctx, id)
+	launchCtx := ctx
+	if a.principal != nil {
+		launchCtx = identity.WithPrincipal(ctx, *a.principal)
+	}
+	res, err := a.svc.LaunchSessionWithCorrelation(launchCtx, id, api.SessionLaunchRequest{TaskID: correlationArg(args, "task_id"), WorkstreamID: correlationArg(args, "workstream_id")})
 	if err != nil {
 		if isNotFound(err) {
 			return nil, toolError("not_found", "session not found: "+id)
 		}
-		if isConflict(err) {
+		if isConflict(err) || errors.Is(err, store.ErrSessionCorrelationConflict) {
 			return nil, toolError("conflict", err.Error())
 		}
 		return nil, toolError("internal_error", err.Error())
@@ -752,3 +775,23 @@ func isConflict(err error) bool {
 	}
 	return errors.Is(err, session.ErrNotCreated)
 }
+
+// Native views have no HTTP stamping boundary: only the transport-bound operator
+// credential can assert identifiers. Context claims and legacy labels never qualify.
+func (a *Adapter) validateCorrelationStamps(task, workstream string) error {
+	if task == "" && workstream == "" {
+		return nil
+	}
+	if a.principal == nil || !identity.IsOperatorCredential(*a.principal) || a.principal.SessionID != "" {
+		return toolError("forbidden", "task_id/workstream_id require the operator credential")
+	}
+	for _, id := range []string{task, workstream} {
+		if id != "" && !api.ValidLaunchCorrelationID(id) {
+			return toolError("invalid_request", "correlation id must be 1-64 letters, digits, '.', '_' or '-', beginning with a letter or digit")
+		}
+	}
+	return nil
+}
+
+// Correlation IDs are opaque: unlike display arguments, never trim or rewrite them.
+func correlationArg(args map[string]any, key string) string { v, _ := args[key].(string); return v }

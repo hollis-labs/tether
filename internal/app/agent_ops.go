@@ -113,6 +113,8 @@ type CreateSessionInput struct {
 	// well-formed; never decoded from a client into this struct. Stored on the session
 	// row and planted as TETHER_TASK_ID; no existence check against Torque.
 	TaskID string
+	// WorkstreamID is an opaque external reference, validated at the operator boundary.
+	WorkstreamID string
 	// RunID is the optional launcher-asserted Torque run; never a team run.
 	RunID string
 

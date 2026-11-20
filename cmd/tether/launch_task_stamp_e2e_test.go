@@ -19,12 +19,17 @@ import (
 func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root, repo := t.TempDir(), t.TempDir()
+	sessionRoot := t.TempDir()
 	for path, body := range map[string]string{
-		"global.yaml":         "version: 0.1.0\ncatalog:\n  defaults:\n    state_db: " + filepath.Join(root, "state.db") + "\n",
-		"projects/p.yaml":     "id: p\nname: P\nrepo_root: " + repo + "\nworkspace:\n  default_mode: shared\n  session_root: " + filepath.Join(root, "sessions") + "\n",
-		"providers/stub.yaml": "id: api-stub\ntype: api\n", // runs in-process; no provider binary or daemon
-		"agents/worker.yaml":  "id: worker\nname: Worker\n",
-		"launches/l1.yaml":    "id: l1\nproject: p\nagent: worker\nprovider: api-stub\n",
+		"global.yaml":             "version: 0.1.0\ncatalog:\n  defaults:\n    state_db: " + filepath.Join(root, "state.db") + "\n",
+		"projects/p.yaml":         "id: p\nname: P\nrepo_root: " + repo + "\nworkspace:\n  default_mode: shared\n  session_root: " + sessionRoot + "\n",
+		"providers/fill.yaml":     "id: fill-cli\ntype: cli\nprovider: claude\nruntime_kind: pty\ncommand: " + filepath.Join(root, "fake-provider") + "\n",
+		"agents/fill-worker.yaml": "id: fill-worker\nname: Fill Worker\n",
+		"launches/fill.yaml":      "id: fill-launch\nproject: p\nagent: fill-worker\nprovider: fill-cli\n",
+		"fake-provider":           "#!/bin/sh\nexec sleep 60\n",
+		"providers/stub.yaml":     "id: api-stub\ntype: api\n", // runs in-process; no provider binary or daemon
+		"agents/worker.yaml":      "id: worker\nname: Worker\n",
+		"launches/l1.yaml":        "id: l1\nproject: p\nagent: worker\nprovider: api-stub\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o700); err != nil {
 			t.Fatal(err)
@@ -32,6 +37,9 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.Chmod(filepath.Join(root, "fake-provider"), 0700); err != nil {
+		t.Fatal(err)
 	}
 	svc, err := app.New(root)
 	if err != nil {
@@ -53,7 +61,7 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	c := client.New("tcp:"+srv.URL[len("http://"):], client.WithToken(token))
 
 	const id = "CW-20261016-0155"
-	res, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42"})
+	res, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42", WorkstreamID: "01M7VQ2QWYB5RZR86W2BWG8PW3", IdempotencyKey: "workstream-create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +72,50 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	plan, err := svc.Store.GetLaunchPlan(res.ID)
 	if err != nil || plan.RunID != "42" || plan.Env[app.RunIDEnv] != "42" || plan.TaskID != id || plan.Env[app.TaskIDEnv] != id {
 		t.Fatalf("stored plan task = %q env = %q err=%v", plan.TaskID, plan.Env[app.TaskIDEnv], err)
+	}
+	if row.WorkstreamID.String != "01M7VQ2QWYB5RZR86W2BWG8PW3" || plan.WorkstreamID != row.WorkstreamID.String {
+		t.Fatal("external workstream not stamped")
+	}
+	replay, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42", WorkstreamID: row.WorkstreamID.String, IdempotencyKey: "workstream-create"})
+	if err != nil || !replay.Replayed || replay.ID != res.ID {
+		t.Fatalf("create replay: %+v %v", replay, err)
+	}
+	_, err = c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42", WorkstreamID: "019a9e45-6789-7123-8123-0123456789ab", IdempotencyKey: "workstream-create"})
+	if err == nil {
+		t.Fatal("changed workstream replay accepted")
+	}
+	after, err := svc.Store.GetSession(res.ID)
+	if err != nil || after.WorkstreamID != row.WorkstreamID {
+		t.Fatal("replay changed stamp")
+	}
+	// A bare keyed create can receive its missing stamps on the split launch.
+	fillInput := api.LaunchRequest{Launch: "fill-launch", IdempotencyKey: "fill-at-launch"}
+	unstamped, err := c.CreateSessionWithInput(context.Background(), fillInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filled, err := c.LaunchSessionWithInput(context.Background(), unstamped.ID, api.SessionLaunchRequest{TaskID: id, WorkstreamID: "019a9e45-6789-7123-8123-0123456789ab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.StopSession(filled.ID) })
+	filledRow, err := svc.Store.GetSession(filled.ID)
+	if err != nil || filledRow.TaskID.String != id || filledRow.WorkstreamID.String != "019a9e45-6789-7123-8123-0123456789ab" {
+		t.Fatal("split HTTP launch lost stamps")
+	}
+	replayFill, err := c.CreateSessionWithInput(context.Background(), fillInput)
+	if err != nil || !replayFill.Replayed || replayFill.ID != filled.ID {
+		t.Fatalf("keyed create replay after fill: %+v %v", replayFill, err)
+	}
+	if _, err := c.LaunchSessionWithInput(context.Background(), filled.ID, api.SessionLaunchRequest{TaskID: id, WorkstreamID: filledRow.WorkstreamID.String}); err != nil {
+		t.Fatal("matching keyed launch replay failed", err)
+	}
+	if _, err := c.LaunchSessionWithInput(context.Background(), filled.ID, api.SessionLaunchRequest{WorkstreamID: "different"}); err == nil {
+		t.Fatal("running session restamped")
+	}
+	afterFill, err := svc.Store.GetSession(filled.ID)
+	if err != nil || afterFill.TaskID != filledRow.TaskID || afterFill.WorkstreamID != filledRow.WorkstreamID {
+		t.Fatal("replay changed launch fill")
 	}
 	// An unkeyed, bare create must also preserve the verified creator through
 	// the daemon adapter, then a relaunch must retain its lineage and creator.
@@ -88,7 +140,7 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prow, err := svc.Store.GetSession(plain.ID); err != nil || prow.TaskID.Valid || prow.RunID.Valid {
+	if prow, err := svc.Store.GetSession(plain.ID); err != nil || prow.TaskID.Valid || prow.RunID.Valid || prow.WorkstreamID.Valid {
 		t.Fatalf("unstamped session task = %+v err=%v", prow.TaskID, err)
 	}
 }

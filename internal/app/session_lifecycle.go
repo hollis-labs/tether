@@ -154,6 +154,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 		return nil, err
 	}
 	stampTaskID(plan, in.TaskID)
+	stampWorkstreamID(plan, in.WorkstreamID)
 	stampRunID(plan, in.RunID)
 	plan.App = in.App
 	plan.Continuity = in.Continuity
@@ -194,6 +195,19 @@ func stampTaskID(plan *launch.Plan, taskID string) {
 		plan.Env = map[string]string{}
 	}
 	plan.Env[TaskIDEnv] = taskID
+}
+
+// stampWorkstreamID seals the opaque workstream after environment merges.
+func stampWorkstreamID(plan *launch.Plan, id string) {
+	plan.WorkstreamID = id
+	if id == "" {
+		delete(plan.Env, "TETHER_WORKSTREAM_ID")
+		return
+	}
+	if plan.Env == nil {
+		plan.Env = make(map[string]string)
+	}
+	plan.Env["TETHER_WORKSTREAM_ID"] = id
 }
 
 // stampRunID seals the launcher-owned run after every environment merge.
@@ -270,6 +284,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		ProviderKind:   providerKind,
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
+		WorkstreamID:   nullableTaskID(plan.WorkstreamID),
 		TaskID:         nullableTaskID(plan.TaskID),
 		RunID:          nullableTaskID(plan.RunID),
 		App:            nullableApp(plan.App),
@@ -299,11 +314,33 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 // LaunchSessionWithContext carries verified caller provenance into the child
 // principal. The raw credential never enters the durable launch plan.
 func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string) (*Launched, error) {
+	return s.LaunchSessionWithCorrelation(ctx, sessionID, api.SessionLaunchRequest{})
+}
+
+// LaunchSessionWithCorrelation fills absent operator stamps under the same gate
+// that owns launch admission, before token minting or runtime dispatch.
+func (s *Service) LaunchSessionWithCorrelation(ctx context.Context, sessionID string, input api.SessionLaunchRequest) (*Launched, error) {
+	if input.TaskID != "" || input.WorkstreamID != "" {
+		p, ok := identity.FromContext(ctx)
+		if !ok || !identity.IsOperatorCredential(p) || p.SessionID != "" {
+			return nil, fmt.Errorf("%w: correlation stamping requires the operator credential", ErrLaunchRefused)
+		}
+		for _, id := range []string{input.TaskID, input.WorkstreamID} {
+			if id != "" && !api.ValidLaunchCorrelationID(id) {
+				return nil, fmt.Errorf("%w: malformed correlation id", ErrLaunchRefused)
+			}
+		}
+	}
 	unlock, err := s.lockSessionLaunch(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	if input.TaskID != "" || input.WorkstreamID != "" {
+		if err := s.Store.FillSessionLaunchCorrelation(ctx, sessionID, input.TaskID, input.WorkstreamID); err != nil {
+			return nil, err
+		}
+	}
 	l, err := s.launchSessionWithContext(ctx, sessionID)
 	s.settleLaunchPromptInput(sessionID, err == nil)
 	return l, err
