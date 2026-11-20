@@ -48,8 +48,6 @@ var clientMethodWrites = map[string]bool{
 	"WorkstreamDigest":           false,
 	"WorkstreamsForRef":          false,
 	"SessionWorkstreamNamespace": false,
-	"MessageGet":                 false,
-	"MessageList":                false,
 	"MessageThread":              false,
 	"MessageTrace":               false,
 	"MessageRetentionCandidates": false,
@@ -76,6 +74,8 @@ var clientMethodWrites = map[string]bool{
 	"MessageInboxAsSession": true,
 
 	// Writes.
+	"MessageGet":  true, // recipient handoff stamps delivered_at
+	"MessageList": true, // recipient handoff stamps delivered_at
 	// POST /messages/{id}/{read,archive,unarchive}; all three mutate the
 	// recipient's view of the message. Unlike inbox, the verb is honest.
 	"MessageMarkRead":  true,
@@ -351,6 +351,8 @@ func TestReadOnlyClaimsAgreeWithTheClientMethodsTheyCall(t *testing.T) {
 // helper. It is also the list to extend when the next one is found.
 func TestKnownMisleadingToolsAreNotReadOnly(t *testing.T) {
 	hazards := map[string]string{
+		"tether_message_get":   "recipient GET records first delivery",
+		"tether_message_list":  "recipient list records first delivery",
 		"tether_message_inbox": "GET /messages/inbox, and messagingStore.Inbox marks every envelope it returns as delivered in the same write transaction",
 	}
 	regs, _ := parseRegistrations(t)

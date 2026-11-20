@@ -31,7 +31,9 @@ func TestMessageEventsActivationFencesExistingTransitionsOnce(t *testing.T) {
 	}
 	old := fstest.MapFS{}
 	for _, entry := range names {
-		if entry.Name() == "0091_message_lifecycle.sql" {
+		// The later delivery-path migration replaces the lifecycle trigger.
+		// Neither belongs in a pre-lifecycle fixture.
+		if entry.Name() == "0091_message_lifecycle.sql" || entry.Name() == "0113_message_delivery_paths.sql" {
 			continue
 		}
 		raw, err := fs.ReadFile(files, entry.Name())

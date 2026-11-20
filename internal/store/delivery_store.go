@@ -263,7 +263,7 @@ const inboxSettleBatch = 500
 // same receipts MarkRead records (CW-20261021-0029). Without the flag the pull is the
 // legacy one.
 func (d *deliveryBackedStore) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {
-	if unreadOnlyInbox(ctx) {
+	if unreadOnlyInbox(ctx) && !inboxInspection(ctx) {
 		d.settleReadUndelivered(ctx, to, f)
 	}
 	return d.messagingStore.Inbox(ctx, to, f)
@@ -313,9 +313,8 @@ func (d *deliveryBackedStore) settleReadUndelivered(ctx context.Context, to mess
 	if rows.Err() != nil || len(found) == 0 {
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, m := range found {
-		if _, err := d.db.ExecContext(ctx, `UPDATE messages SET delivered_at=? WHERE id=? AND delivered_at IS NULL AND read_at IS NOT NULL`, now, m.id); err != nil {
+		if _, err := d.db.ExecContext(ctx, `UPDATE messages SET delivered_at=read_at, delivery_path='read_implied' WHERE id=? AND delivered_at IS NULL AND read_at IS NOT NULL`, m.id); err != nil {
 			log.Printf("delivery store: inbox: stamp delivered_at for read message %s failed: %v", m.id, err)
 			continue
 		}

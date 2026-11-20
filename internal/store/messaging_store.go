@@ -269,8 +269,11 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 	// Mark as DELIVERED within the same transaction — atomic with the SELECT.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, id := range ids {
+		if inboxInspection(ctx) {
+			break
+		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE messages SET delivered_at=? WHERE id=? AND delivered_at IS NULL`,
+			`UPDATE messages SET delivered_at=COALESCE(read_at,?), delivery_path='inbox' WHERE id=? AND delivered_at IS NULL`,
 			now, id); err != nil {
 			return nil, fmt.Errorf("messaging store: inbox mark delivered: %w", err)
 		}
