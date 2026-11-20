@@ -19,6 +19,7 @@ type SharedUpstreams struct {
 	registry    *ToolRegistry
 	known       map[string]bool
 	tags        map[string][]string
+	external    map[string]bool
 	lifecycle   sync.Mutex
 	started     bool
 	closed      bool
@@ -35,15 +36,22 @@ func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRo
 	if err != nil {
 		return nil, err
 	}
-	r := &SharedUpstreams{registry: NewToolRegistry(), known: map[string]bool{}, tags: map[string][]string{}, subscribers: map[uint64]func(ToolRefreshResult){}}
+	r := &SharedUpstreams{registry: NewToolRegistry(), known: map[string]bool{}, external: map[string]bool{}, tags: map[string][]string{}, subscribers: map[uint64]func(ToolRefreshResult){}}
 	for _, entry := range entries {
 		if _, exists := r.known[entry.ID]; exists || entry.ID == "" || entry.ID == "tether" {
 			return nil, fmt.Errorf("duplicate, empty or reserved daemon MCP upstream ID")
 		}
 		r.known[entry.ID] = entry.IsEnabled()
+		r.external[entry.ID] = entry.IsExternal()
 		r.tags[entry.ID] = append([]string(nil), entry.Tags...)
 	}
-	private, factory, err := daemonHTTPPolicies(entries)
+	local := []config.MCPServerEntry{}
+	for _, entry := range entries {
+		if !entry.IsExternal() {
+			local = append(local, entry)
+		}
+	}
+	private, factory, err := daemonHTTPPolicies(local)
 	if err != nil {
 		return nil, err
 	}
@@ -223,12 +231,15 @@ func (v *UpstreamView) namingDiagnostics() ([]mcpgateway.NameFinding, []mcpgatew
 func (v *UpstreamView) Refresh(ctx context.Context, server string) ([]ToolRefreshResult, error) {
 	ids := []string{}
 	if server != "" {
-		if !v.servers[server] {
+		if !v.servers[server] || v.runtime.external[server] {
 			return nil, fmt.Errorf("unknown or excluded MCP origin")
 		}
 		ids = append(ids, server)
 	} else {
 		for id := range v.servers {
+			if v.runtime.external[id] {
+				continue
+			}
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)

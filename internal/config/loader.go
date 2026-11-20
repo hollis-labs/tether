@@ -74,9 +74,11 @@ func Load(catalogRoot string) (*Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
+	cat.MCPServerExternal = make(map[string]bool, len(entries))
 	cat.MCPServerEnabled = make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		cat.MCPServerEnabled[entry.ID] = entry.IsEnabled()
+		cat.MCPServerExternal[entry.ID] = entry.IsExternal()
 	}
 	cat.BootMCPGrants = map[string][]string{}
 	if err := loadDir(filepath.Join(catalogRoot, "boot-profiles"), func(path string) error {

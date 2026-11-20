@@ -34,6 +34,8 @@ const MCPConfineRemoteEnv = "TETHER_MCP_CONFINE_REMOTE"
 // References are resolved only by LoadMCPServers, at spawn time; see
 // resolveEntrySecrets. A catalog listing shows the reference, never the value.
 type MCPServerEntry struct {
+	// ServedBy is empty for built-in upstreams or external for grant-only entries.
+	ServedBy string `yaml:"served_by"`
 	// AllowUnconfinedRemote is an operator opt-in for HTTP/SSE upstreams that
 	// cannot inherit a protected Codex proxy's local filesystem confinement.
 	AllowUnconfinedRemote bool              `yaml:"allow_unconfined_remote"`
@@ -110,6 +112,9 @@ func (e *MCPServerEntry) UnmarshalYAML(node *yaml.Node) error {
 func (e *MCPServerEntry) IsEnabled() bool {
 	return e.Enabled == nil || *e.Enabled
 }
+
+// IsExternal reports an upstream owned by a separate gateway.
+func (e MCPServerEntry) IsExternal() bool { return e.ServedBy == "external" }
 
 // ArgumentRedactionValues returns secret material resolved from argument or url
 // references and environment substitutions in them. The caller receives a copy.
@@ -327,7 +332,7 @@ func LoadMCPServersContext(ctx context.Context, catalogDir string) ([]MCPServerE
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !entry.IsEnabled() {
+		if !entry.IsEnabled() || entry.IsExternal() {
 			continue
 		}
 		if err := resolveEntrySecrets(ctx, &entry); err != nil {
@@ -366,6 +371,10 @@ func LoadMCPServersConfinedContext(ctx context.Context, catalogDir string, ids [
 		if _, ok := want[entry.ID]; !ok || !entry.IsEnabled() {
 			continue
 		}
+		found[entry.ID] = struct{}{}
+		if entry.IsExternal() {
+			continue
+		}
 		entryCtx, cancel := ctx, func() {}
 		if _, bounded := ctx.Deadline(); bounded {
 			entryCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
@@ -376,7 +385,6 @@ func LoadMCPServersConfinedContext(ctx context.Context, catalogDir string, ids [
 			return nil, nil, fmt.Errorf("mcp server %q: %w", entry.ID, secretErr)
 		}
 		entries = append(entries, entry)
-		found[entry.ID] = struct{}{}
 	}
 	seen := map[string]struct{}{}
 	for _, id := range ids {
@@ -430,6 +438,9 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
 		}
 
+		if entry.ServedBy != "" && entry.ServedBy != "external" {
+			return nil, fmt.Errorf("mcp server %q: served_by must be external or omitted", entry.ID)
+		}
 		entry.catalogDir = catalogDir
 		entry.CatalogFile = name
 		entry.fileRefs = map[string]bool{}

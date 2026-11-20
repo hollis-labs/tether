@@ -49,8 +49,22 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	// instead of failing every connection of the principal (CW-20261024-0097). A server the daemon knows but
 	// has disabled is still refused below, and an id the live catalog does not know never reaches here (the
 	// transport validated the grant against it).
+	external := func(id string) bool {
+		if a.svc != nil {
+			if cat := a.svc.CurrentCatalog(); cat != nil {
+				if _, exists := cat.MCPServerEnabled[id]; exists {
+					return cat.MCPServerExternal[id]
+				}
+			}
+		}
+		return r.external[id]
+	}
 	var pending []string
 	for _, id := range grant {
+		if external(id) {
+			known[id] = true
+			continue
+		}
 		if _, running := r.known[id]; id != "tether" && !running && !slices.Contains(pending, id) {
 			pending = append(pending, id)
 			known[id] = true // lets SelectOrigins pass it through; it is removed again below
@@ -74,7 +88,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	}
 	running := selected[:0:0]
 	for _, id := range selected {
-		if slices.Contains(pending, id) {
+		if external(id) || slices.Contains(pending, id) {
 			continue
 		}
 		running = append(running, id)

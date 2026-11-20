@@ -175,12 +175,17 @@ type recoveryPolicy struct {
 }
 
 func NewClientPool(entries []config.MCPServerEntry, registry *ToolRegistry) *ClientPool {
+	local := make([]config.MCPServerEntry, 0, len(entries))
 	for _, entry := range entries {
+		if entry.IsExternal() {
+			continue
+		}
+		local = append(local, entry)
 		if entry.ID != "" {
 			registry.SetPrefix(entry.ID, entry.ToolPrefix)
 		}
 	}
-	return &ClientPool{runtime: processObservation, entries: entries, registry: registry,
+	return &ClientPool{runtime: processObservation, entries: local, registry: registry,
 		statuses: make(map[string]*clientStatus), refreshing: make(map[upstreamClient]bool),
 		policy: recoveryPolicy{Policy: supervise.DefaultPolicy(), handshakeTimeout: 10 * time.Second}}
 }

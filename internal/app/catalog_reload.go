@@ -70,7 +70,7 @@ func (s *Service) ReloadCatalog(_ context.Context) (*config.ReloadReport, error)
 	// list it as pending_restart instead of failing.
 	var added []string
 	for id, enabled := range fresh.MCPServerEnabled {
-		if was, known := old.MCPServerEnabled[id]; enabled && (!known || !was) {
+		if was, known := old.MCPServerEnabled[id]; enabled && !fresh.MCPServerExternal[id] && (!known || !was || old.MCPServerExternal[id]) {
 			added = append(added, id)
 		}
 	}
