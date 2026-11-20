@@ -18,18 +18,23 @@ const auditFile = "apply-audit.jsonl"
 // AuditRecord is one applied change: what, by whom, when, and the backup that
 // undoes it.
 type AuditRecord struct {
-	At         string     `json:"at"`
-	PlanID     string     `json:"plan_id"`
-	Name       string     `json:"name"`
-	TaskID     string     `json:"task_id,omitempty"`
-	Digest     string     `json:"digest"`
-	Files      []string   `json:"files"`
-	BackupID   string     `json:"backup_id"`
-	Activation string     `json:"activation"`
-	Privileged []string   `json:"privileged,omitempty"`
-	RollbackOf string     `json:"rollback_of,omitempty"`
-	PlannedBy  Caller     `json:"planned_by"`
-	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+	Reason          string     `json:"reason,omitempty"`
+	WindowExpiresAt *time.Time `json:"window_expires_at,omitempty"`
+	Event           string     `json:"event,omitempty"`
+	Principal       string     `json:"principal,omitempty"`
+	Rule            string     `json:"rule,omitempty"`
+	At              string     `json:"at"`
+	PlanID          string     `json:"plan_id"`
+	Name            string     `json:"name"`
+	TaskID          string     `json:"task_id,omitempty"`
+	Digest          string     `json:"digest"`
+	Files           []string   `json:"files"`
+	BackupID        string     `json:"backup_id"`
+	Activation      string     `json:"activation"`
+	Privileged      []string   `json:"privileged,omitempty"`
+	RollbackOf      string     `json:"rollback_of,omitempty"`
+	PlannedBy       Caller     `json:"planned_by"`
+	ApprovedAt      *time.Time `json:"approved_at,omitempty"`
 }
 
 // History returns the newest applied changes first, at most limit (default 20).

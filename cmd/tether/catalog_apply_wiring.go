@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/catalogapply"
 	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/config"
@@ -26,7 +27,7 @@ func catalogApplyPaths(cat *config.Catalog) (approverFile, backupRoot string) {
 
 // newCatalogApplyEngine builds the plan/approve/apply engine over the daemon's
 // catalog root (CW-20261012-0124).
-func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
+func newCatalogApplyEngine(svc *app.Service, issuers ...*authissuer.Issuer) *catalogapply.Engine {
 	approverFile, backupRoot := catalogApplyPaths(svc.Catalog)
 	engine := &catalogapply.Engine{
 		Root: svc.CatalogRoot,
@@ -49,10 +50,12 @@ func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 			}
 			return results
 		},
-		BackupRoot: backupRoot,
-		PlansFile:  filepath.Join(filepath.Dir(approverFile), "catalog-plans.json"),
-		Approver:   catalogapply.NewApprover(approverFile),
-		TTL:        catalogPlanTTL(os.Getenv("TETHER_CATALOG_PLAN_TTL")),
+		BackupRoot:     backupRoot,
+		PlansFile:      filepath.Join(filepath.Dir(approverFile), "catalog-plans.json"),
+		PolicyFile:     filepath.Join(filepath.Dir(approverFile), "catalog-approvers.json"),
+		BreakglassFile: filepath.Join(filepath.Dir(approverFile), "catalog-breakglass.json"),
+		Approver:       catalogapply.NewApprover(approverFile),
+		TTL:            catalogPlanTTL(os.Getenv("TETHER_CATALOG_PLAN_TTL")),
 		// Tachyon is the operator's own app (CW-20261030-0190): it approves non-privileged
 		// plans by delegation. TETHER_CATALOG_DELEGATED_PRIVILEGED=1 widens that to every plan.
 		DelegatedApps:       []string{"tachyon"},
@@ -85,8 +88,14 @@ func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 			return ids, nil
 		},
 	}
+	if len(issuers) > 0 && issuers[0] != nil {
+		engine.WindowTrust = issuers[0].Keys
+	}
 	if err := engine.RestorePlans(context.Background()); err != nil {
 		slog.Error("catalog plan persistence reload failed; saved plans unavailable", "error", err)
+	}
+	if _, err := engine.Approvers(); err != nil {
+		slog.Error("catalog approver policy/window unavailable; delegation fails closed", "error", err)
 	}
 	return engine
 }

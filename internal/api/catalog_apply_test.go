@@ -99,7 +99,14 @@ func newCatalogApplyDaemon(t *testing.T) *catalogApplyDaemon {
 		}
 		inner.ServeHTTP(w, r)
 	})
-	sock := filepath.Join(os.TempDir(), "tcad-"+filepath.Base(dir)+".sock")
+	// Keep Unix paths short without sharing the basename "001" across tests
+	// or concurrent go test processes.
+	socketDir, err := os.MkdirTemp("", "tcad-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	sock := filepath.Join(socketDir, "s")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

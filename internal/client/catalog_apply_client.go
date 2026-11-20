@@ -147,3 +147,17 @@ func (cc *CatalogApplyClient) ApproveBatch(ctx context.Context, req api.CatalogA
 	}
 	return &out, nil
 }
+
+// Approvers reads the local declarative policy and active breakglass window.
+func (cc *CatalogApplyClient) Approvers(ctx context.Context) (catalogapply.ApproverView, error) {
+	var out catalogapply.ApproverView
+	err := cc.do(ctx, http.MethodGet, "/catalog/approvers", nil, &out)
+	return out, err
+}
+
+// Breakglass opens or explicitly closes an operator-approved window.
+func (cc *CatalogApplyClient) Breakglass(ctx context.Context, req api.CatalogBreakglassRequest) (map[string]any, error) {
+	var out map[string]any
+	err := cc.do(ctx, http.MethodPost, "/catalog/breakglass", req, &out)
+	return out, err
+}

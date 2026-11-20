@@ -3333,3 +3333,14 @@ Tether still owns authoritative outcome/requester checks and exactly-once
 continuation. Basalisk remains the sole human assurance authority.
 
 See [terminal attachments](terminal-attachments.md) for the optional host-backed PTY API.
+
+### Catalog approver policy and breakglass
+
+`GET /catalog/approvers` returns the declarative principal policy, built-in
+legacy defaults and active window. `POST /catalog/breakglass` accepts
+`principal`, `reason`, `for` (Go duration), `passphrase`, or `end: true`, and
+requires the existing local operator admission plus passphrase verification.
+Single-plan delegated approval requires an authenticated listed service/agent
+and `catalog.approve` (with the documented absent-policy Tachyon compatibility
+exception). Batch approval remains operator-only. See
+[policy format, fences and restart verification](../catalog-approvers.md).

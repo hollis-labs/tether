@@ -35,8 +35,9 @@ const (
 // serviceTetherScopes is the dev allowlist of Tether scopes a service token may
 // hold: publish events, read, the message APIs, and the registry (writes and
 // reads, CW-20261024-0094: a service that enrolls and looks up actors). Nothing
-// that administers devices or the catalog, or launches sessions.
-var serviceTetherScopes = []string{"tether.events", "tether.read", "tether.messages", "tether.registry", "tether.registry_read"}
+// that administers devices or launches sessions. catalog.approve is a narrow
+// operator-issued capability; catalog policy still selects each delegate.
+var serviceTetherScopes = []string{"tether.events", "tether.read", "tether.messages", "tether.registry", "tether.registry_read", "catalog.approve"}
 
 // operatorAppTetherScopes are the extra write scopes a service token may hold for
 // an app the operator treats as itself (CW-20261030-0190: Tachyon), keyed by app id.
