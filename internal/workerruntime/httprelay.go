@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/security/secrets/tokenfile"
+	"github.com/hollis-labs/tether/internal/mcprecovery"
 )
 
 // HTTPRelay bridges one agent's MCP stdio stream to the hub's streamable-HTTP /mcp endpoint
@@ -49,10 +50,16 @@ type HTTPRelay struct {
 	streamWG sync.WaitGroup // the standalone server-to-agent stream
 	getOnce  sync.Once
 
-	reinitMu   sync.Mutex // serializes replacing an evicted hub session
-	reinitSeq  int        // numbers the relay-internal initialize ids
-	streamMu   sync.Mutex // guards streamLive
-	streamLive bool       // a standalone stream goroutine is running
+	reinitMu      sync.Mutex // guards the shared replacement attempt
+	reinitPending *relayReinitialization
+	reinitSeq     int        // numbers the relay-internal initialize ids
+	streamMu      sync.Mutex // guards streamLive
+	streamLive    bool       // a standalone stream goroutine is running
+}
+
+type relayReinitialization struct {
+	done chan struct{}
+	ok   bool
 }
 
 const (
@@ -229,9 +236,11 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 		lastStatus, lastCode = status, code
 		// The hub forgets an agent's session after two idle minutes (and on restart). A client that gets 404 for its
 		// session must start a new one, so do that once, invisibly, and send the same request again.
-		if status == http.StatusNotFound && code == "mcp_session_not_found" && used != "" && !reinitialized && !isInitialize(msg) {
+		if relaySessionLost(status, code) && used != "" && !reinitialized && !isInitialize(msg) {
 			reinitialized = true
-			if r.reinitialize(ctx, used) {
+			// Explicit session rejection is before dispatch; transport loss may
+			// follow execution, so only discovery/ping may be replayed in that case.
+			if r.reinitialize(ctx, used) && (code != "transport_error" || relayReadOnly(msg)) {
 				attempt-- // the replacement session does not use up the token-rotation retry
 				continue
 			}
@@ -257,6 +266,20 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 	}
 	r.logf("hub refused %s (status %d%s)", methodName(msg), lastStatus, codeSuffix(lastCode))
 	r.fail(id, fmt.Sprintf("hub refused the request (status %d%s)", lastStatus, codeSuffix(lastCode)))
+}
+
+// Only known session rejections establish that dispatch did not occur.
+func relaySessionLost(status int, code string) bool {
+	switch code {
+	case "mcp_stopping":
+		return status == http.StatusServiceUnavailable
+	case "mcp_session_not_found":
+		return status == http.StatusNotFound
+	case "mcp_initialize_required", "session_expired", "transport_error", "transport_not_sent":
+		return true
+	default:
+		return false
+	}
 }
 
 func codeSuffix(code string) string {
@@ -285,29 +308,64 @@ func (r *HTTPRelay) rememberInitialize(msg []byte) {
 // relay-internal id and notifications/initialized completes the handshake, so neither exchange reaches the agent,
 // which keeps believing in the one session it started. It returns true when requests can be sent again.
 func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	r.reinitMu.Lock()
-	defer r.reinitMu.Unlock()
+	if pending := r.reinitPending; pending != nil {
+		r.reinitMu.Unlock()
+		select {
+		case <-pending.done:
+			return ctx.Err() == nil && pending.ok
+		case <-ctx.Done():
+			return false
+		}
+	}
 	r.mu.Lock()
 	current, init := r.session, append([]byte(nil), r.initMsg...)
 	r.mu.Unlock()
 	if current != stale {
+		r.reinitMu.Unlock()
 		return true // another request already started the replacement
 	}
 	if len(init) == 0 {
-		return false // the agent never initialized through this relay; nothing to replay
+		r.reinitMu.Unlock()
+		return false // the agent never initialized through this relay
 	}
+	pending := &relayReinitialization{done: make(chan struct{})}
+	r.reinitPending = pending
+	r.reinitMu.Unlock()
+	ok := mcprecovery.Run(ctx, func(attempt context.Context) (bool, error) {
+		handshake, cancel := context.WithTimeout(attempt, mcprecovery.HandshakeTimeout)
+		defer cancel()
+		return r.reinitializeAttempt(handshake, init)
+	}) == nil
+	if ok {
+		// The recovery deadline bounds the handshake, not the replacement's
+		// notification stream. Keep that stream on the downstream lifetime.
+		r.restartStandaloneStream(ctx)
+	}
+	r.reinitMu.Lock()
+	pending.ok = ok
+	r.reinitPending = nil
+	close(pending.done)
+	r.reinitMu.Unlock()
+	return ok
+}
+
+func (r *HTTPRelay) reinitializeAttempt(ctx context.Context, init []byte) (bool, error) {
 	token, err := tokenfile.Read(r.TokenFile)
 	if err != nil {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	r.reinitSeq++
 	body, err := withRequestID(init, fmt.Sprintf("relay-reinit-%d", r.reinitSeq))
 	if err != nil {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, bytes.NewReader(body))
 	if err != nil {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -320,48 +378,51 @@ func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
 		if ctx.Err() == nil {
 			r.logf("could not start a replacement hub session: %s", sanitizeNetErr(err))
 		}
-		return false
+		return true, errors.New("replacement MCP peer unreachable")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		r.logf("could not start a replacement hub session (status %d%s)", resp.StatusCode, codeSuffix(hubErrorCode(resp.Body)))
-		return false
+		code := hubErrorCode(resp.Body)
+		r.logf("could not start a replacement hub session (status %d%s)", resp.StatusCode, codeSuffix(code))
+		return resp.StatusCode == http.StatusServiceUnavailable && code == "mcp_stopping", errors.New("replacement MCP handshake refused")
 	}
 	sid := resp.Header.Get("Mcp-Session-Id")
 	if sid == "" {
 		r.logf("could not start a replacement hub session (no session id)")
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, maxRelayLine+1))
 	if rerr != nil || len(raw) > maxRelayLine {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	protocol := protocolFromInitializeBody(resp.Header.Get("Content-Type"), raw)
+	if protocol == "" {
+		r.mu.Lock()
+		protocol = r.protocol
+		r.mu.Unlock()
+	}
+	if retry, err := r.completeHandshake(ctx, sid, protocol); err != nil {
+		return retry, err
+	}
 	r.mu.Lock()
 	r.session = sid
 	if protocol != "" {
 		r.protocol = protocol
 	}
 	r.mu.Unlock()
-	r.completeHandshake(ctx)
-	r.restartStandaloneStream(ctx)
 	r.logf("hub session expired; started a new one")
-	return true
+	return false, nil
 }
 
-// completeHandshake sends notifications/initialized on the replacement session. A failure here is logged only: the
-// next real request will surface it.
-func (r *HTTPRelay) completeHandshake(ctx context.Context) {
+// completeHandshake accepts a candidate session without publishing it to concurrent calls.
+func (r *HTTPRelay) completeHandshake(ctx context.Context, session, protocol string) (bool, error) {
 	token, err := tokenfile.Read(r.TokenFile)
 	if err != nil {
-		return
+		return false, errors.New("replacement MCP handshake refused")
 	}
-	r.mu.Lock()
-	session, protocol := r.session, r.protocol
-	r.mu.Unlock()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
 	if err != nil {
-		return
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -375,13 +436,16 @@ func (r *HTTPRelay) completeHandshake(ctx context.Context) {
 	}
 	resp, err := r.client().Do(req)
 	if err != nil {
-		return
+		return true, errors.New("replacement MCP peer unreachable")
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 300 {
-		r.logf("replacement hub session refused notifications/initialized (status %d)", resp.StatusCode)
+		code := hubErrorCode(resp.Body)
+		r.logf("replacement hub session refused notifications/initialized (status %d%s)", resp.StatusCode, codeSuffix(code))
+		return resp.StatusCode == http.StatusServiceUnavailable && code == "mcp_stopping", errors.New("replacement MCP handshake refused")
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return false, nil
 }
 
 // withRequestID returns a copy of a JSON-RPC request with its id replaced.
@@ -452,6 +516,10 @@ func (r *HTTPRelay) post(ctx context.Context, msg []byte, token string) (int, st
 		}
 		// The error text of a transport failure can echo the URL but never request headers.
 		r.logf("transport error posting to hub: %s", sanitizeNetErr(err))
+		var operation *net.OpError
+		if errors.As(err, &operation) && operation.Op == "dial" {
+			return -1, "transport_not_sent", false
+		}
 		return -1, "transport_error", false
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -477,11 +545,16 @@ func (r *HTTPRelay) post(ctx context.Context, msg []byte, token string) (int, st
 	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(resp.Header.Get("Content-Type"), ";", 2)[0]))
 	switch mediaType {
 	case "text/event-stream":
-		r.readSSE(resp.Body)
+		if code := r.readSSECall(resp.Body, requestID(msg)); code != "" {
+			return http.StatusBadRequest, code, false
+		}
 	default:
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRelayLine+1))
 		if err != nil || len(body) > maxRelayLine {
 			return -1, "bad_response", false
+		}
+		if code := relayRPCRejection(body, requestID(msg)); code != "" {
+			return http.StatusBadRequest, code, false
 		}
 		r.captureProtocol(msg, body)
 		r.emit(body)
@@ -510,27 +583,69 @@ func (r *HTTPRelay) captureProtocol(req, resp []byte) {
 	}
 }
 
-// readSSE forwards each `data:` event of a stream response to the agent.
-func (r *HTTPRelay) readSSE(body io.Reader) {
+// relayRPCRejection recognizes only an explicit rejection of this request.
+// Unrelated stream messages cannot authorize retrying a tool.
+func relayRPCRejection(payload []byte, id json.RawMessage) string {
+	var rpc struct {
+		ID    json.RawMessage `json:"id"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if len(id) == 0 || json.Unmarshal(payload, &rpc) != nil || !bytes.Equal(bytes.TrimSpace(rpc.ID), bytes.TrimSpace(id)) || rpc.Error == nil {
+		return ""
+	}
+	switch rpc.Error.Message {
+	case "mcp_initialize_required", "session_expired":
+		return rpc.Error.Message
+	default:
+		return ""
+	}
+}
+
+// readSSE forwards standalone stream messages without associating them with a call.
+func (r *HTTPRelay) readSSE(body io.Reader) { r.readSSECall(body, nil) }
+
+// readSSECall withholds an explicit rejection of the current request so post's
+// normal recovery path can replace the session. Once its terminal response has
+// been forwarded, a later stream message cannot cause the operation to repeat.
+func (r *HTTPRelay) readSSECall(body io.Reader, id json.RawMessage) string {
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64<<10), maxRelayLine)
 	var data bytes.Buffer
-	flush := func() {
+	completed := false
+	flush := func() string {
 		if data.Len() == 0 {
-			return
+			return ""
 		}
 		payload := bytes.TrimSpace(data.Bytes())
 		data.Reset()
 		if len(payload) > 0 && json.Valid(payload) {
+			if !completed {
+				if code := relayRPCRejection(payload, id); code != "" {
+					return code
+				}
+				var response struct {
+					ID     json.RawMessage `json:"id"`
+					Result json.RawMessage `json:"result"`
+					Error  json.RawMessage `json:"error"`
+				}
+				if len(id) > 0 && json.Unmarshal(payload, &response) == nil && bytes.Equal(bytes.TrimSpace(response.ID), bytes.TrimSpace(id)) && (len(response.Result) > 0 || len(response.Error) > 0) {
+					completed = true
+				}
+			}
 			r.captureProtocolFromStream(payload)
 			r.emit(payload)
 		}
+		return ""
 	}
 	for sc.Scan() {
 		line := sc.Text()
 		switch {
 		case line == "":
-			flush()
+			if code := flush(); code != "" {
+				return code
+			}
 		case strings.HasPrefix(line, "data:"):
 			if data.Len() > 0 {
 				data.WriteByte('\n')
@@ -538,7 +653,7 @@ func (r *HTTPRelay) readSSE(body io.Reader) {
 			data.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		}
 	}
-	flush()
+	return flush()
 }
 
 // captureProtocolFromStream handles an initialize result delivered as an SSE event.
@@ -596,6 +711,9 @@ func hubErrorCode(body io.Reader) string {
 			Code string `json:"code"`
 		} `json:"error"`
 		Code string `json:"code"`
+	}
+	if strings.TrimSpace(string(raw)) == "session not found" {
+		return "mcp_session_not_found"
 	}
 	if json.Unmarshal(raw, &shaped) != nil {
 		return ""

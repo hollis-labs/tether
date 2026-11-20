@@ -6,28 +6,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/mcprecovery"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MCPInitializeTimeout allows cold daemon-owned upstreams to initialize.
-const MCPInitializeTimeout = 15 * time.Second
+const MCPInitializeTimeout = mcprecovery.HandshakeTimeout
 
 type MCPOptions struct {
 	// OnTransportConnected exposes teardown of the underlying connection after
 	// callers have drained, without waiting on the SDK's graceful RPC close.
 	OnTransportConnected func(mcpsdk.Connection)
-	// OnSessionMissing observes an explicit expiry response for a known SDK session, including
+	// OnSessionMissing observes explicit expiry/stopping for a known SDK session, including
 	// background streams whose errors the SDK reformats without wrapping.
 	OnSessionMissing func()
-	ClientOptions    *mcpsdk.ClientOptions
-	Profile          *string
-	DiscoveryMode    *string
+	// OnStopping observes an explicit pre-dispatch mcp_stopping POST rejection.
+	// GET failures may follow tool execution and never invoke this observer.
+	OnStopping    func(context.Context)
+	ClientOptions *mcpsdk.ClientOptions
+	Profile       *string
+	DiscoveryMode *string
 	// ClientLabel is a self-declared caller name sent as X-Tether-Client-Label on
 	// every request. The daemon records it as an unverified claim in telemetry;
 	// it is never used for authorization (CW-20261024-0048).
@@ -65,7 +68,7 @@ func (c *Client) ConnectMCP(ctx context.Context, opts MCPOptions) (*mcpsdk.Clien
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	httpClient.Transport = mcpErrorTransport{base: base, onSessionMissing: opts.OnSessionMissing, clientLabel: opts.ClientLabel, runToken: opts.RunToken}
+	httpClient.Transport = mcpErrorTransport{base: base, onSessionMissing: opts.OnSessionMissing, onStopping: opts.OnStopping, clientLabel: opts.ClientLabel, runToken: opts.RunToken}
 	// SDK retries resume SSE via GET/Last-Event-ID; they never resend POST.
 	// No OAuth handler is installed (the only SDK path that re-POSTs).
 	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &httpClient, MaxRetries: 1}
@@ -88,6 +91,7 @@ func (t mcpObservedTransport) Connect(ctx context.Context) (mcpsdk.Connection, e
 type mcpErrorTransport struct {
 	base             http.RoundTripper
 	onSessionMissing func()
+	onStopping       func(context.Context)
 	clientLabel      string
 	runToken         string
 }
@@ -110,7 +114,7 @@ func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if response != nil && response.StatusCode == http.StatusUnauthorized && t.runToken != "" && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
 		t.onSessionMissing()
 	}
-	if response != nil && response.StatusCode == http.StatusNotFound && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
+	if response != nil && (response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusServiceUnavailable) && (t.onSessionMissing != nil || t.onStopping != nil) {
 		// A generic route 404 is not proof of expiry. Preserve the response for
 		// the SDK while recognizing only the daemon/SDK's explicit expiry bodies.
 		prefix, readErr := io.ReadAll(io.LimitReader(response.Body, 1024))
@@ -124,7 +128,15 @@ func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			} `json:"error"`
 		}
 		decoded := json.Unmarshal(prefix, &body) == nil
-		if readErr == nil && ((decoded && body.Error.Code == "mcp_session_not_found") || strings.TrimSpace(string(prefix)) == "session not found") {
+		if readErr == nil && decoded && response.StatusCode == http.StatusServiceUnavailable && body.Error.Code == "mcp_stopping" {
+			if t.onStopping != nil && r.Method == http.MethodPost {
+				t.onStopping(r.Context())
+			}
+			if r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
+				t.onSessionMissing()
+			}
+		}
+		if t.onSessionMissing != nil && r.Header.Get("Mcp-Session-Id") != "" && readErr == nil && ((decoded && (body.Error.Code == "mcp_session_not_found" || body.Error.Code == "mcp_initialize_required" || body.Error.Code == "session_expired")) || strings.TrimSpace(string(prefix)) == "session not found") {
 			t.onSessionMissing()
 		}
 	}

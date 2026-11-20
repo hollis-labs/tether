@@ -18,6 +18,7 @@ import (
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/mcprecovery"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -90,8 +91,8 @@ func Run(ctx context.Context, dc *client.Client, opts client.MCPOptions, transpo
 	defer relay.close()
 	initialized := upstream.InitializeResult()
 	server := gomcp.NewServer("tether-forwarder", "1",
-		// Match the daemon's legacy session transport and preserve relay behavior.
-		gomcp.WithSupportedProtocolVersions([]string{"2025-11-25"}),
+		// Negotiate independently on each hop, including Basalisk's stdio client.
+		gomcp.WithSupportedProtocolVersions([]string{"2025-11-25", "2025-03-26"}),
 		gomcp.WithInstructions(initialized.Instructions),
 		gomcp.WithCapabilities(initialized.Capabilities),
 		gomcp.WithoutPanicGuard(),
@@ -255,11 +256,34 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	missingState := &atomic.Bool{}
 	options := d.opts
 	options.OnSessionMissing = func() { missingState.Store(true) }
+	stopping := &atomic.Bool{}
+	options.OnStopping = func(ctx context.Context) {
+		stopping.Store(true)
+		if rejected, ok := ctx.Value(stoppingCallKey{}).(*atomic.Bool); ok {
+			rejected.Store(true)
+		}
+	}
 	var transport mcp.Connection
 	options.OnTransportConnected = func(connection mcp.Connection) { transport = connection }
-	session, err := d.client.ConnectMCP(setup, options)
+	var session *mcp.ClientSession
+	var err error
+	connect := func(parent context.Context) (bool, error) {
+		attempt, stop := context.WithTimeout(parent, client.MCPInitializeTimeout)
+		defer stop()
+		stopping.Store(false)
+		missingState.Store(false)
+		session, err = d.client.ConnectMCP(attempt, options)
+		return stopping.Load() || daemonTransportFailure(err) || errors.Is(err, context.DeadlineExceeded), err
+	}
+	if retired != nil {
+		// Recovery outlives a single cold handshake, but respects caller cancellation.
+		cancel()
+		err = mcprecovery.Run(ctx, connect)
+	} else {
+		_, err = connect(setup)
+	}
 	d.mu.Lock()
-	if err != nil && setup.Err() != nil {
+	if err != nil && retired == nil && setup.Err() != nil {
 		err = setup.Err()
 	}
 	pending.session, pending.err = session, err
@@ -316,7 +340,7 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 	d.mu.Lock()
 	observedMissing := d.session != session || d.missing.Load()
 	d.mu.Unlock()
-	if !observedMissing {
+	if !observedMissing && !initializeRequired(err) {
 		// A closed transport can race our Wait observer. Read-only operations may
 		// reconnect once, but generic/unknown 404 and protocol errors must surface.
 		if errors.Is(err, mcp.ErrSessionMissing) || strings.Contains(err.Error(), "session not found") || strings.Contains(err.Error(), "Not Found") {
@@ -343,9 +367,11 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 	return call(session)
 }
 
-// Probe before tool dispatch so idle views recover without ever replaying a
-// mutation. The view can still disappear during execution: that outcome is
-// unknown and belongs to the caller, regardless of the SDK error category.
+type stoppingCallKey struct{}
+
+// Probe before tool dispatch. Only an explicit pre-dispatch stopping rejection
+// permits one tool retry; an outcome that may include execution stays final.
+
 func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	if _, err := d.invokeRead(ctx, func(session *mcp.ClientSession) (mcp.Result, error) {
 		return nil, session.Ping(ctx, nil)
@@ -356,8 +382,23 @@ func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams
 	if err != nil {
 		return nil, err
 	}
-	defer release()
-	result, err := session.CallTool(ctx, params)
+	rejected := &atomic.Bool{}
+	callCtx := context.WithValue(ctx, stoppingCallKey{}, rejected)
+	result, err := session.CallTool(callCtx, params)
+	release()
+	if err != nil && ctx.Err() == nil && rejected.Load() {
+		// This specific HTTP response is emitted before dispatch. A concurrent
+		// stream failure cannot set this call's flag, so uncertain tools stay final.
+		if _, recoveryErr := d.get(ctx, session); recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		replacement, done, recoveryErr := d.acquire(ctx)
+		if recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		defer done()
+		return replacement.CallTool(ctx, params)
+	}
 	if err != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -420,6 +461,9 @@ func relayError(err error) *jsonrpc.Error {
 }
 
 func daemonTransportFailure(err error) bool {
+	if err == nil {
+		return false
+	}
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
@@ -465,4 +509,10 @@ func relayMeta(meta mcp.Meta) mcp.Meta {
 	delete(forwarded, mcp.MetaKeyClientCapabilities)
 	delete(forwarded, mcp.MetaKeyClientInfo)
 	return forwarded
+}
+
+// Some peers report lost MCP state as a JSON-RPC error rather than HTTP 404.
+func initializeRequired(err error) bool {
+	var protocol *jsonrpc.Error
+	return errors.As(err, &protocol) && (strings.Contains(protocol.Message, "mcp_initialize_required") || strings.Contains(protocol.Message, "session_expired"))
 }
