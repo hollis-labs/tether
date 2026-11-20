@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
 	"github.com/hollis-labs/tether/internal/store"
@@ -31,11 +33,24 @@ func TestRecordedExitStartupAndPeriodic(t *testing.T) {
 			recordedExitFixture(t, svc, "failed", "", 1)
 			recordedExitFixture(t, svc, "completed", "", 0)
 			recordedExitFixture(t, svc, "remote-ended", "disconnected", 1)
+			reasonID, _, err := svc.Store.InsertEvent(events.ScopeSession, "failed", "session.failed", `{"reason":"provider refused request"}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			for i := 0; i < 2; i++ {
 				if entry == "startup" {
 					svc.ReconcileStaleState()
 				} else if err := svc.SweepSessionReaper(context.Background(), time.Now()); err != nil {
 					t.Fatal(err)
+				}
+
+				var reason string
+				if err := svc.Store.DB().QueryRow(`SELECT payload_json FROM events WHERE id=?`, reasonID).Scan(&reason); err != nil {
+					t.Fatal(err)
+				}
+				if reason != `{"reason":"provider refused request"}` {
+					t.Fatalf("failure reason changed: %s", reason)
 				}
 				for _, id := range []string{"failed", "completed", "remote-ended"} {
 					row, err := svc.Store.GetSession(id)
@@ -152,5 +167,70 @@ func TestRecordedExitRemoteLiveAndTransportError(t *testing.T) {
 	}
 	if err := r.svc.StopSession("unreachable"); err == nil {
 		t.Fatal("unreachable worker hidden")
+	}
+}
+
+func TestRecordedExitPeriodicBudgetAndCursor(t *testing.T) {
+	svc := stopHarness(t)
+	// An entire first page remains in flight. The cursor must still advance.
+	var unlocks []func()
+	for i := 0; i < 96; i++ {
+		id := fmt.Sprintf("recorded-%03d", i)
+		recordedExitFixture(t, svc, id, "", 1)
+		if i < 32 {
+			unlock, err := svc.lockSessionLaunch(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unlocks = append(unlocks, unlock)
+		}
+	}
+	for i := 0; i < 40; i++ {
+		if err := svc.Store.CreateSession(store.SessionRow{ID: fmt.Sprintf("ordinary-%03d", i), State: "launching"}, &launch.Plan{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() {
+		for _, unlock := range unlocks {
+			unlock()
+		}
+	}()
+	for tick := 0; tick < 3; tick++ {
+		if err := svc.SweepSessionReaper(context.Background(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if got := svc.reaperState().lastExamined; got != reaperMaxPerSweep {
+			t.Fatalf("ordinary work starved or budget exceeded: examined=%d", got)
+		}
+		var settled int
+		if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM sessions WHERE state='failed'`).Scan(&settled); err != nil {
+			t.Fatal(err)
+		}
+		want := tick * 32
+		if settled != want {
+			t.Fatalf("tick %d settled=%d want=%d", tick, settled, want)
+		}
+		var orphaned int
+		if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM sessions WHERE state='orphaned'`).Scan(&orphaned); err != nil {
+			t.Fatal(err)
+		}
+		if orphaned != 0 {
+			t.Fatal("unvisited recorded exits were orphaned")
+		}
+	}
+}
+
+func TestRecordedExitStartupWalksPages(t *testing.T) {
+	svc := stopHarness(t)
+	for i := 0; i < 70; i++ {
+		recordedExitFixture(t, svc, fmt.Sprintf("recorded-%03d", i), "", 0)
+	}
+	svc.ReconcileStaleState()
+	var settled int
+	if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM sessions WHERE state='completed' AND exit_code=0 AND ended_at='2026-11-19T00:00:00Z'`).Scan(&settled); err != nil {
+		t.Fatal(err)
+	}
+	if settled != 70 {
+		t.Fatalf("settled=%d", settled)
 	}
 }

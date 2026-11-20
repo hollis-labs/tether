@@ -7,9 +7,34 @@ import (
 	"github.com/hollis-labs/libs/mesh/core/teams"
 )
 
+// Prefer the current nonempty roster. Only when it is absent/empty may the
+// latest nonempty retained snapshot prove completed teardown. Historical active
+// members therefore cannot be hidden by deleting the current roster.
+const dissolvedRosterPayloadSQL = `COALESCE(
+ (SELECT payload FROM team_rosters WHERE run_id=r.run_id AND json_array_length(payload,'$.members')>0),
+ (SELECT payload FROM team_roster_snapshots WHERE run_id=r.run_id AND json_array_length(payload,'$.members')>0 ORDER BY version DESC LIMIT 1))`
+
+const dissolvedRosterProofSQL = `COALESCE(json_array_length(` + dissolvedRosterPayloadSQL + `,'$.members')>0 AND NOT EXISTS(
+ SELECT 1 FROM json_each(` + dissolvedRosterPayloadSQL + `,'$.members') m WHERE COALESCE(json_extract(m.value,'$.status'),'') NOT IN ('stopped','released','failed')),0)`
+
+// DissolvedRoster is a read-only recovery view, never a live roster replacement.
+// Removed routing and a fully terminal retained roster must both exist.
+func (s *Store) DissolvedRoster(ctx context.Context, id string) (teams.Roster, error) {
+	var payload []byte
+	err := s.db.QueryRowContext(ctx, `SELECT `+dissolvedRosterPayloadSQL+` FROM team_runs r JOIN team_host_routing h ON h.run_id=r.run_id
+ WHERE r.run_id=? AND h.removed=1 AND `+dissolvedRosterProofSQL, id).Scan(&payload)
+	if err != nil {
+		return teams.Roster{}, readError("dissolved roster", err)
+	}
+	var roster teams.Roster
+	err = decode(payload, &roster)
+	return roster, err
+}
+
 // ReconcileDissolvedRun repairs a run whose teardown committed its removed
-// routing and terminal roster but did not commit the run status. Missing or
-// empty rosters and every live/pending/unknown member state are retained.
+// routing and terminal roster but did not commit the run status. Missing/empty
+// current rosters require a retained terminal snapshot; live/pending/unknown
+// member states are retained.
 // The same write fence as roster mutation prevents a concurrent member add
 // from racing the proof. JSON patching preserves result and extension fields.
 func (s *Store) ReconcileDissolvedRun(ctx context.Context, id string) (settled bool, err error) {
@@ -27,11 +52,10 @@ func (s *Store) ReconcileDissolvedRun(ctx context.Context, id string) (settled b
 			return nil
 		}
 		var proof bool
-		if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_host_routing WHERE run_id=? AND removed=1)
-   AND EXISTS(SELECT 1 FROM team_rosters WHERE run_id=? AND json_array_length(payload,'$.members')>0
-   AND NOT EXISTS(SELECT 1 FROM json_each(payload,'$.members') m WHERE COALESCE(json_extract(m.value,'$.status'),'') NOT IN ('stopped','released','failed')))`, id, id).Scan(&proof); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_runs r JOIN team_host_routing h ON h.run_id=r.run_id WHERE r.run_id=? AND h.removed=1 AND `+dissolvedRosterProofSQL+`)`, id).Scan(&proof); err != nil {
 			return err
 		}
+
 		if !proof {
 			return nil
 		}
@@ -54,11 +78,7 @@ func (s *Store) ReconcileDissolvedRuns(ctx context.Context, limit int) error {
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT r.run_id FROM team_runs r JOIN team_host_routing h ON h.run_id=r.run_id
- WHERE h.removed=1 AND EXISTS(SELECT 1 FROM team_rosters tr WHERE tr.run_id=r.run_id
- AND json_array_length(tr.payload,'$.members')>0
- AND NOT EXISTS(SELECT 1 FROM json_each(tr.payload,'$.members') m WHERE COALESCE(json_extract(m.value,'$.status'),'') NOT IN ('stopped','released','failed')))
- AND json_extract(r.payload,'$.status') NOT IN ('dissolved','completed','failed','canceled','rejected')
- ORDER BY r.run_id LIMIT ?`, limit)
+ WHERE h.removed=1 AND `+dissolvedRosterProofSQL+` AND json_extract(r.payload,'$.status') NOT IN ('dissolved','completed','failed','canceled','rejected') ORDER BY r.run_id LIMIT ?`, limit)
 	if err != nil {
 		return err
 	}

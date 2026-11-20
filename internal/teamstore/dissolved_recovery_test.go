@@ -82,3 +82,60 @@ func TestReconcileDissolvedRunsProofAndPreservation(t *testing.T) {
 		t.Fatal("terminal outcome overwritten")
 	}
 }
+
+func TestReconcileDissolvedRunsRetainedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, status, current string
+		want                  bool
+	}{
+		{"deleted-terminal", "stopped", "deleted", true},
+		{"empty-terminal", "released", "empty", true},
+		{"deleted-active", "active", "deleted", false},
+		{"empty-pending", "provisioning", "empty", false},
+		{"current-active", "stopped", "active", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "db")
+			db, s := open(t, path, teamstore.Options{})
+			createRun(t, s, tc.name)
+			must(t, s.Mutate(ctx, tc.name, func(r *teams.Roster) error {
+				r.Members = []teams.Member{{ID: "owner", Actor: "msg://service/local/owner", Governance: teams.Owner, Status: tc.status}}
+				return nil
+			}))
+			_, err := db.DB().Exec(`INSERT INTO team_host_routing(run_id,install_key,payload,channel,removed) VALUES(?,?,'{}','channel',1)`, tc.name, tc.name)
+			must(t, err)
+			if tc.current == "deleted" {
+				_, err = db.DB().Exec(`DELETE FROM team_rosters WHERE run_id=?`, tc.name)
+				must(t, err)
+			} else {
+				must(t, s.Mutate(ctx, tc.name, func(r *teams.Roster) error {
+					if tc.current == "empty" {
+						r.Members = nil
+					} else {
+						r.Members[0].Status = "active"
+					}
+					return nil
+				}))
+			}
+			_, restarted := open(t, path, teamstore.Options{})
+			for i := 0; i < 2; i++ {
+				must(t, restarted.ReconcileDissolvedRuns(ctx, 50))
+				settled, err := restarted.ReconcileDissolvedRun(ctx, tc.name)
+				must(t, err)
+				if settled != tc.want {
+					t.Fatalf("settled=%v", settled)
+				}
+				roster, err := restarted.DissolvedRoster(ctx, tc.name)
+				if tc.want {
+					must(t, err)
+					if len(roster.Members) != 1 || roster.Members[0].ID != "owner" {
+						t.Fatalf("roster=%+v", roster)
+					}
+				} else if !errors.Is(err, teams.ErrNotFound) {
+					t.Fatalf("unsafe recovery view: %v", err)
+				}
+			}
+		})
+	}
+}

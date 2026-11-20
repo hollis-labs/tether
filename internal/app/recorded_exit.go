@@ -56,21 +56,40 @@ func (s *Service) reconcileRecordedExit(ctx context.Context, id string) (bool, e
 	return true, err
 }
 
+// Startup walks bounded pages once, under its existing startup deadline.
 func (s *Service) reconcileRecordedExits(ctx context.Context) error {
-	ids, err := s.Store.RecordedExitCandidates(ctx)
+	after := ""
+	for {
+		next, _, err := s.reconcileRecordedExitBatch(ctx, after, reaperMaxPerSweep)
+		if err != nil || next == "" {
+			return err
+		}
+		after = next
+	}
+}
+
+// The periodic caller shares its examination/time budget with the ordinary
+// reaper and retains this keyset cursor even when a live candidate is skipped.
+func (s *Service) reconcileRecordedExitBatch(ctx context.Context, after string, limit int) (next string, examined int, result error) {
+	ids, err := s.Store.RecordedExitCandidates(ctx, after, limit)
 	if err != nil {
-		return err
+		return after, 0, err
 	}
 	var failures []error
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
-			return errors.Join(append(failures, err)...)
+			return next, examined, errors.Join(append(failures, err)...)
 		}
+		next = id
+		examined++
 		if _, err := s.reconcileRecordedExit(ctx, id); err != nil {
 			failures = append(failures, err)
 		}
 	}
-	return errors.Join(failures...)
+	if len(ids) < limit {
+		next = ""
+	}
+	return next, examined, errors.Join(failures...)
 }
 
 func (s *Service) sessionLaunchPending(id string) bool {

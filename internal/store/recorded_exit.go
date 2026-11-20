@@ -8,8 +8,11 @@ import (
 // RecordedExitCandidates selects inconsistent running rows with an observed
 // exit. PID zero or absence from a process-local manager alone is not evidence.
 // Worker rows are included only when their durable exit has already arrived.
-func (s *Store) RecordedExitCandidates(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM sessions WHERE state='running' AND COALESCE(pid,0)=0 AND exit_code IS NOT NULL AND COALESCE(ended_at,'')<>'' ORDER BY id`)
+func (s *Store) RecordedExitCandidates(ctx context.Context, after string, limit int) ([]string, error) {
+	if limit < 1 || limit > 64 {
+		limit = 64
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM sessions WHERE id>? AND state='running' AND COALESCE(pid,0)=0 AND exit_code IS NOT NULL AND COALESCE(ended_at,'')<>'' AND NOT EXISTS(SELECT 1 FROM session_shims WHERE session_id=sessions.id) ORDER BY id LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, err
 	}

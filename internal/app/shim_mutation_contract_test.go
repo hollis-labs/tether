@@ -1026,3 +1026,29 @@ func shimDrainWithDiagnostics(ctx context.Context, t *testing.T, f *shimAppFixtu
 		t.Fatal(err)
 	}
 }
+
+func TestRecordedExitPeriodicDefersToShimOutcome(t *testing.T) {
+	f := shimFixture(t)
+	receipt := f.start(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := f.svc.DrainSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Stale durable metadata must not bypass the provider's authoritative exit.
+	if _, err := f.svc.Store.DB().Exec(`UPDATE sessions SET pid=0,ended_at='old',exit_code=1 WHERE id=?`, f.req.ID); err != nil {
+		t.Fatal(err)
+	}
+	inspections := 0
+	f.svc.shimHosting.inspect = func(context.Context, shimhost.Receipt) (shimhost.Inspection, error) {
+		inspections++
+		return shimhost.Inspection{Receipt: receipt, Exit: shim.Exit{Status: 7}}, nil
+	}
+	if err := f.svc.SweepSessionReaper(context.Background(), time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	row, err := f.svc.Store.GetSession(f.req.ID)
+	if err != nil || inspections == 0 || row.State != "failed" || row.ExitCode.Int64 != 7 {
+		t.Fatalf("shim outcome: %+v inspections=%d err=%v", row, inspections, err)
+	}
+}

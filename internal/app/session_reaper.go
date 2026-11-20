@@ -37,11 +37,12 @@ const (
 )
 
 type sessionReaper struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	sweep  sync.Mutex
-	stops  sync.Map
-	cursor int // rotating start index, guarded by sweep
+	cancel             context.CancelFunc
+	done               chan struct{}
+	sweep              sync.Mutex
+	stops              sync.Map
+	cursor             int    // rotating start index, guarded by sweep
+	recordedExitCursor string // keyset cursor; also guarded by sweep
 	// lastExamined and lastSkipped describe the previous sweep (guarded by sweep; read by tests).
 	lastExamined, lastSkipped int
 	backoff                   sync.Map // session id -> reaperBackoff
@@ -179,19 +180,25 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 	if err := s.requireEventBus(); err != nil {
 		return err
 	}
-	if err := s.reconcileRecordedExits(ctx); err != nil {
-		return err
-	}
 	r := s.reaperState()
 	r.sweep.Lock()
 	defer r.sweep.Unlock()
 	began := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, reaperSweepBudget)
+	defer cancel()
+	// Reserve half the shared 64-candidate budget for ordinary reaper work;
+	// permanently retained recorded-exit candidates cannot starve that work.
+	next, recorded, err := s.reconcileRecordedExitBatch(ctx, r.recordedExitCursor, reaperMaxPerSweep/2)
+	r.recordedExitCursor = next
+	if err != nil {
+		return err
+	}
 	rows, err := s.Store.ReaperCandidates(ctx)
 	if err != nil {
 		return err
 	}
 	var failures []error
-	examined, skipped := 0, 0
+	examined, skipped := recorded, 0
 	n := len(rows)
 	start := 0
 	if n > 0 {
@@ -210,6 +217,11 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 		row := rows[(start+i)%n]
 		if session.State(row.State).Terminal() || row.State == string(session.StateOrphaned) {
 			r.clear(row.ID)
+			continue
+		}
+		// Recorded exits belong to the bounded keyset pass above, including
+		// candidates beyond this tick's page. Never reclassify them as orphans.
+		if !row.HasShim && row.State == "running" && row.PID.Int64 == 0 && row.ExitCode.Valid && row.EndedAt.Valid && row.EndedAt.String != "" {
 			continue
 		}
 		if s.sessionLaunchPending(row.ID) {

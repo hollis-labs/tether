@@ -203,7 +203,12 @@ func (s *Service) call(ctx context.Context, verb, key string, request any, fn fu
 		return Result{}, typed(err)
 	}
 	if runID != "" {
-		if err = s.membership(ctx, runID, p); err != nil {
+		if verb == string(mesh.TeamDissolve) {
+			err = s.dissolveMembership(ctx, runID, p)
+		} else {
+			err = s.membership(ctx, runID, p)
+		}
+		if err != nil {
 			return Result{}, typed(err)
 		}
 	}
