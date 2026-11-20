@@ -94,6 +94,10 @@ func TestRunLaunchEnvironmentBindingAndNoPersistence(t *testing.T) {
 	if _, err := svc.Store.DB().Exec(`UPDATE sessions SET task_id='reassigned' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
+	stale := api.ResolveCallerContext(ctx, svc.Store, nil)
+	if stale.RunVerified || stale.RunID != "" || stale.TokenJTI != "" {
+		t.Fatal("reassigned snapshot retained stale signed context")
+	}
 	if _, err := svc.VerifyRunToken(token, p); !errors.Is(err, runtoken.ErrInvalid) {
 		t.Fatal("signed task disagreement accepted")
 	}
