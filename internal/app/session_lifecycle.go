@@ -153,6 +153,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 		return nil, err
 	}
 	stampTaskID(plan, in.TaskID)
+	stampRunID(plan, in.RunID)
 	plan.App = in.App
 	plan.Continuity = in.Continuity
 	plan.RequestingPrincipal = idempotencyPrincipal(in.IdempotencyPrincipal)
@@ -192,6 +193,19 @@ func stampTaskID(plan *launch.Plan, taskID string) {
 		plan.Env = map[string]string{}
 	}
 	plan.Env[TaskIDEnv] = taskID
+}
+
+// stampRunID seals the launcher-owned run after every environment merge.
+func stampRunID(plan *launch.Plan, runID string) {
+	plan.RunID = runID
+	if runID == "" {
+		delete(plan.Env, RunIDEnv)
+		return
+	}
+	if plan.Env == nil {
+		plan.Env = map[string]string{}
+	}
+	plan.Env[RunIDEnv] = runID
 }
 
 func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIdempotency) (launched *Launched, err error) {
@@ -256,6 +270,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 		TaskID:         nullableTaskID(plan.TaskID),
+		RunID:          nullableTaskID(plan.RunID),
 		App:            nullableApp(plan.App),
 	}
 	s.sealTeamPlanEvidence(plan, "")

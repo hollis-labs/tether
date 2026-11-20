@@ -21,7 +21,7 @@ func (s stampSessions) Session(ctx context.Context, id string) (eventstamp.Sessi
 	}
 	return eventstamp.SessionRow{
 		WorkerID: row.WorkerID, ProjectID: row.ProjectID, WorkstreamID: row.WorkstreamID.String,
-		TaskID: row.TaskID.String, LaunchID: row.LaunchID, LogicalAgentID: row.LogicalAgentID,
+		TaskID: row.TaskID.String, RunID: row.RunID.String, LaunchID: row.LaunchID, LogicalAgentID: row.LogicalAgentID,
 	}, true, nil
 }
 

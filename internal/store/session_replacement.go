@@ -172,8 +172,8 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 		return SessionReplacement{}, err
 	}
 	var source SessionRow
-	err := q.QueryRowContext(ctx, `SELECT id, launch_id, project_id, COALESCE(logical_agent_id,''), provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, task_id, app, requesting_principal FROM sessions WHERE id=?`, id).
-		Scan(&source.ID, &source.LaunchID, &source.ProjectID, &source.LogicalAgentID, &source.ProviderID, &source.ProviderKind, &source.Workspace, &source.State, &source.PID, &source.ExitCode, &source.CreatedAt, &source.UpdatedAt, &source.EndedAt, &source.SessionGroupID, &source.ParentSessionID, &source.Intent, &source.Publication, &source.WorkstreamID, &source.RefAttribution, &source.RouteJSON, &source.TaskID, &source.App, &source.RequestingPrincipal)
+	err := q.QueryRowContext(ctx, `SELECT id, launch_id, project_id, COALESCE(logical_agent_id,''), provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, task_id, run_id, app, requesting_principal FROM sessions WHERE id=?`, id).
+		Scan(&source.ID, &source.LaunchID, &source.ProjectID, &source.LogicalAgentID, &source.ProviderID, &source.ProviderKind, &source.Workspace, &source.State, &source.PID, &source.ExitCode, &source.CreatedAt, &source.UpdatedAt, &source.EndedAt, &source.SessionGroupID, &source.ParentSessionID, &source.Intent, &source.Publication, &source.WorkstreamID, &source.RefAttribution, &source.RouteJSON, &source.TaskID, &source.RunID, &source.App, &source.RequestingPrincipal)
 	if err != nil || source != in.Source {
 		return SessionReplacement{}, ErrSessionReplacementUnavailable
 	}
@@ -315,8 +315,8 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	now := eventTime.Format(time.RFC3339Nano)
 	// The source row is the authoritative provider/workstream/route identity;
 	// the caller supplies only an isolated prepared destination workspace.
-	_, err = q.ExecContext(ctx, `INSERT INTO sessions(id,launch_id,project_id,logical_agent_id,provider_id,provider_kind,workspace,state,created_at,updated_at,parent_session_id,intent,publication,session_group_id,workstream_id,ref_attribution,route_json,task_id,app,requesting_principal)
- SELECT ?,launch_id,project_id,logical_agent_id,provider_id,provider_kind,?,'created',?,?,id,'resume',publication,session_group_id,workstream_id,NULL,route_json,task_id,app,? FROM sessions WHERE id=?`, in.DestinationID, in.Workspace, now, now, IdempotencyPrincipalTeam, id)
+	_, err = q.ExecContext(ctx, `INSERT INTO sessions(id,launch_id,project_id,logical_agent_id,provider_id,provider_kind,workspace,state,created_at,updated_at,parent_session_id,intent,publication,session_group_id,workstream_id,ref_attribution,route_json,task_id,run_id,app,requesting_principal)
+ SELECT ?,launch_id,project_id,logical_agent_id,provider_id,provider_kind,?,'created',?,?,id,'resume',publication,session_group_id,workstream_id,NULL,route_json,task_id,run_id,app,? FROM sessions WHERE id=?`, in.DestinationID, in.Workspace, now, now, IdempotencyPrincipalTeam, id)
 	if err != nil {
 		return result, err
 	}

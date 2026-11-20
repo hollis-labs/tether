@@ -53,16 +53,16 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	c := client.New("tcp:"+srv.URL[len("http://"):], client.WithToken(token))
 
 	const id = "CW-20261016-0155"
-	res, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id})
+	res, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: launchID, TaskID: id, RunID: "42"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	row, err := svc.Store.GetSession(res.ID)
-	if err != nil || !row.TaskID.Valid || row.TaskID.String != id || row.RequestingPrincipal.String != identity.OperatorID {
+	if err != nil || !row.RunID.Valid || row.RunID.String != "42" || !row.TaskID.Valid || row.TaskID.String != id || row.RequestingPrincipal.String != identity.OperatorID {
 		t.Fatalf("session row task = %+v err=%v, want %q", row.TaskID, err, id)
 	}
 	plan, err := svc.Store.GetLaunchPlan(res.ID)
-	if err != nil || plan.TaskID != id || plan.Env[app.TaskIDEnv] != id {
+	if err != nil || plan.RunID != "42" || plan.Env[app.RunIDEnv] != "42" || plan.TaskID != id || plan.Env[app.TaskIDEnv] != id {
 		t.Fatalf("stored plan task = %q env = %q err=%v", plan.TaskID, plan.Env[app.TaskIDEnv], err)
 	}
 	// An unkeyed, bare create must also preserve the verified creator through
@@ -88,7 +88,7 @@ func TestLaunchTaskStampEndToEndStoresAndPlants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prow, err := svc.Store.GetSession(plain.ID); err != nil || prow.TaskID.Valid {
+	if prow, err := svc.Store.GetSession(plain.ID); err != nil || prow.TaskID.Valid || prow.RunID.Valid {
 		t.Fatalf("unstamped session task = %+v err=%v", prow.TaskID, err)
 	}
 }

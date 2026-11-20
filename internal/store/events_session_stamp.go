@@ -26,9 +26,8 @@ func stampStoredSession(ctx context.Context, w eventWriter, e *events.Event) err
 	}
 	var task, workstream, run, native string
 	err := w.QueryRowContext(ctx, `SELECT COALESCE(s.task_id,''), COALESCE(s.workstream_id,''),
- COALESCE(r.run_id,''), COALESCE(m.native_session_id,'')
+ COALESCE(s.run_id,''), COALESCE(m.native_session_id,'')
  FROM sessions s
- LEFT JOIN team_runs r ON r.session_group_id=s.session_group_id
  LEFT JOIN session_provider_mappings m ON m.session_id=s.id AND m.owner='tether'
  AND m.provider=COALESCE(NULLIF(?,''),s.provider_id)
  WHERE s.id=?`, e.Envelope.Process.Provider, e.SessionID).Scan(&task, &workstream, &run, &native)

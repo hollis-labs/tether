@@ -9,9 +9,21 @@ An unresolved caller snapshot suppresses all inferred attribution, matching the
 existing eventstamp.Rows provenance boundary. Absent daemon snapshots and
 resolved snapshots permit the subject-session lookup.
 
-There is no `sessions.run_id`. Run attribution follows the unique
-`sessions.session_group_id = team_runs.session_group_id` link. Sessions without
-that link remain without a run. Native IDs come only from owner `tether`, using
+`sessions.run_id` is an optional launcher-asserted Torque `runs.id`, added by
+migration 0112. It is distinct from Tether `team_runs.run_id` / `scope.team_run_id`.
+No team, session-group, payload or parent-name inference supplies a Torque run.
+Old databases without this column remain supported by the copy-only tool: their
+unknown runs stay empty, and the tool does not migrate either database.
+
+An operator launch may supply `run_id` alongside `task_id` in the session-create
+API, or `tether launch --launch <launch> --task <task> --run <Torque-run>`.
+The same launcher permission and identifier syntax rules apply to both fields;
+agent/session callers cannot assert them. They are set only at creation, with
+no Torque existence lookup. `TETHER_RUN_ID` is sealed from the stored session
+facts after environment merges; an absent run removes inherited claims. Run
+attribution is retained through an explicit resume/replacement of that work.
+
+Native IDs come only from owner `tether`, using
 the event's `process_provider` when present, otherwise `sessions.provider_id`.
 An unmatched provider remains empty; other owners, parents and siblings are
 never fallback sources.

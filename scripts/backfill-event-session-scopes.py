@@ -35,6 +35,10 @@ def backfill_copy(source, output, batch_size=10000):
             # SQLite's online backup includes committed WAL content and produces
             # a consistent snapshot without copying a live file behind SQLite.
             src.backup(dst)
+            # An old backup need not be migrated just to inspect/backfill it.
+            # Missing Torque run provenance stays unknown; never use team runs.
+            session_columns = {row[1] for row in dst.execute("PRAGMA table_info(sessions)")}
+            run_source = "s.run_id" if "run_id" in session_columns else "NULL"
             before = fill_rates(dst)
             high = dst.execute("SELECT COALESCE(max(id),0) FROM events").fetchone()[0]
             after_id = 0
@@ -48,13 +52,12 @@ def backfill_copy(source, output, batch_size=10000):
                     break
                 end_id = ids[-1][0]
                 # No payload parsing, fuzzy IDs, sibling/parent-session guesses,
-                # or owner fallback. The session-group to team-run link is UNIQUE.
+                # or owner fallback. Torque runs never come from Tether team runs.
                 dst.execute(
-                    """WITH attribution AS (
-                        SELECT e.id, s.task_id, s.workstream_id, r.run_id,
+                    f"""WITH attribution AS (
+                        SELECT e.id, s.task_id, s.workstream_id, {run_source} AS run_id,
                                m.native_session_id
                         FROM events e JOIN sessions s ON s.id=e.session_id
-                        LEFT JOIN team_runs r ON r.session_group_id=s.session_group_id
                         LEFT JOIN session_provider_mappings m
                           ON m.session_id=s.id AND m.owner='tether'
                          AND m.provider=COALESCE(NULLIF(e.process_provider,''),s.provider_id)

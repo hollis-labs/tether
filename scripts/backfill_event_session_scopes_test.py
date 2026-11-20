@@ -10,7 +10,13 @@ spec.loader.exec_module(backfill)
 
 
 class BackfillCopyTest(unittest.TestCase):
-    def test_copy_only_wal_preservation_isolation_and_idempotence(self):
+    def test_old_schema_keeps_unknown_runs(self):
+        self.check_copy(False)
+
+    def test_new_schema_uses_torque_run_not_team_run(self):
+        self.check_copy(True)
+
+    def check_copy(self, with_run):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.db"
             output = Path(directory) / "copy.db"
@@ -39,6 +45,10 @@ class BackfillCopyTest(unittest.TestCase):
                     INSERT INTO events VALUES(7,'s','missing','','','','','untouched','id-7',0);
                     INSERT INTO events VALUES(8,'s','other',NULL,NULL,NULL,NULL,'untouched','id-8',0);
                 """)
+                if with_run:
+                    db.execute("ALTER TABLE sessions ADD COLUMN run_id TEXT")
+                    db.execute("UPDATE sessions SET run_id='42' WHERE id='s'")
+                    db.commit()
                 # Keep connection open so committed events are still in the WAL.
                 original = db.execute("SELECT * FROM events ORDER BY id").fetchall()
                 report = backfill.backfill_copy(source, output, batch_size=2)
@@ -47,8 +57,10 @@ class BackfillCopyTest(unittest.TestCase):
                 self.assertEqual(report["after"]["filled"]["provider_session_id"], 3)
             with sqlite3.connect(output) as db:
                 rows = db.execute("SELECT * FROM events ORDER BY id").fetchall()
-                self.assertEqual(rows[0][3:7], ('task','stream','run','native'))
+                self.assertEqual(rows[0][3:7], ('task','stream','42' if with_run else None,'native'))
                 self.assertEqual(rows[1], original[1])
+                self.assertEqual(rows[5][5], '42' if with_run else None)
+                self.assertEqual(rows[6][5], '42' if with_run else None)
                 self.assertEqual(rows[2:5], original[2:5])
                 self.assertIsNone(rows[5][6])
                 self.assertEqual(rows[6][6], 'other-native')

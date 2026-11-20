@@ -263,7 +263,7 @@ func (s *Store) sessionsInWorkstream(workstreamID string) ([]SessionRow, error) 
 		`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind,
 		        workspace, state, pid, exit_code, created_at, updated_at, ended_at,
 		        session_group_id, parent_session_id, intent, publication, workstream_id,
-		        ref_attribution
+		        ref_attribution, run_id
 		 FROM sessions WHERE workstream_id = ? ORDER BY created_at ASC`, workstreamID)
 	if err != nil {
 		return nil, fmt.Errorf("sessions in workstream %q: %w", workstreamID, err)
@@ -275,7 +275,7 @@ func (s *Store) sessionsInWorkstream(workstreamID string) ([]SessionRow, error) 
 		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID,
 			&r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt,
 			&r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent,
-			&r.Publication, &r.WorkstreamID, &r.RefAttribution); err != nil {
+			&r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RunID); err != nil {
 			return nil, fmt.Errorf("sessions in workstream %q: scan: %w", workstreamID, err)
 		}
 		out = append(out, r)

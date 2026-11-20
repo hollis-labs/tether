@@ -14,7 +14,7 @@ import (
 func sessionStampFixture(t *testing.T) *Store {
 	t.Helper()
 	s := openTestStoreForSessions(t)
-	if err := s.CreateSession(SessionRow{ID: "subject", LaunchID: "l", ProjectID: "p", LogicalAgentID: "a", ProviderID: "provider", Workspace: "/tmp/ws", State: "created", TaskID: sql.NullString{String: "task", Valid: true}, WorkstreamID: sql.NullString{String: "stream", Valid: true}}, &launch.Plan{LaunchID: "l"}); err != nil {
+	if err := s.CreateSession(SessionRow{ID: "subject", LaunchID: "l", ProjectID: "p", LogicalAgentID: "a", ProviderID: "provider", Workspace: "/tmp/ws", State: "created", RunID: sql.NullString{String: "42", Valid: true}, TaskID: sql.NullString{String: "task", Valid: true}, WorkstreamID: sql.NullString{String: "stream", Valid: true}}, &launch.Plan{LaunchID: "l"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{
@@ -80,7 +80,7 @@ func TestStoredSessionStampAllWritePaths(t *testing.T) {
 			if path == "transaction" {
 				task = "uncommitted"
 			}
-			if got.Envelope.Dims.TaskID != task || got.Envelope.Dims.WorkstreamID != "stream" || got.Envelope.Dims.RunID != "run" || got.Envelope.Process.ProviderSessionID != "native" {
+			if got.Envelope.Dims.TaskID != task || got.Envelope.Dims.WorkstreamID != "stream" || got.Envelope.Dims.RunID != "42" || got.Envelope.Process.ProviderSessionID != "native" {
 				t.Fatalf("missing/wrong stamp: %+v", got.Envelope)
 			}
 			row := rowByID(t, s, got.Seq)
@@ -218,5 +218,23 @@ func TestStoredSessionStampUnresolvedContextCannotInfer(t *testing.T) {
 	}
 	if got.Envelope.Dims != e.Envelope.Dims || got.Envelope.Process.ProviderSessionID != "explicit" {
 		t.Fatal("unresolved context erased explicit metadata")
+	}
+}
+
+func TestStoredSessionStampDoesNotConflateTeamAndTorqueRun(t *testing.T) {
+	s := sessionStampFixture(t)
+	row, err := s.GetSession("subject")
+	if err != nil || row.RunID.String != "42" {
+		t.Fatalf("run roundtrip: %+v %v", row, err)
+	}
+	if _, err := s.db.Exec(`UPDATE sessions SET run_id=NULL WHERE id='subject'`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.InsertEventEnvelope(context.Background(), events.Event{Scope: events.ScopeSession, SessionID: "subject", Kind: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Envelope.Dims.RunID != "" {
+		t.Fatalf("team run used as Torque run: %q", got.Envelope.Dims.RunID)
 	}
 }

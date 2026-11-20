@@ -44,6 +44,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 		return out
 	}
 	out.SessionResolved = true
+	out.RunID = row.RunID.String
 	out.SessionID, out.WorkstreamID, out.TaskID = row.ID, row.WorkstreamID.String, row.TaskID.String
 	out.LaunchID, out.ProjectID, out.LogicalAgentID = row.LaunchID, row.ProjectID, row.LogicalAgentID
 	out.Intent, out.ContinuesSessionID = row.Intent, row.ParentSessionID.String

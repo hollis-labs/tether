@@ -46,8 +46,8 @@ func (r correlationCaptureRuntime) Start(ctx context.Context, opts agentsessions
 	return r.Runtime.Start(ctx, opts)
 }
 
-func TestCreateSessionStampsTaskID(t *testing.T) {
-	for _, k := range []string{"TETHER_TASK_ID", "TETHER_WORKSTREAM_ID", "TETHER_PROJECT_ID"} {
+func TestCreateSessionStampsTaskIDAndRunID(t *testing.T) {
+	for _, k := range []string{"TETHER_TASK_ID", "TETHER_WORKSTREAM_ID", "TETHER_PROJECT_ID", "TETHER_RUN_ID"} {
 		t.Setenv(k, "ambient-wrong")
 	}
 
@@ -67,7 +67,7 @@ func TestCreateSessionStampsTaskID(t *testing.T) {
 		return correlationCaptureRuntime{Runtime: r, env: &actualEnv}, err
 	}}
 
-	l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", TaskID: "CW-20261016-0155", Override: `{"env":{"TETHER_TASK_ID":"evil"}}`})
+	l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", TaskID: "CW-20261016-0155", RunID: "42", Override: `{"env":{"TETHER_TASK_ID":"evil","TETHER_RUN_ID":"evil"}}`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,11 +75,14 @@ func TestCreateSessionStampsTaskID(t *testing.T) {
 	if err != nil || !row.TaskID.Valid || row.TaskID.String != "CW-20261016-0155" {
 		t.Fatalf("row task = %+v err=%v", row.TaskID, err)
 	}
+	if row.RunID.String != "42" || l.Plan.RunID != "42" || l.Plan.Env[RunIDEnv] != "42" {
+		t.Fatalf("run not propagated: row=%+v plan=%+v", row, l.Plan)
+	}
 	if l.Plan.TaskID != "CW-20261016-0155" || l.Plan.Env[TaskIDEnv] != "CW-20261016-0155" {
 		t.Fatalf("plan task = %q env = %q", l.Plan.TaskID, l.Plan.Env[TaskIDEnv])
 	}
 	stored, err := svc.Store.GetLaunchPlan(l.SessionID)
-	if err != nil || stored.TaskID != "CW-20261016-0155" || stored.Env[TaskIDEnv] != "CW-20261016-0155" {
+	if err != nil || stored.RunID != "42" || stored.Env[RunIDEnv] != "42" || stored.TaskID != "CW-20261016-0155" || stored.Env[TaskIDEnv] != "CW-20261016-0155" {
 		t.Fatalf("stored plan = %+v err=%v", stored, err)
 	}
 
@@ -93,19 +96,22 @@ func TestCreateSessionStampsTaskID(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = svc.StopSession(l.SessionID) })
-	for _, want := range []string{"TETHER_TASK_ID=CW-20261016-0155", "TETHER_PROJECT_ID=p", "TETHER_WORKSTREAM_ID=WS-1"} {
+	for _, want := range []string{"TETHER_RUN_ID=42", "TETHER_TASK_ID=CW-20261016-0155", "TETHER_PROJECT_ID=p", "TETHER_WORKSTREAM_ID=WS-1"} {
 		if !strings.Contains(strings.Join(actualEnv, "\n"), want) {
 			t.Fatalf("missing %s", want)
 		}
 	}
 	// No task named, but an override tries to name one through env: nothing is stamped.
-	l2, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", Override: `{"env":{"TETHER_TASK_ID":"evil"}}`})
+	l2, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", Override: `{"env":{"TETHER_TASK_ID":"evil","TETHER_RUN_ID":"evil"}}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	row2, err := svc.Store.GetSession(l2.SessionID)
-	if err != nil || row2.TaskID.Valid {
+	if err != nil || row2.TaskID.Valid || row2.RunID.Valid {
 		t.Fatalf("row task = %+v err=%v, want none", row2.TaskID, err)
+	}
+	if v, ok := l2.Plan.Env[RunIDEnv]; ok {
+		t.Fatalf("spoofed run survived: %q", v)
 	}
 	if v, ok := l2.Plan.Env[TaskIDEnv]; ok {
 		t.Fatalf("spoofed TETHER_TASK_ID survived: %q", v)
@@ -115,7 +121,7 @@ func TestCreateSessionStampsTaskID(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = svc.StopSession(l2.SessionID) })
 	for _, v := range actualEnv {
-		if strings.HasPrefix(v, "TETHER_TASK_ID=") || strings.HasPrefix(v, "TETHER_WORKSTREAM_ID=") {
+		if strings.HasPrefix(v, "TETHER_RUN_ID=") || strings.HasPrefix(v, "TETHER_TASK_ID=") || strings.HasPrefix(v, "TETHER_WORKSTREAM_ID=") {
 			t.Fatalf("unbound launch inherited correlation: %s", v)
 		}
 	}
@@ -136,7 +142,7 @@ func TestWorkerSpecCarriesTaskIDEnv(t *testing.T) {
 // A resume continues the same work, so the child session keeps the parent's task stamp.
 func TestResumeKeepsTaskStamp(t *testing.T) {
 	rig := newCodexRig(t)
-	parent, err := rig.svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "codex-launch", TaskID: "CW-20261016-0155"})
+	parent, err := rig.svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "codex-launch", TaskID: "CW-20261016-0155", RunID: "42"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +189,11 @@ func TestResumeKeepsTaskStamp(t *testing.T) {
 	}
 	owned = append(owned, resumed.SessionID)
 	row, err := rig.svc.Store.GetSession(resumed.SessionID)
-	if err != nil || row.TaskID.String != "CW-20261016-0155" || row.WorkstreamID.String != "WS-resume" || row.ProjectID != "proj" {
+	if err != nil || row.RunID.String != "42" || row.TaskID.String != "CW-20261016-0155" || row.WorkstreamID.String != "WS-resume" || row.ProjectID != "proj" {
 		t.Fatalf("resumed task = %+v err=%v, want the parent's", row.TaskID, err)
 	}
 	plan, err := rig.svc.Store.GetLaunchPlan(resumed.SessionID)
-	if err != nil || plan.Env[TaskIDEnv] != "CW-20261016-0155" {
+	if err != nil || plan.RunID != "42" || plan.Env[RunIDEnv] != "42" || plan.Env[TaskIDEnv] != "CW-20261016-0155" {
 		t.Fatalf("resumed plan env = %q err=%v", plan.Env[TaskIDEnv], err)
 	}
 }

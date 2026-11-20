@@ -72,7 +72,7 @@ func TestProxyEventAttributionOverridesVerifiedCallerClaims(t *testing.T) {
 
 func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 	sessions := &fakeLaunchService{getRes: map[string]*store.SessionRow{
-		"own": {ID: "own", LogicalAgentID: "worker", LaunchID: "launch", ProjectID: "project", WorkstreamID: sql.NullString{String: "work", Valid: true}, TaskID: sql.NullString{String: "CW-20261016-0155", Valid: true}},
+		"own": {ID: "own", LogicalAgentID: "worker", LaunchID: "launch", ProjectID: "project", WorkstreamID: sql.NullString{String: "work", Valid: true}, RunID: sql.NullString{String: "42", Valid: true}, TaskID: sql.NullString{String: "CW-20261016-0155", Valid: true}},
 	}}
 	for _, tc := range []struct {
 		name           string
@@ -99,7 +99,7 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 			if !got.SessionResolved && got.TaskID != "" {
 				t.Fatalf("task id stamped on an unresolved session: %+v", got)
 			}
-			if got.SessionResolved && (got.WorkstreamID != "work" || got.LaunchID != "launch" || got.ProjectID != "project" || got.TaskID != "CW-20261016-0155") {
+			if got.SessionResolved && (got.RunID != "42" || got.WorkstreamID != "work" || got.LaunchID != "launch" || got.ProjectID != "project" || got.TaskID != "CW-20261016-0155") {
 				t.Fatalf("missing row context: %+v", got)
 			}
 		})
