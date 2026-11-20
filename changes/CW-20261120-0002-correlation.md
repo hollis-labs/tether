@@ -1,0 +1,1 @@
+- CW-20261120-0002: Document the Registry-owned correlation/workstream mint prerequisites, read-only Tether integration design and concrete store reconciliation plan preserving compaction inheritance.
