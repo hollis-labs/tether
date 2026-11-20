@@ -29,6 +29,9 @@ type HTTPRelay struct {
 	URL string
 	// TokenFile is the 0600 file holding the current token.
 	TokenFile string
+	// RunToken is launcher correlation, read once from runtime env by the CLI.
+	// It stays fixed across bearer refresh and all POST/GET/DELETE requests.
+	RunToken string
 	// Client overrides the HTTP client (tests). The default has no overall timeout because a response
 	// may be a long-lived SSE stream.
 	Client *http.Client
@@ -296,6 +299,9 @@ func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
+	if r.RunToken != "" {
+		req.Header.Set("X-Run-Token", r.RunToken)
+	}
 	resp, err := r.client().Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -347,6 +353,9 @@ func (r *HTTPRelay) completeHandshake(ctx context.Context) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
+	if r.RunToken != "" {
+		req.Header.Set("X-Run-Token", r.RunToken)
+	}
 	req.Header.Set("Mcp-Session-Id", session)
 	if protocol != "" {
 		req.Header.Set("MCP-Protocol-Version", protocol)
@@ -411,6 +420,9 @@ func (r *HTTPRelay) post(ctx context.Context, msg []byte, token string) (int, st
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
+	if r.RunToken != "" {
+		req.Header.Set("X-Run-Token", r.RunToken)
+	}
 	r.mu.Lock()
 	session, protocol := r.session, r.protocol
 	r.mu.Unlock()
@@ -646,6 +658,9 @@ func (r *HTTPRelay) standalone(ctx context.Context) {
 		}
 		req.Header.Set("Accept", "text/event-stream")
 		req.Header.Set("Authorization", "Bearer "+token)
+		if r.RunToken != "" {
+			req.Header.Set("X-Run-Token", r.RunToken)
+		}
 		req.Header.Set("Mcp-Session-Id", session)
 		if protocol != "" {
 			req.Header.Set("MCP-Protocol-Version", protocol)
@@ -690,6 +705,9 @@ func (r *HTTPRelay) closeSession() {
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if r.RunToken != "" {
+		req.Header.Set("X-Run-Token", r.RunToken)
+	}
 	req.Header.Set("Mcp-Session-Id", session)
 	if resp, err := r.client().Do(req); err == nil {
 		_ = resp.Body.Close()

@@ -7,6 +7,7 @@ import (
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -62,6 +63,12 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 				out.AgentURN = urn
 			}
 		}
+	}
+	if c, ok := runtoken.FromContext(ctx); ok && c.Session == out.SessionID {
+		out.RunVerified = true
+		out.RunID = c.RunID
+		out.TokenJTI = c.JTI
+		out.RunParent = c.Parent
 	}
 	return out
 }

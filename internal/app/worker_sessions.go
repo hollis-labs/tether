@@ -251,6 +251,14 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
 		return nil, fmt.Errorf("extract_refs requires a worker session credential")
 	}
+	runEnv, err := s.mintRunEnvironment(ctx, row)
+	if err != nil {
+		undoIdentity()
+		return nil, fmt.Errorf("mint run context: %w", err)
+	}
+	for k, v := range runEnv {
+		spec.Env[k] = v
+	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		undoIdentity()
