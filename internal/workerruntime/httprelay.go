@@ -681,7 +681,7 @@ func (r *HTTPRelay) standalone(ctx context.Context) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusNotFound && r.sessionID() != session {
+			if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized) && r.sessionID() != session {
 				continue // the session was replaced while this request was in flight: reconnect on the new one
 			}
 			return // 405 (no standalone stream), 401, 403, 404: not worth looping on
