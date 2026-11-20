@@ -5,6 +5,9 @@ from the persisted **subject** session. This covers background, legacy and
 transactional writers. Reads use the writer's connection, including uncommitted
 session data. Caller snapshots and payloads do not supply this lookup. Explicit
 producer values are preserved; an event-ID retry returns the original row.
+An unresolved caller snapshot suppresses all inferred attribution, matching the
+existing eventstamp.Rows provenance boundary. Absent daemon snapshots and
+resolved snapshots permit the subject-session lookup.
 
 There is no `sessions.run_id`. Run attribution follows the unique
 `sessions.session_group_id = team_runs.session_group_id` link. Sessions without

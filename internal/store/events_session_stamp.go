@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
 )
 
@@ -16,6 +17,11 @@ import (
 // No payload or claimed caller identity contributes attribution.
 func stampStoredSession(ctx context.Context, w eventWriter, e *events.Event) error {
 	if e.SessionID == "" {
+		return nil
+	}
+	// Match eventstamp.Rows: an unresolved caller may only be claiming the
+	// subject ID. Only absent (daemon) or resolved snapshots permit inference.
+	if snap, ok := callcontext.FromContext(ctx); ok && !snap.SessionResolved {
 		return nil
 	}
 	var task, workstream, run, native string

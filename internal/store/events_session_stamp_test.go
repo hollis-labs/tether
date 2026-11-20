@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
@@ -154,5 +155,68 @@ func TestStoredSessionStampProviderIsolationAndLateMapping(t *testing.T) {
 	}
 	if next.Envelope.Process.ProviderSessionID != "late" {
 		t.Fatal("late mapping was cached away")
+	}
+}
+
+func TestStoredSessionStampUnresolvedContextCannotInfer(t *testing.T) {
+	for _, path := range []string{"envelope", "legacy", "transaction"} {
+		for _, verified := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/verified=%v", path, verified), func(t *testing.T) {
+				s := sessionStampFixture(t)
+				ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{
+					Verified: verified, SessionResolved: false, SessionID: "subject", TaskID: "claimed-task", WorkstreamID: "claimed-stream",
+				})
+				e := events.Event{Scope: events.ScopeSession, SessionID: "subject", Kind: "test"}
+				var got events.Event
+				var err error
+				switch path {
+				case "legacy":
+					seq, _, writeErr := s.InsertEventContext(ctx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+					if writeErr != nil {
+						t.Fatal(writeErr)
+					}
+					rows, readErr := s.EventsSince(seq - 1)
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+					got = rows[0]
+				case "transaction":
+					tx, txErr := s.db.BeginTx(ctx, nil)
+					if txErr != nil {
+						t.Fatal(txErr)
+					}
+					defer tx.Rollback()
+					got, err = s.InsertEventTx(ctx, tx, e)
+					if err == nil {
+						err = tx.Commit()
+					}
+				default:
+					got, err = s.InsertEventEnvelope(ctx, e)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Envelope.Dims.TaskID != "" || got.Envelope.Dims.WorkstreamID != "" || got.Envelope.Dims.RunID != "" || got.Envelope.Process.ProviderSessionID != "" {
+					t.Fatalf("unresolved caller gained attribution: %+v", got.Envelope)
+				}
+				row := rowByID(t, s, got.Seq)
+				for _, column := range []string{"scope_task_id", "scope_workstream_id", "scope_run_id", "provider_session_id"} {
+					if row[column] != nil {
+						t.Fatalf("unresolved caller persisted %s=%v", column, row[column])
+					}
+				}
+			})
+		}
+	}
+	// Skipping inference does not erase explicitly supplied producer metadata.
+	s := sessionStampFixture(t)
+	ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{})
+	e := events.Event{Scope: events.ScopeSession, SessionID: "subject", Kind: "test", Envelope: events.Envelope{Dims: events.ScopeDims{TaskID: "explicit", WorkstreamID: "explicit", RunID: "explicit"}, Process: events.Process{ProviderSessionID: "explicit"}}}
+	got, err := s.InsertEventEnvelope(ctx, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Envelope.Dims != e.Envelope.Dims || got.Envelope.Process.ProviderSessionID != "explicit" {
+		t.Fatal("unresolved context erased explicit metadata")
 	}
 }
