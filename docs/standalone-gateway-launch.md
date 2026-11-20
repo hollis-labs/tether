@@ -5,7 +5,7 @@ A launch can opt into the standalone gateway with an explicit catalog launch
 
 ```yaml
 env:
-  TETHER_MCP_GATEWAY_URL: https://mcp.nanite.cloud/mcp
+  TETHER_MCP_GATEWAY_URL: https://mcp.example.com/mcp
 ```
 
 The launcher adds an MCP server named `gateway` alongside the existing `tether`
