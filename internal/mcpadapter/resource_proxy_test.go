@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -261,7 +262,8 @@ func TestSavedGrantNarrowingRevokesExistingResourceAndRefreshAccess(t *testing.T
 		t.Fatal(err)
 	}
 	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:s", Kind: "session", SessionID: "s"})
-	a, err := NewVerifiedAdapter(ctx, nil, nil)
+	svc := &app.Service{Catalog: &config.Catalog{MCPServerEnabled: map[string]bool{"app": true}, MCPServerExternal: map[string]bool{}}}
+	a, err := NewVerifiedAdapter(ctx, svc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,6 +284,18 @@ func TestSavedGrantNarrowingRevokesExistingResourceAndRefreshAccess(t *testing.T
 	if _, err := cs.ReadResource(ctx, params); err != nil {
 		t.Fatal(err)
 	}
+	// Ownership changes must revoke the same established resource/refresh paths.
+	svc.Catalog.MCPServerExternal["app"] = true
+	if _, err := cs.ReadResource(ctx, params); err == nil {
+		t.Fatal("external origin retained resource dispatch")
+	}
+	if _, err := a.upstreams.(*UpstreamView).Refresh(ctx, "app"); err == nil {
+		t.Fatal("external origin retained refresh")
+	}
+	if reads.Load() != 1 {
+		t.Fatal("external resource received RPC")
+	}
+	delete(svc.Catalog.MCPServerExternal, "app")
 	enabled.Store(false)
 	if _, err := cs.ReadResource(ctx, params); err == nil {
 		t.Fatal("removed origin retained resource dispatch")

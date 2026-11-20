@@ -195,6 +195,8 @@ type LaunchRequest struct {
 	// launcher may assert it (403 task_id_not_permitted otherwise); it is set at creation
 	// and never changed; there is no existence check against Torque.
 	TaskID string `json:"task_id,omitempty"`
+	// RunID is the optional Torque runs.id asserted by the same launcher.
+	RunID string `json:"run_id,omitempty"`
 
 	// App is the one app this session speaks for (CW-20261020-0036): the app whose
 	// service token it may later request. Only the verified local operator may set it
@@ -264,6 +266,8 @@ type CreateSessionInput struct {
 	IdempotencyPrincipal string
 	// TaskID is the validated, launcher-asserted task id. See LaunchRequest.TaskID.
 	TaskID string
+	// RunID is the validated launcher-asserted Torque run.
+	RunID string
 	// App is the validated, operator-asserted app. See LaunchRequest.App.
 	App string
 
@@ -423,6 +427,7 @@ type SessionDTO struct {
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 	Intent          string `json:"intent,omitempty"`
 	TaskID          string `json:"task_id,omitempty"`
+	RunID           string `json:"run_id,omitempty"`
 	WorkerID        string `json:"worker_id,omitempty"`
 	// ProviderMappings is null when the reader is unavailable, [] when no
 	// mappings are recorded. Native identifiers require owner+provider context.
@@ -499,6 +504,7 @@ func SessionRowToDTO(r store.SessionRow) SessionDTO {
 	if r.TaskID.Valid {
 		dto.TaskID = r.TaskID.String
 	}
+	dto.RunID = r.RunID.String
 	dto.WorkerID = r.WorkerID
 	dto.SessionGroupID = r.SessionGroupID.String
 	dto.WorkstreamID = r.WorkstreamID.String

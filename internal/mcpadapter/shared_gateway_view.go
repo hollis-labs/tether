@@ -56,9 +56,33 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	// instead of failing every connection of the principal (CW-20261024-0097). A server the daemon knows but
 	// has disabled is still refused below, and an id the live catalog does not know never reaches here (the
 	// transport validated the grant against it).
+	external := func(id string) bool {
+		if a.svc != nil {
+			if cat := a.svc.CurrentCatalog(); cat != nil {
+				if _, exists := cat.MCPServerEnabled[id]; exists {
+					return cat.MCPServerExternal[id]
+				}
+			}
+		}
+		return r.external[id]
+	}
 	var pending []string
 	for _, id := range grant {
-		if _, running := r.known[id]; id != "tether" && !running && !slices.Contains(pending, id) {
+		if external(id) {
+			// Ownership must not override known-disabled grant metadata.
+			if _, declared := known[id]; !declared {
+				known[id] = true
+				if a.svc != nil {
+					if cat := a.svc.CurrentCatalog(); cat != nil {
+						if enabled, exists := cat.MCPServerEnabled[id]; exists {
+							known[id] = enabled
+						}
+					}
+				}
+			}
+			continue
+		}
+		if _, running := r.known[id]; id != "tether" && (!running || (r.external[id] && r.known[id])) && !slices.Contains(pending, id) {
 			pending = append(pending, id)
 			known[id] = true // lets SelectOrigins pass it through; it is removed again below
 		}
@@ -81,7 +105,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	}
 	running := selected[:0:0]
 	for _, id := range selected {
-		if id == "tether" || slices.Contains(pending, id) {
+		if id == "tether" || external(id) || slices.Contains(pending, id) {
 			continue
 		}
 		running = append(running, id)
@@ -91,7 +115,26 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err != nil {
 		return nil, err
 	}
-	upstreams.liveServers = opts.LiveServers
+	upstreams.isExternal = external
+	// Resource dispatch and refresh must obey both live grants and live ownership.
+	currentPoolServers := func() ([]string, error) {
+		ids := selected
+		if opts.LiveServers != nil {
+			var err error
+			ids, err = opts.LiveServers()
+			if err != nil {
+				return nil, err
+			}
+		}
+		allowed := []string{}
+		for _, id := range ids {
+			if upstreams.includes(id) {
+				allowed = append(allowed, id)
+			}
+		}
+		return allowed, nil
+	}
+	upstreams.liveServers = currentPoolServers
 	a.upstreams = upstreams
 	registry := NewToolRegistry()
 	for _, entry := range r.pool.entries {
@@ -220,13 +263,43 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 
 		_, collisions, _ := upstreams.namingDiagnostics()
 		full.Collisions = append(full.Collisions, collisions...)
+		entries := []mcpgateway.Entry{}
+		for _, entry := range full.Entries {
+			if entry.Origin == "tether" || upstreams.includes(entry.Origin) {
+				entries = append(entries, entry)
+			}
+		}
+		full.Entries = entries
+		lint := []mcpgateway.NameFinding{}
+		for _, finding := range full.Lint {
+			if finding.Origin == "tether" || upstreams.includes(finding.Origin) {
+				lint = append(lint, finding)
+			}
+		}
+		full.Lint = lint
+		visibleCollisions := []mcpgateway.NameCollision{}
+		for _, collision := range full.Collisions {
+			visible := true
+			for _, owner := range collision.Owners {
+				if owner.Origin != "tether" && !upstreams.includes(owner.Origin) {
+					visible = false
+				}
+			}
+			if visible {
+				visibleCollisions = append(visibleCollisions, collision)
+			}
+		}
+		full.Collisions = visibleCollisions
 		origins := []mcpgateway.OriginStatus{}
 		for _, origin := range full.Origins {
-			if origin.ID == "tether" || upstreams.servers[origin.ID] || stale[origin.ID] {
+			if origin.ID == "tether" || (!external(origin.ID) && (upstreams.includes(origin.ID) || stale[origin.ID])) {
 				origins = append(origins, origin)
 			}
 		}
 		for _, id := range pending {
+			if external(id) {
+				continue
+			}
 			if opts.LiveServers != nil {
 				ids, err := opts.LiveServers()
 				if err != nil || !slices.Contains(ids, id) {
@@ -253,12 +326,24 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err := gateway.Policy.ValidateNames(gateway.Snapshot()); err != nil {
 		return nil, err
 	}
+	// Previously registered SDK handlers survive ownership changes. Refuse them
+	// before the generic unknown-target fallback can dispatch cached inventory.
+	s.SDKServer().AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			if call, ok := req.(*mcpsdk.CallToolRequest); ok {
+				if tool, found := registry.Lookup(call.Params.Name); found && tool.ServerID != "" && !upstreams.includes(tool.ServerID) {
+					return errorResult("unknown or excluded MCP origin"), nil
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
 	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
 	if !opts.Only {
 		a.registerDocsResources(s)
 		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
 	}
-	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(r.pool, upstreams.servers, gateway, opts.Publisher, opts.LiveServers))
+	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(r.pool, upstreams.servers, gateway, opts.Publisher, currentPoolServers))
 	// Outermost: a denied machine call is audited and never reaches the upstream
 	// or the call logger. The access mode is the caller's (ProxyOptions), not
 	// the daemon's env; unset is read-only.

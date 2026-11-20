@@ -81,6 +81,7 @@ func stampSession(ctx context.Context, e *events.Event) {
 	set(&d.AgentURN, snap.AgentURN)
 	set(&d.WorkstreamID, snap.WorkstreamID)
 	set(&d.TaskID, snap.TaskID)
+	set(&d.RunID, snap.RunID)
 	set(&d.LaunchID, snap.LaunchID)
 	set(&d.ProjectID, snap.ProjectID)
 	set(&d.LogicalAgentID, snap.LogicalAgentID)

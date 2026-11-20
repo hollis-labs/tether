@@ -2305,3 +2305,26 @@ upstream enabled in the catalog that the agent may hold: machine-changing
 upstreams (Cerberus) only with `machine_authority` (CW-20261114-0038). It is
 expanded when the launch is resolved, so the session's grant lists real names;
 an effective grant (`TETHER_MCP_SERVERS`) refuses a literal `*`.
+
+### Externally served catalog entries
+
+Use `served_by: external` for grant-only MCP origins owned by a separate gateway.
+The default (field omitted) keeps Tether's built-in upstream behavior. Other
+values are rejected. External entries remain visible in the catalog and eligible
+for MCP grants; `enabled: false` still disables grants. Tether does not spawn,
+connect, resolve credentials, or report gateway health/status for these origins.
+Their addition on catalog reload does not require a daemon restart. The external
+gateway owns their tools and health; granting one does not route its tools through
+Tether's built-in gateway.
+
+For Cerberus, after installing a Tether version supporting this field, update the
+managed source of `mcp-servers/shared-services.yaml` to match
+`examples/catalog/mcp-servers/shared-services.yaml`, then apply it through the
+normal Cerberus catalog workflow and reload the catalog. Preserve its existing
+ID and tags (and enabled setting, if present), and remove obsolete built-in
+transport/credential fields. Verify catalog validation and the existing grants,
+and check the standalone gateway independently. This source change does not
+migrate the live catalog or deploy a service. Converting a built-in origin to
+external leaves existing daemon connections until restart; restart the daemon
+when retiring such a connection. Converting external to built-in requires a
+restart to start its upstream.

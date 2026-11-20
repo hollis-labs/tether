@@ -304,7 +304,7 @@ func TestSharedGatewayView_GrantedOriginNotYetRunningIsPendingNotFatal(t *testin
 // neither may fall back to a registered but now forbidden upstream handler.
 func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "one", Transport: "http"}, {ID: "two", Transport: "http"}}, daemonTestRoots(t), true)
+	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "one", Transport: "http"}, {ID: "two", Transport: "http"}, {ID: "outside", ServedBy: "external", Command: "must-not-run"}}, daemonTestRoots(t), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,18 +343,19 @@ func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
 	for _, mode := range []mcpgateway.Mode{mcpgateway.Flat, mcpgateway.Search} {
 		t.Run(string(mode), func(t *testing.T) {
 			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "caller", Kind: "session", SessionID: "s"})
-			a, err := NewVerifiedAdapter(ctx, nil, nil)
+			svc := &app.Service{Catalog: &config.Catalog{MCPServerEnabled: map[string]bool{"one": true, "two": true, "outside": true}, MCPServerExternal: map[string]bool{"outside": true}}}
+			a, err := NewVerifiedAdapter(ctx, svc, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			var live atomic.Int32
 			live.Store(2)
-			v, err := r.NewGatewayView(ctx, a, ProxyOptions{ServerFilter: []string{"one", "two"}, LiveServers: func() ([]string, error) {
+			v, err := r.NewGatewayView(ctx, a, ProxyOptions{ServerFilter: []string{"one", "two", "outside", "tether"}, LiveServers: func() ([]string, error) {
 				switch live.Load() {
 				case 2:
-					return []string{"one", "two"}, nil
+					return []string{"one", "two", "outside", "tether"}, nil
 				case 1:
-					return []string{"one"}, nil
+					return []string{"one", "outside", "tether"}, nil
 				default:
 					return nil, nil
 				}
@@ -379,6 +380,21 @@ func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
 					t.Fatalf("%s: %+v %v", target, res, err)
 				}
 			}
+			call("two_read", false)
+			if a.upstreams.(*UpstreamView).servers["outside"] || a.upstreams.(*UpstreamView).servers["tether"] {
+				t.Fatal("non-pool origin granted to pool")
+			}
+			svc.Catalog.MCPServerExternal["two"] = true
+			call("two_read", true)
+			if _, err := a.upstreams.(*UpstreamView).Refresh(ctx, "two"); err == nil {
+				t.Fatal("external origin refresh accepted")
+			}
+			for _, origin := range v.Service.Snapshot().Origins {
+				if origin.ID == "outside" || origin.ID == "two" {
+					t.Fatalf("external origin leaked: %+v", origin)
+				}
+			}
+			delete(svc.Catalog.MCPServerExternal, "two")
 			call("two_read", false)
 			live.Store(1)
 			call("one_read", false)

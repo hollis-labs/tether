@@ -17,6 +17,7 @@ type SessionRow struct {
 	ProjectID      string
 	WorkstreamID   string
 	TaskID         string
+	RunID          string
 	LaunchID       string
 	LogicalAgentID string
 }
@@ -96,6 +97,7 @@ func (r *Rows) Stamp(ctx context.Context, e *events.Event) error {
 	set(&d.ProjectID, entry.row.ProjectID)
 	set(&d.WorkstreamID, entry.row.WorkstreamID)
 	set(&d.TaskID, entry.row.TaskID)
+	set(&d.RunID, entry.row.RunID)
 	set(&d.LaunchID, entry.row.LaunchID)
 	set(&d.LogicalAgentID, entry.row.LogicalAgentID)
 	return nil

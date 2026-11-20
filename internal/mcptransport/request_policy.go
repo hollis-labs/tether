@@ -171,7 +171,7 @@ func selectedUpstreamOrigins(a admission) ([]string, error) {
 	}
 	origins := []string{}
 	for _, id := range selected {
-		if id != "tether" {
+		if id != "tether" && !a.catalog.MCPServerExternal[id] {
 			origins = append(origins, id)
 		}
 	}
