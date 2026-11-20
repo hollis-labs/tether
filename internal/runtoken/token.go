@@ -4,20 +4,17 @@ package runtoken
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
 const Header = "X-Run-Token"
 const TokenEnv = "TETHER_RUN_TOKEN"
-const IDEnv = "TETHER_RUN_ID"
+const IDEnv = "TETHER_EXECUTION_RUN_ID"
 const MaxSize = 4096
 
 var ErrInvalid = errors.New("invalid run token")
@@ -93,44 +90,6 @@ func Verify(key ed25519.PublicKey, token string, now time.Time) (Claims, error) 
 		return Claims{}, ErrInvalid
 	}
 	return c, nil
-}
-
-// Authority caches local key material. No network service is used to mint or verify.
-// The singleton key survives daemon restart in the credential-protected state DB.
-// Tokens themselves are never stored. Rotation intentionally requires an operator migration.
-type Authority struct {
-	once sync.Once
-	key  ed25519.PrivateKey
-	err  error
-}
-
-func (a *Authority) Key(db *sql.DB) (ed25519.PrivateKey, error) {
-	a.once.Do(func() {
-		if db == nil {
-			a.err = ErrInvalid
-			return
-		}
-		_, key, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			a.err = err
-			return
-		}
-		_, err = db.Exec(`INSERT OR IGNORE INTO run_signing_key(id, private_key) VALUES (1, ?)`, []byte(key))
-		if err != nil {
-			a.err = err
-			return
-		}
-		var raw []byte
-		a.err = db.QueryRow(`SELECT private_key FROM run_signing_key WHERE id=1`).Scan(&raw)
-		if a.err == nil {
-			if len(raw) != ed25519.PrivateKeySize {
-				a.err = ErrInvalid
-			} else {
-				a.key = ed25519.PrivateKey(raw)
-			}
-		}
-	})
-	return a.key, a.err
 }
 
 // FromHeader distinguishes an absent header from a supplied empty/duplicate header.

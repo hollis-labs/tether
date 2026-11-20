@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/workerruntime"
 	"github.com/spf13/cobra"
 	"os"
@@ -30,6 +31,10 @@ func main() {
 	var descriptor string
 	shimCmd := &cobra.Command{Use: "shim-host", Hidden: true, RunE: func(c *cobra.Command, _ []string) error {
 		spec, err := shim.ReadLaunch(descriptor)
+		if err != nil {
+			return err
+		}
+		spec.Env, err = runtoken.RestoreEnvironment(spec.Env, spec.Session)
 		if err != nil {
 			return err
 		}

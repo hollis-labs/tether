@@ -34,6 +34,7 @@ import (
 	"github.com/hollis-labs/tether/internal/provider/acp"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
@@ -673,7 +674,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 	}
 	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
-	startOpts.Env = mergeEnv(startOpts.Env, runEnv)
+	startOpts.Env = runtoken.SealEnvironment(startOpts.Env, runEnv)
 	if plan.NativeResumeOnly {
 		// Planting owns the fresh inactive artifacts; native-only execution uses
 		// the separately validated, persisted source context instead of boot CWD.

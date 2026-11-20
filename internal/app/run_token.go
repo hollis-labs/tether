@@ -22,7 +22,7 @@ func runURN(row *store.SessionRow) string {
 // mintRunEnvironment never modifies or persists the launch plan. Parent is
 // inherited only from a verified run in the launching request's context.
 func (s *Service) mintRunEnvironment(ctx context.Context, row *store.SessionRow) (map[string]string, error) {
-	key, err := s.runTokens.Key(s.Store.DB())
+	key, err := s.runTokens.Key(s.Store.RunSigningKeyPath())
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (s *Service) VerifyRunToken(token string, p identity.Principal) (runtoken.C
 	if s == nil || s.Store == nil || !p.Verified || p.SessionID == "" || p.ID != identity.SessionPrincipalIDPrefix+p.SessionID || (p.Kind != "session" && !identity.IsBoundAgentToken(p)) {
 		return runtoken.Claims{}, runtoken.ErrInvalid
 	}
-	key, err := s.runTokens.Key(s.Store.DB())
+	key, err := s.runTokens.Key(s.Store.RunSigningKeyPath())
 	if err != nil {
 		return runtoken.Claims{}, runtoken.ErrInvalid
 	}

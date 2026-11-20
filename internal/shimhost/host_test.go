@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"io"
 	"os"
 	"os/signal"
@@ -44,6 +45,10 @@ func TestHostProcess(t *testing.T) {
 			fmt.Fprintln(os.Stderr, "descriptor refused")
 			os.Exit(2)
 		}
+		spec.Env, e = runtoken.RestoreEnvironment(spec.Env, spec.Session)
+		if e != nil {
+			os.Exit(15)
+		}
 		h, e := shim.Start(spec)
 		if e != nil {
 			fmt.Fprintln(os.Stderr, "host refused")
@@ -60,7 +65,15 @@ func TestHostProcess(t *testing.T) {
 		os.Exit(0)
 	case "child-exit":
 		os.Exit(7)
-	case "child":
+	case "child", "run-token-child":
+		if os.Getenv("TETHER_TEST_SHIM") == "run-token-child" {
+			if os.Getenv(runtoken.TokenEnv) != testRuntimeRunToken || os.Getenv("TETHER_RUN_HANDOFF_PATH") != "" {
+				os.Exit(31)
+			}
+			if os.WriteFile(filepath.Join(os.Getenv("HOME"), "run-token-ready"), []byte("ready"), 0600) != nil {
+				os.Exit(32)
+			}
+		}
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
 	}

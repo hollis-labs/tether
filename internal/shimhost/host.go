@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"net"
 	"os"
 	"os/exec"
@@ -308,6 +309,12 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	if _, err = rand.Read(secret[:]); err != nil {
 		return r, err
 	}
+	var closeRunHandoff func()
+	spec.Env, closeRunHandoff, err = runtoken.PrepareEnvironment(spec.Env, spec.Session)
+	if err != nil {
+		return r, fail("invalid_request", "run token handoff refused")
+	}
+	defer closeRunHandoff()
 	spec.Secret = hex.EncodeToString(secret[:])
 	raw, err = json.Marshal(spec) //nolint:gosec // Capability intentionally stored only in the private 0600 descriptor.
 	if err != nil {

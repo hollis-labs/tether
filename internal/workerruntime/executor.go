@@ -21,6 +21,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/provider"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/hollis-labs/tether/internal/workspace"
@@ -356,6 +357,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}
 	cmd.Env = launch.CorrelationFromEnv(spec.Env).SealEnv(cmd.Env)
+	cmd.Env = runtoken.SealEnvironment(cmd.Env, spec.Env)
 	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+sessionAgentURN(spec))
 	// Per-session issued tokens: 0600 files outside the checkout, refreshed in
 	// place; the child gets only their paths.
@@ -391,8 +393,13 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if actor == "" {
 		actor = "urn:agent:worker"
 	}
+	runtimeEnv, closeRunHandoff, err := runtoken.PrepareEnvironment(cmd.Env, spec.Session)
+	if err != nil {
+		return nil, err
+	}
+	defer closeRunHandoff()
 	descriptor := filepath.Join(hostRoot, "launch.json")
-	launchSpec := shim.Launch{Session: spec.Session, Instance: "urn:instance:worker", Generation: 1, Actor: mesh.Actor{URN: mesh.URN(actor), Kind: mesh.ActorAgent}, Subject: mesh.URN("urn:session:" + spec.Session), Argv: cmd.Args, Env: cmd.Env, Cwd: cmd.Dir, ControlDir: filepath.Join(hostRoot, "c"), JournalDir: filepath.Join(hostRoot, "j"), Secret: secret, PinPath: pin, PinKey: spec.Session, BootGeneration: uuid.NewString(), Reservation: spec.Session, JournalBytes: 256 << 20, Heartbeat: time.Second}
+	launchSpec := shim.Launch{Session: spec.Session, Instance: "urn:instance:worker", Generation: 1, Actor: mesh.Actor{URN: mesh.URN(actor), Kind: mesh.ActorAgent}, Subject: mesh.URN("urn:session:" + spec.Session), Argv: cmd.Args, Env: runtimeEnv, Cwd: cmd.Dir, ControlDir: filepath.Join(hostRoot, "c"), JournalDir: filepath.Join(hostRoot, "j"), Secret: secret, PinPath: pin, PinKey: spec.Session, BootGeneration: uuid.NewString(), Reservation: spec.Session, JournalBytes: 256 << 20, Heartbeat: time.Second}
 	if err := shimhost.WritePrivateJSON(descriptor, launchSpec); err != nil {
 		return nil, err
 	}

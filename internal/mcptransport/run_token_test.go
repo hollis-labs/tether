@@ -33,7 +33,7 @@ func runFixture(t *testing.T) (*transportFixture, string, ed25519.PrivateKey, ru
 		t.Fatal(err)
 	}
 	var authority runtoken.Authority
-	key, err := authority.Key(f.db.DB())
+	key, err := authority.Key(f.db.RunSigningKeyPath())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,17 @@ func TestRunTokenExpiryEndsRetainedViewAndRejectsReadmission(t *testing.T) {
 }
 
 func TestRunTokenAttributionSurvivesProxyEventWrite(t *testing.T) {
+	for _, torque := range []string{"", "42"} {
+		t.Run("torque-"+torque, func(t *testing.T) { testRunTokenProxyRow(t, torque) })
+	}
+}
+func testRunTokenProxyRow(t *testing.T, torque string) {
 	f, bearer, key, c := runFixture(t)
+	if torque != "" {
+		if _, err := f.db.DB().Exec(`UPDATE sessions SET run_id=? WHERE id='run-session'`, torque); err != nil {
+			t.Fatal(err)
+		}
+	}
 	token := signRun(t, key, c)
 	response := f.request(t, http.MethodPost, "/mcp", bearer, "", runHeader(token))
 	id := response.Header.Get("Mcp-Session-Id")
@@ -177,7 +187,7 @@ func TestRunTokenAttributionSurvivesProxyEventWrite(t *testing.T) {
 		}
 		if len(rows) > 0 {
 			s := rows[0].Attribution
-			if !s.Verified || !s.SessionResolved || !s.RunVerified || s.RunID != c.RunID || s.TokenJTI != c.JTI {
+			if !s.Verified || !s.SessionResolved || !s.RunVerified || s.RunID != torque || s.ExecutionRunID != c.RunID || s.TokenJTI != c.JTI {
 				t.Fatalf("wrong additive attribution: %+v", s)
 			}
 			raw, _ := json.Marshal(rows)
@@ -197,7 +207,7 @@ func TestRunTokenBackendAdmissionNativeAndBearerRefresh(t *testing.T) {
 	g := newBackendFixture(t)
 	bearer, _ := g.mint(t, "tether", "s-rot", "tether.read")
 	var authority runtoken.Authority
-	key, err := authority.Key(g.f.db.DB())
+	key, err := authority.Key(g.f.db.RunSigningKeyPath())
 	if err != nil {
 		t.Fatal(err)
 	}
