@@ -64,7 +64,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 			}
 		}
 	}
-	if c, ok := runtoken.FromContext(ctx); ok && c.Session == out.SessionID {
+	if c, ok := runtoken.FromContext(ctx); ok && c.Session == out.SessionID && c.Task == out.TaskID && c.Workstream == out.WorkstreamID {
 		out.RunVerified = true
 		out.RunID = c.RunID
 		out.TokenJTI = c.JTI
