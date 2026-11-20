@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/catalogapply"
+	"github.com/hollis-labs/tether/internal/catalogcheck"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -26,7 +28,26 @@ func catalogApplyPaths(cat *config.Catalog) (approverFile, backupRoot string) {
 func newCatalogApplyEngine(svc *app.Service) *catalogapply.Engine {
 	approverFile, backupRoot := catalogApplyPaths(svc.Catalog)
 	return &catalogapply.Engine{
-		Root:       svc.CatalogRoot,
+		Root: svc.CatalogRoot,
+		Preflight: func(root string) []catalogcheck.Result {
+			cat, err := config.LoadLayered(root)
+			if err != nil {
+				return nil
+			} // The structural report already explains parse failures.
+			impacts, err := svc.MCPGrantImpacts(context.Background(), cat)
+			if err != nil {
+				return []catalogcheck.Result{catalogcheck.Fail("running session MCP grants", err.Error(), "Retry validation when the session store is available")}
+			}
+			var results []catalogcheck.Result
+			for _, impact := range impacts {
+				for _, issue := range impact.Servers {
+					result := catalogcheck.Warn("running session MCP grants", fmt.Sprintf("session %q server %q: %s; effective grant will narrow", impact.SessionID, issue.Server, issue.Reason), impact.Hint)
+					result.Entity = "session:" + impact.SessionID
+					results = append(results, result)
+				}
+			}
+			return results
+		},
 		BackupRoot: backupRoot,
 		Approver:   catalogapply.NewApprover(approverFile),
 		TTL:        catalogPlanTTL(os.Getenv("TETHER_CATALOG_PLAN_TTL")),

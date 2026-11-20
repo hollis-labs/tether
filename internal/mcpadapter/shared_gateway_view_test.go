@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/app"
@@ -294,5 +295,104 @@ func TestSharedGatewayView_GrantedOriginNotYetRunningIsPendingNotFatal(t *testin
 	}
 	if status.Complete || !slices.Contains(status.IncompleteServers, "chrome-devtools") {
 		t.Fatalf("status must say the inventory is incomplete until the reload: complete=%v incomplete=%v", status.Complete, status.IncompleteServers)
+	}
+}
+
+// An established SDK session must retain its usable tools while its live
+// catalog boundary drops an origin. Exercise both direct and search dispatch;
+// neither may fall back to a registered but now forbidden upstream handler.
+func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "one", Transport: "http"}, {ID: "two", Transport: "http"}}, daemonTestRoots(t), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range []string{"one", "two"} {
+		s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: origin, Version: "test"}, nil)
+		s.AddTool(&mcpsdk.Tool{Name: origin + "_read", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{}, nil
+		})
+		st, ct := mcpsdk.NewInMemoryTransports()
+		ss, err := s.Connect(context.Background(), st, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ss.Close() }()
+		cs, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "upstream", Version: "1"}, nil).Connect(context.Background(), ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = cs.Close() }()
+		tools, err := cs.ListTools(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.pool.mu.Lock()
+		r.pool.statuses[origin].client = cs
+		r.pool.mu.Unlock()
+		if _, err := r.pool.publish(context.Background(), origin, cs, tools.Tools, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []mcpgateway.Mode{mcpgateway.Flat, mcpgateway.Search} {
+		t.Run(string(mode), func(t *testing.T) {
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "caller", Kind: "session", SessionID: "s"})
+			a, err := NewVerifiedAdapter(ctx, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var live atomic.Int32
+			live.Store(2)
+			v, err := r.NewGatewayView(ctx, a, ProxyOptions{ServerFilter: []string{"one", "two"}, LiveServers: func() ([]string, error) {
+				switch live.Load() {
+				case 2:
+					return []string{"one", "two"}, nil
+				case 1:
+					return []string{"one"}, nil
+				default:
+					return nil, nil
+				}
+			}, ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: string(mode), Source: "test"}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer v.Close()
+			cs := connectDaemonView(ctx, t, v)
+			call := func(target string, wantErr bool) {
+				t.Helper()
+				name, args := target, map[string]any{}
+				if mode == mcpgateway.Search {
+					name, args = "tether_tool_call", map[string]any{"name": target, "arguments": map[string]any{}}
+				}
+				res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args})
+				if wantErr {
+					if err == nil && !res.IsError {
+						t.Fatalf("removed tool %s invoked", target)
+					}
+				} else if err != nil || res.IsError {
+					t.Fatalf("%s: %+v %v", target, res, err)
+				}
+			}
+			call("two_read", false)
+			live.Store(1)
+			call("one_read", false)
+			call("two_read", true)
+			names := listToolNames(t, cs)
+			if slices.Contains(names, "two_read") {
+				t.Fatal("stale tool listed", names)
+			}
+			if _, err := v.Service.ResolveTarget("tether_whoami"); err != nil {
+				t.Fatal("Tether recovery target lost", err)
+			}
+			live.Store(0)
+			call("one_read", true)
+			if _, err := v.Service.ResolveTarget("tether_whoami"); err != nil {
+				t.Fatal("all externals gone lost Tether", err)
+			}
+		})
 	}
 }

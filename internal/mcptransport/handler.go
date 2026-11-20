@@ -561,6 +561,17 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		h.cfg.Service != nil && h.cfg.Service.Store != nil {
 		adapter.SetRefAttacher(hubRefAttacher{sessionID: p.SessionID, store: h.cfg.Service.Store})
 	}
+	a.options.LiveServers = func() ([]string, error) {
+		cat, err := h.cfg.Resolver.Catalog(h.ctx)
+		if err != nil {
+			return nil, err
+		}
+		if cat == nil {
+			return nil, errCatalogUnavailable
+		}
+		ids, _ := cat.NarrowMCPGrant(a.caller.Policy.Servers)
+		return ids, nil
+	}
 	a.options.Publisher = h.cfg.Publisher
 	if h.cfg.Service != nil && h.cfg.Service.Store != nil {
 		a.options.ProxyStore = h.cfg.Service.Store

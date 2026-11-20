@@ -127,6 +127,8 @@ type Engine struct {
 	Approver   *Approver
 	// Validate checks a catalog tree; nil uses the daemon's own loaders.
 	Validate func(root string) error
+	// Preflight adds read-only runtime findings against the live or scratch candidate tree.
+	Preflight func(root string) []catalogcheck.Result
 	// RunningSessions returns ids of live sessions that use any of touches
 	// ("agent:<id>", "launch:<id>"). Nil means none are known.
 	RunningSessions func(ctx context.Context, touches []string) ([]string, error)
@@ -490,7 +492,25 @@ func (e *Engine) checkFiles(in []File, opt Options, skipSecretScan bool) ([]File
 }
 
 // ValidateLive checks the live catalog and returns structured findings.
-func (e *Engine) ValidateLive() catalogcheck.Report { return catalogcheck.Run(e.Root) }
+func (e *Engine) ValidateLive() catalogcheck.Report { return e.validationReport(e.Root) }
+func (e *Engine) validationReport(root string) catalogcheck.Report {
+	report := catalogcheck.Run(root)
+	if e.Preflight != nil {
+		for _, result := range e.Preflight(root) {
+			report.Results = append(report.Results, result)
+			if result.Status == catalogcheck.StatusWarn {
+				report.Warnings++
+			}
+			if result.Status == catalogcheck.StatusFail {
+				report.Failures++
+				report.OK = false
+			}
+		}
+	}
+	rank := map[string]int{catalogcheck.StatusFail: 0, catalogcheck.StatusWarn: 1, catalogcheck.StatusOK: 2}
+	sort.SliceStable(report.Results, func(i, j int) bool { return rank[report.Results[i].Status] < rank[report.Results[j].Status] })
+	return report
+}
 
 // ValidateBundle checks what the catalog would be with the bundle applied,
 // without storing a plan or touching the live catalog. An empty bundle is the
@@ -527,7 +547,7 @@ func (e *Engine) ValidateBundle(files []File, opt Options) (catalogcheck.Report,
 			return catalogcheck.Report{}, err
 		}
 	}
-	return catalogcheck.Run(root), nil
+	return e.validationReport(root), nil
 }
 
 // DelegatedApprover reports whether the service principal id belongs to a

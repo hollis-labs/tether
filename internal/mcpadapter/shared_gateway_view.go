@@ -43,6 +43,11 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	for id, enabled := range r.known {
 		known[id] = enabled
 	}
+	stale := map[string]bool{}
+	for _, issue := range opts.StaleServers {
+		known[issue.Server] = true
+		stale[issue.Server] = true
+	}
 	grant := append([]string{}, opts.ServerFilter...)
 	// Origins the grant names that the running daemon does not have yet (a server a catalog apply added after
 	// the daemon started) degrade that origin, not the whole view: they are reported as pending a reload
@@ -84,6 +89,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err != nil {
 		return nil, err
 	}
+	upstreams.liveServers = opts.LiveServers
 	a.upstreams = upstreams
 	registry := NewToolRegistry()
 	for _, entry := range r.pool.entries {
@@ -192,15 +198,39 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	fullSnapshot := gateway.Snapshot
 	gateway.Snapshot = func() mcpgateway.Snapshot {
 		full := fullSnapshot()
+		if opts.LiveServers != nil {
+			ids, err := opts.LiveServers()
+			if err != nil {
+				ids = nil
+			}
+			for i := range full.Origins {
+				origin := &full.Origins[i]
+				if origin.ID != "tether" && !slices.Contains(ids, origin.ID) {
+					origin.Status = "grant_stale"
+					origin.AvailableTools = 0
+					origin.Error = "server removed or disabled; resume or relaunch after correcting the catalog"
+				}
+			}
+		}
+		for _, issue := range opts.StaleServers {
+			full.Origins = append(full.Origins, mcpgateway.OriginStatus{ID: issue.Server, Status: "grant_stale", Error: issue.Reason + "; resume or relaunch after correcting the catalog"})
+		}
+
 		_, collisions, _ := upstreams.namingDiagnostics()
 		full.Collisions = append(full.Collisions, collisions...)
 		origins := []mcpgateway.OriginStatus{}
 		for _, origin := range full.Origins {
-			if origin.ID == "tether" || upstreams.servers[origin.ID] {
+			if origin.ID == "tether" || upstreams.servers[origin.ID] || stale[origin.ID] {
 				origins = append(origins, origin)
 			}
 		}
 		for _, id := range pending {
+			if opts.LiveServers != nil {
+				ids, err := opts.LiveServers()
+				if err != nil || !slices.Contains(ids, id) {
+					continue
+				}
+			}
 			origins = append(origins, mcpgateway.OriginStatus{ID: id, Status: "pending_restart",
 				Error: "added to the catalog after the daemon started; reload the daemon to start it"})
 		}
@@ -226,7 +256,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		a.registerDocsResources(s)
 		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
 	}
-	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(r.pool, upstreams.servers, gateway, opts.Publisher))
+	s.SDKServer().AddReceivingMiddleware(a.resourceProxyMiddleware(r.pool, upstreams.servers, gateway, opts.Publisher, opts.LiveServers))
 	// Outermost: a denied machine call is audited and never reaches the upstream
 	// or the call logger. The access mode is the caller's (ProxyOptions), not
 	// the daemon's env; unset is read-only.

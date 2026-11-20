@@ -7,20 +7,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hollis-labs/tether/internal/store"
+	"log/slog"
 	"sort"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // Caller is derived exclusively from verified identity and daemon-owned state.
 // Request selectors may further restrict this grant, never replace it.
 type Caller struct {
-	Principal identity.Principal
-	Policy    mcpgateway.SessionPolicy
+	// SavedDigest binds an open transport to the validated immutable snapshot.
+	// Catalog narrowing changes effective origins without invalidating that binding.
+	SavedDigest string
+	Narrowed    []config.MCPGrantIssue
+	Principal   identity.Principal
+	Policy      mcpgateway.SessionPolicy
 	// MachineAccess is the calling agent's catalog machine_access, resolved
 	// from the stored session snapshot's agent, or for a service/interactive
 	// principal from the agent its operator-provisioned mcp_grants entry
@@ -34,14 +39,21 @@ type Caller struct {
 var errSessionUnavailable = errors.New("session policy temporarily unavailable")
 
 type CallerResolver struct {
-	Catalog func(context.Context) (*config.Catalog, error)
-	Session func(context.Context, string) (mcpgateway.SessionPolicy, error)
+	OnNarrow func(context.Context, mcpgateway.SessionPolicy, []config.MCPGrantIssue)
+	Catalog  func(context.Context) (*config.Catalog, error)
+	Session  func(context.Context, string) (mcpgateway.SessionPolicy, error)
 	// RecoverySession additionally checks retained authority without presenting
 	// a credential or manufacturing a verified transport principal.
 	RecoverySession func(context.Context, string) (mcpgateway.SessionPolicy, error)
 }
 
-func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
+func (r CallerResolver) Resolve(ctx context.Context) (result Caller, resolveErr error) {
+	defer func() {
+		if resolveErr != nil {
+			p, _ := identity.FromContext(ctx)
+			slog.WarnContext(ctx, "MCP admission refused", "session", p.SessionID, "server", "", "reason", resolveErr.Error())
+		}
+	}()
 	p, verified := identity.FromContext(ctx)
 	if !verified || p.ID == "" {
 		return Caller{}, identity.ErrInvalidToken
@@ -61,17 +73,19 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 	// credential carries. It is taken from daemon-owned state only.
 	machineAgent := ""
 	boundAgent := identity.IsBoundAgentToken(p)
+	savedDigest := ""
+	var narrowed []config.MCPGrantIssue
 	switch {
 	case p.Kind == "session" || boundAgent:
 		// A session credential and an issued session-bound agent token (#365)
 		// resolve to the same session policy, read from the session row for
 		// p.SessionID; a token cannot widen it.
 		if p.SessionID == "" || r.Session == nil {
-			return Caller{}, fmt.Errorf("session MCP policy unavailable; resume or relaunch the session")
+			return Caller{}, store.ErrSessionMCPPolicyUnavailable
 		}
 		policy, err = r.Session(ctx, p.SessionID)
 		if err != nil {
-			if !errors.Is(err, store.ErrSessionMCPPolicyUnavailable) && !errors.Is(err, mcpgateway.ErrInvalidSessionMCPPolicy) {
+			if !errors.Is(err, store.ErrSessionMCPPolicyUnavailable) && !errors.Is(err, mcpgateway.ErrInvalidSessionMCPPolicy) && !errors.Is(err, mcpgateway.ErrSessionMCPIdentity) {
 				return Caller{}, errSessionUnavailable
 			}
 			return Caller{}, err
@@ -80,7 +94,16 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 			return Caller{}, err
 		}
 		if policy.SessionID != p.SessionID {
-			return Caller{}, fmt.Errorf("session MCP policy identity mismatch")
+			return Caller{}, mcpgateway.ErrSessionMCPIdentity
+		}
+		savedDigest = policy.Digest
+		original := policy
+		policy.Servers, narrowed = cat.NarrowMCPGrant(policy.Servers)
+		for _, issue := range narrowed {
+			slog.WarnContext(ctx, "MCP grant narrowed", "session", p.SessionID, "server", issue.Server, "reason", issue.Reason)
+		}
+		if len(narrowed) > 0 && r.OnNarrow != nil {
+			r.OnNarrow(ctx, original, narrowed)
 		}
 	case p.Kind == "operator":
 		if p.ID != identity.OperatorID || p.TokenID != "" {
@@ -102,8 +125,10 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 	default:
 		return Caller{}, identity.ErrInvalidToken
 	}
-	if err := cat.ValidateMCPGrant(fmt.Sprintf("verified principal %q MCP grant", p.ID), policy.Servers); err != nil {
-		return Caller{}, err
+	if savedDigest == "" {
+		if err := cat.ValidateMCPGrant(fmt.Sprintf("verified principal %q MCP grant", p.ID), policy.Servers); err != nil {
+			return Caller{}, err
+		}
 	}
 	// Own the returned slices/pointers; transport views must not alias mutable
 	// catalog/store results after the credential binding is established.
@@ -124,5 +149,5 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 			access = launch.MachineAccessReadWrite
 		}
 	}
-	return Caller{Principal: p, Policy: policy.Seal(), MachineAccess: access}, nil
+	return Caller{SavedDigest: savedDigest, Narrowed: narrowed, Principal: p, Policy: policy.Seal(), MachineAccess: access}, nil
 }

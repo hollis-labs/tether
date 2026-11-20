@@ -70,12 +70,16 @@ func viewFingerprint(caller Caller, token string, opts mcpadapter.ProxyOptions) 
 		issuer, audience, parent = caller.Principal.Issuer, caller.Principal.Audience, caller.Principal.Parent
 	}
 	// Selector source labels are presentation; resolved content is authority.
+	digest := caller.Policy.Digest
+	if caller.SavedDigest != "" {
+		digest = caller.SavedDigest
+	}
 	payload := struct {
 		Credential, PrincipalID, Kind, SessionID, TokenHash, Issuer, Audience, Parent, PolicyDigest, MachineAccess string
 		Scopes                                                                                                     []string
 		Profile                                                                                                    *mcpgateway.Profile
 		Mode                                                                                                       mcpgateway.Mode
-	}{credential, caller.Principal.ID, caller.Principal.Kind, caller.Principal.SessionID, tokenHash, issuer, audience, parent, caller.Policy.Digest, caller.MachineAccess, scopes, opts.Profile.Profile, mode.Mode}
+	}{credential, caller.Principal.ID, caller.Principal.Kind, caller.Principal.SessionID, tokenHash, issuer, audience, parent, digest, caller.MachineAccess, scopes, opts.Profile.Profile, mode.Mode}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -147,6 +151,9 @@ func selectedUpstreamOrigins(a admission) ([]string, error) {
 	known := map[string]bool{"tether": true}
 	for id, enabled := range a.catalog.MCPServerEnabled {
 		known[id] = enabled
+	}
+	for _, issue := range a.caller.Narrowed {
+		known[issue.Server] = true
 	}
 	selected := append([]string{}, a.options.ServerFilter...)
 	for _, floor := range a.options.AuthorityProfiles {

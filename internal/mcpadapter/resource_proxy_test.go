@@ -242,3 +242,61 @@ func TestResourceServiceCredentialScrub(t *testing.T) {
 		t.Fatal("upstream result mutated")
 	}
 }
+
+func TestSavedGrantNarrowingRevokesExistingResourceAndRefreshAccess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "app", Transport: "http"}}, daemonTestRoots(t), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	var reads atomic.Int32
+	upstream := resourceFixture(t, "app", &reads)
+	tools, err := upstream.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.pool.statuses["app"] = &clientStatus{client: upstream, state: "connected", accepted: true}
+	if _, err := r.pool.publish(context.Background(), "app", upstream, tools.Tools, false); err != nil {
+		t.Fatal(err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:s", Kind: "session", SessionID: "s"})
+	a, err := NewVerifiedAdapter(ctx, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var enabled atomic.Bool
+	enabled.Store(true)
+	v, err := r.NewGatewayView(ctx, a, ProxyOptions{Only: true, ServerFilter: []string{"app"}, LiveServers: func() ([]string, error) {
+		if enabled.Load() {
+			return []string{"app"}, nil
+		}
+		return nil, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	cs := connectDaemonView(ctx, t, v)
+	params := &mcpsdk.ReadResourceParams{URI: appResourceURI, Meta: mcpsdk.Meta{"fixture": "request"}}
+	if _, err := cs.ReadResource(ctx, params); err != nil {
+		t.Fatal(err)
+	}
+	enabled.Store(false)
+	if _, err := cs.ReadResource(ctx, params); err == nil {
+		t.Fatal("removed origin retained resource dispatch")
+	}
+	if reads.Load() != 1 {
+		t.Fatalf("removed origin received RPC: %d", reads.Load())
+	}
+	listed, err := cs.ListResources(ctx, nil)
+	if err != nil || len(listed.Resources) != 0 {
+		t.Fatalf("stale resources listed: %+v %v", listed, err)
+	}
+	if _, err := a.upstreams.(*UpstreamView).Refresh(ctx, "app"); err == nil {
+		t.Fatal("removed origin retained refresh access")
+	}
+	if results, err := a.upstreams.(*UpstreamView).Refresh(ctx, ""); err != nil || len(results) != 0 {
+		t.Fatalf("refresh selected removed origin: %+v %v", results, err)
+	}
+}

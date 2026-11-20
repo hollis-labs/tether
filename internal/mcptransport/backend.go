@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 const (
@@ -249,7 +251,14 @@ func admissionSelectors(w http.ResponseWriter, r *http.Request) (selectors, erro
 
 func admissionError(w http.ResponseWriter, err error) {
 	status, code := http.StatusForbidden, "mcp_policy_refused"
+	message := "MCP policy refused; resume or relaunch the session"
 	switch {
+	case errors.Is(err, mcpgateway.ErrSessionMCPIdentity):
+		code, message = "mcp_identity_mismatch", "Session MCP identity mismatch; resume or relaunch the session"
+	case errors.Is(err, mcpgateway.ErrInvalidSessionMCPPolicy), errors.Is(err, store.ErrSessionMCPPolicyUnavailable):
+		code, message = "mcp_policy_invalid", "Invalid or missing saved MCP policy; resume or relaunch the session"
+	case errors.Is(err, config.ErrInvalidMCPGrant):
+		code, message = "mcp_grant_stale", "MCP grant names an unavailable server; correct the grant and resume or relaunch the session"
 	case errors.Is(err, identity.ErrInvalidToken):
 		status, code = http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, errRemoteCaller):
@@ -258,6 +267,12 @@ func admissionError(w http.ResponseWriter, err error) {
 		status, code = http.StatusServiceUnavailable, "identity_unavailable"
 	case errors.Is(err, errCatalogUnavailable), errors.Is(err, errSessionUnavailable):
 		status, code = http.StatusServiceUnavailable, "mcp_catalog_unavailable"
+	}
+	if code == "mcp_policy_refused" || code == "mcp_identity_mismatch" || code == "mcp_policy_invalid" || code == "mcp_grant_stale" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code, "message": message}})
+		return
 	}
 	transportError(w, status, code)
 }

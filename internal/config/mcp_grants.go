@@ -183,3 +183,42 @@ func (c *Catalog) ValidateLaunchMCPGrants(id string) error {
 	}
 	return errors.Join(issues...)
 }
+
+// MCPGrantIssue describes authority removed from a previously validated snapshot.
+// It contains names and reasons only, never credentials.
+type MCPGrantIssue struct {
+	Server string `json:"server"`
+	Reason string `json:"reason"`
+}
+
+// NarrowMCPGrant intersects a saved grant with today's enabled catalog. It does
+// not validate the snapshot: callers must authenticate and check its digest and
+// identity first. Tether is an in-process recovery surface, not an upstream.
+func (c *Catalog) NarrowMCPGrant(ids []string) ([]string, []MCPGrantIssue) {
+	effective := []string{}
+	var issues []MCPGrantIssue
+	for _, id := range ids {
+		if id == "tether" {
+			effective = append(effective, id)
+			continue
+		}
+		enabled, exists := c.MCPServerEnabled[id]
+		if exists && enabled {
+			effective = append(effective, id)
+			continue
+		}
+		reason := "removed"
+		if exists {
+			reason = "disabled"
+		}
+		issues = append(issues, MCPGrantIssue{Server: id, Reason: reason})
+	}
+	return effective, issues
+}
+
+// SessionMCPGrantImpact is a preflight warning for a running session.
+type SessionMCPGrantImpact struct {
+	SessionID string          `json:"session_id"`
+	Servers   []MCPGrantIssue `json:"servers"`
+	Hint      string          `json:"hint"`
+}

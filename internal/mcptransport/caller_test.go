@@ -74,8 +74,8 @@ func TestCallerResolver_RefusesChangedOrMismatchedSessionPolicy(t *testing.T) {
 	}
 	policy = policy.Seal()
 	cat.MCPServerEnabled["one"] = false
-	if _, err := r.Resolve(ctx); !errors.Is(err, config.ErrInvalidMCPGrant) {
-		t.Fatal("disabled grant accepted", err)
+	if caller, err := r.Resolve(ctx); err != nil || len(caller.Policy.Servers) != 0 || len(caller.Narrowed) != 1 {
+		t.Fatalf("disabled grant not narrowed: %+v %v", caller, err)
 	}
 }
 

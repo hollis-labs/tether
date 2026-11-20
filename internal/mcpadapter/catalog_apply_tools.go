@@ -61,7 +61,7 @@ func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name: "tether_catalog_validate",
 		Description: "Validate the catalog and return structured findings (severity, check, entity, message, remedy), failures first. With no files it checks the LIVE catalog. With files it checks what the catalog would be with that bundle applied, on a scratch copy; nothing is stored or written, so use it to test a draft before tether_catalog_plan. " +
-			"Checks: the layered load and parse, MCP grants against the declared servers, references between agents, launches, projects and providers, sandbox profiles, MCP discovery modes, profiles, server names and credential files. It reads files only; it does not contact a daemon, a database or an upstream. Read-only; no scope required.",
+			"Checks: the layered load and parse, MCP grants against the declared servers, references between agents, launches, projects and providers, sandbox profiles, MCP discovery modes, profiles, server names and credential files. The daemon also warns about running sessions whose saved MCP grant would lose a removed or disabled server. It does not contact upstreams. Read-only; no scope required.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.ArrayProp("files", "Optional draft files to overlay on the live catalog: {path, content} or {path, delete: true}.", false, fileItem),
 		),
