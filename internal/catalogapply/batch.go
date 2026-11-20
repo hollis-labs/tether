@@ -39,13 +39,14 @@ func (e *Engine) ApproveBatch(req BatchApprovalRequest) ([]ApprovalResult, error
 		}
 		seen[p.ID] = true
 	}
-	if e.Approver == nil {
-		return nil, ErrNoPassphrase
+	if !e.ApprovalOff {
+		if e.Approver == nil {
+			return nil, ErrNoPassphrase
+		}
+		if err := e.Approver.Verify(req.Passphrase); err != nil {
+			return nil, err
+		}
 	}
-	if err := e.Approver.Verify(req.Passphrase); err != nil {
-		return nil, err
-	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	results := make([]ApprovalResult, 0, len(req.Plans))

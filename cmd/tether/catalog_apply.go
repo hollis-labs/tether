@@ -112,11 +112,6 @@ var catalogApproveCmd = &cobra.Command{
 	Short: "Approve planned catalog changes so the agent can apply them",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-		if err != nil || !term.IsTerminal(int(tty.Fd())) {
-			return errors.New("approval needs a terminal: run `tether catalog approve` yourself, from a shell you are typing in")
-		}
-		defer func() { _ = tty.Close() }() // /dev/tty is never buffered; nothing to flush
 		h, err := localOnlyClient(catalogPath)
 		if err != nil {
 			return err
@@ -137,6 +132,20 @@ var catalogApproveCmd = &cobra.Command{
 			}
 			plans = append(plans, plan)
 		}
+		allApproved := true
+		for _, p := range plans {
+			if p.State != catalogapply.StateApproved {
+				allApproved = false
+			}
+		}
+		if allApproved {
+			return nil
+		}
+		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		if err != nil || !term.IsTerminal(int(tty.Fd())) {
+			return errors.New("approval needs a terminal: run `tether catalog approve` yourself, from a shell you are typing in")
+		}
+		defer func() { _ = tty.Close() }() // /dev/tty is never buffered; nothing to flush
 		now := time.Now()
 		if err := printApprovalReview(tty, plans, now, catalogApproveAckPrivileged, catalogApproveAllowRunning); err != nil {
 			return err
