@@ -1947,6 +1947,21 @@ passphrase verification. It uses the local-socket `catalogApprover` gate;
 session, device, service and remote callers cannot use this operator endpoint.
 The existing delegated single-plan approval route retains its existing policy.
 
+Request:
+
+```json
+{
+  "plans": [{"id": "cp_example", "digest": "<full SHA-256 digest>"}],
+  "passphrase": "<entered at the operator terminal>",
+  "ack_privileged": false,
+  "allow_running": false
+}
+```
+
+A `200` response has `results: [{id, plan?, error?}]`, with a plan for each
+success or an error for each failure. Empty batches, duplicate ids and batches
+larger than 64 entries return `400`; gate or credential failures return `403`.
+
 Each batch entry binds its own plan id and full digest. The engine enforces the
 same expiry, validity, privileged-change and running-session checks for each
 entry. A successful batch request can contain both successful approvals and
@@ -1957,7 +1972,9 @@ whole batch, not one attempt per entry; authentication failure approves nothing.
 The terminal CLI `tether catalog approve <id> [<id>...]` shows the plans and asks
 for one confirmation followed by one passphrase. For multiple plans, the
 confirmation is the first 12 hexadecimal characters of SHA-256 over the sorted
-list of full digests. Privileged changes still require `--ack-privileged`, and
+list of full digests joined with newline characters, without a trailing newline.
+Single-plan approval retains the first 12 characters of that plan's digest.
+Privileged changes still require `--ack-privileged`, and
 changes used by running sessions still require `--allow-running`.
 
 ### `GET /catalog/projects`
