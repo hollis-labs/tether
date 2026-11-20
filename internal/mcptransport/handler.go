@@ -168,7 +168,7 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 		cfg.RecheckInterval = time.Second
 	}
 	if cfg.MaxViews <= 0 {
-		cfg.MaxViews = 128
+		cfg.MaxViews = 256
 	}
 	if cfg.MaxPrincipalViews <= 0 {
 		cfg.MaxPrincipalViews = 64

@@ -825,7 +825,7 @@ func TestTransportPerPrincipalLimitDoesNotLockOthersOut(t *testing.T) {
 	f := newTransportFixture(t, true, false)
 	f.handler.cfg.MaxViews = 128
 	a, b := f.token(t, "abusive", nil), f.token(t, "other", nil)
-	for i := 0; i < 16; i++ {
+	for i := 0; i < f.handler.cfg.MaxPrincipalViews; i++ {
 		r := f.request(t, http.MethodPost, "/mcp", a, "", nil)
 		if r.StatusCode != 200 {
 			t.Fatal(i, r.StatusCode)
