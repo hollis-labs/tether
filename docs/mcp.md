@@ -2381,8 +2381,8 @@ Valid plans return `state: approved` and `approved_by: approval-disabled`, which
 is also recorded in the apply audit. Agent self-definition, operator-only,
 privileged and global catalog approval fences and running-session acknowledgements
 are lifted. Catalog write scopes, path and secret checks, validation, expiry,
-digest and live-base checks, backups, rollback on failure, and catalog git commits
-remain in effect. Invalid plans remain invalid. Approvals remain memory-only.
+digest and live-base checks, backups and rollback on failure remain in effect.
+Invalid plans remain invalid. Approvals remain memory-only.
 
 Call `tether_catalog_plan` with `apply: true` (HTTP: `POST /catalog/plans` with
 `"apply": true`) to plan and apply immediately. The response is the applied plan

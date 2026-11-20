@@ -3,7 +3,6 @@ package catalogapply
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/hollis-labs/tether/internal/operatorattest"
 	"io"
@@ -66,23 +65,10 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 	if cp.State != StateApproved || cp.ApprovedAt == nil {
 		return nil, fmt.Errorf("plan %q is not approved (state %s); a human approves a plan with its digest", planID, cp.State)
 	}
-	if digestOf(cp) != cp.Digest {
-		return nil, fmt.Errorf("plan %q digest no longer matches its content", planID)
-	}
-	// The live catalog must still be what the approver reviewed.
-	for _, f := range cp.Files {
-		live := "-"
-		if b, err := os.ReadFile(filepath.Join(e.Root, filepath.FromSlash(f.Path))); err == nil {
-			live = sha(string(b))
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
-		}
-		if live != f.baseSHA256 {
-			return nil, fmt.Errorf("stale plan: %s changed after the plan was made; plan again", f.Path)
-		}
-		if err := checkNoSymlinks(e.Root, f.Path); err != nil {
-			return nil, err
-		}
+	// Autoapproval must retain the same content, path and live-base integrity
+	// checks as explicit approval, immediately before any filesystem writes.
+	if err := e.checkLiveBase(cp); err != nil {
+		return nil, err
 	}
 	if e.RunningSessions != nil && len(cp.Touches) > 0 && !cp.AllowRunning && !e.ApprovalOff {
 		ids, err := e.RunningSessions(ctx, cp.Touches)

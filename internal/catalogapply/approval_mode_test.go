@@ -126,3 +126,57 @@ func TestApprovalOffOperatorOnlyAndRollback(t *testing.T) {
 		t.Fatalf("restored %q %v", body, err)
 	}
 }
+
+func TestApplyRechecksAutoapprovedPlanIntegrity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Plan)
+	}{
+		{"content", func(p *Plan) { p.Files[0].content = "id: general\nname: Tampered\n" }},
+		{"path", func(p *Plan) { p.Files[0].Path = "../escape.yaml"; p.Digest = digestOf(p) }},
+		{"digest", func(p *Plan) { p.Digest = "tampered" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEngine(t)
+			e.ApprovalOff = true
+			p, err := e.PlanBundle(context.Background(), Bundle{Name: "integrity", Files: []File{{Path: "agents/general.yaml", Content: "id: general\nname: Changed\n"}}}, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.mu.Lock()
+			tc.mutate(e.plans[p.ID])
+			e.mu.Unlock()
+			if _, err = e.Apply(context.Background(), p.ID); err == nil {
+				t.Fatal("tampered plan applied")
+			}
+			body, err := os.ReadFile(filepath.Join(e.Root, "agents/general.yaml"))
+			if err != nil || string(body) != "id: general\nname: General\n" {
+				t.Fatalf("live catalog changed: %q %v", body, err)
+			}
+			if _, err = os.Stat(e.BackupRoot); !os.IsNotExist(err) {
+				t.Fatalf("integrity failure reached writes: %v", err)
+			}
+		})
+	}
+}
+
+func TestApprovalOffRestoreStillRebuildsPlannedRecords(t *testing.T) {
+	e := newEngine(t)
+	e.PlansFile = filepath.Join(t.TempDir(), "plans.json")
+	p, err := e.PlanBundle(context.Background(), Bundle{Name: "restore", Files: []File{{Path: "agents/general.yaml", Content: "id: general\nname: Changed\n"}}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := &Engine{Root: e.Root, BackupRoot: e.BackupRoot, PlansFile: e.PlansFile, Validate: e.Validate, ApprovalOff: true}
+	if err = next.RestorePlans(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restored, ok := next.Get(p.ID)
+	if !ok || restored.State != StatePlanned {
+		t.Fatalf("restored: %+v %v", restored, ok)
+	}
+	approved, err := next.Approve(ApprovalRequest{PlanID: p.ID, Digest: p.Digest})
+	if err != nil || approved.State != StateApproved || approved.ApprovedBy != "approval-disabled" {
+		t.Fatalf("approve restored: %+v %v", approved, err)
+	}
+}
