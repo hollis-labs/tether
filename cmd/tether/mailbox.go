@@ -30,11 +30,12 @@ var mailboxCmd = &cobra.Command{
 
 var mailboxWatchCmd = &cobra.Command{
 	Use:   "watch <urn>",
-	Short: "Stream new mailbox messages without marking them delivered or read",
+	Short: "Stream mailbox messages and record recipient delivery, without marking read",
 	Long: `Stream a recipient's mailbox over SSE until interrupted.
 
-Reads are side-effect free, like "messages list": nothing is marked delivered or
-read. Without --after-seq only messages that arrive after the watch starts are
+Successful writes to the authenticated recipient record delivery, without marking
+read. Operator inspection leaves delivery state unchanged. Without --after-seq
+only messages that arrive after the watch starts are
 shown. The command reconnects with backoff, resumes from the last seen seq and
 skips anything it already printed. With --json each delivery is one line with
 the "messages list --json" fields plus "seq"; a dropped-history notice is a line
