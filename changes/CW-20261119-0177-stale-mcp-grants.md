@@ -1,2 +1,3 @@
 - Keep running sessions connected to Tether and their remaining MCP servers when a saved server is removed or disabled; report narrowed grants in whoami, agent notices, logs and catalog preflight, and distinguish invalid policy and identity failures (CW-20261119-0177).
 - Preserve native Tether recovery when external catalog metadata disables its name; verify stale saved profile origins preserve server and tool authority floors (CW-20261119-0177).
+- Keep intrinsic Tether grants out of external upstream validation and dispatch, including native-only saved grants with no selected profile (CW-20261119-0177).

@@ -81,7 +81,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	}
 	running := selected[:0:0]
 	for _, id := range selected {
-		if slices.Contains(pending, id) {
+		if id == "tether" || slices.Contains(pending, id) {
 			continue
 		}
 		running = append(running, id)

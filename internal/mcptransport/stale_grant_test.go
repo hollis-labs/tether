@@ -15,6 +15,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/store"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -212,5 +213,20 @@ func TestStaleProfileOriginValidationPreservesAuthorityFloors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSelectedOriginsIntrinsicTetherWithoutProfile(t *testing.T) {
+	for _, known := range []map[string]bool{{}, {"tether": false}} {
+		a := admission{catalog: &config.Catalog{MCPServerEnabled: known}, caller: Caller{Narrowed: []config.MCPGrantIssue{{Server: "removed", Reason: "removed"}}}, options: mcpadapter.ProxyOptions{ServerFilter: []string{"tether"}}}
+		got, err := selectedUpstreamOrigins(a)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("native-only origins: %v %v", got, err)
+		}
+		a.options.ServerFilter = append(a.options.ServerFilter, "disabled")
+		a.catalog.MCPServerEnabled["disabled"] = false
+		if _, err := selectedUpstreamOrigins(a); err == nil {
+			t.Fatal("unrelated disabled origin accepted")
+		}
 	}
 }

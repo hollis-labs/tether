@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -395,5 +396,55 @@ func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
 				t.Fatal("all externals gone lost Tether", err)
 			}
 		})
+	}
+}
+
+func TestSharedGatewayView_IntrinsicTetherNeverEntersExternalPool(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		for _, profiled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("disabled=%v/profile=%v", disabled, profiled), func(t *testing.T) {
+				r, err := NewSharedUpstreams(nil, daemonTestRoots(t), true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer r.Close()
+				if disabled {
+					r.known["tether"] = false
+				}
+				r.known["other"] = false
+				if err := r.Start(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:s", Kind: "session", SessionID: "s"})
+				a, err := NewVerifiedAdapter(ctx, &app.Service{Catalog: &config.Catalog{}}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				opts := ProxyOptions{ServerFilter: []string{"tether"}, StaleServers: []config.MCPGrantIssue{{Server: "removed", Reason: "removed"}}}
+				if profiled {
+					opts.Profile = mcpgateway.ProfileSelection{Profile: &mcpgateway.Profile{Servers: []string{"tether"}}}
+				}
+				v, err := r.NewGatewayView(ctx, a, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer v.Close()
+				if a.upstreams.(*UpstreamView).servers["tether"] {
+					t.Fatal("native Tether granted to external pool")
+				}
+				cs := connectDaemonView(ctx, t, v)
+				if !slices.Contains(listToolNames(t, cs), "tether_catalog_list_projects") {
+					t.Fatal("native recovery tools missing")
+				}
+				result, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_catalog_list_projects", Arguments: map[string]any{}})
+				if err != nil || result.IsError {
+					t.Fatalf("native recovery: %+v %v", result, err)
+				}
+				opts.ServerFilter = []string{"tether", "other"}
+				if _, err := r.NewGatewayView(ctx, a, opts); err == nil {
+					t.Fatal("unrelated disabled origin accepted")
+				}
+			})
+		}
 	}
 }
