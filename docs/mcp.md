@@ -1758,8 +1758,11 @@ this in the daemon environment, not the MCP client environment.
 Planned bundles are persisted in `catalog-plans.json` beside the state database,
 with mode `0600` and atomic replacement. Plan responses and
 `tether_catalog_plan_get` expose `expires_at` and `survives_restart`. Rollback
-bundles containing detected secret literals stay in memory only, with a warning
-and `survives_restart: false`; persisted records never include the review diff. Reload checks the stored bundle,
+records reference their existing backup rather than copying its contents, so
+pre-existing secret literals are not duplicated into plan records. Reload reads
+the referenced backup and checks the reconstructed digest; missing or changed
+backups invalidate the saved rollback. Persisted records never include the
+review diff. Reload checks the stored bundle,
 digest and base hashes against the live catalog and revalidates the candidate;
 changed or invalid records cannot become approved. **Approval is never restored
 from disk.** Only the `planned` state is persisted; approving a plan removes its
