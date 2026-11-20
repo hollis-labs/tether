@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +15,8 @@ import (
 
 // Remote service tokens (CW-20261019-0044, PR 3). The remote listener accepts
 // stored tth_ device credentials and, on a closed list of exact routes, an
-// issued service JWT: POST /events (scope events), and POST /messages and
-// POST /messages/notify (scope messages, send only; CW-20261030-0198).
+// issued service JWT on the send routes below and the two bound mailbox routes
+// (CW-20261118-0017). Mailbox grants are checked independently of sender mode.
 //
 // The two credential families never cross: a bearer is dispatched by format with
 // no fallthrough, a device credential never takes the JWT path, and a JWT on
@@ -26,7 +28,7 @@ const (
 	ServiceJWTPath   = "/events"
 )
 
-// serviceJWTRoutes is the closed list of exact POST routes a service JWT may use
+// serviceJWTRoutes lists the exact send routes a service JWT may use
 // remotely, with the scope each requires. A scope for one route never opens
 // another: tether.messages does not publish events and tether.events does not
 // send mail.
@@ -34,6 +36,7 @@ var serviceJWTRoutes = map[string]string{
 	"/events":          ScopeEvents,
 	"/messages":        ScopeMessages,
 	"/messages/notify": ScopeMessages,
+	"/messages/post":   ScopeMessages,
 }
 
 // serviceRouteName returns the listed route equal to path (the map key, never the
@@ -44,18 +47,32 @@ func serviceRouteName(path string) string {
 			return route
 		}
 	}
+	if path == "/messages/list" {
+		return "/messages/list"
+	}
+	if serviceReadPath.MatchString(path) {
+		return "/messages/{id}/read"
+	}
 	return "-"
 }
 
 // ServiceJWTScope returns the scope a service JWT needs for method and path, and
 // whether the route is on the closed list at all.
 func ServiceJWTScope(method, path string) (string, bool) {
+	if method == http.MethodGet && path == "/messages/list" {
+		return ScopeRead, true
+	}
+	if method == http.MethodPost && serviceReadPath.MatchString(path) {
+		return ScopeMessages, true
+	}
 	if method != ServiceJWTMethod {
 		return "", false
 	}
 	scope, ok := serviceJWTRoutes[path]
 	return scope, ok
 }
+
+var serviceReadPath = regexp.MustCompile(`^/messages/[A-Za-z0-9_-]+/read$`)
 
 var servicePrincipalRe = regexp.MustCompile(`^msg://service/[a-z][a-z0-9-]{0,31}/[a-z][a-z0-9-]{0,31}$`)
 
@@ -156,13 +173,13 @@ func (l *AttemptLimiter) Refund() {
 	}
 }
 
-// serviceJWTRequest reports whether r is exactly one of the closed list of POST
-// routes (/events, /messages, /messages/notify), no query, no variant, and
+// serviceJWTRequest reports whether r is exactly one of the closed routes,
+// with only its documented mailbox query selectors, no variant, and
 // returns its JWT bearer if there is one (three dot-separated parts, not a tth_
 // credential).
 func serviceJWTRequest(r *http.Request) (string, bool) {
 	if _, listed := ServiceJWTScope(r.Method, r.URL.Path); !listed || r.URL.EscapedPath() != r.URL.Path ||
-		r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.Fragment != "" || r.URL.Opaque != "" {
+		!serviceJWTQuery(r) || r.URL.ForceQuery || r.URL.Fragment != "" || r.URL.Opaque != "" {
 		return "", false
 	}
 	headers := r.Header.Values("Authorization")
@@ -178,6 +195,36 @@ func serviceJWTRequest(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return tok, true
+}
+
+// serviceMailboxRequest is deliberately narrower than all mailbox operations.
+func serviceMailboxRequest(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.URL.Path == "/messages/list" || r.Method == http.MethodPost && serviceReadPath.MatchString(r.URL.Path)
+}
+
+// Queries are allowed only on the two mailbox routes, with one unambiguous
+// value per documented selector. No unknown keys or duplicate selectors.
+func serviceJWTQuery(r *http.Request) bool {
+	if !serviceMailboxRequest(r) {
+		return r.URL.RawQuery == ""
+	}
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return false
+	}
+	allowed := map[string]bool{"as": true}
+	if r.Method == http.MethodGet {
+		for _, key := range []string{"to", "kind", "thread_id", "include_archived", "unread_only", "limit", "offset"} {
+			allowed[key] = true
+		}
+	}
+	for _, pair := range strings.Split(r.URL.RawQuery, "&") {
+		key, _, hasValue := strings.Cut(pair, "=")
+		if !hasValue || !allowed[key] || len(q[key]) != 1 {
+			return false
+		}
+	}
+	return q.Get("as") != "" && (r.Method != http.MethodGet || q.Get("to") == q.Get("as"))
 }
 
 // handleServiceJWT authenticates a service JWT for POST /events. It writes the
@@ -240,9 +287,22 @@ func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string
 		_, _ = w.Write([]byte(`{"error":{"code":"scope_required","message":"required scope: ` + AppScopePrefix + need + `"}}`))
 		return
 	}
+	if serviceMailboxRequest(r) {
+		// A service's own subject and aliases are not agent mailbox grants.
+		// This is mandatory even when sender identity is in observe mode.
+		as := r.URL.Query().Get("as")
+		if !strings.HasPrefix(as, "msg://agent/") || !slices.Contains(p.Addresses, as) {
+			refuse(http.StatusForbidden, "forbidden")
+			return
+		}
+	}
 	p.Verified = true
 	// Audit-style line: principal and a jti prefix only, never the token.
-	log.Printf("identity: remote service JWT accepted sub=%s jti=%.8s route=POST %s scope=%s", p.ID, p.TokenID, serviceRouteName(r.URL.Path), need)
+	method := http.MethodPost
+	if r.Method == http.MethodGet {
+		method = http.MethodGet
+	}
+	log.Printf("identity: remote service JWT accepted sub=%s jti=%.8s route=%s %s scope=%s", p.ID, p.TokenID, method, serviceRouteName(r.URL.Path), need)
 	if record != nil {
 		obs.Event = "service_jwt_accepted"
 		_ = record(r.Context(), obs)

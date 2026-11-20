@@ -827,6 +827,14 @@ func (s *Server) seatAddressOfPrincipal(r *http.Request) (messaging.Address, boo
 	if !ok {
 		return messaging.Address{}, false
 	}
+	if p.Kind == "service" && identity.ServiceEventsRequest(r.Context()) {
+		for _, a := range p.Addresses {
+			if strings.HasPrefix(a, "msg://agent/") {
+				addr, err := messaging.ParseURN(a)
+				return addr, err == nil
+			}
+		}
+	}
 	candidates := append([]string{p.DefaultAddress()}, p.Addresses...)
 	for _, a := range candidates {
 		if s.handleFor(r.Context(), a) == "" {

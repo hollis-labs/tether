@@ -308,6 +308,7 @@ func (s *State) addService(r ServiceRecord) error {
 	if s.doc.Services == nil {
 		s.doc.Services = map[string]ServiceRecord{}
 	}
+	r.Addresses = append([]string(nil), r.Addresses...)
 	s.doc.Services[r.JTI] = r
 	return s.saveLocked()
 }
@@ -335,6 +336,7 @@ func (s *State) addServiceForRequester(r ServiceRecord, limit int) error {
 	if s.doc.Services == nil {
 		s.doc.Services = map[string]ServiceRecord{}
 	}
+	r.Addresses = append([]string(nil), r.Addresses...)
 	s.doc.Services[r.JTI] = r
 	return s.saveLocked()
 }
@@ -354,6 +356,7 @@ func (s *State) Services() []ServiceRecord {
 	out := make([]ServiceRecord, 0, len(s.doc.Services))
 	for _, r := range s.doc.Services {
 		r.Scopes = append([]string(nil), r.Scopes...)
+		r.Addresses = append([]string(nil), r.Addresses...)
 		out = append(out, r)
 	}
 	sort.Slice(out, func(a, b int) bool {

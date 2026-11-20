@@ -295,9 +295,18 @@ func (c *addressAliases) canonicalizeMail(ctx context.Context, db *sql.DB, env *
 // alias: the address the caller used, before it was resolved to the canonical one.
 const MetaAliasTo = "tether.alias_to"
 
+type exactMailboxKey struct{}
+
+// WithExactMailbox limits mailbox reads and recipient actions to the literal
+// stored recipient, without expanding mutable address aliases.
+func WithExactMailbox(ctx context.Context) context.Context {
+	return context.WithValue(ctx, exactMailboxKey{}, true)
+}
+
 // mailboxForms is AddressForms for a mailbox read.
 func (ms *messagingStore) mailboxForms(ctx context.Context, to messaging.Address) ([]string, error) {
-	if ms.owner == nil {
+	exact, _ := ctx.Value(exactMailboxKey{}).(bool)
+	if exact || ms.owner == nil {
 		return []string{to.URN()}, nil
 	}
 	return ms.owner.addrAliases.forms(ctx, ms.db, to.URN())

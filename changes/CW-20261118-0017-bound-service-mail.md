@@ -1,0 +1,1 @@
+- CW-20261118-0017: Bind service tokens to registered active agents and allow remote typed sends and strictly bound mailbox list/mark-read requests.

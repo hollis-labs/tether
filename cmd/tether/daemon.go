@@ -1652,6 +1652,9 @@ func buildTokenIssuer(ctx context.Context, svc *app.Service, dir string) (*authi
 		name = svc.Catalog.Global.Identity.Issuer
 	}
 	issuer := authissuer.New(name, keys, state)
+	if svc.Registry != nil {
+		issuer.ServiceAddresses = svc.Registry
+	}
 	svc.AgentTokens = issuer
 	go issuer.Maintain(ctx, authissuer.DefaultRotateEvery)
 	return issuer, nil

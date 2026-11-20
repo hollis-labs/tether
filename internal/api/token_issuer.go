@@ -49,6 +49,7 @@ const ServiceTokensPath = "/auth/service-tokens" //nolint:gosec // G101: a route
 
 // ServiceTokenRequest is the body of POST /auth/service-tokens.
 type ServiceTokenRequest struct {
+	Addresses     []string `json:"addresses,omitempty"`
 	App           string   `json:"app"`
 	Env           string   `json:"env,omitempty"`
 	Audience      string   `json:"audience"`
@@ -182,7 +183,7 @@ func NewTokenIssuerHandler(is *authissuer.Issuer, opts ...IssuerOption) http.Han
 		if !decodeDeviceBody(w, r, &req) {
 			return
 		}
-		tok, rec, err := is.IssueService(p, authissuer.ServiceRequest{App: req.App, Env: req.Env, Audience: req.Audience, Scopes: req.Scopes, Label: req.Label, AllowWildcard: req.AllowWildcard})
+		tok, rec, err := is.IssueService(p, authissuer.ServiceRequest{App: req.App, Env: req.Env, Audience: req.Audience, Scopes: req.Scopes, Addresses: req.Addresses, Label: req.Label, AllowWildcard: req.AllowWildcard})
 		switch {
 		case errors.Is(err, authissuer.ErrForbidden):
 			writeError(w, http.StatusForbidden, CodeForbidden, strings.TrimPrefix(err.Error(), "authissuer: "))

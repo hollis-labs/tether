@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	auth "github.com/hollis-labs/libs/security/auth"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/registry"
 )
 
 // TTL bounds (design: default 15 min, max 60 min).
@@ -56,6 +57,11 @@ type Issuer struct {
 	State *State
 	Now   func() time.Time
 
+	// ServiceAddresses validates operator-bound agent addresses. Nil refuses bindings.
+	ServiceAddresses interface {
+		Lookup(context.Context, string) (registry.Profile, error)
+	}
+
 	// keyLife serializes what must not interleave: choosing a service key through
 	// registering the token that names it (issueServiceFrom), and pruning rotated-out
 	// service keys. Without it a rotate-then-prune between the two deletes a key an
@@ -77,16 +83,17 @@ func New(name string, keys *KeyStore, state *State) *Issuer {
 
 // Claims is the JWT payload.
 type Claims struct {
-	Iss   string `json:"iss"`
-	Sub   string `json:"sub"`
-	Aud   string `json:"aud"`
-	Scope string `json:"scope"`
-	Exp   int64  `json:"exp"`
-	Iat   int64  `json:"iat"`
-	JTI   string `json:"jti"`
-	Kind  string `json:"kind"`
-	SID   string `json:"sid,omitempty"`
-	Par   string `json:"par,omitempty"`
+	Addresses []string `json:"addresses,omitempty"`
+	Iss       string   `json:"iss"`
+	Sub       string   `json:"sub"`
+	Aud       string   `json:"aud"`
+	Scope     string   `json:"scope"`
+	Exp       int64    `json:"exp"`
+	Iat       int64    `json:"iat"`
+	JTI       string   `json:"jti"`
+	Kind      string   `json:"kind"`
+	SID       string   `json:"sid,omitempty"`
+	Par       string   `json:"par,omitempty"`
 }
 
 // Request is a token exchange request.

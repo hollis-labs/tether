@@ -1,6 +1,7 @@
 package authissuer
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -10,7 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/registry"
 )
 
 // Service tokens (CW-20261019-0044, security direction v1): a third token class
@@ -49,6 +52,7 @@ var (
 
 // ServiceRequest asks for a service token.
 type ServiceRequest struct {
+	Addresses []string
 	// App names the workload. The principal is msg://service/<app>/<env>.
 	App string
 	// Env defaults to "dev".
@@ -67,14 +71,15 @@ type ServiceRequest struct {
 // ServiceRecord is the issuer's metadata for one service token. It never holds
 // the token.
 type ServiceRecord struct {
-	JTI      string   `json:"jti"`
-	Sub      string   `json:"sub"`
-	App      string   `json:"app"`
-	Env      string   `json:"env"`
-	Audience string   `json:"aud"`
-	Scopes   []string `json:"scopes"`
-	Label    string   `json:"label,omitempty"`
-	IssuedBy string   `json:"issued_by"`
+	Addresses []string `json:"addresses,omitempty"`
+	JTI       string   `json:"jti"`
+	Sub       string   `json:"sub"`
+	App       string   `json:"app"`
+	Env       string   `json:"env"`
+	Audience  string   `json:"aud"`
+	Scopes    []string `json:"scopes"`
+	Label     string   `json:"label,omitempty"`
+	IssuedBy  string   `json:"issued_by"`
 	// KID is the service signing key that signed the token; the key is kept
 	// while any live record names it.
 	KID string `json:"kid,omitempty"`
@@ -137,6 +142,26 @@ func (i *Issuer) mintService(issuedBy string, req ServiceRequest, replaces strin
 	if err != nil {
 		return Token{}, ServiceRecord{}, err
 	}
+	if len(req.Addresses) > 16 {
+		return Token{}, ServiceRecord{}, invalid("at most 16 addresses may be bound")
+	}
+	addresses := make([]string, 0, len(req.Addresses))
+	for _, address := range req.Addresses {
+		addr, err := messaging.ParseURN(address)
+		if err != nil || addr.Kind != messaging.KindAgent || addr.SubID != "" || addr.URN() != address {
+			return Token{}, ServiceRecord{}, invalid("addresses must be agent URNs")
+		}
+		if i.ServiceAddresses == nil {
+			return Token{}, ServiceRecord{}, invalid("agent address registry unavailable")
+		}
+		profile, err := i.ServiceAddresses.Lookup(context.Background(), address)
+		if err != nil || profile.URN != address || profile.Kind != registry.KindAgent || profile.Status != registry.StatusActive || profile.MergedInto != "" {
+			return Token{}, ServiceRecord{}, invalid("addresses must name registered active agents")
+		}
+		if !slices.Contains(addresses, address) {
+			addresses = append(addresses, address)
+		}
+	}
 	sub := ServicePrincipalID(req.App, env)
 	if identity.ReservedIssuerSubject(sub) {
 		return Token{}, ServiceRecord{}, forbidden("issuer protocol subjects cannot be service principals")
@@ -147,7 +172,7 @@ func (i *Issuer) mintService(issuedBy string, req ServiceRequest, replaces strin
 	now := i.Now().UTC()
 	exp := now.Add(ServiceTokenLifetime)
 	c := Claims{Iss: i.Name, Sub: sub, Aud: req.Audience, Scope: strings.Join(scopes, " "), Exp: exp.Unix(), Iat: now.Unix(),
-		JTI: uuid.NewString(), Kind: KindService, Par: issuedBy}
+		JTI: uuid.NewString(), Kind: KindService, Par: issuedBy, Addresses: addresses}
 	// Hold keyLife from choosing the key until the record that names it is saved, so
 	// a concurrent rotate + prune cannot delete the key in between.
 	i.keyLife.Lock()
@@ -163,7 +188,7 @@ func (i *Issuer) mintService(issuedBy string, req ServiceRequest, replaces strin
 	if i.afterServiceKeyChosen != nil {
 		i.afterServiceKeyChosen()
 	}
-	rec := ServiceRecord{JTI: c.JTI, Sub: sub, App: req.App, Env: env, Audience: req.Audience, Scopes: scopes, Label: req.Label,
+	rec := ServiceRecord{JTI: c.JTI, Sub: sub, App: req.App, Env: env, Audience: req.Audience, Scopes: scopes, Addresses: addresses, Label: req.Label,
 		IssuedBy: issuedBy, IssuedAt: now, ExpiresAt: exp, KID: kid, Replaces: replaces,
 		RequestedBy: requestedBy, RequestedSession: requestedSession}
 	if err := add(rec); err != nil {
@@ -300,7 +325,7 @@ func (i *Issuer) RotateServiceKey(parent identity.Principal, reissue bool) (Rota
 		return res, forbidden("too many live service tokens to re-issue; revoke unused ones first")
 	}
 	for _, old := range res.Pending {
-		tok, rec, err := i.issueServiceFrom(parent, ServiceRequest{App: old.App, Env: old.Env, Audience: old.Audience, Scopes: old.Scopes, Label: old.Label}, old.JTI, true)
+		tok, rec, err := i.issueServiceFrom(parent, ServiceRequest{App: old.App, Env: old.Env, Audience: old.Audience, Scopes: old.Scopes, Addresses: old.Addresses, Label: old.Label}, old.JTI, true)
 		if err != nil {
 			return res, err
 		}

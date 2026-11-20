@@ -175,3 +175,21 @@ func TestServiceTokenRevokeAllArgumentRules(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceTokenIssueBoundAddresses(t *testing.T) {
+	factory, got := serviceTokenFake(t)
+	cmd := newServiceTokenCommand(factory)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"issue", "--app", "surface", "--scope", "messages,read", "--address", "msg://agent/agent-mux/agt_first", "--address", "msg://agent/agent-mux/agt_second", "--out-file", filepath.Join(t.TempDir(), "surface.token")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Addresses) != 2 || got.Addresses[0] != "msg://agent/agent-mux/agt_first" || got.Addresses[1] != "msg://agent/agent-mux/agt_second" {
+		t.Fatal("address flags not carried to issuance")
+	}
+	if strings.Contains(out.String(), "signature-secret") {
+		t.Fatal("token printed")
+	}
+}

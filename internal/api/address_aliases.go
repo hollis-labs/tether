@@ -211,6 +211,18 @@ func (s *Server) guardMailbox(next http.HandlerFunc) http.HandlerFunc {
 		canonical(w, r)
 	})
 	return func(w http.ResponseWriter, r *http.Request) {
+		if identity.ServiceEventsRequest(r.Context()) && (r.URL.Path == "/messages/list" || strings.HasSuffix(r.URL.Path, "/read")) {
+			// The remote admission already checked the literal bound mailbox.
+			// Do not expand its authority via mutable seat or address aliases.
+			p, ok := verifiedPrincipal(r)
+			as := r.URL.Query().Get("as")
+			if !ok || !slices.Contains(p.Addresses, as) || s.protectedMailbox(r, as) {
+				writeError(w, http.StatusForbidden, CodeForbidden, "mailbox is not a bound agent address")
+				return
+			}
+			next(w, r.WithContext(store.WithExactMailbox(r.Context())))
+			return
+		}
 		// Chrispian's own console reads his mailbox (@archie's ruling on #554): a device he paired, holding
 		// read, may GET it (list, watch, thread, item). Never GET /messages/inbox, the destructive pull (it
 		// marks delivery and settles read mail), never a send, read mark, archive, ack or consume (all POST),
