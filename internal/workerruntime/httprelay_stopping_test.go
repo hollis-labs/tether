@@ -106,3 +106,63 @@ func TestHTTPRelayRecoversGracefulStopBeforeToolDispatch(t *testing.T) {
 	}
 	rig.finish()
 }
+
+func TestHTTPRelayInitializedReadiness(t *testing.T) {
+	for _, mode := range []string{"transient", "exhausted", "unauthorized"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				attempts := 0
+				var relay *HTTPRelay
+				relay = newStoppingRelay(t, stoppingRoundTrip(func(req *http.Request) (*http.Response, error) {
+					response := &http.Response{StatusCode: 202, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}
+					if req.Method == http.MethodGet {
+						response.StatusCode = 405
+						return response, nil
+					}
+					raw, _ := io.ReadAll(req.Body)
+					if methodName(raw) == "initialize" {
+						attempts++
+						response.StatusCode = 200
+						response.Header.Set("Mcp-Session-Id", "replacement")
+						response.Body = io.NopCloser(strings.NewReader(`{"result":{"protocolVersion":"2025-03-26"}}`))
+						return response, nil
+					}
+					relay.mu.Lock()
+					session := relay.session
+					relay.mu.Unlock()
+					if session != "old" || req.Header.Get("Mcp-Session-Id") != "replacement" || req.Header.Get("MCP-Protocol-Version") != "2025-03-26" {
+						t.Errorf("candidate published before readiness: session=%s headers=%v", session, req.Header)
+					}
+					if mode != "transient" || attempts == 1 {
+						response.StatusCode = 503
+						response.Body = io.NopCloser(strings.NewReader(`{"error":{"code":"mcp_stopping"}}`))
+						if mode == "unauthorized" {
+							response.StatusCode = 401
+						}
+					}
+					return response, nil
+				}))
+				relay.out = io.Discard
+				ok := relay.reinitialize(context.Background(), "old")
+				relay.mu.Lock()
+				session := relay.session
+				relay.mu.Unlock()
+				switch mode {
+				case "transient":
+					if !ok || session != "replacement" || attempts != 2 || time.Since(start) != time.Second {
+						t.Fatalf("ok=%v session=%s attempts=%d elapsed=%v", ok, session, attempts, time.Since(start))
+					}
+				case "exhausted":
+					if ok || session != "old" || attempts != 6 || time.Since(start) != 60*time.Second {
+						t.Fatalf("ok=%v session=%s attempts=%d elapsed=%v", ok, session, attempts, time.Since(start))
+					}
+				case "unauthorized":
+					if ok || session != "old" || attempts != 1 {
+						t.Fatalf("ok=%v session=%s attempts=%d", ok, session, attempts)
+					}
+				}
+			})
+		})
+	}
+}

@@ -396,30 +396,33 @@ func (r *HTTPRelay) reinitializeAttempt(ctx context.Context, init []byte) (bool,
 		return false, errors.New("replacement MCP handshake refused")
 	}
 	protocol := protocolFromInitializeBody(resp.Header.Get("Content-Type"), raw)
+	if protocol == "" {
+		r.mu.Lock()
+		protocol = r.protocol
+		r.mu.Unlock()
+	}
+	if retry, err := r.completeHandshake(ctx, sid, protocol); err != nil {
+		return retry, err
+	}
 	r.mu.Lock()
 	r.session = sid
 	if protocol != "" {
 		r.protocol = protocol
 	}
 	r.mu.Unlock()
-	r.completeHandshake(ctx)
 	r.logf("hub session expired; started a new one")
 	return false, nil
 }
 
-// completeHandshake sends notifications/initialized on the replacement session. A failure here is logged only: the
-// next real request will surface it.
-func (r *HTTPRelay) completeHandshake(ctx context.Context) {
+// completeHandshake accepts a candidate session without publishing it to concurrent calls.
+func (r *HTTPRelay) completeHandshake(ctx context.Context, session, protocol string) (bool, error) {
 	token, err := tokenfile.Read(r.TokenFile)
 	if err != nil {
-		return
+		return false, errors.New("replacement MCP handshake refused")
 	}
-	r.mu.Lock()
-	session, protocol := r.session, r.protocol
-	r.mu.Unlock()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
 	if err != nil {
-		return
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -433,13 +436,16 @@ func (r *HTTPRelay) completeHandshake(ctx context.Context) {
 	}
 	resp, err := r.client().Do(req)
 	if err != nil {
-		return
+		return true, errors.New("replacement MCP peer unreachable")
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 300 {
-		r.logf("replacement hub session refused notifications/initialized (status %d)", resp.StatusCode)
+		code := hubErrorCode(resp.Body)
+		r.logf("replacement hub session refused notifications/initialized (status %d%s)", resp.StatusCode, codeSuffix(code))
+		return resp.StatusCode == http.StatusServiceUnavailable && code == "mcp_stopping", errors.New("replacement MCP handshake refused")
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return false, nil
 }
 
 // withRequestID returns a copy of a JSON-RPC request with its id replaced.
