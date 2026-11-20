@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -45,7 +46,7 @@ func TestExternalMessageHookInputRefusesAmbiguousLifecycle(t *testing.T) {
 	}
 }
 
-func TestExternalMessageHookRealMailboxRemainsUnreadAndUndelivered(t *testing.T) {
+func TestExternalMessageHookRealMailboxRecordsDeliveryWithoutReading(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +86,7 @@ func TestExternalMessageHookRealMailboxRemainsUnreadAndUndelivered(t *testing.T)
 		if r.Header.Get("Authorization") != "Bearer synthetic-hook-credential" {
 			t.Error("client did not preserve its explicit credential")
 		}
-		handler.ServeHTTP(w, r)
+		handler.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, Kind: "service", ID: externalHookRecipient})))
 	}))
 	defer srv.Close()
 	c := client.New("tcp:"+strings.TrimPrefix(srv.URL, "http://"), client.WithToken("synthetic-hook-credential"))
@@ -121,12 +122,15 @@ func TestExternalMessageHookRealMailboxRemainsUnreadAndUndelivered(t *testing.T)
 	if err := runExternalMessageHook(ctx, c, externalMessageHookInput{Event: "Stop", StopActive: &active}, externalHookOptions(), &guarded); err != nil || strings.TrimSpace(guarded.String()) != "{}" || requests.Load() != 3 {
 		t.Fatalf("Stop guard failed: %v", err)
 	}
-	for _, before := range messages {
+	for i, before := range messages {
 		after, err := ms.Get(ctx, before.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if after.DeliveredAt != nil || after.ConsumedAt != nil || !bytes.Equal(after.Payload, before.Payload) {
+		// The unread recipient poll proves delivery; the fixture
+		// explicitly read its second message before polling. Archived and
+		// other-recipient messages were never handed to the hook.
+		if (after.DeliveredAt != nil) != (i == 0 || i == 1) || after.ConsumedAt != nil || !bytes.Equal(after.Payload, before.Payload) {
 			t.Fatal("poll changed message delivery state or payload")
 		}
 	}

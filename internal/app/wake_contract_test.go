@@ -114,8 +114,18 @@ func TestWakeContract_IdleBusyOffline(t *testing.T) {
 			if n := r.rt.sendCallCount("s1"); n != tc.turns {
 				t.Fatalf("turns %d, want %d", n, tc.turns)
 			}
-			if _, err := r.st.MessagingStore().Get(context.Background(), sent.ID); err != nil {
-				t.Fatalf("mail not stored: %v", err)
+			env, err := r.st.MessagingStore().Get(context.Background(), sent.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (env.DeliveredAt != nil) != tc.delivered {
+				t.Fatalf("delivered_at=%v outcome=%+v", env.DeliveredAt, out)
+			}
+			if tc.delivered {
+				var count int
+				if err := r.st.DB().QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.message_id')=? AND json_extract(payload_json,'$.path')='wake_hub' AND json_extract(payload_json,'$.session_id')='s1'`, sent.ID).Scan(&count); err != nil || count != 1 {
+					t.Fatalf("hub delivery events=%d err=%v", count, err)
+				}
 			}
 			// Delivered is not completion: the delivery stays leased at
 			// turn_submitted until the recipient reads or consumes it.

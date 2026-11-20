@@ -1,8 +1,8 @@
 package store
 
 // messaging_inbox.go — non-destructive inbox semantics for the messages
-// table (CW-20260517-0003). The methods here never mutate delivered_at;
-// they implement repeatable listing, explicit read state, and soft-delete
+// table (CW-20260517-0003). These implement repeatable listing, explicit
+// read state (which also proves delivery), and soft-delete
 // archive. The atomic-delivery pull model (Inbox, in messaging_store.go)
 // stays intact for agent consumers — see ADR-0023 §4.
 
@@ -59,8 +59,8 @@ type ListPage struct {
 // InboxStore extends messaging.Store with non-destructive inbox semantics:
 // repeatable listing, explicit read state, and soft-delete archive. The
 // embedded messaging.Store keeps the atomic-delivery pull model (Inbox)
-// intact for agent consumers (ADR-0023 §4); the methods added here never
-// mutate delivered_at.
+// intact for agent consumers (ADR-0023 §4). An explicit read also implies
+// delivery when no earlier handoff was recorded.
 type InboxStore interface {
 	messaging.Store
 
@@ -71,7 +71,7 @@ type InboxStore interface {
 	// count of matching rows for pagination.
 	List(ctx context.Context, to messaging.Address, f ListFilter) (ListPage, error)
 
-	// MarkRead stamps read_at for (id, recipient). Idempotent: a second
+	// MarkRead stamps read_at and implies delivery for (id, recipient). Idempotent: a second
 	// call is a no-op. Returns messaging.ErrNotFound if the id is absent
 	// and ErrWrongRecipient if recipient is not the envelope's to_urn.
 	MarkRead(ctx context.Context, id string, recipient messaging.Address) error
@@ -225,12 +225,22 @@ func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, re
 	if !mine {
 		return ErrWrongRecipient
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	nowTime := time.Now().UTC()
+	now := nowTime.Format(time.RFC3339Nano)
 	switch {
 	case col == "read_at" && !clr:
+		// The candidate time was captured before acquiring the SQL connection.
+		// A handoff can commit while this write is queued, so clamp against
+		// the delivery timestamp in the UPDATE itself. Normalize UTC fractions
+		// to nine digits for exact comparison (julianday loses nanoseconds).
+		// Preserve delivered_at and its already-journaled event unchanged.
 		_, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET read_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NULL`,
-			now, id, toURN)
+			`UPDATE messages SET read_at=CASE
+			 WHEN delivered_at IS NOT NULL AND
+			 substr(replace(delivered_at,'Z','') || CASE WHEN instr(delivered_at,'.')=0 THEN '.' ELSE '' END || '000000000',1,29) > ?
+			 THEN delivered_at ELSE ? END
+			 WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NULL`,
+			nowTime.Format("2006-01-02T15:04:05.000000000"), now, id, toURN)
 	case col == "read_at" && clr:
 		_, err = ms.db.ExecContext(ctx,
 			`UPDATE messages SET read_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NOT NULL`,

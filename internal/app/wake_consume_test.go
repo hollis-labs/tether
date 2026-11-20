@@ -99,13 +99,13 @@ func TestAttemptWake_SubmittedWakeAwaitsConsumptionThenSettles(t *testing.T) {
 		t.Fatalf("attempts = %+v; want one attempt at turn_submitted (never consumption)", attempts)
 	}
 
-	// The recipient's own inbox pull, as GET /messages/inbox handles it for
-	// a verified recipient session: pull, then consume what was pulled.
+	// The wake already handed the body to the recipient, so the atomic inbox
+	// must not hand it out again. The recipient acknowledges the wake's message.
 	pulled, err := st.MessagingStore().Inbox(ctx, to, messaging.Filter{})
-	if err != nil || len(pulled) != 1 {
-		t.Fatalf("inbox = %v, %v; want the one message", pulled, err)
+	if err != nil || len(pulled) != 0 {
+		t.Fatalf("inbox = %v, %v; want no duplicate handoff", pulled, err)
 	}
-	if err := st.MessagingStore().Consume(ctx, pulled[0].ID, to); err != nil {
+	if err := st.MessagingStore().Consume(ctx, env.ID, to); err != nil {
 		t.Fatalf("consume: %v", err)
 	}
 

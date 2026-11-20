@@ -1254,6 +1254,17 @@ func (f *federatedMessageStore) MailboxAfter(ctx context.Context, to gomsg.Addre
 	}
 	return w.MailboxAfter(ctx, to, after, filt, limit)
 }
+
+// MarkDelivered follows List and MailboxAfter to the local mailbox. A remote
+// authority owns its own recipient delivery evidence.
+func (f *federatedMessageStore) MarkDelivered(ctx context.Context, id string, recipient gomsg.Address, path, sessionID string) error {
+	marker, ok := f.InboxStore.(store.DeliveryMarker)
+	if !ok {
+		return errors.New("message delivery marking unavailable")
+	}
+	return marker.MarkDelivered(ctx, id, recipient, path, sessionID)
+}
+
 func (f *federatedMessageStore) Consume(ctx context.Context, id string, recipient gomsg.Address) error {
 	return f.router.Consume(ctx, id, recipient)
 }

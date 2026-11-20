@@ -22,3 +22,16 @@ func unreadOnlyInbox(ctx context.Context) bool {
 
 // InboxUnreadOnly reports whether ctx carries WithUnreadOnlyInbox.
 func InboxUnreadOnly(ctx context.Context) bool { return unreadOnlyInbox(ctx) }
+
+// WithInboxInspection makes an inbox query a repeatable inspection. It must not
+// count an operator looking at another recipient's mailbox as delivery.
+func WithInboxInspection(ctx context.Context) context.Context {
+	return context.WithValue(ctx, inboxInspectionKey{}, true)
+}
+
+type inboxInspectionKey struct{}
+
+func inboxInspection(ctx context.Context) bool {
+	v, _ := ctx.Value(inboxInspectionKey{}).(bool)
+	return v
+}

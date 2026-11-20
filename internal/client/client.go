@@ -1039,7 +1039,8 @@ func (c *Client) MessageInboxAsSession(ctx context.Context, to, kind, threadID, 
 	return res.Messages, nil
 }
 
-// MessageList fetches messages for a recipient without marking them delivered.
+// MessageList fetches a repeatable page. Unread returns to the authenticated
+// recipient mark delivery; operator inspection does not. Neither marks read.
 //
 // T05 (messaging vNext, ADR 0045): the daemon requires ?as= to equal ?to= for
 // a mailbox read, so `to` doubles as the caller's identity claim here.

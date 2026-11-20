@@ -11,6 +11,7 @@ import (
 
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -43,7 +44,15 @@ func TestInbox_ActorMailboxPullByTheBoundSession(t *testing.T) {
 		runtimeHealthOK: map[string]bool{"s-bound": true, "s-other": true, "s-unbound": true},
 	}
 	svc := boundLaunchService{fakeLaunchService: base, bound: map[string]string{"agt_x": "s-bound"}}
-	srv := httptest.NewServer(NewHandler(Deps{Service: svc, MessageStore: db.MessagingStore()}))
+	h := NewHandler(Deps{Service: svc, MessageStore: db.MessagingStore()})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sid := r.URL.Query().Get("as_session")
+		p := identity.Principal{Verified: true, Kind: "operator", ID: identity.OperatorID, Scopes: []string{"*"}}
+		if sid != "" {
+			p = identity.Principal{Verified: true, Kind: "session", ID: identity.SessionPrincipalIDPrefix + sid, SessionID: sid}
+		}
+		h.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), p)))
+	}))
 	t.Cleanup(srv.Close)
 	actor := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "agt_x"}
 
@@ -69,6 +78,10 @@ func TestInbox_ActorMailboxPullByTheBoundSession(t *testing.T) {
 			}
 			read, unread := send(), send()
 			if _, err := db.DB().Exec(`UPDATE messages SET read_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), read.ID); err != nil {
+				t.Fatal(err)
+			}
+			// Model a pre-fix read row: current reads also stamp delivered_at.
+			if _, err := db.DB().Exec(`UPDATE messages SET delivered_at=NULL, delivery_path='' WHERE id=?`, read.ID); err != nil {
 				t.Fatal(err)
 			}
 			q := url.Values{"to": {actor.URN()}, "as": {actor.URN()}}
