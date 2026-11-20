@@ -256,6 +256,13 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	missingState := &atomic.Bool{}
 	options := d.opts
 	options.OnSessionMissing = func() { missingState.Store(true) }
+	stopping := &atomic.Bool{}
+	options.OnStopping = func(ctx context.Context) {
+		stopping.Store(true)
+		if rejected, ok := ctx.Value(stoppingCallKey{}).(*atomic.Bool); ok {
+			rejected.Store(true)
+		}
+	}
 	var transport mcp.Connection
 	options.OnTransportConnected = func(connection mcp.Connection) { transport = connection }
 	var session *mcp.ClientSession
@@ -263,8 +270,10 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	connect := func(parent context.Context) (bool, error) {
 		attempt, stop := context.WithTimeout(parent, client.MCPInitializeTimeout)
 		defer stop()
+		stopping.Store(false)
+		missingState.Store(false)
 		session, err = d.client.ConnectMCP(attempt, options)
-		return daemonTransportFailure(err) || errors.Is(err, context.DeadlineExceeded), err
+		return stopping.Load() || daemonTransportFailure(err) || errors.Is(err, context.DeadlineExceeded), err
 	}
 	if retired != nil {
 		// Recovery outlives a single cold handshake, but respects caller cancellation.
@@ -358,9 +367,11 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 	return call(session)
 }
 
-// Probe before tool dispatch so idle views recover without ever replaying a
-// mutation. The view can still disappear during execution: that outcome is
-// unknown and belongs to the caller, regardless of the SDK error category.
+type stoppingCallKey struct{}
+
+// Probe before tool dispatch. Only an explicit pre-dispatch stopping rejection
+// permits one tool retry; an outcome that may include execution stays final.
+
 func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	if _, err := d.invokeRead(ctx, func(session *mcp.ClientSession) (mcp.Result, error) {
 		return nil, session.Ping(ctx, nil)
@@ -371,8 +382,23 @@ func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams
 	if err != nil {
 		return nil, err
 	}
-	defer release()
-	result, err := session.CallTool(ctx, params)
+	rejected := &atomic.Bool{}
+	callCtx := context.WithValue(ctx, stoppingCallKey{}, rejected)
+	result, err := session.CallTool(callCtx, params)
+	release()
+	if err != nil && ctx.Err() == nil && rejected.Load() {
+		// This specific HTTP response is emitted before dispatch. A concurrent
+		// stream failure cannot set this call's flag, so uncertain tools stay final.
+		if _, recoveryErr := d.get(ctx, session); recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		replacement, done, recoveryErr := d.acquire(ctx)
+		if recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		defer done()
+		return replacement.CallTool(ctx, params)
+	}
 	if err != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

@@ -271,6 +271,8 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 // Only known session rejections establish that dispatch did not occur.
 func relaySessionLost(status int, code string) bool {
 	switch code {
+	case "mcp_stopping":
+		return status == http.StatusServiceUnavailable
 	case "mcp_session_not_found":
 		return status == http.StatusNotFound
 	case "mcp_initialize_required", "session_expired", "transport_error", "transport_not_sent":
@@ -306,12 +308,15 @@ func (r *HTTPRelay) rememberInitialize(msg []byte) {
 // relay-internal id and notifications/initialized completes the handshake, so neither exchange reaches the agent,
 // which keeps believing in the one session it started. It returns true when requests can be sent again.
 func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	r.reinitMu.Lock()
 	if pending := r.reinitPending; pending != nil {
 		r.reinitMu.Unlock()
 		select {
 		case <-pending.done:
-			return pending.ok
+			return ctx.Err() == nil && pending.ok
 		case <-ctx.Done():
 			return false
 		}
@@ -331,7 +336,9 @@ func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
 	r.reinitPending = pending
 	r.reinitMu.Unlock()
 	ok := mcprecovery.Run(ctx, func(attempt context.Context) (bool, error) {
-		return r.reinitializeAttempt(attempt, init)
+		handshake, cancel := context.WithTimeout(attempt, mcprecovery.HandshakeTimeout)
+		defer cancel()
+		return r.reinitializeAttempt(handshake, init)
 	}) == nil
 	if ok {
 		// The recovery deadline bounds the handshake, not the replacement's
@@ -375,8 +382,9 @@ func (r *HTTPRelay) reinitializeAttempt(ctx context.Context, init []byte) (bool,
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		r.logf("could not start a replacement hub session (status %d%s)", resp.StatusCode, codeSuffix(hubErrorCode(resp.Body)))
-		return resp.StatusCode == http.StatusNotFound || resp.StatusCode >= 500, errors.New("replacement MCP handshake refused")
+		code := hubErrorCode(resp.Body)
+		r.logf("could not start a replacement hub session (status %d%s)", resp.StatusCode, codeSuffix(code))
+		return resp.StatusCode == http.StatusServiceUnavailable && code == "mcp_stopping", errors.New("replacement MCP handshake refused")
 	}
 	sid := resp.Header.Get("Mcp-Session-Id")
 	if sid == "" {

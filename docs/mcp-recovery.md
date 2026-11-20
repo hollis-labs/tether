@@ -14,8 +14,10 @@ unrelated route 404 or admission/protocol rejection still surfaces. A replacemen
 handshake does not grant extra retries to the original operation: it is retried
 at most once.
 
-The forwarder probes with ping before tools/call and never repeats a dispatched
-tool. The HTTP relay can repeat a request explicitly rejected before dispatch,
+The forwarder probes with ping before tools/call and never repeats a tool whose
+execution may have occurred. An explicit `503 mcp_stopping` POST rejection is
+known to precede dispatch and permits one retry. A stopping GET response can
+follow tool execution and does not permit a tool retry. The HTTP relay can repeat a request explicitly rejected before dispatch,
 or one that failed during dialing. After ambiguous transport loss it restores
 the session, but repeats only discovery/ping requests. A tool whose response was
 lost still returns an error because its outcome may be unknown.
@@ -50,3 +52,8 @@ upstream restart and checks successful tools/call results before and after it,
 with one execution per call. The worker HTTP relay restart regression likewise
 uses a 2025-03-26 handshake and tools/call. This establishes bridge behavior;
 Basalisk's live child-process argv remains deployment evidence to verify.
+
+Graceful-stop `503 mcp_stopping` responses are recoverable; generic route, auth,
+and protocol failures are terminal. Each replacement handshake is capped at
+15 seconds within the single 60-second recovery budget. Concurrent HTTP relay
+waiters share that budget and its result, and can cancel independently.

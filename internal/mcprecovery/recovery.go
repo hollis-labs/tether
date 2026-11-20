@@ -9,6 +9,9 @@ import (
 
 const Budget = 60 * time.Second
 
+// HandshakeTimeout bounds each initialization within the aggregate recovery budget.
+const HandshakeTimeout = 15 * time.Second
+
 // Run retries only the supplied handshake. Retryability belongs to the caller,
 // which can distinguish admission errors from a temporarily absent server.
 func Run(ctx context.Context, attempt func(context.Context) (bool, error)) error {
