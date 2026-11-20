@@ -171,7 +171,7 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 		cfg.MaxViews = 128
 	}
 	if cfg.MaxPrincipalViews <= 0 {
-		cfg.MaxPrincipalViews = 16
+		cfg.MaxPrincipalViews = 64
 	}
 	if cfg.VerificationTimeout <= 0 {
 		cfg.VerificationTimeout = 2 * time.Second
