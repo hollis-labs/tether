@@ -1,5 +1,9 @@
 # Workstreams and the session digest
 
+The [Registry reconciliation plan](registry-workstream-reconciliation.md)
+describes the proposed retirement of local ID minting and its prerequisites.
+It is documentation only; the behavior below remains the current implementation.
+
 A **workstream** is the durable container for work that outlives any one
 session. A **session ref** records what a session touched. The **digest**
 assembles both into the view an operator or a recovery instruction actually

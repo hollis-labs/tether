@@ -1,0 +1,1 @@
+- Document the Registry workstream reconciliation plan and activation prerequisites, preserving legacy lineage without re-keying historical rows (CW-20261120-0002).
