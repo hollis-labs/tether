@@ -222,12 +222,12 @@ func (e *Engine) restoreBundle(r persistedPlan) (Bundle, bool, error) {
 		return Bundle{}, false, errors.New("invalid rollback backup id")
 	}
 	dir := filepath.Join(e.BackupRoot, r.RollbackOf)
-	info, err := os.Stat(dir)
+	info, err := os.Lstat(dir)
 	if err != nil {
 		return Bundle{}, false, err
 	}
-	if !info.IsDir() {
-		return Bundle{}, false, errors.New("rollback backup is not a directory")
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return Bundle{}, false, errors.New("rollback backup is not a real directory")
 	}
 	backup, err := listAllowed(dir)
 	if err != nil {
@@ -240,6 +240,11 @@ func (e *Engine) restoreBundle(r persistedPlan) (Bundle, bool, error) {
 			return Bundle{}, false, errors.New("rollback records must use backup references")
 		}
 		if f.Delete {
+			// A deletion references the backup's absence, just as a write
+			// references its bytes. Both must still match on restart.
+			if _, exists := backup[f.Path]; exists {
+				return Bundle{}, false, errors.New("rollback deletion path now present in backup")
+			}
 			continue
 		}
 		content, ok := backup[f.Path]

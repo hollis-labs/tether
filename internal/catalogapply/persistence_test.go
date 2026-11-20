@@ -346,3 +346,43 @@ func TestSecretRollbackRestartRequiresFreshApprovalThenApplies(t *testing.T) {
 		t.Fatal("approved backup content was not restored")
 	}
 }
+
+func TestRollbackDeletionReferencesRejectChangedBackup(t *testing.T) {
+	for _, mode := range []string{"file added", "symlink root", "file root"} {
+		t.Run(mode, func(t *testing.T) {
+			e := persistentEngine(t)
+			backupID := "catalog-pre-deletion-20261120T120000Z"
+			backupDir := filepath.Join(e.BackupRoot, backupID)
+			if err := copyTree(e.Root, backupDir); err != nil {
+				t.Fatal(err)
+			}
+			write(t, e.Root, "agents/extra.yaml", "id: extra\n")
+			p, err := e.PlanRollback(context.Background(), backupID, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Files) != 1 || p.Files[0].Action != "delete" {
+				t.Fatalf("expected deletion-only fixture: %+v", p.Files)
+			}
+			switch mode {
+			case "file added":
+				write(t, backupDir, "agents/extra.yaml", "id: extra\n")
+			case "symlink root", "file root":
+				moved := backupDir + "-moved"
+				if err := os.Rename(backupDir, moved); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "symlink root" {
+					if err := os.Symlink(moved, backupDir); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.WriteFile(backupDir, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, ok := restartEngine(t, e).Get(p.ID); ok {
+				t.Fatal("restored deletion from changed backup reference")
+			}
+		})
+	}
+}
