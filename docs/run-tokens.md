@@ -30,7 +30,8 @@ headers retain legacy admission with no verified run. Supplied invalid,
 forged, expired, wrong-type/issuer/audience, wrong-session/URN or stale
 task/workstream tokens fail admission. Session terminal/revoked credentials
 continue to fail independently. A session credential or bound agent JWT is
-required; operator/service credentials cannot acquire run attribution.
+required, with authenticated subject `msg://session/local/<session>`;
+operator/service credentials cannot acquire run attribution.
 
 A run token is pinned to the MCP view, including its jti. Changing, adding or
 removing it requires a new MCP session. HTTP requests, method admission and

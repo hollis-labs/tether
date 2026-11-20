@@ -46,7 +46,7 @@ func TestRunLaunchEnvironmentBindingAndNoPersistence(t *testing.T) {
 	if !snap.Verified || !snap.SessionResolved || !snap.RunVerified || snap.RunID != c.RunID || snap.TokenJTI != c.JTI {
 		t.Fatal("run attribution not additive")
 	}
-	for _, mutate := range []func(*identity.Principal){func(p *identity.Principal) { p.SessionID = "other" }, func(p *identity.Principal) { p.Verified = false }, func(p *identity.Principal) { p.Kind = "service" }} {
+	for _, mutate := range []func(*identity.Principal){func(p *identity.Principal) { p.SessionID = "other" }, func(p *identity.Principal) { p.ID = "other-principal" }, func(p *identity.Principal) { p.Verified = false }, func(p *identity.Principal) { p.Kind = "service" }} {
 		bad := p
 		mutate(&bad)
 		if _, err := svc.VerifyRunToken(token, bad); !errors.Is(err, runtoken.ErrInvalid) {
