@@ -88,10 +88,13 @@ Two models, and the choice is not free.
 daemon-hosted session. **Two different calls, and the distinction matters:**
 
 - `tether_message_list` / the client's list read is **non-destructive and
-  repeatable**. This is the polling call.
+  repeatable**. This is the polling call. Unread messages returned to their
+  authenticated recipient count as delivery, without marking them read. Operator
+  inspection does not count as delivery.
 - `tether_message_inbox` / `Inbox` is an **atomic-delivery pull**: returned
   messages are marked delivered and **will not come back on a later inbox
-  call**. It is a take, not a look.
+  call** when pulled by the authenticated recipient. Operator inspection leaves
+  delivery state unchanged.
 
 Build the poll loop on `list`. Reach for `inbox` only where exactly-once
 hand-off to one consumer is what you want, and where losing the batch on a

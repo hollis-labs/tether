@@ -43,8 +43,8 @@ type mailboxWatchMessage struct {
 // handleMessagesWatch services GET /messages/watch, the resumable mailbox
 // stream (CW-20261012-0021). It speaks the ADR 0063 stream framing used by the
 // environment streams (`id: <seq>`, `event: <kind>`, `gap`, `synchronized`)
-// over durable mailbox rows. Reads are side-effect free like /messages/list:
-// nothing is marked delivered or read, and no wake is triggered.
+// over durable mailbox rows. A successful write to the verified recipient marks
+// the message delivered. Read state is changed only by an explicit recipient act.
 //
 // Query params: to and as (required, equal, as for /messages/list), after_seq
 // (or Last-Event-ID; absent means "from now"), kind, thread_id, unread_only.
@@ -151,6 +151,9 @@ func (s *Server) handleMessagesWatch(w http.ResponseWriter, r *http.Request) {
 	for {
 		for _, e := range win.Entries {
 			if !emitEvent("message", e.Seq, mailboxWatchMessage{Seq: e.Seq, Message: e.Message}) {
+				return
+			}
+			if err := s.markMessageDelivered(r, e.ID, e.To, "watch_stream"); err != nil {
 				return
 			}
 			after = e.Seq

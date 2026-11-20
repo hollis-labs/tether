@@ -578,6 +578,14 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id str
 		writeError(w, http.StatusForbidden, CodeForbidden, "as must be the message's sender or recipient")
 		return
 	}
+	// A sender inspection is not a recipient handoff. Read messages already
+	// have read_implied delivery; the marker preserves that first observation.
+	if s.sameAddress(r.Context(), as, env.To.URN()) && s.isDeliveryRecipient(r, env.To.URN()) {
+		if err := s.markMessageDelivered(r, id, env.To, "get"); err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, env)
 }
 
@@ -631,7 +639,12 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 	f.ThreadID = q.Get("thread_id")
 
 	inbox := messageinbox.New(s.MessageStore, inboxSessionLookup{s.Service})
-	result, err := inbox.Pull(r.Context(), to, f, q.Get("as_session"))
+	ctx, sessionID := r.Context(), q.Get("as_session")
+	if !s.isDeliveryRecipient(r, to.URN()) {
+		ctx = store.WithInboxInspection(ctx)
+		sessionID = ""
+	}
+	result, err := inbox.Pull(ctx, to, f, sessionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
@@ -674,8 +687,9 @@ func (s inboxSessionLookup) LogicalAgentID(id string) (string, error) {
 //	[&include_archived=true][&unread_only=true]
 //
 // Non-destructive, repeatable listing of a recipient's messages. Unlike
-// /messages/inbox this never stamps delivered_at — a UI can poll it
-// without consuming the inbox. Archived messages are excluded unless
+// /messages/inbox this remains repeatable. Unread messages returned to their
+// verified recipient are marked delivered; operator inspection has no effect.
+// Archived messages are excluded unless
 // include_archived=true. Each message carries read_at/archived_at/
 // canceled_at state and a subject/body payload projection.
 //
@@ -739,6 +753,14 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
+	}
+	for _, msg := range page.Messages {
+		if msg.ReadAt == nil {
+			if err := s.markMessageDelivered(r, msg.ID, msg.To, "list"); err != nil {
+				writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"messages": page.Messages,

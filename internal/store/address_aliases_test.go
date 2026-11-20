@@ -253,9 +253,10 @@ func TestAddressAliasSendListAndActions(t *testing.T) {
 		t.Fatalf("unread via alias = %v, want 2", got)
 	}
 
-	// The destructive pull of any form drains the one mailbox.
+	// The read message is already delivered. A destructive pull through any
+	// form drains the remaining two messages from the one mailbox.
 	pulled, err := ms.Inbox(ctx, aliasAddr(t, aliasAgent), messaging.Filter{})
-	if err != nil || len(pulled) != 3 {
+	if err != nil || len(pulled) != 2 {
 		t.Fatalf("inbox via alias = %d, %v", len(pulled), err)
 	}
 	if again, _ := ms.Inbox(ctx, aliasAddr(t, aliasCanonical), messaging.Filter{}); len(again) != 0 {
