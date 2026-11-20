@@ -311,6 +311,7 @@ func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
 	if err := r.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	r.known["tether"] = false // external catalog metadata cannot disable native recovery
 	for _, origin := range []string{"one", "two"} {
 		s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: origin, Version: "test"}, nil)
 		s.AddTool(&mcpsdk.Tool{Name: origin + "_read", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {

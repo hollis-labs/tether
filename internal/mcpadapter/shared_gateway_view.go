@@ -43,6 +43,8 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	for id, enabled := range r.known {
 		known[id] = enabled
 	}
+	// The in-process recovery origin is independent of external catalog entries.
+	known["tether"] = true
 	stale := map[string]bool{}
 	for _, issue := range opts.StaleServers {
 		known[issue.Server] = true

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"slices"
@@ -114,12 +115,15 @@ func TestTransportSavedGrantRemovalKeepsEstablishedTetherConnection(t *testing.T
 	f := newTransportFixture(t, true, false)
 	ctx := context.Background()
 	f.catMu.Lock()
-	f.cat.MCPServerEnabled = map[string]bool{"removed": true, "disabled": true, "keep": true}
+	f.cat.MCPServerEnabled = map[string]bool{"removed": true, "disabled": true, "keep": true, "tether": false}
+	f.cat.Global.MCP.Profiles["saved"] = mcpgateway.Profile{Servers: []string{"removed", "disabled", "keep", "tether"}}
 	f.catMu.Unlock()
 	if err := f.db.CreateSession(store.SessionRow{ID: "s", LogicalAgentID: "agent", State: "running"}, &launch.Plan{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.SaveSessionMCPPolicy(ctx, mcpgateway.SessionPolicy{SessionID: "s", AgentID: "agent", Servers: []string{"removed", "disabled", "keep"}}.Seal()); err != nil {
+	profileID := "saved"
+	floor := mcpgateway.Profile{Servers: []string{"removed", "disabled", "keep", "tether"}}
+	if err := f.db.SaveSessionMCPPolicy(ctx, mcpgateway.SessionPolicy{SessionID: "s", AgentID: "agent", Servers: []string{"removed", "disabled", "keep", "tether"}, Profile: &profileID, LaunchProfile: &floor, ToolProfile: &floor}.Seal()); err != nil {
 		t.Fatal(err)
 	}
 	token, err := f.ids.Mint(ctx, identity.Principal{ID: "session:s", Kind: "session", SessionID: "s"})
@@ -135,6 +139,16 @@ func TestTransportSavedGrantRemovalKeepsEstablishedTetherConnection(t *testing.T
 	delete(f.cat.MCPServerEnabled, "removed")
 	f.cat.MCPServerEnabled["disabled"] = false
 	f.catMu.Unlock()
+	// A fresh view must also accept stale origins in saved and selected profiles.
+	reconnect, err := client.New(f.addr, client.WithToken(token)).ConnectMCP(ctx, client.MCPOptions{})
+	if err != nil {
+		t.Fatal("stale profile blocked reconnect", err)
+	}
+	defer func() { _ = reconnect.Close() }()
+	recovery, err := reconnect.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_docs_list", Arguments: map[string]any{}})
+	if err != nil || recovery.IsError {
+		t.Fatalf("reconnected recovery: %+v %v", recovery, err)
+	}
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal("narrowing disconnected established session", err)
@@ -158,5 +172,45 @@ func TestTransportSavedGrantRemovalKeepsEstablishedTetherConnection(t *testing.T
 	result, err = session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_docs_list", Arguments: map[string]any{}})
 	if err != nil || result.IsError {
 		t.Fatalf("Tether call with no external servers: %+v %v", result, err)
+	}
+}
+
+func TestStaleProfileOriginValidationPreservesAuthorityFloors(t *testing.T) {
+	for _, servers := range [][]string{nil, {}, {"removed"}, {"removed", "keep", "tether"}} {
+		t.Run(fmt.Sprintf("%#v", servers), func(t *testing.T) {
+			profile := mcpgateway.Profile{Servers: servers, ReadOnly: true}
+			id := "saved"
+			saved := mcpgateway.SessionPolicy{SessionID: "s", Servers: []string{"keep", "tether"}, Profile: &id, LaunchProfile: &profile, ToolProfile: &profile}.Seal()
+			caller := Caller{Policy: saved, Narrowed: []config.MCPGrantIssue{{Server: "removed", Reason: "removed"}}}
+			opts, err := ViewOptions(caller, mcpgateway.Config{Profiles: map[string]mcpgateway.Profile{id: profile}}, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := selectedUpstreamOrigins(admission{catalog: &config.Catalog{MCPServerEnabled: map[string]bool{"keep": true, "tether": false}}, caller: caller, options: opts})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{}
+			if servers == nil || slices.Contains(servers, "keep") {
+				want = []string{"keep"}
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("origins=%v want=%v", got, want)
+			}
+			for _, floor := range opts.AuthorityProfiles {
+				if !floor.Profile.ReadOnly || (floor.Profile.Servers == nil) != (servers == nil) || !slices.Equal(floor.Profile.Servers, servers) {
+					t.Fatalf("floor changed: %+v", floor)
+				}
+			}
+			if (opts.Profile.Profile.Servers == nil) != (servers == nil) {
+				t.Fatal("selected nil/empty changed")
+			}
+			caller.Narrowed = nil
+			if servers != nil && slices.Contains(servers, "removed") {
+				if _, err := selectedUpstreamOrigins(admission{catalog: &config.Catalog{MCPServerEnabled: map[string]bool{"keep": true}}, caller: caller, options: opts}); err == nil {
+					t.Fatal("unrelated unknown origin accepted")
+				}
+			}
+		})
 	}
 }

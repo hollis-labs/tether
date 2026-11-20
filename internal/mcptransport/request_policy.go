@@ -152,6 +152,8 @@ func selectedUpstreamOrigins(a admission) ([]string, error) {
 	for id, enabled := range a.catalog.MCPServerEnabled {
 		known[id] = enabled
 	}
+	// The in-process recovery origin is independent of external catalog entries.
+	known["tether"] = true
 	for _, issue := range a.caller.Narrowed {
 		known[issue.Server] = true
 	}
