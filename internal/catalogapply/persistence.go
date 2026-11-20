@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -46,11 +47,16 @@ func recordPlan(p *Plan) (persistedPlan, bool) {
 		Base: map[string]string{}, CreatedAt: p.CreatedAt, ExpiresAt: p.ExpiresAt, TTLSeconds: p.TTLSeconds,
 		RollbackOf: p.RollbackOf, Caller: p.PlannedBy}
 	for _, f := range p.Files {
-		// Rollbacks may restore pre-existing literals; do not copy those to records.
-		if ScanSecrets(f.content) != "" {
+		// Rollbacks reference their existing backup rather than duplicating its
+		// contents (which may contain pre-existing secret literals).
+		content := f.content
+		if p.RollbackOf != "" {
+			content = ""
+		}
+		if ScanSecrets(content) != "" {
 			return persistedPlan{}, false
 		}
-		r.Bundle.Files = append(r.Bundle.Files, File{Path: f.Path, Content: f.content, Delete: f.Action == "delete"})
+		r.Bundle.Files = append(r.Bundle.Files, File{Path: f.Path, Content: content, Delete: f.Action == "delete"})
 		r.Base[f.Path] = f.baseSHA256
 	}
 	r.Checksum = r.checksum()
@@ -143,8 +149,14 @@ func (e *Engine) RestorePlans(ctx context.Context) error {
 			drop("duplicate plan id")
 			continue
 		}
-		// Use the ordinary input and secret checks, even for persisted rollbacks.
-		p, err := e.buildPlan(ctx, r.Bundle, Options{Caller: r.Caller, expectedBase: r.Base}, false, r.RollbackOf)
+		// Ordinary bundles pass the ordinary secret checks. Rollbacks may
+		// restore existing literals only from the same validated backup reference.
+		bundle, rollback, err := e.restoreBundle(r)
+		if err != nil {
+			drop("rollback backup reference no longer valid")
+			continue
+		}
+		p, err := e.buildPlan(ctx, bundle, Options{Caller: r.Caller, expectedBase: r.Base}, rollback, r.RollbackOf)
 		if err != nil {
 			drop("bundle or live base no longer valid")
 			continue
@@ -198,4 +210,43 @@ func (e *Engine) checkLiveBase(p *Plan) error {
 		}
 	}
 	return nil
+}
+
+// restoreBundle resolves rollback references without trusting any disk-supplied
+// content or security finding. The rebuilt digest also binds the backup bytes.
+func (e *Engine) restoreBundle(r persistedPlan) (Bundle, bool, error) {
+	if r.RollbackOf == "" {
+		return r.Bundle, false, nil
+	}
+	if filepath.Base(r.RollbackOf) != r.RollbackOf || !strings.HasPrefix(r.RollbackOf, "catalog-pre-") {
+		return Bundle{}, false, errors.New("invalid rollback backup id")
+	}
+	dir := filepath.Join(e.BackupRoot, r.RollbackOf)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return Bundle{}, false, err
+	}
+	if !info.IsDir() {
+		return Bundle{}, false, errors.New("rollback backup is not a directory")
+	}
+	backup, err := listAllowed(dir)
+	if err != nil {
+		return Bundle{}, false, err
+	}
+	b := r.Bundle
+	b.Files = append([]File(nil), b.Files...)
+	for i, f := range b.Files {
+		if f.Content != "" {
+			return Bundle{}, false, errors.New("rollback records must use backup references")
+		}
+		if f.Delete {
+			continue
+		}
+		content, ok := backup[f.Path]
+		if !ok {
+			return Bundle{}, false, errors.New("rollback file absent from backup")
+		}
+		b.Files[i].Content = content
+	}
+	return b, true, nil
 }

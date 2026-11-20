@@ -240,7 +240,7 @@ func TestPersistenceRollbackAndSubsecondTTL(t *testing.T) {
 	}
 }
 
-func TestPersistenceSecretBearingRollbackStaysMemoryOnly(t *testing.T) {
+func TestPersistenceSecretBearingRollbackUsesBackupReferences(t *testing.T) {
 	e := persistentEngine(t)
 	backupID := "catalog-pre-original-20261120T120000Z"
 	write(t, filepath.Join(e.BackupRoot, backupID), "agents/general.yaml", "id: general\napi_key: sk-abcdefghijklmnopqrstuvwxyz12345678901234567890\n")
@@ -248,15 +248,25 @@ func TestPersistenceSecretBearingRollbackStaysMemoryOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.SurvivesRestart {
-		t.Fatal("secret-bearing rollback marked durable")
+	if !p.SurvivesRestart {
+		t.Fatal("secret-bearing rollback must survive by backup reference")
 	}
 	raw, _ := os.ReadFile(e.PlansFile)
 	if strings.Contains(string(raw), "api_key") {
 		t.Fatal("secret-bearing rollback content persisted")
 	}
-	if _, ok := restartEngine(t, e).Get(p.ID); ok {
-		t.Fatal("secret-bearing rollback restored")
+	next := restartEngine(t, e)
+	got, ok := next.Get(p.ID)
+	if !ok || got.State != StatePlanned || got.ApprovedAt != nil || got.Digest != p.Digest {
+		t.Fatalf("rollback not restored as unapproved: %+v", got)
+	}
+	if _, err := next.Apply(context.Background(), p.ID); err == nil {
+		t.Fatal("restored rollback bypassed approval")
+	}
+	// A changed backup cannot silently alter the reviewed restoration.
+	write(t, filepath.Join(e.BackupRoot, backupID), "agents/general.yaml", "id: general\nname: Changed backup\n")
+	if _, ok := restartEngine(t, next).Get(p.ID); ok {
+		t.Fatal("modified backup was trusted")
 	}
 }
 
@@ -270,5 +280,69 @@ func TestPersistenceRewritesPermissiveSnapshotMode(t *testing.T) {
 	info, err := os.Stat(e.PlansFile)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("restored mode: %v %v", info, err)
+	}
+}
+
+func TestRollbackReferencesRejectMissingOrEditedRecords(t *testing.T) {
+	for _, mode := range []string{"missing backup", "inline content", "traversal"} {
+		t.Run(mode, func(t *testing.T) {
+			e := persistentEngine(t)
+			backupID := "catalog-pre-original-20261120T120000Z"
+			backupDir := filepath.Join(e.BackupRoot, backupID)
+			write(t, backupDir, "agents/general.yaml", "id: general\nname: Original\n")
+			p, err := e.PlanRollback(context.Background(), backupID, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := os.ReadFile(e.PlansFile)
+			var snapshot planFile
+			if err := json.Unmarshal(raw, &snapshot); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "missing backup":
+				if err := os.Rename(backupDir, backupDir+"-moved"); err != nil {
+					t.Fatal(err)
+				}
+			case "inline content":
+				snapshot.Plans[0].Bundle.Files[0].Content = "injected literal"
+			case "traversal":
+				snapshot.Plans[0].RollbackOf = "../catalog-pre-other"
+			}
+			snapshot.Plans[0].Checksum = snapshot.Plans[0].checksum()
+			raw, _ = json.Marshal(snapshot)
+			if err := os.WriteFile(e.PlansFile, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := restartEngine(t, e).Get(p.ID); ok {
+				t.Fatal("unsafe rollback reference restored")
+			}
+		})
+	}
+}
+
+func TestSecretRollbackRestartRequiresFreshApprovalThenApplies(t *testing.T) {
+	e := persistentEngine(t)
+	backupID := "catalog-pre-original-20261120T120000Z"
+	const body = "id: general\napi_key: sk-abcdefghijklmnopqrstuvwxyz12345678901234567890\n"
+	write(t, filepath.Join(e.BackupRoot, backupID), "agents/general.yaml", body)
+	p, err := e.PlanRollback(context.Background(), backupID, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := restartEngine(t, e)
+	got, ok := next.Get(p.ID)
+	if !ok {
+		t.Fatal("rollback lost across restart")
+	}
+	if _, err := next.Apply(context.Background(), p.ID); err == nil {
+		t.Fatal("rollback applied without fresh approval")
+	}
+	approve(t, next, got)
+	if _, err := next.Apply(context.Background(), p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, next.Root, "agents/general.yaml") != body {
+		t.Fatal("approved backup content was not restored")
 	}
 }
