@@ -354,13 +354,9 @@ func (s *Server) handleCatalogApproveBatch(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 		return
 	}
-	delegated := false
 	if !catalogApprover(r) {
-		if !s.catalogDelegatedApprover(r) {
-			writeError(w, http.StatusForbidden, CodeForbidden, "a plan is approved by the local operator on the daemon's own socket, not by a session, a device or a remote caller")
-			return
-		}
-		delegated = true
+		writeError(w, http.StatusForbidden, CodeForbidden, "batch approval requires the local operator on the daemon's own socket and the operator passphrase")
+		return
 	}
 	var req CatalogApproveBatchRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
@@ -375,7 +371,7 @@ func (s *Server) handleCatalogApproveBatch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	results, err := batch.ApproveBatch(catalogapply.BatchApprovalRequest{Plans: req.Plans, Passphrase: req.Passphrase,
-		AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning, Delegated: delegated})
+		AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning})
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, CatalogApproveBatchResponse{Results: results})

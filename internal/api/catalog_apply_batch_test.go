@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -116,25 +117,36 @@ func TestCatalogPlanHTTPShowsRestartAndExpiry(t *testing.T) {
 	}
 }
 
-func TestCatalogBatchDelegatedServicePreservesPrivilegeFences(t *testing.T) {
-	d := newCatalogApplyDaemon(t)
-	d.engine.DelegatedApps = []string{"tachyon"}
-	normal := d.plan(helperFiles, asSession)
-	privileged := d.plan([]catalogapply.File{{Path: "agents/privileged.yaml", Content: "id: privileged\npermissions: [all]\n"}}, asSession)
-	trust := d.plan([]catalogapply.File{{Path: "global.yaml", Content: "version: 1\noperator_attestation:\n  key_id: next\n"}}, asSession)
-	req := api.CatalogApproveBatchRequest{Plans: []catalogapply.ApprovalItem{{ID: normal.ID, Digest: normal.Digest}, {ID: privileged.ID, Digest: privileged.Digest}, {ID: trust.ID, Digest: trust.Digest}}, AckPrivileged: true}
-	code, b := d.call("POST", "/catalog/plans/approve-batch", req, map[string]string{"X-Test-Principal": "delegated-service"})
-	var res api.CatalogApproveBatchResponse
-	if code != 200 || json.Unmarshal(b, &res) != nil || len(res.Results) != 3 || res.Results[0].Plan == nil || res.Results[1].Error == "" || res.Results[2].Error == "" {
-		t.Fatalf("delegated batch: %d %s", code, b)
-	}
-	d.engine.DelegatedPrivileged = true
-	code, b = d.call("POST", "/catalog/plans/approve-batch", req, map[string]string{"X-Test-Principal": "delegated-service"})
-	if code != 200 || json.Unmarshal(b, &res) != nil || res.Results[1].Plan == nil || res.Results[2].Error == "" {
-		t.Fatalf("delegated privileged batch: %d %s", code, b)
-	}
-	got, _ := d.engine.Get(trust.ID)
-	if got.State != catalogapply.StatePlanned {
-		t.Fatal("delegated trust-root plan approved")
+func TestCatalogBatchRejectsDelegatedServiceEvenWithPrivilegedFlag(t *testing.T) {
+	for _, privilegedFlag := range []bool{false, true} {
+		t.Run(fmt.Sprint(privilegedFlag), func(t *testing.T) {
+			d := newCatalogApplyDaemon(t)
+			d.engine.DelegatedApps = []string{"tachyon"}
+			d.engine.DelegatedPrivileged = privilegedFlag
+			normal := d.plan(helperFiles, asSession)
+			privileged := d.plan([]catalogapply.File{{Path: "agents/privileged.yaml", Content: "id: privileged\npermissions: [all]\n"}}, asSession)
+			trust := d.plan([]catalogapply.File{{Path: "global.yaml", Content: "version: 1\noperator_attestation:\n  key_id: next\n"}}, asSession)
+			plans := []catalogapply.Plan{normal, privileged, trust}
+			req := api.CatalogApproveBatchRequest{Passphrase: applyPass, AckPrivileged: true}
+			for _, p := range plans {
+				req.Plans = append(req.Plans, catalogapply.ApprovalItem{ID: p.ID, Digest: p.Digest})
+			}
+			headers := map[string]string{"X-Test-Principal": "delegated-service"}
+			code, b := d.call("POST", "/catalog/plans/approve-batch", req, headers)
+			if code != http.StatusForbidden {
+				t.Fatalf("delegated batch bypass: %d %s", code, b)
+			}
+			for _, p := range plans {
+				got, _ := d.engine.Get(p.ID)
+				if got.State != catalogapply.StatePlanned || got.ApprovedAt != nil {
+					t.Fatalf("denied batch changed %s", p.ID)
+				}
+			}
+			// Existing single-plan service delegation remains available.
+			code, b = d.call("POST", "/catalog/plans/"+normal.ID+"/approve", api.CatalogApproveRequest{Digest: normal.Digest}, headers)
+			if code != http.StatusOK {
+				t.Fatalf("single delegation changed: %d %s", code, b)
+			}
+		})
 	}
 }

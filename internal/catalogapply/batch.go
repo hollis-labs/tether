@@ -9,13 +9,13 @@ type ApprovalItem struct {
 }
 
 // BatchApprovalRequest shares one credential and explicit acknowledgements.
-// Delegated must only be set by an authenticated, scoped API gate.
+// Batch approval always requires the operator credential; single-plan
+// delegation does not extend to this operation.
 type BatchApprovalRequest struct {
 	Plans         []ApprovalItem
 	Passphrase    string
 	AckPrivileged bool
 	AllowRunning  bool
-	Delegated     bool
 }
 
 // ApprovalResult reports independent per-plan outcomes; failed plans are unchanged.
@@ -39,20 +39,19 @@ func (e *Engine) ApproveBatch(req BatchApprovalRequest) ([]ApprovalResult, error
 		}
 		seen[p.ID] = true
 	}
-	if !req.Delegated {
-		if e.Approver == nil {
-			return nil, ErrNoPassphrase
-		}
-		if err := e.Approver.Verify(req.Passphrase); err != nil {
-			return nil, err
-		}
+	if e.Approver == nil {
+		return nil, ErrNoPassphrase
 	}
+	if err := e.Approver.Verify(req.Passphrase); err != nil {
+		return nil, err
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	results := make([]ApprovalResult, 0, len(req.Plans))
 	for _, item := range req.Plans {
 		p, err := e.approveLocked(ApprovalRequest{PlanID: item.ID, Digest: item.Digest,
-			AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning, Delegated: req.Delegated}, true)
+			AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning}, true)
 		result := ApprovalResult{ID: item.ID, Plan: p}
 		if err != nil {
 			result.Error = err.Error()

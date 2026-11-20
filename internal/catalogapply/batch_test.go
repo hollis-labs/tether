@@ -92,16 +92,25 @@ func TestApproveBatchPerPlanFailuresPreserveAllChecks(t *testing.T) {
 	}
 }
 
-func TestApproveBatchDelegationCannotApproveTrustRoot(t *testing.T) {
+func TestApproveBatchTrustRootAlwaysRequiresOperatorPassphrase(t *testing.T) {
 	e := newEngine(t)
 	e.DelegatedPrivileged = true
 	p, err := e.PlanBundle(context.Background(), Bundle{Name: "trust", Files: []File{{Path: "global.yaml", Content: "version: 1\noperator_attestation:\n  key_id: next\n"}}}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	results, err := e.ApproveBatch(BatchApprovalRequest{Plans: []ApprovalItem{{ID: p.ID, Digest: p.Digest}}, Delegated: true, AckPrivileged: true})
-	if err != nil || len(results) != 1 || results[0].Error == "" {
-		t.Fatalf("trust-root delegation: %+v %v", results, err)
+	req := BatchApprovalRequest{Plans: []ApprovalItem{{ID: p.ID, Digest: p.Digest}}, AckPrivileged: true}
+	if _, err := e.ApproveBatch(req); !errors.Is(err, ErrBadPassphrase) {
+		t.Fatalf("batch did not require operator passphrase: %v", err)
+	}
+	got, _ := e.Get(p.ID)
+	if got.State != StatePlanned || got.ApprovedAt != nil {
+		t.Fatal("missing credential approved trust root")
+	}
+	req.Passphrase = passphrase
+	results, err := e.ApproveBatch(req)
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Plan.State != StateApproved {
+		t.Fatalf("operator trust-root approval: %+v %v", results, err)
 	}
 }
 
