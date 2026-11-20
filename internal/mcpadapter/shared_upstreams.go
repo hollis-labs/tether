@@ -133,9 +133,10 @@ func (r *SharedUpstreams) publish(refresh ToolRefreshResult) {
 // UpstreamView has explicit grants: nil and [] both mean zero. The caller's
 // verified principal resolver supplies servers, never an HTTP client flag.
 type UpstreamView struct {
-	runtime *SharedUpstreams
-	servers map[string]bool
-	Service *mcpgateway.Service
+	runtime    *SharedUpstreams
+	servers    map[string]bool
+	isExternal func(string) bool
+	Service    *mcpgateway.Service
 }
 
 func (r *SharedUpstreams) OpenView(owner string, servers []string, selection mcpgateway.Selection) (*UpstreamView, error) {
@@ -158,11 +159,16 @@ func (r *SharedUpstreams) OpenView(owner string, servers []string, selection mcp
 	return v, nil
 }
 
+// includes rechecks ownership because an existing view survives catalog reloads.
+func (v *UpstreamView) includes(id string) bool {
+	return v.servers[id] && !(v.isExternal != nil && v.isExternal(id)) && !v.runtime.external[id]
+}
+
 func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 	s := mcpgateway.Snapshot{Entries: []mcpgateway.Entry{}, Origins: []mcpgateway.OriginStatus{}}
 	s.Lint, s.Collisions, _ = v.namingDiagnostics()
 	for _, status := range v.StatusSummary() {
-		if v.servers[status.ID] {
+		if v.includes(status.ID) {
 			s.Origins = append(s.Origins, mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.CatalogedTools, InventoryExamined: status.InventoryExamined, Error: status.Error})
 			if status.Status != "connected" {
 				// A tool list or call that would use a down remote upstream
@@ -173,7 +179,7 @@ func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 	}
 	for _, def := range v.runtime.registry.AllDefinitions() {
 		tool, found := v.runtime.registry.Lookup(def.Name)
-		if found && v.servers[tool.ServerID] {
+		if found && v.includes(tool.ServerID) {
 			s.Entries = append(s.Entries, mcpgateway.Entry{Tool: def, Origin: tool.ServerID, Tags: v.runtime.tags[tool.ServerID]})
 		}
 	}
@@ -187,7 +193,7 @@ func (v *UpstreamView) StatusSummary() []ServerStatus {
 	statuses := []ServerStatus{}
 	_, _, private := v.namingDiagnostics()
 	for _, status := range v.runtime.pool.StatusSummary() {
-		if v.servers[status.ID] {
+		if v.includes(status.ID) {
 			if private[status.ID] {
 				status.Error = "tool name collision; other owner outside this view"
 			}
@@ -203,14 +209,14 @@ func (v *UpstreamView) namingDiagnostics() ([]mcpgateway.NameFinding, []mcpgatew
 	collisions := []mcpgateway.NameCollision{}
 	private := map[string]bool{}
 	for _, finding := range allLint {
-		if v.servers[finding.Origin] {
+		if v.includes(finding.Origin) {
 			lint = append(lint, finding)
 		}
 	}
 	for _, collision := range allCollisions {
 		visible := true
 		for _, owner := range collision.Owners {
-			if owner.Origin != "tether" && !v.servers[owner.Origin] {
+			if owner.Origin != "tether" && !v.includes(owner.Origin) {
 				visible = false
 			}
 		}
@@ -218,7 +224,7 @@ func (v *UpstreamView) namingDiagnostics() ([]mcpgateway.NameFinding, []mcpgatew
 			collisions = append(collisions, collision)
 		} else {
 			for _, owner := range collision.Owners {
-				if v.servers[owner.Origin] {
+				if v.includes(owner.Origin) {
 					private[owner.Origin] = true
 				}
 			}
@@ -231,13 +237,13 @@ func (v *UpstreamView) namingDiagnostics() ([]mcpgateway.NameFinding, []mcpgatew
 func (v *UpstreamView) Refresh(ctx context.Context, server string) ([]ToolRefreshResult, error) {
 	ids := []string{}
 	if server != "" {
-		if !v.servers[server] || v.runtime.external[server] {
+		if !v.includes(server) {
 			return nil, fmt.Errorf("unknown or excluded MCP origin")
 		}
 		ids = append(ids, server)
 	} else {
 		for id := range v.servers {
-			if v.runtime.external[id] {
+			if !v.includes(id) {
 				continue
 			}
 			ids = append(ids, id)
