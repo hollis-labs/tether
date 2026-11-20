@@ -1062,6 +1062,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		IdempotencyPrincipal: in.IdempotencyPrincipal,
 		ReplaceIdempotency:   in.ReplaceIdempotency,
 		TaskID:               in.TaskID,
+		WorkstreamID:         in.WorkstreamID,
 		RunID:                in.RunID,
 		App:                  in.App,
 		Continuity:           in.Continuity,
@@ -1098,6 +1099,10 @@ func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, erro
 }
 func (a *serviceAdapter) LaunchSessionWithContext(ctx context.Context, sessionID string) (api.LaunchResult, error) {
 	return launchResult(a.svc.LaunchSessionWithContext(ctx, sessionID))
+}
+
+func (a *serviceAdapter) LaunchSessionWithCorrelation(ctx context.Context, id string, input api.SessionLaunchRequest) (api.LaunchResult, error) {
+	return launchResult(a.svc.LaunchSessionWithCorrelation(ctx, id, input))
 }
 
 // LaunchChatSession is the operator chat's launch: catalog-bounded for a catalog seat (CW-20261114-0063).

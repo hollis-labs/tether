@@ -17,11 +17,15 @@ func creatorService(t *testing.T) *app.Service {
 	t.Setenv("HOME", t.TempDir())
 	root, repo, sessions := t.TempDir(), t.TempDir(), t.TempDir()
 	files := map[string]string{
-		"global.yaml":         "version: 0.1.0\ncatalog:\n  defaults:\n    state_db: " + filepath.Join(root, "state.db") + "\n",
-		"projects/p.yaml":     "id: p\nrepo_root: " + repo + "\nworkspace:\n  default_mode: shared\n  session_root: " + sessions + "\n",
-		"providers/stub.yaml": "id: api-stub\ntype: api\n",
-		"agents/worker.yaml":  "id: worker\nname: Worker\n",
-		"launches/l1.yaml":    "id: l1\nproject: p\nagent: worker\nprovider: api-stub\n",
+		"global.yaml":             "version: 0.1.0\ncatalog:\n  defaults:\n    state_db: " + filepath.Join(root, "state.db") + "\n",
+		"projects/p.yaml":         "id: p\nrepo_root: " + repo + "\nworkspace:\n  default_mode: shared\n  session_root: " + sessions + "\n",
+		"providers/fill.yaml":     "id: fill-cli\ntype: cli\nprovider: claude\nruntime_kind: pty\ncommand: " + filepath.Join(root, "fake-provider") + "\n",
+		"agents/fill-worker.yaml": "id: fill-worker\nname: Fill Worker\n",
+		"launches/fill.yaml":      "id: fill-launch\nproject: p\nagent: fill-worker\nprovider: fill-cli\n",
+		"fake-provider":           "#!/bin/sh\nexec sleep 60\n",
+		"providers/stub.yaml":     "id: api-stub\ntype: api\n",
+		"agents/worker.yaml":      "id: worker\nname: Worker\n",
+		"launches/l1.yaml":        "id: l1\nproject: p\nagent: worker\nprovider: api-stub\n",
 	}
 	for name, body := range files {
 		path := filepath.Join(root, name)
@@ -31,6 +35,9 @@ func creatorService(t *testing.T) *app.Service {
 		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.Chmod(filepath.Join(root, "fake-provider"), 0700); err != nil {
+		t.Fatal(err)
 	}
 	svc, err := app.New(root)
 	if err != nil {

@@ -745,6 +745,12 @@ What each state means is under
 
 ### `POST /sessions`
 
+Optional `task_id` and `workstream_id` are operator-asserted correlation stamps,
+fixed before launch. Workstream references are opaque 1–64 ASCII letters, digits,
+`.`, `_`, `-`, beginning with a letter or digit; ULID and UUIDv7 are accepted
+without existence checks. Agent/session callers cannot assert stamps. See
+[launch-time stamps](../task-stamp.md) for trust and replay behavior.
+
 Create a session from a launch profile. Does not start the runtime.
 
 Request body:
@@ -818,6 +824,13 @@ identity lands. Keys live as long as their session row; Tether does not purge
 sessions today, so in practice they are permanent.
 
 ### `POST /sessions/{id}/launch`
+
+An optional JSON body may supply operator-only `task_id` and `workstream_id`.
+Absent stamps may be filled on a `created` session under the canonical launch
+lock, atomically with its stored launch plan, before token minting. Existing
+nonempty stamps must match; conflicts or additions after launch return 409
+without changing stamps. Omit the body for existing launch behavior. The original
+keyed-create digest is retained, so create replay keeps the filled stamps.
 
 Transition a `created` session to `running`. Returns 409 `conflict` when the
 target is in any other state, except for a session created with an

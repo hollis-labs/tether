@@ -1064,6 +1064,8 @@ is not running yet. Follow with `tether_session_launch`.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `launch_id` | string | ✓ | Launch profile ID from the catalog (see tether_catalog_list_launches) |
+| `task_id` | string | — | Operator-only task stamp, fixed at create. |
+| `workstream_id` | string | — | Operator-only opaque external reference; 1–64 safe ASCII characters, ULID/UUID accepted without lookup. Fixed at create. |
 | `boot_prompt` | string | — | Optional boot prompt override; replaces catalog static boot fragments verbatim |
 | `agent_file` | string | — | v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent. |
 | `agent_inline` | string | — | v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order. |
@@ -1083,6 +1085,12 @@ Start a previously created session. Transitions `created → running`.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `session_id` | string | ✓ | Session UUID from `tether_session_create` |
+| `task_id` | string | — | Operator-only: fill an absent task on a created session, or match its existing stamp. |
+| `workstream_id` | string | — | Operator-only: fill an absent workstream on a created session, or match its existing stamp. |
+
+These fields never grant an agent permission to stamp itself. Native views
+require a transport-verified operator credential; forwarded calls retain the
+HTTP boundary. See [launch-time stamps](task-stamp.md).
 
 #### `tether_session_stop` _(session.write)_
 Send a stop signal to a running session.

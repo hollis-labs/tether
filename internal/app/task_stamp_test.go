@@ -4,6 +4,8 @@ import (
 	"context"
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
 	"strings"
 	"testing"
@@ -67,7 +69,7 @@ func TestCreateSessionStampsTaskIDAndRunID(t *testing.T) {
 		return correlationCaptureRuntime{Runtime: r, env: &actualEnv}, err
 	}}
 
-	l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", TaskID: "CW-20261016-0155", RunID: "42", Override: `{"env":{"TETHER_TASK_ID":"evil","TETHER_RUN_ID":"evil"}}`})
+	l, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", TaskID: "CW-20261016-0155", WorkstreamID: "01M7VQ2QWYB5RZR86W2BWG8PW3", RunID: "42", Override: `{"env":{"TETHER_TASK_ID":"evil","TETHER_RUN_ID":"evil","TETHER_WORKSTREAM_ID":"evil"}}`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,28 +88,38 @@ func TestCreateSessionStampsTaskIDAndRunID(t *testing.T) {
 		t.Fatalf("stored plan = %+v err=%v", stored, err)
 	}
 
-	if _, err := svc.Store.CreateWorkstream(store.WorkstreamRow{ID: "WS-1"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Store.AssignSessionWorkstream(l.SessionID, "WS-1"); err != nil {
-		t.Fatal(err)
+	if row.WorkstreamID.String != "01M7VQ2QWYB5RZR86W2BWG8PW3" || stored.WorkstreamID != row.WorkstreamID.String || stored.Env["TETHER_WORKSTREAM_ID"] != row.WorkstreamID.String {
+		t.Fatal("workstream not persisted before launch")
 	}
 	if _, err := svc.LaunchSession(l.SessionID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = svc.StopSession(l.SessionID) })
-	for _, want := range []string{"TETHER_RUN_ID=42", "TETHER_TASK_ID=CW-20261016-0155", "TETHER_PROJECT_ID=p", "TETHER_WORKSTREAM_ID=WS-1"} {
+	for _, want := range []string{"TETHER_RUN_ID=42", "TETHER_TASK_ID=CW-20261016-0155", "TETHER_PROJECT_ID=p", "TETHER_WORKSTREAM_ID=01M7VQ2QWYB5RZR86W2BWG8PW3"} {
 		if !strings.Contains(strings.Join(actualEnv, "\n"), want) {
 			t.Fatalf("missing %s", want)
 		}
 	}
+	env := map[string]string{}
+	for _, v := range actualEnv {
+		k, v, _ := strings.Cut(v, "=")
+		env[k] = v
+	}
+	principal, err := identity.NewStore(svc.Store.DB()).Verify(context.Background(), env["TETHER_TOKEN"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := svc.VerifyRunToken(env[runtoken.TokenEnv], principal)
+	if err != nil || claims.Task != row.TaskID.String || claims.Workstream != row.WorkstreamID.String {
+		t.Fatal("minted run token lost task/workstream binding")
+	}
 	// No task named, but an override tries to name one through env: nothing is stamped.
-	l2, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", Override: `{"env":{"TETHER_TASK_ID":"evil","TETHER_RUN_ID":"evil"}}`})
+	l2, err := svc.CreateSessionWithInput(CreateSessionInput{LaunchID: "l1", Override: `{"env":{"TETHER_TASK_ID":"evil","TETHER_RUN_ID":"evil","TETHER_WORKSTREAM_ID":"evil"}}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	row2, err := svc.Store.GetSession(l2.SessionID)
-	if err != nil || row2.TaskID.Valid || row2.RunID.Valid {
+	if err != nil || row2.TaskID.Valid || row2.RunID.Valid || row2.WorkstreamID.Valid {
 		t.Fatalf("row task = %+v err=%v, want none", row2.TaskID, err)
 	}
 	if v, ok := l2.Plan.Env[RunIDEnv]; ok {

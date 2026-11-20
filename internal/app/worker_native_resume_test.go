@@ -407,13 +407,13 @@ func TestWorkerNativeAdmissionRejectsWrongReadiness(t *testing.T) {
 
 func TestWorkerCreateRelaunchPersistsCreator(t *testing.T) {
 	r, ctx, source, _, _ := nativeContinuationRig(t)
-	in := CreateSessionInput{LaunchID: "seat", Worker: "fake-worker", Continuity: "relaunch", IdempotencyPrincipal: "worker-creator", IdempotencyKey: "worker-create"}
+	in := CreateSessionInput{LaunchID: "seat", Worker: "fake-worker", Continuity: "relaunch", IdempotencyPrincipal: "worker-creator", IdempotencyKey: "worker-create", TaskID: "CW-20261120-0135", WorkstreamID: "01M7VQ2QWYB5RZR86W2BWG8PW3"}
 	child, err := r.svc.CreateSessionWithInput(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	row, err := r.db.GetSession(child.SessionID)
-	if err != nil || row.WorkerID != source.WorkerID || row.Intent != "resume" || row.ParentSessionID.String != source.ID || row.RequestingPrincipal.String != "worker-creator" {
+	if err != nil || row.WorkerID != source.WorkerID || row.Intent != "resume" || row.ParentSessionID.String != source.ID || row.RequestingPrincipal.String != "worker-creator" || row.WorkstreamID.String != in.WorkstreamID || row.TaskID.String != in.TaskID {
 		t.Fatalf("worker create=%+v %v", row, err)
 	}
 	before, _, err := r.db.ConversationForSession(ctx, child.SessionID)

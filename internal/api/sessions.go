@@ -291,6 +291,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.TaskID = taskID
+	workstreamID, workstreamOK := s.workstreamStamp(w, r, req.WorkstreamID)
+	if !workstreamOK {
+		return
+	}
+	req.WorkstreamID = workstreamID
 	runID, runOK := s.runStamp(w, r, req.RunID)
 	if !runOK {
 		return
@@ -337,6 +342,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		ReplaceIdempotency:   req.ReplaceIdempotency,
 		IdempotencyPrincipal: idemPrincipal,
 		TaskID:               req.TaskID,
+		WorkstreamID:         req.WorkstreamID,
 		RunID:                req.RunID,
 		App:                  req.App,
 		Continuity:           req.Continuity,
@@ -434,9 +440,34 @@ func writeIdempotencyConflict(w http.ResponseWriter, err error) bool {
 // leg of the split. Returns 200 on successful transition to running,
 // 409 when the session is not in 'created' state, 404 when not found.
 func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id string) {
+	var req SessionLaunchRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid session launch request")
+			return
+		}
+	}
+	task, ok := s.taskStamp(w, r, req.TaskID)
+	if !ok {
+		return
+	}
+	workstream, ok := s.workstreamStamp(w, r, req.WorkstreamID)
+	if !ok {
+		return
+	}
+
 	var res LaunchResult
 	var err error
-	if contextual, ok := s.Service.(interface {
+	if task != "" || workstream != "" {
+		stamped, ok := s.Service.(interface {
+			LaunchSessionWithCorrelation(context.Context, string, SessionLaunchRequest) (LaunchResult, error)
+		})
+		if !ok {
+			writeError(w, http.StatusConflict, CodeConflict, "service does not support launch correlation stamping")
+			return
+		}
+		res, err = stamped.LaunchSessionWithCorrelation(r.Context(), id, SessionLaunchRequest{TaskID: task, WorkstreamID: workstream})
+	} else if contextual, ok := s.Service.(interface {
 		LaunchSessionWithContext(context.Context, string) (LaunchResult, error)
 	}); ok {
 		res, err = contextual.LaunchSessionWithContext(r.Context(), id)
@@ -444,6 +475,10 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id 
 		res, err = s.Service.LaunchSession(id)
 	}
 	if err != nil {
+		if errors.Is(err, store.ErrSessionCorrelationConflict) {
+			writeError(w, http.StatusConflict, CodeConflict, remoteResponseError(r, err, "correlation stamp conflicts").Error())
+			return
+		}
 		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
 			return
