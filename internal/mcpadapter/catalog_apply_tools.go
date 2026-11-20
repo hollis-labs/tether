@@ -32,7 +32,7 @@ func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
 		Name: "tether_catalog_plan",
 		Description: "Review a catalog change without applying it. Send a bundle of whole files (create, replace or delete) under the catalog root, or rollback_of to restore a backup. " +
 			"The daemon checks every path against an allowlist (agents, launches, projects, providers, skills, boot-profiles, mcp-servers, sandbox-profiles, team-definitions, global.yaml, teams-policy.yaml; never credentials/), refuses obvious secrets, applies the bundle to a scratch copy, validates it and returns a diff, the digest, which changes are privileged (permissions, network, scopes, daemon defaults) and which running sessions use the touched definitions. Nothing live changes. " +
-			"You cannot change your own agent or launch definition. A plan is installed only after the operator approves it by digest at a terminal; ask them to run `tether catalog approve <plan_id>`. The plan expires at expires_at (ttl_seconds after creation, default 15 minutes); if it lapsed before approval, call tether_catalog_plan again with the same bundle and the same plan_id and digest are re-armed. Requires the catalog.write scope.",
+			"You cannot change your own agent or launch definition. A plan is installed only after the operator approves it by digest at a terminal; ask them to run `tether catalog approve <plan_id>`. The response includes expires_at, ttl_seconds (default 15 minutes, configurable up to 7 days) and survives_restart. Only valid planned records marked survives_restart survive a daemon restart; approvals never survive. For an expired or invalid plan, call tether_catalog_plan again with the original name and files, or rollback_of for a rollback. An identical expired plan may reuse its id and digest only within the one-hour rearm grace while its live base is unchanged. Requires the catalog.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("name", "Short bundle name: letters, digits, '.', '_' or '-'. Used in the backup name. Required unless rollback_of is set.", false),
 			gomcp.StringProp("task_id", "Torque task id the change belongs to (for the audit trail).", false),
@@ -44,7 +44,7 @@ func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_catalog_plan_get",
-		Description: "Read a catalog plan: its state (planned, invalid, approved, applied), digest, diff and validation. Read-only; no scope required.",
+		Description: "Read a catalog plan: its state (planned, invalid, approved, applied), digest, diff, validation, expires_at, ttl_seconds and survives_restart. Expiry still applies after restart; only valid planned records marked survives_restart persist, and approvals never persist. If expired or invalid, re-plan with the original name and files, or rollback_of. Read-only; no scope required.",
 		InputSchema: gomcp.InputSchema(gomcp.StringProp("plan_id", "Plan id from tether_catalog_plan.", true)),
 		Handler:     a.handleCatalogPlanGet,
 	}, Reads("catalog plan lookup"))
