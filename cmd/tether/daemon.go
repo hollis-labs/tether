@@ -1101,6 +1101,10 @@ func (a *serviceAdapter) LaunchSessionWithContext(ctx context.Context, sessionID
 	return launchResult(a.svc.LaunchSessionWithContext(ctx, sessionID))
 }
 
+func (a *serviceAdapter) LaunchSessionWithCorrelation(ctx context.Context, id string, input api.SessionLaunchRequest) (api.LaunchResult, error) {
+	return launchResult(a.svc.LaunchSessionWithCorrelation(ctx, id, input))
+}
+
 // LaunchChatSession is the operator chat's launch: catalog-bounded for a catalog seat (CW-20261114-0063).
 func (a *serviceAdapter) LaunchChatSession(ctx context.Context, sessionID string) (api.LaunchResult, error) {
 	return launchResult(a.svc.LaunchChatSession(ctx, sessionID))

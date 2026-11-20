@@ -73,7 +73,7 @@ func TestSessionLaunchCorrelationAssertions(t *testing.T) {
 			svc := &fakeLaunchService{getRes: map[string]*store.SessionRow{"s1": {ID: "s1", TaskID: sql.NullString{String: "CW-1", Valid: true}, WorkstreamID: sql.NullString{String: "external", Valid: true}}}}
 			r := httptest.NewRequest("POST", "/sessions/s1/launch", strings.NewReader(tc.body)).WithContext(identity.WithPrincipal(context.Background(), tc.p))
 			w := httptest.NewRecorder()
-			NewHandler(Deps{Service: svc}).ServeHTTP(w, r)
+			NewHandler(Deps{Service: &correlationLaunchFake{svc}}).ServeHTTP(w, r)
 			if w.Code != tc.status {
 				t.Fatalf("status %d want %d: %s", w.Code, tc.status, w.Body.String())
 			}
@@ -82,4 +82,17 @@ func TestSessionLaunchCorrelationAssertions(t *testing.T) {
 			}
 		})
 	}
+}
+
+type correlationLaunchFake struct{ *fakeLaunchService }
+
+func (f *correlationLaunchFake) LaunchSessionWithCorrelation(_ context.Context, id string, in SessionLaunchRequest) (LaunchResult, error) {
+	row, err := f.GetSession(id)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	if (in.TaskID != "" && in.TaskID != row.TaskID.String) || (in.WorkstreamID != "" && in.WorkstreamID != row.WorkstreamID.String) {
+		return LaunchResult{}, store.ErrSessionCorrelationConflict
+	}
+	return f.LaunchSession(id)
 }

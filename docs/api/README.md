@@ -825,10 +825,12 @@ sessions today, so in practice they are permanent.
 
 ### `POST /sessions/{id}/launch`
 
-An optional JSON body may assert `task_id` and `workstream_id` previously fixed
-at create. These fields use the create-time operator boundary; mismatch returns
-409 `conflict` without launching or changing the row. Omit the body for the
-existing launch behavior. This endpoint does not assign new stamps.
+An optional JSON body may supply operator-only `task_id` and `workstream_id`.
+Absent stamps may be filled on a `created` session under the canonical launch
+lock, atomically with its stored launch plan, before token minting. Existing
+nonempty stamps must match; conflicts or additions after launch return 409
+without changing stamps. Omit the body for existing launch behavior. The original
+keyed-create digest is retained, so create replay keeps the filled stamps.
 
 Transition a `created` session to `running`. Returns 409 `conflict` when the
 target is in any other state, except for a session created with an

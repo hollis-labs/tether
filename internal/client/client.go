@@ -512,7 +512,7 @@ func (c *Client) LaunchSession(ctx context.Context, sessionID string) (api.Launc
 	return c.LaunchSessionWithInput(ctx, sessionID, api.SessionLaunchRequest{})
 }
 
-// LaunchSessionWithInput asserts optional correlation stamps before starting a session.
+// LaunchSessionWithInput fills absent correlation stamps before starting a session.
 func (c *Client) LaunchSessionWithInput(ctx context.Context, sessionID string, input api.SessionLaunchRequest) (api.LaunchResponse, error) {
 	var body io.Reader
 	if input.TaskID != "" || input.WorkstreamID != "" {

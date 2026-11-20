@@ -146,8 +146,8 @@ type LaunchResult struct {
 // Request / response payloads for the HTTP API. JSON tags are the public
 // contract; rename with care.
 
-// SessionLaunchRequest optionally asserts the correlation fixed at session creation.
-// It never restamps an existing session or its idempotency record.
+// SessionLaunchRequest fills absent operator stamps on a created session.
+// Nonempty stamps may only match; the original create idempotency record is retained.
 type SessionLaunchRequest struct {
 	TaskID       string `json:"task_id,omitempty"`
 	WorkstreamID string `json:"workstream_id,omitempty"`

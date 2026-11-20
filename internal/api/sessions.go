@@ -455,25 +455,19 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	if task != "" || workstream != "" {
-		row, err := s.Service.GetSession(id)
-		if errors.Is(err, store.ErrSessionNotFound) {
-			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
-			return
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, CodeInternalError, "session lookup failed")
-			return
-		}
-		if (task != "" && task != row.TaskID.String) || (workstream != "" && workstream != row.WorkstreamID.String) {
-			writeError(w, http.StatusConflict, CodeConflict, "task_id/workstream_id must match the stamps fixed at session creation")
-			return
-		}
-	}
 
 	var res LaunchResult
 	var err error
-	if contextual, ok := s.Service.(interface {
+	if task != "" || workstream != "" {
+		stamped, ok := s.Service.(interface {
+			LaunchSessionWithCorrelation(context.Context, string, SessionLaunchRequest) (LaunchResult, error)
+		})
+		if !ok {
+			writeError(w, http.StatusConflict, CodeConflict, "service does not support launch correlation stamping")
+			return
+		}
+		res, err = stamped.LaunchSessionWithCorrelation(r.Context(), id, SessionLaunchRequest{TaskID: task, WorkstreamID: workstream})
+	} else if contextual, ok := s.Service.(interface {
 		LaunchSessionWithContext(context.Context, string) (LaunchResult, error)
 	}); ok {
 		res, err = contextual.LaunchSessionWithContext(r.Context(), id)
@@ -481,6 +475,10 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id 
 		res, err = s.Service.LaunchSession(id)
 	}
 	if err != nil {
+		if errors.Is(err, store.ErrSessionCorrelationConflict) {
+			writeError(w, http.StatusConflict, CodeConflict, remoteResponseError(r, err, "correlation stamp conflicts").Error())
+			return
+		}
 		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
 			return

@@ -17,7 +17,7 @@ A session can carry the Torque task it was launched for. The stamp is one opaque
   here). TODO: allow a Torque service principal here once the
   issuer provides one (CW-20261016-0017; decision `tether_task_id_stamp_and_usage_rows_2026_10_16`).
 - **When.** At creation only. `POST /sessions` takes `task_id`; `POST /sessions/bootstrap` takes `task_id` and applies
-  it only when the row is created. A later request, even from the launcher, never rebinds the session.
+  it only when the row is created. A later request never replaces a nonempty task stamp. Split launch may fill an absent stamp before execution (see below).
   Later claims about the task are Torque facts, not Tether state.
 - **Where it goes.** The session row and the stored launch plan; `TETHER_TASK_ID` in the agent's environment, for
   hub-local and Outpost launches alike. At process launch, all three reserved variables (`TETHER_TASK_ID`,
@@ -84,10 +84,15 @@ session before execution. Token signing, header, issuer and audience are unchang
 A resume inherits the reference. The reference may belong to an external service;
 its presence does not create a local Tether workstream record.
 
-Stamps are fixed at create. Optional `task_id`/`workstream_id` on
-`POST /sessions/{id}/launch` and MCP `tether_session_launch` are operator-only
-assertions: a mismatch returns conflict before starting, and never restamps the
-session. Existing bodyless launch requests work unchanged. Idempotency replays
-retain the original stamps; changing either field with the same key conflicts.
+Nonempty stamps cannot be replaced by launch requests. Optional `task_id` and
+`workstream_id` on `POST /sessions/{id}/launch` and MCP `tether_session_launch`
+fill absent stamps only while the session is still `created`. This uses the
+operator boundary and canonical session launch lock. Row and launch-plan updates
+commit together before token minting or process launch. Conflicting nonempty
+stamps and additions after launch return conflict without changing either value.
+Matching values retain normal launch/replay semantics; bodyless launches work
+unchanged. Original keyed-create requests still replay the same session after a
+launch-time fill, without rewriting their request digest or erasing the stamps.
+Changing a field in the create request with the same key still conflicts.
 CLI `--idempotency-key auto` distinguishes nonempty workstream references while
 retaining the previous key derivation when `--workstream` is omitted.

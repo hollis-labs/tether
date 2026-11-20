@@ -88,8 +88,8 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 		Description: "Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID returned by tether_session_create", true),
-			gomcp.StringProp("task_id", "Optional operator-only assertion of the task fixed at create; mismatch refuses launch.", false),
-			gomcp.StringProp("workstream_id", "Optional operator-only assertion of the workstream fixed at create; mismatch refuses launch.", false),
+			gomcp.StringProp("task_id", "Optional operator-only task id: fill an absent stamp before launch, or match an existing stamp. Conflicting or post-launch additions are refused.", false),
+			gomcp.StringProp("workstream_id", "Optional operator-only opaque workstream id: fill an absent stamp before launch, or match an existing stamp. Conflicting or post-launch additions are refused.", false),
 			gomcp.StringProp("continuity", "Optional: relaunch asserts the created session is a continuation (intent resume with a parent_session_id, set by tether_session_create continuity=relaunch) and refuses to start a fresh one with invalid_request, so a restart cannot silently lose its lineage. It changes nothing on the session. fresh or omitted: no check.", false),
 		),
 		Handler: a.handleSessionLaunch,
@@ -425,18 +425,6 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) 
 		if err := a.validateCorrelationStamps(task, workstream); err != nil {
 			return nil, err
 		}
-		if task != "" || workstream != "" {
-			if a.svc == nil {
-				return nil, toolError("daemon_unavailable", "session launch needs the daemon")
-			}
-			row, err := a.svc.Store.GetSession(str(args, "session_id"))
-			if err != nil {
-				return nil, toolError("not_found", "session not found")
-			}
-			if (task != "" && task != row.TaskID.String) || (workstream != "" && workstream != row.WorkstreamID.String) {
-				return nil, toolError("conflict", "task_id/workstream_id must match the stamps fixed at session creation")
-			}
-		}
 	}
 
 	id := str(args, "session_id")
@@ -488,12 +476,16 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) 
 			"logical_agent_id": res.LogicalAgentID,
 		}), nil
 	}
-	res, err := a.svc.LaunchSessionWithContext(ctx, id)
+	launchCtx := ctx
+	if a.principal != nil {
+		launchCtx = identity.WithPrincipal(ctx, *a.principal)
+	}
+	res, err := a.svc.LaunchSessionWithCorrelation(launchCtx, id, api.SessionLaunchRequest{TaskID: correlationArg(args, "task_id"), WorkstreamID: correlationArg(args, "workstream_id")})
 	if err != nil {
 		if isNotFound(err) {
 			return nil, toolError("not_found", "session not found: "+id)
 		}
-		if isConflict(err) {
+		if isConflict(err) || errors.Is(err, store.ErrSessionCorrelationConflict) {
 			return nil, toolError("conflict", err.Error())
 		}
 		return nil, toolError("internal_error", err.Error())

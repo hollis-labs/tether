@@ -115,7 +115,30 @@ func TestNativeMCPCorrelationTrustAndReplay(t *testing.T) {
 		if _, err := b.handleSessionCreate(forged, map[string]any{"launch_id": "l1"}); err != nil {
 			t.Fatalf("bare legacy create: %v", err)
 		}
+	} // Native MCP fills an unbound created session and retains keyed-create replay.
+	fillArgs := map[string]any{"launch_id": "fill-launch", "idempotency_key": "native-fill"}
+	bare, err := a.handleSessionCreate(ctx, fillArgs)
+	if err != nil {
+		t.Fatal(err)
 	}
+	bareID := bare.(map[string]any)["session_id"].(string)
+	_, err = a.handleSessionLaunch(ctx, map[string]any{"session_id": bareID, "task_id": "CW-fill", "workstream_id": "01M7VQ2QWYB5RZR86W2BWG8PW3"})
+	if err != nil {
+		t.Fatal("native fill launch", err)
+	}
+	t.Cleanup(func() { _ = svc.StopSession(bareID) })
+	fillRow, err := svc.Store.GetSession(bareID)
+	if err != nil || fillRow.TaskID.String != "CW-fill" || fillRow.WorkstreamID.String != "01M7VQ2QWYB5RZR86W2BWG8PW3" {
+		t.Fatal("native MCP fill not persisted")
+	}
+	fillReplay, err := a.handleSessionCreate(ctx, fillArgs)
+	if err != nil || fillReplay.(map[string]any)["session_id"] != bareID || fillReplay.(map[string]any)["replayed"] != true {
+		t.Fatal("native keyed create replay changed after fill", err)
+	}
+	if _, err = a.handleSessionLaunch(ctx, map[string]any{"session_id": bareID, "task_id": "CW-fill", "workstream_id": fillRow.WorkstreamID.String}); err != nil {
+		t.Fatal("native matching launch replay", err)
+	}
+
 	legacy := New(svc, "operator", []string{ScopeSessionWrite})
 	if _, err := legacy.handleSessionCreate(identity.WithPrincipal(context.Background(), operator), map[string]any{"launch_id": "l1", "workstream_id": "work"}); err == nil {
 		t.Fatal("legacy label/context promoted to operator")
