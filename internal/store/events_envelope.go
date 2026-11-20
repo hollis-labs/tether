@@ -172,6 +172,9 @@ func (s *Store) InsertEventEnvelope(ctx context.Context, e events.Event) (events
 // an outbox row. A repeat of an event id already stored writes nothing and
 // reports existing=true with the stored sequence.
 func insertEventEnvelopeRow(ctx context.Context, w eventWriter, e events.Event, at time.Time, eventID string, pending bool) (events.Event, bool, error) {
+	if err := stampStoredSession(ctx, w, &e); err != nil {
+		return events.Event{}, false, err
+	}
 	if err := applyEventRetentionAdmission(ctx, w, &e); err != nil {
 		return events.Event{}, false, err
 	}

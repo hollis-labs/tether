@@ -36,6 +36,7 @@ var (
 	launchContinuity   string
 	launchTorqueTasks  []string
 	launchTask         string
+	launchRun          string
 	launchTorqueURL    string
 	launchTorqueDir    string
 )
@@ -77,7 +78,7 @@ var launchCmd = &cobra.Command{
 		}
 		idemKey := launchIdemKey
 		if idemKey == autoIdempotencyKey {
-			idemKey = deriveLaunchIdempotencyKey(launchID, launchWorker, launchTorqueTasks)
+			idemKey = deriveLaunchIdempotencyKey(launchID, launchWorker, launchTorqueTasks, launchRun)
 		}
 
 		taskID := launchTaskStamp(launchTask, launchTorqueTasks)
@@ -86,7 +87,7 @@ var launchCmd = &cobra.Command{
 			return fmt.Errorf(`--continuity must be "fresh" or "relaunch"`)
 		}
 
-		if launchContinuity != "" || taskID != "" || launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
+		if launchContinuity != "" || taskID != "" || launchRun != "" || launchWorker != "" || route != nil || idemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Worker:          launchWorker,
 				Launch:          launchID,
@@ -100,6 +101,7 @@ var launchCmd = &cobra.Command{
 				Injection:       injection,
 				IdempotencyKey:  idemKey,
 				TaskID:          taskID,
+				RunID:           launchRun,
 				Continuity:      launchContinuity,
 
 				ReplaceIdempotency: launchReplace,
@@ -158,6 +160,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchContinuity, "continuity", "", `"relaunch" records the session as a continuation (intent resume, parent = the agent's newest earlier session); default "fresh"`)
 	launchCmd.Flags().BoolVar(&launchReplace, "replace", false, "with --idempotency-key: rebind the key to this launch when the session it was bound to has ended (a live session refuses)")
 	launchCmd.Flags().StringVar(&launchTask, "task", "", "stamp the session with this Torque task id (accepted only from the operator credential this CLI presents); defaults to the task given by a single --torque-task")
+	launchCmd.Flags().StringVar(&launchRun, "run", "", "stamp the session with this Torque run id (operator credential only)")
 	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
 	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990); sends TORQUE_API_TOKEN as a bearer token when set")
 	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")
@@ -180,10 +183,14 @@ const autoIdempotencyKey = "auto"
 // deriveLaunchIdempotencyKey builds a retry-stable key from the launch id,
 // target worker and Torque task ids (order-insensitive), so re-running the
 // same task launch returns the session it started instead of a duplicate.
-func deriveLaunchIdempotencyKey(launchID, worker string, tasks []string) string {
+func deriveLaunchIdempotencyKey(launchID, worker string, tasks []string, runID string) string {
 	ids := append([]string(nil), tasks...)
 	sort.Strings(ids)
-	sum := sha256.Sum256([]byte(launchID + "\x00" + worker + "\x00" + strings.Join(ids, ",")))
+	seed := launchID + "\x00" + worker + "\x00" + strings.Join(ids, ",")
+	if runID != "" {
+		seed += "\x00run:" + runID
+	}
+	sum := sha256.Sum256([]byte(seed))
 	return "launch-" + hex.EncodeToString(sum[:16])
 }
 

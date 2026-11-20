@@ -28,6 +28,8 @@ type Plan struct {
 	// (CW-20261012-0062a): a bare Torque id, asserted only by the launcher at creation
 	// and never changed. Empty when none was named.
 	TaskID string `json:"task_id,omitempty"`
+	// RunID is an optional launcher-asserted Torque runs.id.
+	RunID string `json:"run_id,omitempty"`
 	// App is the app the hub stamps on the session row at creation (CW-20261020-0036).
 	// Never serialized, so a stored or caller-supplied plan cannot carry one in.
 	App string `json:"-"`

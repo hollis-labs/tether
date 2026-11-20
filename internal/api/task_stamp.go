@@ -35,12 +35,22 @@ const eventTaskIDDropped = "task_id_dropped"
 // TODO(CW-20261012-0062): add a Torque service principal after the issuer lands
 // (CW-20261016-0017) and allow it here; decision tether_task_id_stamp_and_usage_rows_2026_10_16.
 func (s *Server) taskStamp(w http.ResponseWriter, r *http.Request, taskID string) (string, bool) {
+	return s.launchCorrelationStamp(w, r, taskID, "task")
+}
+
+// runStamp applies the task-stamp caller boundary to an optional Torque run.
+// It validates only bounded identifier syntax, never invents or rewrites an ID.
+func (s *Server) runStamp(w http.ResponseWriter, r *http.Request, runID string) (string, bool) {
+	return s.launchCorrelationStamp(w, r, runID, "run")
+}
+
+func (s *Server) launchCorrelationStamp(w http.ResponseWriter, r *http.Request, taskID, dimension string) (string, bool) {
 	if taskID == "" {
 		return "", true
 	}
 	p, ok := identity.FromContext(r.Context())
 	if ok && (p.Kind == "session" || p.Kind == "agent" || p.SessionID != "") {
-		writeError(w, http.StatusForbidden, CodeForbidden, "task_id_not_permitted: an agent or session may not assert a task id")
+		writeError(w, http.StatusForbidden, CodeForbidden, dimension+"_id_not_permitted: an agent or session may not assert a "+dimension+" id")
 		return "", false
 	}
 	if !ok || !identity.IsOperatorCredential(p) {
@@ -48,19 +58,19 @@ func (s *Server) taskStamp(w http.ResponseWriter, r *http.Request, taskID string
 		// anonymous traffic from allocating audit metadata or touching the database (and in
 		// enforce mode such a request never gets here). Only an identified caller is audited.
 		if ok {
-			s.auditTaskIDDropped(r, p)
+			s.auditCorrelationIDDropped(r, p, dimension+"_id_dropped")
 		}
 		return "", true
 	}
 	if !taskIDPattern.MatchString(taskID) {
-		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "task_id must be a bare task id (letters, digits, '.', '_' or '-', at most 64 characters)")
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, dimension+"_id must be a bare "+dimension+" id (letters, digits, '.', '_' or '-', at most 64 characters)")
 		return "", false
 	}
 	return taskID, true
 }
 
-// auditTaskIDDropped records the dropped field with the caller's real authentication state.
-func (s *Server) auditTaskIDDropped(r *http.Request, p identity.Principal) {
+// auditCorrelationIDDropped records the dropped field with the caller's real authentication state.
+func (s *Server) auditCorrelationIDDropped(r *http.Request, p identity.Principal, event string) {
 	if s.IdentityAudit == nil {
 		return
 	}
@@ -72,6 +82,6 @@ func (s *Server) auditTaskIDDropped(r *http.Request, p identity.Principal) {
 	_ = s.IdentityAudit(r.Context(), identity.Observation{
 		At: time.Now().UTC(), PrincipalID: p.ID, SessionID: p.SessionID,
 		Mode: s.IdentityMode, Authentication: auth,
-		Method: r.Method, Route: "/" + family, Event: eventTaskIDDropped,
+		Method: r.Method, Route: "/" + family, Event: event,
 	})
 }

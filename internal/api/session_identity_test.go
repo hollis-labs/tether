@@ -33,7 +33,7 @@ func TestSessionIdentityReads(t *testing.T) {
 	if err := db.CreateSessionGroup(store.SessionGroupRow{ID: "g", CreatedAt: "2026-10-19T00:00:00Z", UpdatedAt: "2026-10-19T00:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
-	row := store.SessionRow{ID: "child", LaunchID: "not-a-native-id", Workspace: "/private/workspace", ProviderID: "codex", State: "created", ParentSessionID: sql.NullString{String: "parent", Valid: true}, Intent: "resume", TaskID: sql.NullString{String: "CW-20261018-0049", Valid: true}, WorkerID: "worker-1"}
+	row := store.SessionRow{ID: "child", LaunchID: "not-a-native-id", Workspace: "/private/workspace", ProviderID: "codex", State: "created", ParentSessionID: sql.NullString{String: "parent", Valid: true}, Intent: "resume", RunID: sql.NullString{String: "42", Valid: true}, TaskID: sql.NullString{String: "CW-20261018-0049", Valid: true}, WorkerID: "worker-1"}
 	if err := db.CreateSession(row, &launch.Plan{LaunchID: row.LaunchID}); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestSessionIdentityReads(t *testing.T) {
 			} else if err := json.Unmarshal(rr.Body.Bytes(), &dto); err != nil {
 				t.Fatal(err)
 			}
-			if dto.ParentSessionID != "parent" || dto.Intent != "resume" || dto.TaskID != row.TaskID.String || dto.WorkerID != "worker-1" {
+			if dto.ParentSessionID != "parent" || dto.Intent != "resume" || dto.RunID != "42" || dto.TaskID != row.TaskID.String || dto.WorkerID != "worker-1" {
 				t.Fatalf("lost explicit relations: %+v", dto)
 			}
 			if len(dto.ProviderMappings) != 3 {
