@@ -1755,13 +1755,18 @@ not Go duration syntax. An unset value keeps the default. Invalid values or
 values outside that range fall back to 15 minutes and emit a warning. Configure
 this in the daemon environment, not the MCP client environment.
 
-Planned bundles are persisted under the daemon's state directory in files with
-mode `0600`. Plan responses and `tether_catalog_plan_get` expose the expiry and
-whether the plan survives a daemon restart. Reload checks the stored bundle,
+Planned bundles are persisted in `catalog-plans.json` beside the configured
+state database, with mode `0600`. Plan responses and `tether_catalog_plan_get`
+expose `expires_at`, `ttl_seconds` and `survives_restart`. Rollback records store
+backup references instead of copying backup contents; reload requires the same
+backup bytes and live base, so secret literals are not duplicated into records. Reload checks the stored bundle,
 digest and base hashes against the live catalog and revalidates the candidate;
 changed or invalid records cannot become approved. **Approval is never restored
 from disk.** A surviving plan needs approval in the current process before apply;
-it does not need to be planned again just because the daemon restarted.
+it does not need to be planned again just because the daemon restarted. Approving
+a plan removes its planned record and sets `survives_restart` to false; an
+approved plan that was not applied before restart must be planned and approved
+again. Approval fields added to a snapshot cannot grant approval.
 
 An expired plan cannot be approved or applied. For up to one hour after expiry,
 call `tether_catalog_plan` again with the **same bundle** to re-arm the same plan
