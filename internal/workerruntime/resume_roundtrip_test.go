@@ -3,6 +3,7 @@ package workerruntime
 import (
 	"context"
 	"encoding/json"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,6 +134,10 @@ func TestWorkerResumeRoundTripWithFakeHub(t *testing.T) {
 	var hosts []*shim.Host
 	e.Spawn = func(descriptor string) (*exec.Cmd, error) {
 		spec, err := shim.ReadLaunch(descriptor)
+		if err != nil {
+			return nil, err
+		}
+		spec.Env, err = runtoken.RestoreEnvironment(spec.Env, spec.Session)
 		if err != nil {
 			return nil, err
 		}

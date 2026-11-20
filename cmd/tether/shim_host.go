@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,6 +27,10 @@ func shimHostCmd() *cobra.Command {
 		// Install handlers before starting the child so teardown has no signal gap.
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+		spec.Env, err = runtoken.RestoreEnvironment(spec.Env, spec.Session)
+		if err != nil {
+			return err
+		}
 		host, err := shim.Start(spec)
 		if err != nil {
 			return fmt.Errorf("shim host start refused")

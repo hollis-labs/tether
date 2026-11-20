@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hollis-labs/libs/harness/core/shim"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/workerruntime"
 	"github.com/spf13/cobra"
 	"os"
@@ -33,6 +34,10 @@ func main() {
 		if err != nil {
 			return err
 		}
+		spec.Env, err = runtoken.RestoreEnvironment(spec.Env, spec.Session)
+		if err != nil {
+			return err
+		}
 		host, err := shim.Start(spec)
 		if err != nil {
 			return err
@@ -50,7 +55,7 @@ func main() {
 	cmd.AddCommand(relayCmd)
 	var httpURL, httpToken string
 	httpRelayCmd := &cobra.Command{Use: "mcp-http-relay", Hidden: true, SilenceUsage: true, Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
-		r := &workerruntime.HTTPRelay{URL: httpURL, TokenFile: httpToken, Stderr: os.Stderr}
+		r := &workerruntime.HTTPRelay{URL: httpURL, TokenFile: httpToken, RunToken: os.Getenv("TETHER_RUN_TOKEN"), Stderr: os.Stderr}
 		return r.Run(c.Context(), os.Stdin, os.Stdout)
 	}}
 	httpRelayCmd.Flags().StringVar(&httpURL, "url", "", "hub streamable-HTTP MCP endpoint (https)")

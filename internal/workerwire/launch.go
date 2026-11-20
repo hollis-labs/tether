@@ -53,6 +53,9 @@ const FeatureAgentToken = "agent-token"
 // FeatureProviderProcess supports native Codex/AGY launch projection and framed turns.
 const FeatureProviderProcess = "provider-process"
 
+// FeatureExecutionRunToken promises nonpersistent execution-token handoff.
+const FeatureExecutionRunToken = "execution-run-token-v1"
+
 // AgentTokenSpec is one token the outpost keeps for a session: audience (one
 // app) and the scopes the launch policy grants.
 type AgentTokenSpec struct {

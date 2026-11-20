@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"golang.org/x/sys/unix"
 	"io"
 	"os"
@@ -87,6 +88,10 @@ func TestShimLaunchProcess(t *testing.T) {
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer cancel()
+		spec.Env, err = runtoken.RestoreEnvironment(spec.Env, spec.Session)
+		if err != nil {
+			os.Exit(15)
+		}
 		host, err := shim.Start(spec)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

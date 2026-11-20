@@ -21,6 +21,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/provider"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"github.com/hollis-labs/tether/internal/workspace"
@@ -356,6 +357,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}
 	cmd.Env = launch.CorrelationFromEnv(spec.Env).SealEnv(cmd.Env)
+	cmd.Env = runtoken.SealEnvironment(cmd.Env, spec.Env)
 	cmd.Env = append(cmd.Env, "TETHER_WORKER_SESSION="+spec.Session, "TETHER_AGENT_URN="+sessionAgentURN(spec))
 	// Per-session issued tokens: 0600 files outside the checkout, refreshed in
 	// place; the child gets only their paths.
@@ -391,8 +393,32 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if actor == "" {
 		actor = "urn:agent:worker"
 	}
+	var child *exec.Cmd
+	var childExited <-chan struct{}
+	possiblySubmitted := false
+	runtimeEnv, closeRunHandoff, err := runtoken.PrepareEnvironment(cmd.Env, spec.Session)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		runtoken.FinishHandoff(runtimeEnv, closeRunHandoff, possiblySubmitted, func(check context.Context) bool {
+			if childExited != nil {
+				select {
+				case <-childExited:
+					return true
+				default:
+				}
+			}
+			observer, err := shimhost.Connect(check, filepath.Join(hostRoot, "c", "control.sock"), secret, spec.Session, "urn:instance:worker", "1", "observer", "", false)
+			if err == nil {
+				_ = observer.Close()
+				return true
+			}
+			return false
+		})
+	}()
 	descriptor := filepath.Join(hostRoot, "launch.json")
-	launchSpec := shim.Launch{Session: spec.Session, Instance: "urn:instance:worker", Generation: 1, Actor: mesh.Actor{URN: mesh.URN(actor), Kind: mesh.ActorAgent}, Subject: mesh.URN("urn:session:" + spec.Session), Argv: cmd.Args, Env: cmd.Env, Cwd: cmd.Dir, ControlDir: filepath.Join(hostRoot, "c"), JournalDir: filepath.Join(hostRoot, "j"), Secret: secret, PinPath: pin, PinKey: spec.Session, BootGeneration: uuid.NewString(), Reservation: spec.Session, JournalBytes: 256 << 20, Heartbeat: time.Second}
+	launchSpec := shim.Launch{Session: spec.Session, Instance: "urn:instance:worker", Generation: 1, Actor: mesh.Actor{URN: mesh.URN(actor), Kind: mesh.ActorAgent}, Subject: mesh.URN("urn:session:" + spec.Session), Argv: cmd.Args, Env: runtimeEnv, Cwd: cmd.Dir, ControlDir: filepath.Join(hostRoot, "c"), JournalDir: filepath.Join(hostRoot, "j"), Secret: secret, PinPath: pin, PinKey: spec.Session, BootGeneration: uuid.NewString(), Reservation: spec.Session, JournalBytes: 256 << 20, Heartbeat: time.Second}
 	if err := shimhost.WritePrivateJSON(descriptor, launchSpec); err != nil {
 		return nil, err
 	}
@@ -400,8 +426,8 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 	if releaseSource != nil {
 		keepReservation = true
 	}
-	var child *exec.Cmd
 	if e.Spawn != nil {
+		possiblySubmitted = true
 		child, err = e.Spawn(descriptor)
 	} else {
 		child = exec.Command(e.Binary, "shim-host", "--launch", descriptor) //nolint:gosec // G204: e.Binary is this worker's own executable; descriptor is a path this worker wrote
@@ -413,17 +439,25 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		child.Stdout = logFile
 		child.Stderr = logFile
 		err = child.Start()
+		if err == nil {
+			possiblySubmitted = true
+		}
 		_ = logFile.Close()
 	}
 	if err != nil {
 		return nil, err
 	}
 	if child != nil {
-		go func() { _ = child.Wait() }()
+		done := make(chan struct{})
+		childExited = done
+		go func() { _ = child.Wait(); close(done) }()
 	}
 	var client *shim.Client
 	deadline := time.Now().Add(10 * time.Second)
 	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		client, err = shim.Connect(filepath.Join(launchSpec.ControlDir, "control.sock"), secret, spec.Session, launchSpec.Instance, "1", "controller", false)
 		if err == nil {
 			break
@@ -431,8 +465,13 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("shim did not start: %w", err)
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
+	possiblySubmitted = false
 	started = true
 	s := &execution{AgentTokens: spec.AgentTokens, AuthDir: authDir, stopTokens: stopTokens, secrets: envSecrets(spec.Env), ID: spec.Session, Descriptor: descriptor, Workspace: cwd, State: "running", Sandboxed: sandboxed, client: client, Provider: spec.Provider, pending: make(map[string]chan shim.Frame)}
 	if child != nil {

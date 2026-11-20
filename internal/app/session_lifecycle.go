@@ -34,6 +34,7 @@ import (
 	"github.com/hollis-labs/tether/internal/provider/acp"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
@@ -520,6 +521,10 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			}
 		}
 	}()
+	runEnv, err := s.mintRunEnvironment(ctx, row)
+	if err != nil {
+		return nil, fmt.Errorf("mint run context: %w", err)
+	}
 	var startOpts agentsessions.StartOptions
 	if rt.Kind() == acp.Kind {
 		// An ACP agent (CW-20260930-0106 stage 1). go-agent-wrapper's ACP
@@ -669,6 +674,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 	}
 	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
+	startOpts.Env = runtoken.SealEnvironment(startOpts.Env, runEnv)
 	if plan.NativeResumeOnly {
 		// Planting owns the fresh inactive artifacts; native-only execution uses
 		// the separately validated, persisted source context instead of boot CWD.

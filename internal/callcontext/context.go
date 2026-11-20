@@ -10,6 +10,10 @@ import (
 )
 
 type Snapshot struct {
+	RunVerified    bool   `json:"run_verified,omitempty"`
+	ExecutionRunID string `json:"execution_run_id,omitempty"`
+	TokenJTI       string `json:"token_jti,omitempty"`
+	RunParent      string `json:"run_parent,omitempty"`
 	// Verified is identity.Principal.Verified: a bearer credential resolved to
 	// a principal row, of any kind. SessionResolved is the narrower fact that
 	// the principal is a session whose row was found; session-scoped fields
