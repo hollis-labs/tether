@@ -43,6 +43,7 @@ still see an ordinary message of the mapped transport kind.
 | `body` | Required markdown, at most 4000 characters. |
 | `options` | `question` and `decision`: 2 to 6. `approval_request`: optional; without options the answers are `approve` and `deny`. Other kinds: none. Ids `[a-z0-9_-]{1,20}`, unique; at most one `recommended`. |
 | `default_option` | Optional option id: what happens if nobody answers. |
+| `task_id` | Durable Torque request task ID. On a Torque-connected hub, omit to create or supply an open manual task to link. Returned in request/reply envelopes; see [request lifecycle](request-lifecycle.md). |
 | `deliverable` | Required on `request` and only there: what done looks like, at most 1000 characters. A `request` takes no options. |
 | `status` | Optional on a reply only (`in_reply_to` set): `done`, `declined` or `blocked`. |
 | `evidence` | Optional list of up to 10 one-line pointers (PR, commit, path, URL), each at most 500 characters. |

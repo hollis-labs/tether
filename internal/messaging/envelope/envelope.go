@@ -107,6 +107,8 @@ type Answer struct {
 
 // Envelope is the typed message. From is stamped by the server.
 type Envelope struct {
+	// TaskID links a request to its durable Torque lifecycle.
+	TaskID        string    `json:"task_id,omitempty"`
 	Schema        string    `json:"schema,omitempty"`
 	Kind          Kind      `json:"kind"`
 	From          string    `json:"from,omitempty"`
@@ -246,6 +248,9 @@ func HasOptions(k Kind) bool {
 // Validate checks shape and syntax. It does not resolve handles or look up the
 // parent of a reply; Check does both.
 func (e Envelope) Validate() error {
+	if e.TaskID != "" && !taskRE.MatchString(e.TaskID) {
+		return fail("task_id", "must be a Torque task id")
+	}
 	if e.Schema != "" && e.Schema != Schema {
 		return fail("schema", "must be %q", Schema)
 	}
