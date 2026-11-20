@@ -41,7 +41,7 @@ func (s *Service) mintRunEnvironment(ctx context.Context, row *store.SessionRow)
 // current server-owned context. Task/workstream reassignment invalidates an old
 // signed context instead of overwriting the existing attribution fields.
 func (s *Service) VerifyRunToken(token string, p identity.Principal) (runtoken.Claims, error) {
-	if s == nil || s.Store == nil || !p.Verified || p.SessionID == "" || (p.Kind != "session" && !identity.IsBoundAgentToken(p)) {
+	if s == nil || s.Store == nil || !p.Verified || p.SessionID == "" || p.ID != identity.SessionPrincipalIDPrefix+p.SessionID || (p.Kind != "session" && !identity.IsBoundAgentToken(p)) {
 		return runtoken.Claims{}, runtoken.ErrInvalid
 	}
 	key, err := s.runTokens.Key(s.Store.DB())
