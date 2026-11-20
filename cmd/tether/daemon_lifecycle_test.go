@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
+	"github.com/hollis-labs/tether/internal/requestflow"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -62,6 +63,7 @@ func TestDaemonRunStartupFailuresCloseServiceOnce(t *testing.T) {
 }
 
 func TestDaemonRunSharesChannelsAndOrdersCloseHook(t *testing.T) {
+	t.Setenv("TORQUE_BASE_URL", "http://torque.example")
 	t.Setenv("HOME", t.TempDir())
 	oldFactory, oldClose, oldRun, oldCatalog := newDaemonService, closeDaemonService, runDaemonServer, catalogPath
 	t.Cleanup(func() {
@@ -89,6 +91,9 @@ func TestDaemonRunSharesChannelsAndOrdersCloseHook(t *testing.T) {
 	}
 	expected := errors.New("serve failure")
 	runDaemonServer = func(server *daemon.Server, _ context.Context) error {
+		if backend, ok := server.Requests.(*requestflow.HTTPBackend); !ok || backend.BaseURL != "http://torque.example" {
+			t.Fatal("request backend not wired from environment")
+		}
 		if server.Channels != svc.Channels {
 			t.Fatal("server and router do not share channel service")
 		}
