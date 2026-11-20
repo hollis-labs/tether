@@ -173,7 +173,7 @@ launches agents (Torque) does not need the operator to hand-issue each token.
 
 ## Reaching the hub from another host (remote listener)
 
-The hub API (for example `https://tether.hub.nanite.cloud`, distinct from the
+The hub API (for example `https://tether.hub.example.com`, distinct from the
 web UI) accepts service JWTs on this closed route list. The existing network
 configuration is sufficient; issuing a bound token requires no pairing or mode change:
 
@@ -221,9 +221,9 @@ and the underlying stored recipient must match the literal binding. A bound
 selector cannot mark a different recipient's message read (409).
 
 Example URL shapes (send the bearer privately, never in the URL):
-`POST https://tether.hub.nanite.cloud/messages/post`,
-`GET https://tether.hub.nanite.cloud/messages/list?to=<encoded-URN>&as=<encoded-URN>`,
-`POST https://tether.hub.nanite.cloud/messages/<id>/read?as=<encoded-URN>`.
+`POST https://tether.hub.example.com/messages/post`,
+`GET https://tether.hub.example.com/messages/list?to=<encoded-URN>&as=<encoded-URN>`,
+`POST https://tether.hub.example.com/messages/<id>/read?as=<encoded-URN>`.
 
 How it is checked, in this order, all required:
 
