@@ -69,13 +69,15 @@ type PlannedFile struct {
 
 // Plan is a reviewed-but-not-installed change.
 type Plan struct {
-	ID        string    `json:"plan_id"`
-	Name      string    `json:"name"`
-	TaskID    string    `json:"task_id,omitempty"`
-	State     string    `json:"state"`
-	Digest    string    `json:"digest"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ApprovedBy string    `json:"approved_by,omitempty"`
+	Result     *Result   `json:"result,omitempty"`
+	ID         string    `json:"plan_id"`
+	Name       string    `json:"name"`
+	TaskID     string    `json:"task_id,omitempty"`
+	State      string    `json:"state"`
+	Digest     string    `json:"digest"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
 	// SurvivesRestart describes the planned record, never a persisted approval.
 	SurvivesRestart  bool          `json:"survives_restart"`
 	TTLSeconds       int           `json:"ttl_seconds"`
@@ -125,9 +127,11 @@ type Options struct {
 
 // Engine plans and applies catalog changes under Root.
 type Engine struct {
-	Root       string
-	BackupRoot string
-	Approver   *Approver
+	// ApprovalOff disables approval policy for a temporary development window.
+	ApprovalOff bool
+	Root        string
+	BackupRoot  string
+	Approver    *Approver
 	// Validate checks a catalog tree; nil uses the daemon's own loaders.
 	Validate func(root string) error
 	// Preflight adds read-only runtime findings against the live or scratch candidate tree.
@@ -258,6 +262,11 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 	}
 	if e.plans == nil {
 		e.plans = map[string]*Plan{}
+	}
+	if e.ApprovalOff && p.State == StatePlanned {
+		now := e.now().UTC()
+		p.State, p.ApprovedAt, p.ApprovedBy, p.AllowRunning = StateApproved, &now, "approval-disabled", true
+		p.ApprovalRequired = ""
 	}
 	previous := e.plans[p.ID]
 	e.plans[p.ID] = p
@@ -505,7 +514,7 @@ func (e *Engine) checkFiles(in []File, opt Options, skipSecretScan bool) ([]File
 			return nil, fmt.Errorf("path %q appears twice in the bundle", f.Path)
 		}
 		seen[f.Path] = true
-		if protected[f.Path] {
+		if protected[f.Path] && !e.ApprovalOff {
 			return nil, fmt.Errorf("%s is the caller's own definition; an agent does not change its own definition or permissions", f.Path)
 		}
 		if f.Delete {
@@ -633,7 +642,7 @@ type ApprovalRequest struct {
 // Approve records a human's approval. The approver must have read the plan's
 // digest and know the approval passphrase.
 func (e *Engine) Approve(req ApprovalRequest) (*Plan, error) {
-	if e.Approver == nil && !req.Delegated {
+	if e.Approver == nil && !req.Delegated && !e.ApprovalOff {
 		return nil, ErrNoPassphrase
 	}
 	e.mu.Lock()
@@ -657,6 +666,26 @@ func (e *Engine) approveLocked(req ApprovalRequest, credentialVerified bool) (*P
 	}
 	if req.Digest != p.Digest {
 		return nil, fmt.Errorf("digest mismatch: the approval names a different plan content than %q holds", p.ID)
+	}
+	if e.ApprovalOff {
+		if digestOf(p) != p.Digest {
+			return nil, fmt.Errorf("plan digest no longer matches content")
+		}
+		if err := e.checkLiveBase(p); err != nil {
+			return nil, err
+		}
+		if p.State == StateApproved {
+			return clonePlan(p), nil
+		}
+		now := e.now().UTC()
+		previous := *p
+		p.State, p.ApprovedAt, p.ApprovedBy, p.AllowRunning = StateApproved, &now, "approval-disabled", true
+		p.SurvivesRestart = false
+		if err := e.persistLocked(); err != nil {
+			*p = previous
+			return nil, fmt.Errorf("persist catalog approval removal: %w", err)
+		}
+		return clonePlan(p), nil
 	}
 	if req.Delegated && p.OperatorOnly {
 		return nil, fmt.Errorf("plan %q %s; only the operator credential approves it (`tether catalog approve`)", p.ID, ReasonOperatorAttestation)

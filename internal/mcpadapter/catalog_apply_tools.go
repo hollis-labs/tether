@@ -30,11 +30,12 @@ func (a *Adapter) registerCatalogApplyTools(s *gomcp.Server) {
 	}
 	a.addTool(s, gomcp.Tool{
 		Name: "tether_catalog_plan",
-		Description: "Review a catalog change without applying it. Send a bundle of whole files (create, replace or delete) under the catalog root, or rollback_of to restore a backup. " +
-			"The daemon checks every path against an allowlist (agents, launches, projects, providers, skills, boot-profiles, mcp-servers, sandbox-profiles, team-definitions, global.yaml, teams-policy.yaml; never credentials/), refuses obvious secrets, applies the bundle to a scratch copy, validates it and returns a diff, the digest, which changes are privileged (permissions, network, scopes, daemon defaults) and which running sessions use the touched definitions. Nothing live changes. " +
-			"You cannot change your own agent or launch definition. A plan is installed only after the operator approves it by digest at a terminal; ask them to run `tether catalog approve <plan_id>`. The response includes expires_at, ttl_seconds (default 15 minutes, configurable up to 7 days) and survives_restart. Only valid planned records marked survives_restart survive a daemon restart; approvals never survive. For an expired or invalid plan, call tether_catalog_plan again with the original name and files, or rollback_of for a rollback. An identical expired plan may reuse its id and digest only within the one-hour rearm grace while its live base is unchanged. Requires the catalog.write scope.",
+		Description: "Review a catalog change. With daemon TETHER_CATALOG_APPROVAL=off valid plans are autoapproved as approval-disabled; apply:true installs immediately and returns result. Otherwise operator approval is required. Send a bundle of whole files (create, replace or delete) under the catalog root, or rollback_of to restore a backup. " +
+			"The daemon checks every path against an allowlist (agents, launches, projects, providers, skills, boot-profiles, mcp-servers, sandbox-profiles, team-definitions, global.yaml, teams-policy.yaml; never credentials/), refuses obvious secrets, applies the bundle to a scratch copy, validates it and returns a diff, the digest, which changes are privileged (permissions, network, scopes, daemon defaults) and which running sessions use the touched definitions. Live changes occur only with apply:true and approval off. " +
+			"With approval on, you cannot change your own agent or launch definition and a plan is installed only after operator approval by digest at a terminal; ask them to run `tether catalog approve <plan_id>`. The response includes expires_at, ttl_seconds (default 15 minutes, configurable up to 7 days) and survives_restart. Only valid planned records marked survives_restart survive a daemon restart; approvals never survive. For an expired or invalid plan, call tether_catalog_plan again with the original name and files, or rollback_of for a rollback. An identical expired plan may reuse its id and digest only within the one-hour rearm grace while its live base is unchanged. Requires the catalog.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("name", "Short bundle name: letters, digits, '.', '_' or '-'. Used in the backup name. Required unless rollback_of is set.", false),
+			gomcp.BooleanProp("apply", "Plan and immediately apply (requires daemon catalog approval off).", false),
 			gomcp.StringProp("task_id", "Torque task id the change belongs to (for the audit trail).", false),
 			gomcp.ArrayProp("files", "Files to create, replace or delete.", false, fileItem),
 			gomcp.StringProp("rollback_of", "Backup id (from tether_catalog_backups) to restore instead of sending files.", false),
@@ -105,7 +106,8 @@ func (a *Adapter) handleCatalogPlan(ctx context.Context, args map[string]any) (a
 	if err := a.catalogApplyClient("tether_catalog_plan"); err != nil {
 		return nil, toolError("internal_error", err.Error())
 	}
-	req := api.CatalogPlanRequest{Name: str(args, "name"), TaskID: str(args, "task_id"), RollbackOf: str(args, "rollback_of")}
+	apply, _ := args["apply"].(bool)
+	req := api.CatalogPlanRequest{Apply: apply, Name: str(args, "name"), TaskID: str(args, "task_id"), RollbackOf: str(args, "rollback_of")}
 	if raw, ok := args["files"].([]any); ok {
 		for i, item := range raw {
 			m, ok := item.(map[string]any)

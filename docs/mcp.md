@@ -2368,3 +2368,31 @@ migrate the live catalog or deploy a service. Converting a built-in origin to
 external leaves existing daemon connections until restart; restart the daemon
 when retiring such a connection. Converting external to built-in requires a
 restart to start its upstream.
+
+### Temporary catalog approval development window
+
+Set `TETHER_CATALOG_APPROVAL=off` in the daemon environment to disable catalog
+approval for a temporary development window. Unset it to restore the default
+approval requirements. The setting is read at daemon startup; startup logs and
+`GET /catalog/approvers` show `approval: off` while enabled. No approver policy,
+passphrase or breakglass token is needed in this mode.
+
+Valid plans return `state: approved` and `approved_by: approval-disabled`, which
+is also recorded in the apply audit. Agent self-definition, operator-only,
+privileged and global catalog approval fences and running-session acknowledgements
+are lifted. Catalog write scopes, path and secret checks, validation, expiry,
+digest and live-base checks, backups and rollback on failure remain in effect.
+Invalid plans remain invalid. Approvals remain memory-only; when approval is off,
+restored valid unexpired plans are autoapproved again after full integrity checks.
+The existing external catalog autocommit job remains untouched; the daemon does
+not add a git commit callback.
+
+Call `tether_catalog_plan` with `apply: true` (HTTP: `POST /catalog/plans` with
+`"apply": true`) to plan and apply immediately. The response is the applied plan
+with a `result` containing backup, reload and restart information. Failures return
+the plan and any partial apply result. With approval on, this option is rejected.
+The CLI equivalent is `tether catalog plan bundle.json --apply`; the JSON contains
+`name`, `task_id` and `files` (or `rollback_of`), and `-` reads stdin.
+`tether catalog approve <plan_id>` succeeds without a terminal for already
+approved plans. This switch is temporary; remove it when the development window
+ends. It does not restart running sessions.
