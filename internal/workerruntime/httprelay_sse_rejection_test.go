@@ -38,7 +38,7 @@ func TestHTTPRelayRecoversExplicitSSERejection(t *testing.T) {
 				if hub.count("initialize") != 2 || hub.count(method) != 1 {
 					t.Fatalf("initializes=%d dispatches=%d", hub.count("initialize"), hub.count(method))
 				}
-				rig.finish()
+				rig.finishDrainingNotifications()
 			})
 		}
 	}
@@ -74,4 +74,49 @@ func TestHTTPRelaySSERejectionRequiresMatchingRequest(t *testing.T) {
 			t.Fatal("unrelated/generic error swallowed")
 		}
 	}
+}
+
+// Keep the downstream reader alive through relay shutdown, as a connected MCP
+// client does. A late standalone notification can follow the final call reply;
+// stopping reads first leaves emit blocked on the rig's unbuffered stdout pipe.
+func (g *relayRig) finishDrainingNotifications() {
+	g.t.Helper()
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for g.out.Scan() {
+		}
+	}()
+	g.finish()
+	<-drained // Run closes stdout before reporting completion.
+	if err := g.out.Err(); err != nil {
+		g.t.Fatal(err)
+	}
+}
+
+func TestHTTPRelayShutdownWithNotificationAfterFinalReply(t *testing.T) {
+	allowNotification := make(chan struct{})
+	getStarted := make(chan struct{})
+	transport := stoppingRoundTrip(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet {
+			close(getStarted)
+			select {
+			case <-allowNotification:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+		}
+		return http.DefaultTransport.RoundTrip(req)
+	})
+	rig := newRelayRig(t, &fakeHub{}, transport)
+	rig.handshake()
+	<-getStarted
+	rig.send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write"}}`)
+	if response := rig.recvReply(); response["result"] == nil {
+		t.Fatalf("reply=%v", response)
+	}
+	// Force the ordering seen in CI: no notification is available while reading
+	// the terminal reply, but one can arrive during shutdown.
+	close(allowNotification)
+	rig.finishDrainingNotifications()
 }
