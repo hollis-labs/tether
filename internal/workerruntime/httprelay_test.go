@@ -624,7 +624,6 @@ type retireViewTransport struct {
 	releaseOldGET chan struct{}
 	newGET        chan struct{}
 	oldOnce       sync.Once
-	releaseOnce   sync.Once
 	newOnce       sync.Once
 }
 
@@ -650,9 +649,6 @@ func (r *retireViewTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		}
 		req.Body = io.NopCloser(bytes.NewReader(data))
 		method := methodName(data)
-		if method == "notifications/initialized" && req.Header.Get("Mcp-Session-Id") == "sess-2" && r.releaseOldGET != nil {
-			r.releaseOnce.Do(func() { close(r.releaseOldGET) })
-		}
 		if method == "tools/list" || method == "tools/call" {
 			r.calls.Add(1)
 			if r.retired.CompareAndSwap(false, true) {
@@ -716,6 +712,9 @@ func TestHTTPRelayReconnectAfter401PreservesRunTokenAndDoesNotReplayMutation(t *
 			if hub.count("initialize") != 2 {
 				t.Fatal("view not replaced")
 			}
+			// The replacement response proves reinitialize has already attempted
+			// to restart the stream while the old GET is still in flight.
+			close(transport.releaseOldGET)
 			select {
 			case <-transport.newGET:
 			case <-time.After(5 * time.Second):
