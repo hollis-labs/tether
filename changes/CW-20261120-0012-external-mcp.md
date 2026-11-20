@@ -1,0 +1,1 @@
+- CW-20261120-0012: Support grant-only MCP catalog entries with `served_by: external`, excluding them from built-in connections, health/status and reload restart warnings; document the Cerberus shared-services migration.

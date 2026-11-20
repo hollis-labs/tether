@@ -49,9 +49,33 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	// instead of failing every connection of the principal (CW-20261024-0097). A server the daemon knows but
 	// has disabled is still refused below, and an id the live catalog does not know never reaches here (the
 	// transport validated the grant against it).
+	external := func(id string) bool {
+		if a.svc != nil {
+			if cat := a.svc.CurrentCatalog(); cat != nil {
+				if _, exists := cat.MCPServerEnabled[id]; exists {
+					return cat.MCPServerExternal[id]
+				}
+			}
+		}
+		return r.external[id]
+	}
 	var pending []string
 	for _, id := range grant {
-		if _, running := r.known[id]; id != "tether" && !running && !slices.Contains(pending, id) {
+		if external(id) {
+			// Ownership must not override known-disabled grant metadata.
+			if _, declared := known[id]; !declared {
+				known[id] = true
+				if a.svc != nil {
+					if cat := a.svc.CurrentCatalog(); cat != nil {
+						if enabled, exists := cat.MCPServerEnabled[id]; exists {
+							known[id] = enabled
+						}
+					}
+				}
+			}
+			continue
+		}
+		if _, running := r.known[id]; id != "tether" && (!running || (r.external[id] && r.known[id])) && !slices.Contains(pending, id) {
 			pending = append(pending, id)
 			known[id] = true // lets SelectOrigins pass it through; it is removed again below
 		}
@@ -74,7 +98,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	}
 	running := selected[:0:0]
 	for _, id := range selected {
-		if slices.Contains(pending, id) {
+		if external(id) || slices.Contains(pending, id) {
 			continue
 		}
 		running = append(running, id)
@@ -84,6 +108,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err != nil {
 		return nil, err
 	}
+	upstreams.isExternal = external
 	a.upstreams = upstreams
 	registry := NewToolRegistry()
 	for _, entry := range r.pool.entries {
@@ -194,13 +219,43 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		full := fullSnapshot()
 		_, collisions, _ := upstreams.namingDiagnostics()
 		full.Collisions = append(full.Collisions, collisions...)
+		entries := []mcpgateway.Entry{}
+		for _, entry := range full.Entries {
+			if entry.Origin == "tether" || upstreams.includes(entry.Origin) {
+				entries = append(entries, entry)
+			}
+		}
+		full.Entries = entries
+		lint := []mcpgateway.NameFinding{}
+		for _, finding := range full.Lint {
+			if finding.Origin == "tether" || upstreams.includes(finding.Origin) {
+				lint = append(lint, finding)
+			}
+		}
+		full.Lint = lint
+		visibleCollisions := []mcpgateway.NameCollision{}
+		for _, collision := range full.Collisions {
+			visible := true
+			for _, owner := range collision.Owners {
+				if owner.Origin != "tether" && !upstreams.includes(owner.Origin) {
+					visible = false
+				}
+			}
+			if visible {
+				visibleCollisions = append(visibleCollisions, collision)
+			}
+		}
+		full.Collisions = visibleCollisions
 		origins := []mcpgateway.OriginStatus{}
 		for _, origin := range full.Origins {
-			if origin.ID == "tether" || upstreams.servers[origin.ID] {
+			if origin.ID == "tether" || upstreams.includes(origin.ID) {
 				origins = append(origins, origin)
 			}
 		}
 		for _, id := range pending {
+			if external(id) {
+				continue
+			}
 			origins = append(origins, mcpgateway.OriginStatus{ID: id, Status: "pending_restart",
 				Error: "added to the catalog after the daemon started; reload the daemon to start it"})
 		}

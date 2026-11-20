@@ -186,3 +186,32 @@ func TestReloadCatalogSaysANewMCPServerNeedsARestart(t *testing.T) {
 		}
 	}
 }
+
+func TestReloadCatalogExternalMCPNeedsNoRestart(t *testing.T) {
+	svc, root := reloadService(t)
+	writeCat(t, root, "mcp-servers/shared-services.yaml", "id: shared-services\nserved_by: external\n")
+	report, err := svc.ReloadCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, warning := range report.RestartRequired {
+		if strings.Contains(warning, "shared-services") {
+			t.Fatal(warning)
+		}
+	}
+	if err := svc.CurrentCatalog().ValidateMCPGrant("test", []string{"shared-services"}); err != nil {
+		t.Fatal(err)
+	}
+	writeCat(t, root, "mcp-servers/shared-services.yaml", "id: shared-services\ntransport: stdio\ncommand: example\n")
+	report, err = svc.ReloadCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, warning := range report.RestartRequired {
+		found = found || strings.Contains(warning, "shared-services")
+	}
+	if !found {
+		t.Fatal("external to built-in requires restart")
+	}
+}

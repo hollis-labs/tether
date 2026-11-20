@@ -22,7 +22,7 @@ func CheckMCPServerCredentialFiles(catalogDir string) ([]MCPFileCheck, error) {
 	}
 	var checks []MCPFileCheck
 	for _, entry := range entries {
-		if !entry.IsEnabled() {
+		if !entry.IsEnabled() || entry.IsExternal() {
 			continue
 		}
 		if entry.TokenFile != "" {
