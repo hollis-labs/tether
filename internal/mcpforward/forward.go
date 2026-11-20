@@ -91,8 +91,8 @@ func Run(ctx context.Context, dc *client.Client, opts client.MCPOptions, transpo
 	defer relay.close()
 	initialized := upstream.InitializeResult()
 	server := gomcp.NewServer("tether-forwarder", "1",
-		// Match the daemon's legacy session transport and preserve relay behavior.
-		gomcp.WithSupportedProtocolVersions([]string{"2025-11-25"}),
+		// Negotiate independently on each hop, including Basalisk's stdio client.
+		gomcp.WithSupportedProtocolVersions([]string{"2025-11-25", "2025-03-26"}),
 		gomcp.WithInstructions(initialized.Instructions),
 		gomcp.WithCapabilities(initialized.Capabilities),
 		gomcp.WithoutPanicGuard(),

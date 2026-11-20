@@ -134,6 +134,9 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Mcp-Session-Id", h.sess())
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"hub","version":"1"}}}`, m.ID)
+		case "tools/call":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"ok"}]}}`, m.ID)
 		case "tools/list":
 			if r.Header.Get("Mcp-Session-Id") != h.sess() || r.Header.Get("MCP-Protocol-Version") != "2025-03-26" {
 				w.WriteHeader(http.StatusBadRequest)
@@ -751,7 +754,7 @@ func TestHTTPRelayRecoversAcrossActualServerRestart(t *testing.T) {
 	address := g.srv.Listener.Addr().String()
 	g.srv.CloseClientConnections()
 	g.srv.Close()
-	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write"}}`)
 	time.Sleep(1200 * time.Millisecond)
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
@@ -770,7 +773,10 @@ func TestHTTPRelayRecoversAcrossActualServerRestart(t *testing.T) {
 	if hub.count("initialize") != 2 {
 		t.Fatalf("initialize count = %d", hub.count("initialize"))
 	}
-	t.Log("stdio client recovered after real TCP server restart without manual reconnect")
+	if hub.count("tools/call") != 1 {
+		t.Fatalf("tool dispatched %d times", hub.count("tools/call"))
+	}
+	t.Log("2025-03-26 stdio client recovered tools/call after TCP restart; tool dispatched once")
 	g.finish()
 }
 

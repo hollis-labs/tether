@@ -43,3 +43,10 @@ lost still returns an error because its outcome may be unknown.
 No shared daemon, outpost or gateway restart is needed to run the regression
 suite. End-to-end Basalisk, Claude kit and native Codex restart verification must
 be coordinated separately with the Lead Orchestrator.
+
+The forwarder also negotiates `2025-03-26` for Basalisk-shaped stdio clients.
+A raw JSON-RPC regression retains the same downstream connection across a real
+upstream restart and checks successful tools/call results before and after it,
+with one execution per call. The worker HTTP relay restart regression likewise
+uses a 2025-03-26 handshake and tools/call. This establishes bridge behavior;
+Basalisk's live child-process argv remains deployment evidence to verify.
