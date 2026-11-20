@@ -56,6 +56,8 @@ func (s *Server) registerCatalogApplyRoutes(router *http.ServeMux) {
 	router.HandleFunc("/catalog/validate", s.handleCatalogValidate)
 	router.HandleFunc("/catalog/files", s.handleCatalogFiles)
 	router.HandleFunc("/catalog/audit", s.handleCatalogAudit)
+	router.HandleFunc("/catalog/approvers", s.handleCatalogApprovers)
+	router.HandleFunc("/catalog/breakglass", s.handleCatalogBreakglass)
 }
 
 // CatalogPlanRequest is the POST /catalog/plans body. Exactly one of Files or
@@ -108,8 +110,14 @@ func catalogApprover(r *http.Request) bool {
 // only after catalogApprover refuses; the engine still refuses privileged plans.
 func (s *Server) catalogDelegatedApprover(r *http.Request) bool {
 	p, ok := identity.FromContext(r.Context())
-	if !ok || p.Kind != "service" || p.TokenID == "" || !identity.ScopeGranted(p.Scopes, catalogWriteScope) {
+	if !ok || !p.Verified || (p.Kind != "service" && p.Kind != "agent") || p.TokenID == "" {
 		return false
+	}
+	if !identity.ScopeGranted(p.Scopes, catalogapply.ApproveScope) {
+		legacy, ok := s.CatalogApply.(interface{ LegacyDelegatedApprover(string) bool })
+		if !ok || !legacy.LegacyDelegatedApprover(p.ID) || !identity.ScopeGranted(p.Scopes, catalogWriteScope) {
+			return false
+		}
 	}
 	d, ok := s.CatalogApply.(interface{ DelegatedApprover(principalID string) bool })
 	return ok && d.DelegatedApprover(p.ID)
@@ -200,6 +208,18 @@ func (s *Server) handleCatalogApprove(w http.ResponseWriter, r *http.Request, id
 			return
 		}
 		delegated = true
+		p, _ := identity.FromContext(r.Context())
+		if p.Kind == "agent" && p.SessionID != "" {
+			if s.Service == nil {
+				writeError(w, http.StatusForbidden, CodeForbidden, "cannot resolve delegate session definition")
+				return
+			}
+			row, err := s.Service.GetSession(p.SessionID)
+			if err != nil || row == nil {
+				writeError(w, http.StatusForbidden, CodeForbidden, "cannot resolve delegate session definition")
+				return
+			}
+		}
 	}
 	var req CatalogApproveRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
@@ -209,6 +229,7 @@ func (s *Server) handleCatalogApprove(w http.ResponseWriter, r *http.Request, id
 	plan, err := s.CatalogApply.Approve(catalogapply.ApprovalRequest{
 		PlanID: id, Digest: req.Digest, Passphrase: req.Passphrase,
 		AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning, Delegated: delegated,
+		Principal: delegatedPrincipal(r), ProtectedPaths: s.callerDefinitionPaths(r),
 	})
 	switch {
 	case err == nil:
@@ -320,7 +341,7 @@ func (s *Server) handleCatalogAudit(w http.ResponseWriter, r *http.Request) {
 // change.
 func (s *Server) callerDefinitionPaths(r *http.Request) []string {
 	p, ok := identity.FromContext(r.Context())
-	if !ok || p.Kind != "session" || p.SessionID == "" || s.Service == nil {
+	if !ok || (p.Kind != "session" && p.Kind != "agent") || p.SessionID == "" || s.Service == nil {
 		return nil
 	}
 	row, err := s.Service.GetSession(p.SessionID)

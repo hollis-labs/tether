@@ -154,6 +154,19 @@ type Engine struct {
 	// may approve by delegation. Empty means no delegation.
 	DelegatedApps []string
 
+	// PolicyFile is re-read on every delegated approval; malformed policy denies.
+	PolicyFile      string
+	BreakglassFile  string
+	WindowTrust     BreakglassTrust
+	policySeen      bool
+	window          *BreakglassWindow
+	windowLoaded    bool
+	windowSignature string
+	policyClock     time.Time
+	windowErr       error
+	windowTimer     *time.Timer
+	approvalTimes   map[string][]time.Time
+
 	// PlansFile enables planned-only persistence. Set before RestorePlans and serving requests.
 	PlansFile string
 
@@ -579,12 +592,14 @@ func (e *Engine) ValidateBundle(files []File, opt Options) (catalogcheck.Report,
 // DelegatedApprover reports whether the service principal id belongs to a
 // delegated app.
 func (e *Engine) DelegatedApprover(principalID string) bool {
-	for _, app := range e.DelegatedApps {
-		if principalID == "msg://service/"+app || strings.HasPrefix(principalID, "msg://service/"+app+"/") {
-			return true
-		}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	policy, legacy, err := e.policyLocked()
+	if err != nil {
+		return false
 	}
-	return false
+	_, ok := e.principalLocked(policy, legacy, principalID)
+	return ok
 }
 
 // Get returns a copy of a plan.
@@ -610,7 +625,9 @@ type ApprovalRequest struct {
 	// Delegated is an approval by a trusted service (the caller has already
 	// authenticated it) instead of the operator's passphrase. It covers only
 	// plans with no privileged changes unless Engine.DelegatedPrivileged is set.
-	Delegated bool
+	Delegated      bool
+	Principal      string
+	ProtectedPaths []string
 }
 
 // Approve records a human's approval. The approver must have read the plan's
@@ -644,8 +661,13 @@ func (e *Engine) approveLocked(req ApprovalRequest, credentialVerified bool) (*P
 	if req.Delegated && p.OperatorOnly {
 		return nil, fmt.Errorf("plan %q %s; only the operator credential approves it (`tether catalog approve`)", p.ID, ReasonOperatorAttestation)
 	}
-	if req.Delegated && len(p.Privileged) > 0 && !e.DelegatedPrivileged {
-		return nil, fmt.Errorf("plan %q makes privileged changes; only the operator approves those (`tether catalog approve`)", p.ID)
+	var matched string
+	if req.Delegated {
+		var err error
+		matched, err = e.authorizeDelegateLocked(req, p)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(p.Privileged) > 0 && !req.AckPrivileged {
 		return nil, fmt.Errorf("plan %q makes privileged changes; confirm them explicitly", p.ID)
@@ -662,6 +684,15 @@ func (e *Engine) approveLocked(req ApprovalRequest, credentialVerified bool) (*P
 		}
 	}
 	now := e.now().UTC()
+	if req.Delegated {
+		if err := e.approvalAudit("delegate_approve", req.Principal, matched, p.Digest, p.ID); err != nil {
+			return nil, err
+		}
+		if matched == "breakglass" {
+			slog.Warn("catalog breakglass used", "principal", req.Principal, "plan_id", p.ID, "digest", p.Digest)
+		}
+		e.approvalTimes[req.Principal] = append(e.approvalTimes[req.Principal], now)
+	}
 	previous := *p
 	p.State, p.ApprovedAt, p.AllowRunning = StateApproved, &now, req.AllowRunning
 	p.SurvivesRestart = false

@@ -222,7 +222,7 @@ func CanonicalScopes(in []string) ([]string, error) {
 		switch {
 		case IsLegacyChildScope(s):
 			seen[legacyScopeNeeds[s]] = true
-		case s == WorkloadTrustScope:
+		case s == WorkloadTrustScope || s == "catalog.approve":
 			seen[s] = true
 		case IsCanonicalScope(s):
 			seen[s] = true
