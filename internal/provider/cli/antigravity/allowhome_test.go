@@ -324,3 +324,29 @@ func TestApplyAllowlistOffReturnsEnvUntouchedAndOnRelocatesHome(t *testing.T) {
 		t.Fatalf("a server with no rule should be logged once: %v %v", logged, err)
 	}
 }
+
+func TestStandaloneGatewayOptInGrantsOnlyItsPlantedRelayInPrivateHome(t *testing.T) {
+	home := fakeRealHome(t)
+	before := snapshot(t, home)
+	boot, ws := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(boot, ".agents/plugins/tether/mcp_config.json"), `{"mcpServers":{"tether":{},"gateway":{},"untrusted":{}}}`, 0600)
+	env, err := ApplyAllowlist(AllowlistOptions{StandaloneGateway: true, BootDir: boot, WorkspaceRoot: ws, Env: []string{"HOME=" + home}, Flag: func(string) string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	farm := filepath.Join(ws, HomeDirName)
+	if !slices.Contains(env, "HOME="+farm) {
+		t.Fatal("headless gateway opt-in did not enable private HOME")
+	}
+	_, allow := readAllow(t, farm)
+	if !slices.Equal(allow, []string{"mcp(tether_gateway/*)", "mcp(tether_tether/*)"}) {
+		t.Fatal("unexpected gateway permissions", allow)
+	}
+	if !slices.Equal(before, snapshot(t, home)) {
+		t.Fatal("real home was mutated")
+	}
+	_, denied := AllowRules([]string{"gateway"})
+	if !slices.Equal(denied, []string{"gateway"}) {
+		t.Fatal("gateway implicitly allowed without opt-in")
+	}
+}

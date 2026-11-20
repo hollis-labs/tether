@@ -60,7 +60,7 @@ func TestAgyAllowlistLeavesEnvAloneWhenOffOrNotAgy(t *testing.T) {
 		"on, codex brand": {"codex", "1"},
 	} {
 		ws := t.TempDir()
-		got, err := withAgyAllowlist(tc.brand, boot, ws, env, agyFlagEnv(tc.on), noHome)
+		got, err := withAgyAllowlist(tc.brand, boot, ws, env, agyFlagEnv(tc.on), noHome, false)
 		if err != nil || !reflect.DeepEqual(got, env) {
 			t.Errorf("%s: env changed or errored: %v %v", name, got, err)
 		}
@@ -76,7 +76,7 @@ func TestAgyAllowlistRelocatesHomeAndGrantsOnlyTether(t *testing.T) {
 	boot := agyBootDir(t, `{"tether":{"command":"t"},"torque":{"command":"q"}}`)
 	env := []string{"HOME=" + home, "PATH=/p"}
 
-	got, err := withAgyAllowlist("antigravity", boot, ws, env, agyFlagEnv("1"), noHome)
+	got, err := withAgyAllowlist("antigravity", boot, ws, env, agyFlagEnv("1"), noHome, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestAgyAllowlistFallsBackToTheUserHomeWhenEnvHasNone(t *testing.T) {
 	home := fakeHome(t)
 	ws := t.TempDir()
 	boot := agyBootDir(t, `{"tether":{"command":"t"}}`)
-	got, err := withAgyAllowlist("antigravity", boot, ws, []string{"PATH=/p"}, agyFlagEnv("1"), func() (string, error) { return home, nil })
+	got, err := withAgyAllowlist("antigravity", boot, ws, []string{"PATH=/p"}, agyFlagEnv("1"), func() (string, error) { return home, nil }, false)
 	if err != nil || got[len(got)-1] != "HOME="+filepath.Join(ws, antigravity.HomeDirName) {
 		t.Fatalf("env=%v err=%v", got, err)
 	}
@@ -112,7 +112,7 @@ func TestAgyAllowlistFallsBackToTheUserHomeWhenEnvHasNone(t *testing.T) {
 func TestAgyAllowlistFailsTheLaunchWhenEnabledButUnbuildable(t *testing.T) {
 	home := fakeHome(t)
 	// No planted plugin config: enabled means the operator wants it, so say so.
-	if _, err := withAgyAllowlist("antigravity", t.TempDir(), t.TempDir(), []string{"HOME=" + home}, agyFlagEnv("1"), noHome); err == nil {
+	if _, err := withAgyAllowlist("antigravity", t.TempDir(), t.TempDir(), []string{"HOME=" + home}, agyFlagEnv("1"), noHome, false); err == nil {
 		t.Fatal("a missing planted config must fail the launch, not silently keep a HOME that denies every call")
 	}
 }

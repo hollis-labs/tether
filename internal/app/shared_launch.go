@@ -118,6 +118,9 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 			Args: append([]string(nil), plant.TetherArgs...), Env: copyMap(plant.TetherEnv),
 		})
 	}
+	if plant.GatewayServer != nil {
+		prepared.PlantContext.MCPServers = append(prepared.PlantContext.MCPServers, *plant.GatewayServer)
+	}
 	if codexHome != nil {
 		if err := custody.PlantCodex(ctx, prepared, codexHome, providerplant.WithResolver(plantResolver)); err != nil {
 			return nil, err
@@ -131,6 +134,7 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 }
 
 type plantContextInput struct {
+	GatewayServer     *agentlaunch.MCPServerSpec
 	ArtifactAdmission launchartifacts.Admission
 	DaemonOwned       bool
 	TetherCommand     string

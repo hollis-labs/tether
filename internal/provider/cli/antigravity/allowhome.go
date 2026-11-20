@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"os"
 	"path/filepath"
 	"slices"
@@ -104,8 +105,11 @@ func ServerName(server string) string { return PluginName + "_" + server }
 // that get none. Only Tether's own server is granted, server-wide; any other
 // server in the plugin stays denied until a grant policy names it.
 func AllowRules(servers []string) (rules, denied []string) {
+	return allowRules(servers, false)
+}
+func allowRules(servers []string, standalone bool) (rules, denied []string) {
 	for _, s := range servers {
-		if s == GatewayServer {
+		if s == GatewayServer || standalone && s == gatewaylaunch.Name {
 			rules = append(rules, "mcp("+ServerName(s)+"/*)")
 			continue
 		}
@@ -327,6 +331,9 @@ func FlagLookup(launchEnv map[string]string, fallback func(string) string) func(
 
 // AllowlistOptions describes one launch for ApplyAllowlist.
 type AllowlistOptions struct {
+	// StandaloneGateway enables the launch-owned standalone relay as well as
+	// tether. Its upstream/tool authority remains enforced at admission.
+	StandaloneGateway bool
 	// BootDir is the planted boot dir whose .agents/plugins/tether/mcp_config.json
 	// names the MCP servers agy will see. WorkspaceRoot holds the launch's private home.
 	BootDir, WorkspaceRoot string
@@ -340,18 +347,19 @@ type AllowlistOptions struct {
 }
 
 // ApplyAllowlist returns the environment an agy launch should use. When the switch
-// is off it returns o.Env unchanged. When on, it plants a private HOME and returns
+// and standalone gateway opt-in are off it returns o.Env unchanged. When enabled,
+// it plants a private HOME and returns
 // o.Env with HOME pointing at it; enabled but unable to build it is an error, not a
 // silent fall back to a HOME that denies every call. Callers gate on the provider.
 func ApplyAllowlist(o AllowlistOptions) ([]string, error) {
-	if !AllowlistEnabled(o.Flag) {
+	if !o.StandaloneGateway && !AllowlistEnabled(o.Flag) {
 		return o.Env, nil
 	}
 	servers, err := PluginServers(o.BootDir)
 	if err != nil {
 		return nil, err
 	}
-	rules, denied := AllowRules(servers)
+	rules, denied := allowRules(servers, o.StandaloneGateway)
 	if len(denied) > 0 && o.Logf != nil {
 		o.Logf("agy allowlist: no rule for planted MCP server(s) %s; their calls stay denied", strings.Join(denied, ", "))
 	}

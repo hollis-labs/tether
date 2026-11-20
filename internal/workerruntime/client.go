@@ -434,7 +434,7 @@ func (w *Worker) Request(ctx context.Context, f workerwire.Frame) (workerwire.Fr
 func workerFeatures(handoff bool) []string {
 	features := []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureCodexResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents, workerwire.FeatureStopGate}
 	if handoff {
-		features = append(features, workerwire.FeatureExecutionRunToken)
+		features = append(features, workerwire.FeatureExecutionRunToken, workerwire.FeatureStandaloneGateway)
 	}
 	return features
 }

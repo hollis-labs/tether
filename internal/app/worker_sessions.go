@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -202,6 +203,15 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		}
 	}
 	spec.Env = sessionCorrelation(*row).SealMap(spec.Env)
+	if spec.Env[gatewaylaunch.URLenv] != "" {
+		if err := gatewaylaunch.ValidateURL(spec.Env[gatewaylaunch.URLenv]); err != nil {
+			return refuseBeforeSend(err)
+		}
+		if s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureStandaloneGateway) {
+			return refuseBeforeSend(fmt.Errorf("standalone gateway requires worker support; upgrade tether-worker"))
+		}
+	}
+
 	if len(p.EditableAgents) > 0 {
 		if s.Workers == nil || !s.Workers.Supports(row.WorkerID, workerwire.FeatureEditableAgents) {
 			exit := 1

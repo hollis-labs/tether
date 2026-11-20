@@ -41,7 +41,8 @@ type HTTPRelay struct {
 	mu       sync.Mutex // guards session, protocol, initMsg, wg ordering of the first request
 	session  string
 	protocol string
-	initMsg  []byte // the agent's latest initialize request, replayed to start a replacement hub session
+	initMsg  []byte     // the agent's latest initialize request, replayed to start a replacement hub session
+	logMu    sync.Mutex // serializes diagnostics from concurrent requests
 	outMu    sync.Mutex
 	out      io.Writer
 	wg       sync.WaitGroup // in-flight forwards
@@ -98,6 +99,8 @@ func (r *HTTPRelay) client() *http.Client {
 }
 
 func (r *HTTPRelay) logf(format string, args ...any) {
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
 	if r.Stderr != nil {
 		_, _ = fmt.Fprintf(r.Stderr, "mcp-http-relay: "+format+"\n", args...)
 	}
@@ -230,6 +233,16 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 			reinitialized = true
 			if r.reinitialize(ctx, used) {
 				attempt-- // the replacement session does not use up the token-rotation retry
+				continue
+			}
+			break
+		}
+		if status == http.StatusUnauthorized && used != "" && !reinitialized && !isInitialize(msg) {
+			reinitialized = true
+			// A rejected view may be replaced with the current bearer/run token.
+			// Never repost a mutation: only discovery and ping are safe to retry.
+			if r.reinitialize(ctx, used) && relayReadOnly(msg) {
+				attempt--
 				continue
 			}
 			break
@@ -671,7 +684,7 @@ func (r *HTTPRelay) standalone(ctx context.Context) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusNotFound && r.sessionID() != session {
+			if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized) && r.sessionID() != session {
 				continue // the session was replaced while this request was in flight: reconnect on the new one
 			}
 			return // 405 (no standalone stream), 401, 403, 404: not worth looping on
@@ -711,5 +724,16 @@ func (r *HTTPRelay) closeSession() {
 	req.Header.Set("Mcp-Session-Id", session)
 	if resp, err := r.client().Do(req); err == nil {
 		_ = resp.Body.Close()
+	}
+}
+
+// relayReadOnly is deliberately narrow. tools/call can mutate even if its
+// name sounds read-only; notifications and unknown methods are not replayed.
+func relayReadOnly(msg []byte) bool {
+	switch methodName(msg) {
+	case "ping", "tools/list", "resources/list", "resources/templates/list", "prompts/list":
+		return true
+	default:
+		return false
 	}
 }

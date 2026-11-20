@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hollis-labs/tether/internal/gatewaylaunch"
 	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
@@ -331,6 +332,14 @@ func (e *Executor) plantHubHTTP(cwd, credDir string, spec workerwire.LaunchSpec)
 		config.Servers = map[string]mcpEntry{}
 	}
 	config.Servers["tether"] = mcpEntry{Command: e.Binary, Args: []string{"mcp-http-relay", "--url", e.HubMCPURL, "--token-file", sessionAgentTokenFile(credDir)}}
+	if endpoint := spec.Env[gatewaylaunch.URLenv]; endpoint != "" {
+		path := spec.Env[gatewaylaunch.TokenFileEnv]
+		if path == "" {
+			return fmt.Errorf("gateway credential handoff missing")
+		}
+		server := gatewaylaunch.Server(e.Binary, endpoint, path)
+		config.Servers[server.Name] = mcpEntry{Command: server.Command, Args: server.Args}
+	}
 	for name, entry := range config.Servers {
 		if err := validateHeaders(name, entry); err != nil {
 			return err
