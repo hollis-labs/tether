@@ -1,0 +1,1 @@
+- Connect typed requests and replies to durable Torque request tasks, carry task IDs in envelopes, and alert the requester immediately for offline recipients or after an unclaimed 15-minute deadline with restart-safe delivery retries (CW-20261120-0177).

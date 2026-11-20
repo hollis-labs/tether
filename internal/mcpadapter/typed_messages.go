@@ -13,7 +13,7 @@ import (
 // call comes back as invalid_request naming the field and the reason, so fix it
 // and call again.
 
-var envelopeFields = []string{"kind", "to", "re", "in_reply_to", "attention", "awaiting", "intent", "subject", "body", "options", "default_option", "answer", "on_behalf_of", "drafted_by", "deliverable", "status", "evidence"}
+var envelopeFields = []string{"kind", "to", "re", "in_reply_to", "attention", "awaiting", "intent", "subject", "body", "options", "default_option", "answer", "on_behalf_of", "drafted_by", "deliverable", "status", "evidence", "task_id"}
 
 func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 	a.addTool(s, strictArgs(gomcp.Tool{
@@ -38,6 +38,7 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 		Name: "tether_ask",
 		Description: "Ask a seat or Chrispian for something that needs an answer or an action: kind request (\"do X and report back\"; give a deliverable saying what done looks like), " +
 			"question or decision (2-6 options), approval_request, handoff or escalation. Use it whenever someone must act or answer before you can go on. " +
+			"On a Torque-connected hub, kind=request creates or links a durable Torque task and returns task_id; use one recipient and a stable idempotency_key. " +
 			"The recipient is woken; its tether_reply comes back to you and wakes you. You are the sender (your session identity). " +
 			"Do not use it for status or progress (use Torque checkpoints or tether_status_set) or for plain FYIs (tether_message_post kind update). Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
@@ -45,6 +46,7 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 			gomcp.StringArrayProp("to", "Recipients as @handles, e.g. [\"@archie\"]; @chrispian is the human operator", true),
 			gomcp.StringProp("subject", "One-line title, at most 120 characters", true),
 			gomcp.StringProp("body", "Markdown, at most 4000 characters: what you need and the context", true),
+			gomcp.StringProp("task_id", "Existing Torque task to link as this request (optional; otherwise created)", false),
 			gomcp.StringProp("deliverable", "For a request: what done looks like (PR merged, numbers, a file path...), at most 1000 characters", false),
 			gomcp.StringProp("re", "What it is about: task:<task id>, thread:<id> or topic:<slug> (optional)", false),
 			optionsProp,
@@ -52,7 +54,7 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 			gomcp.StringEnumProp("attention", "Who must look: human, agent or none (default human when @chrispian is a recipient, else agent)", false, "human", "agent", "none"),
 			gomcp.StringEnumProp("urgency", "Delivery urgency (default normal)", false, "very-low", "low", "normal", "high"),
 			gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
-			gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
+			gomcp.StringProp("idempotency_key", "Required for tracked requests/final replies; repeating unchanged input returns the earlier send", false),
 		),
 		Handler: a.handleAsk,
 	}), Writes())
@@ -72,7 +74,7 @@ func (a *Adapter) registerTypedMessageTools(s *gomcp.Server) {
 			gomcp.StringProp("subject", "One-line title (optional)", false),
 			gomcp.StringArrayProp("to", "Recipients as @handles (optional; default the asker)", false),
 			gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
-			gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
+			gomcp.StringProp("idempotency_key", "Required for tracked requests/final replies; repeating unchanged input returns the earlier send", false),
 		),
 		Handler: a.handleReply,
 	}), Writes())
@@ -178,7 +180,7 @@ func (a *Adapter) handleMessagePost(ctx context.Context, args map[string]any) (a
 // validates it and refuses a bad one with the field and the reason.
 func (a *Adapter) handleAsk(ctx context.Context, args map[string]any) (any, error) {
 	env := map[string]any{}
-	for _, k := range []string{"kind", "to", "re", "subject", "body", "deliverable", "options", "default_option", "attention"} {
+	for _, k := range []string{"kind", "to", "re", "subject", "body", "deliverable", "options", "default_option", "attention", "task_id"} {
 		if v, ok := args[k]; ok && v != nil && v != "" {
 			env[k] = v
 		}
@@ -363,11 +365,12 @@ func messagePostInputSchema() any {
 		}),
 		gomcp.StringProp("default_option", "Option id that applies if nobody answers (optional)", false),
 		gomcp.ObjectProp("answer", "On a reply to a question/decision/approval_request: {option, note?}", false),
+		gomcp.StringProp("task_id", "Existing Torque task to link as this request (optional; otherwise created)", false),
 		gomcp.StringProp("deliverable", "Required for kind request: what done looks like (PR merged, numbers, a file path...), at most 1000 characters; only a request carries one", false),
 		gomcp.StringEnumProp("status", "On a reply (in_reply_to): how it settles a request: done, declined or blocked (optional)", false, "done", "declined", "blocked"),
 		gomcp.StringArrayProp("evidence", "Pointers backing a reply: PR URL, commit, file path, event id (at most 10, one line each)", false),
 		gomcp.StringEnumProp("urgency", "Delivery urgency (default normal); a critical approval is an approval_request at high", false, "very-low", "low", "normal", "high"),
 		gomcp.StringProp("as", "Your address (optional; default your authenticated identity)", false),
-		gomcp.StringProp("idempotency_key", "Optional key; repeating it returns the earlier send instead of sending again", false),
+		gomcp.StringProp("idempotency_key", "Required for tracked requests/final replies; repeating unchanged input returns the earlier send", false),
 	)
 }
