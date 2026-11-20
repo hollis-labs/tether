@@ -335,3 +335,69 @@ func TestBreakglassMonotonicDeadlineFailsClosedWithFrozenClock(t *testing.T) {
 	}
 	t.Fatal("monotonic expiry rearmed authority while wall clock was frozen")
 }
+
+// The signer can be unavailable during an operator's end; denial must still persist.
+type failingWindowSeal struct{ BreakglassTrust }
+
+func (f failingWindowSeal) SealCatalogBreakglass([]byte) (string, error) {
+	return "", errors.New("signer unavailable")
+}
+
+func TestBreakglassInvalidationSurvivesRestart(t *testing.T) {
+	for _, cause := range []string{"clock", "policy", "malformed-policy", "failed-end"} {
+		t.Run(cause, func(t *testing.T) {
+			e, now := policyEngine(t)
+			policy, err := os.ReadFile(e.PolicyFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			trust := e.WindowTrust
+			if _, err := e.Breakglass(delegateURN, "restart", time.Hour, passphrase, false); err != nil {
+				t.Fatal(err)
+			}
+			switch cause {
+			case "clock":
+				*now = now.Add(-time.Minute)
+				if _, err := e.Approvers(); err == nil {
+					t.Fatal("clock not refused")
+				}
+				*now = now.Add(2 * time.Minute)
+			case "policy":
+				setPolicy(t, e, delegateURN, PrincipalPolicy{Scopes: []string{ApproveScope}, RateLimit: 9})
+				if _, err := e.Approvers(); err == nil {
+					t.Fatal("policy not refused")
+				}
+				if err := os.WriteFile(e.PolicyFile, policy, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "malformed-policy":
+				if err := os.WriteFile(e.PolicyFile, []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := e.Approvers(); err == nil {
+					t.Fatal("malformed policy not refused")
+				}
+				if err := os.WriteFile(e.PolicyFile, policy, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "failed-end":
+				e.WindowTrust = failingWindowSeal{trust}
+				if _, err := e.Breakglass("", "", 0, passphrase, true); err == nil {
+					t.Fatal("failed signer accepted")
+				}
+			}
+			next := newEngine(t)
+			next.PolicyFile, next.BreakglassFile = e.PolicyFile, e.BreakglassFile
+			next.Approver, next.WindowTrust, next.Now = e.Approver, trust, e.Now
+			if view, err := next.Approvers(); err == nil {
+				t.Fatalf("invalidated state not latched after restart: %+v", view)
+			}
+			if _, err := next.Breakglass("", "", 0, passphrase, true); err != nil {
+				t.Fatal(err)
+			}
+			if view, err := next.Approvers(); err != nil || view.Breakglass != nil {
+				t.Fatalf("operator recovery: %+v %v", view, err)
+			}
+		})
+	}
+}

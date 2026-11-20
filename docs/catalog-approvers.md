@@ -39,7 +39,11 @@ Keys are exact authenticated service or agent URNs. The credential must hold
 `catalog.approve`; `catalog.write`, `maintain`, and `tether.catalog` do not imply
 it. Issued service tokens can request the dedicated capability through the
 existing operator-controlled issuance flow. Policy alone never authenticates a
-caller. Session/device/anonymous identities cannot use delegation. Policy
+caller. Agent JWTs identify a bound session: approval resolves that session’s
+logical agent through the current catalog to its configured `urn` (or its
+`msg://agent/agent-mux/<logical-id>` address when no `urn` is set). Missing
+sessions/catalog entries refuse approval; registry aliases do not grant it.
+Remote approvals remain unavailable; scoped delegation uses the local socket. Session/device/anonymous identities cannot use delegation. Policy
 `scopes` must contain exactly `catalog.approve`. Each principal has a required
 `rate_limit` of 1–10000 successful approvals per rolling hour in this process;
 a restart resets rate accounting. Refused requests do not consume the quota.
@@ -97,7 +101,10 @@ A restart accepts only an unexpired signature bound to the same policy and
 operator passphrase verifier. Issuer key rotation or pruning, passphrase
 rotation, policy changes, bad parsing/signatures, backward clock movement or
 invalid bounds close delegation. Failure remains latched until an operator
-explicitly ends the invalid window with the passphrase. Replacing a window does
+explicitly ends the invalid window with the passphrase. A denial-only
+`catalog-breakglass.json.blocked` marker persists invalidation across restart,
+including when signing a closure fails. It grants no authority and needs no
+key. Operator end persists signed closure before removing this marker. Replacing a window does
 not extend one implicitly. Restarts never restore plan approvals.
 
 As with existing catalog and issuer trust, direct access to rewrite trusted

@@ -206,7 +206,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/catalog/plans/approve-batch", "/catalog/plans/approve-batch", map[string]string{"POST": localScope}),
 	routeScope("/catalog/plans/team-activation", "/catalog/plans/team-activation", map[string]string{"POST": localScope}),
 	routeScope("/catalog/plans/", "/catalog/plans/{id}", map[string]string{"GET": readScope}),
-	routeScope("/catalog/plans/", "/catalog/plans/{id}/approve", map[string]string{"POST": "catalog.approve"}),
+	routeScope("/catalog/plans/", "/catalog/plans/{id}/approve", map[string]string{"POST": localScope}),
 	routeScope("/catalog/plans/", "/catalog/plans/{id}/apply", map[string]string{"POST": localScope}),
 	routeScope("/catalog/backups", "/catalog/backups", map[string]string{"GET": readScope}),
 	routeScope("/catalog/files", "/catalog/files", map[string]string{"GET": readScope}),
@@ -379,6 +379,13 @@ func AgentScopeMiddleware(mode identity.Mode, next http.Handler) http.Handler {
 		// (net/http's mux redirects such paths today; this does not rely on it).
 		if identity.IsBoundAgentToken(p) && path.Clean(r.URL.Path) == r.URL.Path && (r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/p/")) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		// Only the local single-plan approval handler admits scoped delegates.
+		// Remote and batch/operator-only route policy remains unchanged.
+		rule := remoteScopeRule(r)
+		if rule != nil && rule.Path == "/catalog/plans/{id}/approve" && r.Method == http.MethodPost && path.Clean(r.URL.Path) == r.URL.Path {
+			next.ServeHTTP(w, r) // handler checks verified principal, scope and policy
 			return
 		}
 		applyRouteScopes(w, r, next, true, false, func(scope string) bool { return identity.ScopeGranted(p.Scopes, scope) })

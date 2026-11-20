@@ -79,7 +79,16 @@ func decodeStrict(b []byte, out any) error {
 	}
 	return nil
 }
-func (e *Engine) policyLocked() (ApproverPolicy, bool, error) {
+func (e *Engine) policyLocked() (policy ApproverPolicy, legacy bool, policyErr error) {
+	defer func() {
+		// A parse/read failure must not let an existing window revive when the
+		// policy is repaired, including before the first restore in a new process.
+		if policyErr != nil && e.windowErr == nil && e.BreakglassFile != "" {
+			if _, err := os.Lstat(e.BreakglassFile); !errors.Is(err, os.ErrNotExist) {
+				policyErr = e.invalidateWindowLocked(policyErr)
+			}
+		}
+	}()
 	empty := ApproverPolicy{Principals: map[string]PrincipalPolicy{}}
 	if e.PolicyFile != "" {
 		b, err := os.ReadFile(e.PolicyFile)
@@ -328,35 +337,63 @@ func (e *Engine) saveWindowLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(e.BreakglassFile), 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(e.BreakglassFile), ".breakglass-*")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	defer os.Remove(name) //nolint:errcheck
-	if err = f.Chmod(0600); err == nil {
-		_, err = f.Write(data)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	cerr := f.Close()
-	if err != nil {
-		return err
-	}
-	if cerr != nil {
-		return cerr
-	}
-	if err := os.Rename(name, e.BreakglassFile); err != nil {
+	if err := writeWindowState(e.BreakglassFile, data); err != nil {
 		return err
 	}
 	e.windowSignature = mac
 	return nil
 }
+
+// writeWindowState makes both the replacement and its directory entry durable.
+func writeWindowState(destination string, data []byte) error {
+	dir := filepath.Dir(destination)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".breakglass-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name) //nolint:errcheck
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(name, destination); err != nil {
+		return err
+	}
+	return syncWindowDirectory(destination)
+}
+func syncWindowDirectory(destination string) error {
+	dir, err := os.Open(filepath.Dir(destination))
+	if err != nil {
+		return err
+	}
+	defer dir.Close() //nolint:errcheck
+	return dir.Sync()
+}
+
+// This denial-only marker needs no signing authority: its presence can only
+// remove authority. It is durable even when the existing signer is unavailable.
+// Only a successful passphrase-gated end removes it, after persisting closure.
+func (e *Engine) blockWindowLocked() error {
+	if e.BreakglassFile == "" {
+		return nil
+	}
+	return writeWindowState(e.BreakglassFile+".blocked", []byte("operator end required\n"))
+}
+
 func (e *Engine) invalidateWindowLocked(err error) error {
+	if persistErr := e.blockWindowLocked(); persistErr != nil {
+		err = errors.Join(err, fmt.Errorf("persist breakglass denial: %w", persistErr))
+	}
 	e.window = nil
 	if e.windowTimer != nil {
 		e.windowTimer.Stop()
@@ -377,6 +414,15 @@ func (e *Engine) windowLocked(p ApproverPolicy, now time.Time) error {
 	return nil
 }
 func (e *Engine) checkWindowLocked(p ApproverPolicy, now time.Time) error {
+	if e.BreakglassFile != "" {
+		_, err := os.Lstat(e.BreakglassFile + ".blocked")
+		if err == nil {
+			return errors.New("breakglass is blocked; operator end required")
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	if !e.windowLoaded {
 		e.windowLoaded = true
 		if e.BreakglassFile != "" {
@@ -449,26 +495,37 @@ func (e *Engine) Breakglass(principal, reason string, duration time.Duration, pa
 	now := e.now().UTC()
 	if end {
 		old := e.window
-		e.windowErr = nil
+		// Persist denial BEFORE clearing memory or attempting a signed closure.
+		if err := e.blockWindowLocked(); err != nil {
+			return nil, e.invalidateWindowLocked(err)
+		}
 		if e.windowTimer != nil {
 			e.windowTimer.Stop()
 			e.windowTimer = nil
 		}
-		e.policyClock = now
 		e.window = nil
 		e.windowLoaded = true
 		if err := e.saveWindowLocked(); err != nil {
-			return nil, err
+			return nil, e.invalidateWindowLocked(err)
 		}
 		if old != nil {
 			principal = old.Principal
 		}
 		if err := e.approvalAudit("breakglass_end", principal, "", "", ""); err != nil {
-			return nil, err
+			return nil, e.invalidateWindowLocked(err)
 		}
+		if err := os.Remove(e.BreakglassFile + ".blocked"); err != nil {
+			return nil, e.invalidateWindowLocked(err)
+		}
+		if err := syncWindowDirectory(e.BreakglassFile); err != nil {
+			return nil, e.invalidateWindowLocked(err)
+		}
+		e.windowErr = nil
+		e.policyClock = now
 		slog.Warn("catalog breakglass closed", "principal", principal)
 		return nil, nil
 	}
+
 	p, legacy, err := e.policyLocked()
 	if err != nil {
 		return nil, err
@@ -561,9 +618,7 @@ func (e *Engine) scheduleExpiryLocked(now time.Time) {
 			err = e.windowLocked(p, e.now().UTC())
 		}
 		if err != nil {
-			e.window = nil
-			e.windowErr = err
-			slog.Error("catalog breakglass expiry failed closed", "error", err)
+			_ = e.invalidateWindowLocked(err)
 		}
 	})
 }

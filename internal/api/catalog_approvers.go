@@ -6,13 +6,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/catalogapply"
-	"github.com/hollis-labs/tether/internal/identity"
 )
-
-func delegatedPrincipal(r *http.Request) string {
-	p, _ := identity.FromContext(r.Context())
-	return p.ID
-}
 
 type CatalogBreakglassRequest struct {
 	Principal  string `json:"principal"`

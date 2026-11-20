@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/hollis-labs/tether/internal/authissuer"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,8 +12,11 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/authissuer"
 	"github.com/hollis-labs/tether/internal/catalogapply"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 func TestCatalogConfiguredApproverAdmission(t *testing.T) {
@@ -36,7 +38,7 @@ func TestCatalogConfiguredApproverAdmission(t *testing.T) {
 		want           int
 	}{
 		{"scoped-service", "service", urn, []string{"catalog.approve"}, true, 200},
-		{"scoped-agent", "agent", urn, []string{"catalog.approve"}, true, 200},
+		{"forged-agent-kind", "agent", urn, []string{"catalog.approve"}, true, 403},
 		{"write-is-not-approve", "service", urn, []string{"catalog.write"}, true, 403},
 		{"maintain-is-not-approve", "service", urn, []string{"maintain"}, true, 403},
 		{"unlisted", "service", "msg://service/else/dev", []string{"catalog.approve"}, true, 403},
@@ -99,3 +101,80 @@ func TestCatalogBreakglassLocalOperatorLifecycle(t *testing.T) {
 		t.Fatalf("end %d %s", code, b)
 	}
 }
+
+func TestCatalogMintedAgentApprovalBinding(t *testing.T) {
+	d := newCatalogApplyDaemon(t)
+	urn := "msg://agent/agent-mux/agt_approver"
+	dir := t.TempDir()
+	d.engine.PolicyFile = filepath.Join(dir, "catalog-approvers.json")
+	policy, _ := json.Marshal(catalogapply.ApproverPolicy{Principals: map[string]catalogapply.PrincipalPolicy{urn: {Scopes: []string{catalogapply.ApproveScope}, RateLimit: 10, Allowlist: []catalogapply.ApprovalRule{{Name: "agents", Paths: []string{"agents/*.yaml"}, Actions: []string{"create", "modify"}}}}}})
+	if err := os.WriteFile(d.engine.PolicyFile, policy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := authissuer.OpenKeyStore(filepath.Join(dir, "auth"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := authissuer.OpenState(filepath.Join(dir, "issuer.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := authissuer.New("tether", keys, state)
+	tok, err := issuer.Exchange(identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}, authissuer.Request{Audience: "tether", Scopes: []string{"catalog.approve"}, SessionID: "test-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := authissuer.NewVerifier(nil, issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := &config.Catalog{Agents: map[string]config.Agent{"helper": {ID: "helper", URN: urn}}}
+	sessions := sessionLookup{rows: map[string]store.SessionRow{"test-session": {LogicalAgentID: "helper", LaunchID: "helper-launch"}}}
+	handler := api.NewHandler(api.Deps{CatalogApply: d.engine, Service: sessions, Catalog: approverCatalog{cat}})
+	handler = identity.Middleware(identity.Enforce, verifier, nil, api.AgentScopeMiddleware(identity.Enforce, handler))
+	request := func(rel string, remote bool) int {
+		t.Helper()
+		plan, err := d.engine.PlanBundle(context.Background(), catalogapply.Bundle{Name: "bound", Files: []catalogapply.File{{Path: rel, Content: "id: test\n"}}}, catalogapply.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(api.CatalogApproveRequest{Digest: plan.Digest})
+		req := httptest.NewRequest("POST", "/catalog/plans/"+plan.ID+"/approve", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+tok.Token)
+		if remote {
+			req = req.WithContext(identity.WithRemoteContext(req.Context()))
+		}
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out.Code
+	}
+	if code := request("agents/other.yaml", false); code != 200 {
+		t.Fatalf("real agent token refused: %d", code)
+	}
+	if code := request("agents/helper.yaml", false); code == 200 {
+		t.Fatal("agent approved own definition")
+	}
+	if code := request("agents/remote.yaml", true); code != 403 {
+		t.Fatalf("remote agent approval: %d", code)
+	}
+	cat.Agents["helper"] = config.Agent{ID: "helper", URN: "msg://agent/agent-mux/else"}
+	if code := request("agents/changed-binding.yaml", false); code != 403 {
+		t.Fatalf("stale seat binding: %d", code)
+	}
+	delete(sessions.rows, "test-session")
+	if code := request("agents/no-session.yaml", false); code != 403 {
+		t.Fatalf("missing session: %d", code)
+	}
+}
+
+func TestCatalogRemoteApprovalRouteRemainsLocalCustody(t *testing.T) {
+	req := httptest.NewRequest("POST", "/catalog/plans/example/approve", nil)
+	scope, _, known := api.RequiredRemoteScope(req)
+	if !known || scope != "local-only" {
+		t.Fatalf("remote scope widened: %q", scope)
+	}
+}
+
+type approverCatalog struct{ cat *config.Catalog }
+
+func (a approverCatalog) Load() (*config.Catalog, error) { return a.cat, nil }
