@@ -161,7 +161,13 @@ func (r *SharedUpstreams) OpenView(owner string, servers []string, selection mcp
 
 // includes rechecks ownership because an existing view survives catalog reloads.
 func (v *UpstreamView) includes(id string) bool {
-	return v.servers[id] && !(v.isExternal != nil && v.isExternal(id)) && !v.runtime.external[id]
+	if !v.servers[id] {
+		return false
+	}
+	if v.isExternal != nil {
+		return !v.isExternal(id)
+	}
+	return !v.runtime.external[id]
 }
 
 func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
