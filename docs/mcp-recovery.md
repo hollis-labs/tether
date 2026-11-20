@@ -37,7 +37,7 @@ lost still returns an error because its outcome may be unknown.
   includes any Basalisk/Surface Desk or agent kit configured with native HTTP
   instead of the relay command. Those clients need equivalent bounded
   replacement handshakes in their owning client library. The pinned shared
-  `plugin-mcp` v0.10.0 client reconnects synchronously without a backoff budget;
+  `plugin-mcp` v0.6.0 client reconnects synchronously without a backoff budget;
   Tether cannot retrofit that behavior into a different process.
 
 No shared daemon, outpost or gateway restart is needed to run the regression
