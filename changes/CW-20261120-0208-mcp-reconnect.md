@@ -1,0 +1,1 @@
+- Recover daemon MCP forwarders and worker HTTP relays across server restarts with replacement handshake backoff from 1s to 30s and a 60s recovery budget; retry safe requests once while preserving uncertain tool outcomes. (CW-20261120-0208)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/security/secrets/tokenfile"
+	"github.com/hollis-labs/tether/internal/mcprecovery"
 )
 
 // HTTPRelay bridges one agent's MCP stdio stream to the hub's streamable-HTTP /mcp endpoint
@@ -49,10 +50,16 @@ type HTTPRelay struct {
 	streamWG sync.WaitGroup // the standalone server-to-agent stream
 	getOnce  sync.Once
 
-	reinitMu   sync.Mutex // serializes replacing an evicted hub session
-	reinitSeq  int        // numbers the relay-internal initialize ids
-	streamMu   sync.Mutex // guards streamLive
-	streamLive bool       // a standalone stream goroutine is running
+	reinitMu      sync.Mutex // guards the shared replacement attempt
+	reinitPending *relayReinitialization
+	reinitSeq     int        // numbers the relay-internal initialize ids
+	streamMu      sync.Mutex // guards streamLive
+	streamLive    bool       // a standalone stream goroutine is running
+}
+
+type relayReinitialization struct {
+	done chan struct{}
+	ok   bool
 }
 
 const (
@@ -229,9 +236,11 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 		lastStatus, lastCode = status, code
 		// The hub forgets an agent's session after two idle minutes (and on restart). A client that gets 404 for its
 		// session must start a new one, so do that once, invisibly, and send the same request again.
-		if status == http.StatusNotFound && code == "mcp_session_not_found" && used != "" && !reinitialized && !isInitialize(msg) {
+		if relaySessionLost(status, code) && used != "" && !reinitialized && !isInitialize(msg) {
 			reinitialized = true
-			if r.reinitialize(ctx, used) {
+			// Explicit session rejection is before dispatch; transport loss may
+			// follow execution, so only discovery/ping may be replayed in that case.
+			if r.reinitialize(ctx, used) && (code != "transport_error" || relayReadOnly(msg)) {
 				attempt-- // the replacement session does not use up the token-rotation retry
 				continue
 			}
@@ -257,6 +266,18 @@ func (r *HTTPRelay) forward(ctx context.Context, msg []byte) {
 	}
 	r.logf("hub refused %s (status %d%s)", methodName(msg), lastStatus, codeSuffix(lastCode))
 	r.fail(id, fmt.Sprintf("hub refused the request (status %d%s)", lastStatus, codeSuffix(lastCode)))
+}
+
+// Only known session rejections establish that dispatch did not occur.
+func relaySessionLost(status int, code string) bool {
+	switch code {
+	case "mcp_session_not_found":
+		return status == http.StatusNotFound
+	case "mcp_initialize_required", "session_expired", "transport_error", "transport_not_sent":
+		return true
+	default:
+		return false
+	}
 }
 
 func codeSuffix(code string) string {
@@ -286,28 +307,53 @@ func (r *HTTPRelay) rememberInitialize(msg []byte) {
 // which keeps believing in the one session it started. It returns true when requests can be sent again.
 func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
 	r.reinitMu.Lock()
-	defer r.reinitMu.Unlock()
+	if pending := r.reinitPending; pending != nil {
+		r.reinitMu.Unlock()
+		select {
+		case <-pending.done:
+			return pending.ok
+		case <-ctx.Done():
+			return false
+		}
+	}
 	r.mu.Lock()
 	current, init := r.session, append([]byte(nil), r.initMsg...)
 	r.mu.Unlock()
 	if current != stale {
+		r.reinitMu.Unlock()
 		return true // another request already started the replacement
 	}
 	if len(init) == 0 {
-		return false // the agent never initialized through this relay; nothing to replay
+		r.reinitMu.Unlock()
+		return false // the agent never initialized through this relay
 	}
+	pending := &relayReinitialization{done: make(chan struct{})}
+	r.reinitPending = pending
+	r.reinitMu.Unlock()
+	ok := mcprecovery.Run(ctx, func(attempt context.Context) (bool, error) {
+		return r.reinitializeAttempt(attempt, init)
+	}) == nil
+	r.reinitMu.Lock()
+	pending.ok = ok
+	r.reinitPending = nil
+	close(pending.done)
+	r.reinitMu.Unlock()
+	return ok
+}
+
+func (r *HTTPRelay) reinitializeAttempt(ctx context.Context, init []byte) (bool, error) {
 	token, err := tokenfile.Read(r.TokenFile)
 	if err != nil {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	r.reinitSeq++
 	body, err := withRequestID(init, fmt.Sprintf("relay-reinit-%d", r.reinitSeq))
 	if err != nil {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, bytes.NewReader(body))
 	if err != nil {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -320,21 +366,21 @@ func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
 		if ctx.Err() == nil {
 			r.logf("could not start a replacement hub session: %s", sanitizeNetErr(err))
 		}
-		return false
+		return true, errors.New("replacement MCP peer unreachable")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		r.logf("could not start a replacement hub session (status %d%s)", resp.StatusCode, codeSuffix(hubErrorCode(resp.Body)))
-		return false
+		return resp.StatusCode == http.StatusNotFound || resp.StatusCode >= 500, errors.New("replacement MCP handshake refused")
 	}
 	sid := resp.Header.Get("Mcp-Session-Id")
 	if sid == "" {
 		r.logf("could not start a replacement hub session (no session id)")
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, maxRelayLine+1))
 	if rerr != nil || len(raw) > maxRelayLine {
-		return false
+		return false, errors.New("replacement MCP handshake refused")
 	}
 	protocol := protocolFromInitializeBody(resp.Header.Get("Content-Type"), raw)
 	r.mu.Lock()
@@ -346,7 +392,7 @@ func (r *HTTPRelay) reinitialize(ctx context.Context, stale string) bool {
 	r.completeHandshake(ctx)
 	r.restartStandaloneStream(ctx)
 	r.logf("hub session expired; started a new one")
-	return true
+	return false, nil
 }
 
 // completeHandshake sends notifications/initialized on the replacement session. A failure here is logged only: the
@@ -452,6 +498,10 @@ func (r *HTTPRelay) post(ctx context.Context, msg []byte, token string) (int, st
 		}
 		// The error text of a transport failure can echo the URL but never request headers.
 		r.logf("transport error posting to hub: %s", sanitizeNetErr(err))
+		var operation *net.OpError
+		if errors.As(err, &operation) && operation.Op == "dial" {
+			return -1, "transport_not_sent", false
+		}
 		return -1, "transport_error", false
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -482,6 +532,14 @@ func (r *HTTPRelay) post(ctx context.Context, msg []byte, token string) (int, st
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRelayLine+1))
 		if err != nil || len(body) > maxRelayLine {
 			return -1, "bad_response", false
+		}
+		var rpc struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &rpc) == nil && (rpc.Error.Message == "mcp_initialize_required" || rpc.Error.Message == "session_expired") {
+			return http.StatusBadRequest, rpc.Error.Message, false
 		}
 		r.captureProtocol(msg, body)
 		r.emit(body)
@@ -596,6 +654,9 @@ func hubErrorCode(body io.Reader) string {
 			Code string `json:"code"`
 		} `json:"error"`
 		Code string `json:"code"`
+	}
+	if strings.TrimSpace(string(raw)) == "session not found" {
+		return "mcp_session_not_found"
 	}
 	if json.Unmarshal(raw, &shaped) != nil {
 		return ""

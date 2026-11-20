@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -740,4 +741,142 @@ func TestHTTPRelayReconnectAfter401PreservesRunTokenAndDoesNotReplayMutation(t *
 			}
 		})
 	}
+}
+
+func TestHTTPRelayRecoversAcrossActualServerRestart(t *testing.T) {
+	hub := &fakeHub{}
+	g := newRelayRig(t, hub, nil)
+	g.handshake()
+	hub.waitCount(t, "notifications/initialized", 1)
+	address := g.srv.Listener.Addr().String()
+	g.srv.CloseClientConnections()
+	g.srv.Close()
+	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	time.Sleep(1200 * time.Millisecond)
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.evict()
+	replacement := httptest.NewUnstartedServer(hub)
+	replacement.Listener.Close()
+	replacement.Listener = listener
+	replacement.Start()
+	defer replacement.Close()
+	m := g.recvReply()
+	if m["id"] != float64(2) || m["result"] == nil || m["error"] != nil {
+		t.Fatalf("after TCP restart: %v", m)
+	}
+	if hub.count("initialize") != 2 {
+		t.Fatalf("initialize count = %d", hub.count("initialize"))
+	}
+	t.Log("stdio client recovered after real TCP server restart without manual reconnect")
+	g.finish()
+}
+
+type loseMutationResponse struct{ calls atomic.Int32 }
+
+func (l *loseMutationResponse) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodPost {
+		body, _ := io.ReadAll(req.Body)
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		if methodName(body) == "tools/call" {
+			l.calls.Add(1)
+			// The peer may have committed the tool before this connection was lost.
+			return nil, io.ErrUnexpectedEOF
+		}
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestHTTPRelayDoesNotReplayAmbiguousMutationOnReconnect(t *testing.T) {
+	transport := &loseMutationResponse{}
+	hub := &fakeHub{}
+	g := newRelayRig(t, hub, transport)
+	g.handshake()
+	hub.waitCount(t, "notifications/initialized", 1)
+	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write"}}`)
+	if m := g.recvReply(); m["error"] == nil {
+		t.Fatalf("uncertain tool outcome swallowed: %v", m)
+	}
+	if transport.calls.Load() != 1 {
+		t.Fatalf("mutation sent %d times", transport.calls.Load())
+	}
+	g.send(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
+	if m := g.recvReply(); m["result"] == nil {
+		t.Fatalf("replacement session unusable: %v", m)
+	}
+	if hub.count("initialize") != 2 {
+		t.Fatalf("replacement not initialized: %d", hub.count("initialize"))
+	}
+	g.finish()
+}
+
+func TestHTTPRelayReplacementWaiterCanCancel(t *testing.T) {
+	started, finish := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-finish
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "token")
+	if err := tokenfile.Write(file, tokenOne); err != nil {
+		t.Fatal(err)
+	}
+	relay := &HTTPRelay{URL: server.URL, TokenFile: file, session: "stale", initMsg: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)}
+	first := make(chan bool, 1)
+	go func() { first <- relay.reinitialize(context.Background(), "stale") }()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	waiter := make(chan bool, 1)
+	go func() { waiter <- relay.reinitialize(ctx, "stale") }()
+	select {
+	case ok := <-waiter:
+		if ok {
+			t.Error("canceled waiter succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Error("waiter blocked behind replacement mutex")
+	}
+	close(finish)
+	if <-first {
+		t.Error("forbidden replacement succeeded")
+	}
+}
+
+type unsentMutation struct{ calls atomic.Int32 }
+
+func (u *unsentMutation) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodPost {
+		raw, _ := io.ReadAll(req.Body)
+		req.Body = io.NopCloser(bytes.NewReader(raw))
+		if methodName(raw) == "tools/call" {
+			if u.calls.Add(1) == 1 {
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+			}
+			var msg struct{ ID json.RawMessage }
+			json.Unmarshal(raw, &msg)
+			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"content":[]}}`, msg.ID)
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+		}
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestHTTPRelayRetriesUnsentMutationOnce(t *testing.T) {
+	transport := &unsentMutation{}
+	hub := &fakeHub{}
+	g := newRelayRig(t, hub, transport)
+	g.handshake()
+	hub.waitCount(t, "notifications/initialized", 1)
+	g.send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write"}}`)
+	if m := g.recvReply(); m["error"] != nil || m["result"] == nil {
+		t.Fatalf("unsent tool did not recover: %v", m)
+	}
+	if transport.calls.Load() != 2 || hub.count("initialize") != 2 {
+		t.Fatalf("dispatch=%d initialize=%d", transport.calls.Load(), hub.count("initialize"))
+	}
+	g.finish()
 }

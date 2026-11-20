@@ -110,7 +110,7 @@ func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if response != nil && response.StatusCode == http.StatusUnauthorized && t.runToken != "" && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
 		t.onSessionMissing()
 	}
-	if response != nil && response.StatusCode == http.StatusNotFound && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
+	if response != nil && (response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusBadRequest) && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {
 		// A generic route 404 is not proof of expiry. Preserve the response for
 		// the SDK while recognizing only the daemon/SDK's explicit expiry bodies.
 		prefix, readErr := io.ReadAll(io.LimitReader(response.Body, 1024))
@@ -124,7 +124,7 @@ func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			} `json:"error"`
 		}
 		decoded := json.Unmarshal(prefix, &body) == nil
-		if readErr == nil && ((decoded && body.Error.Code == "mcp_session_not_found") || strings.TrimSpace(string(prefix)) == "session not found") {
+		if readErr == nil && ((decoded && (body.Error.Code == "mcp_session_not_found" || body.Error.Code == "mcp_initialize_required" || body.Error.Code == "session_expired")) || strings.TrimSpace(string(prefix)) == "session not found") {
 			t.onSessionMissing()
 		}
 	}

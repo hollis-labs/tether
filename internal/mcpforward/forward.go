@@ -18,6 +18,7 @@ import (
 
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/mcprecovery"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -257,9 +258,23 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	options.OnSessionMissing = func() { missingState.Store(true) }
 	var transport mcp.Connection
 	options.OnTransportConnected = func(connection mcp.Connection) { transport = connection }
-	session, err := d.client.ConnectMCP(setup, options)
+	var session *mcp.ClientSession
+	var err error
+	connect := func(parent context.Context) (bool, error) {
+		attempt, stop := context.WithTimeout(parent, client.MCPInitializeTimeout)
+		defer stop()
+		session, err = d.client.ConnectMCP(attempt, options)
+		return daemonTransportFailure(err) || errors.Is(err, context.DeadlineExceeded), err
+	}
+	if retired != nil {
+		// Recovery outlives a single cold handshake, but respects caller cancellation.
+		cancel()
+		err = mcprecovery.Run(ctx, connect)
+	} else {
+		_, err = connect(setup)
+	}
 	d.mu.Lock()
-	if err != nil && setup.Err() != nil {
+	if err != nil && retired == nil && setup.Err() != nil {
 		err = setup.Err()
 	}
 	pending.session, pending.err = session, err
@@ -316,7 +331,7 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 	d.mu.Lock()
 	observedMissing := d.session != session || d.missing.Load()
 	d.mu.Unlock()
-	if !observedMissing {
+	if !observedMissing && !initializeRequired(err) {
 		// A closed transport can race our Wait observer. Read-only operations may
 		// reconnect once, but generic/unknown 404 and protocol errors must surface.
 		if errors.Is(err, mcp.ErrSessionMissing) || strings.Contains(err.Error(), "session not found") || strings.Contains(err.Error(), "Not Found") {
@@ -420,6 +435,9 @@ func relayError(err error) *jsonrpc.Error {
 }
 
 func daemonTransportFailure(err error) bool {
+	if err == nil {
+		return false
+	}
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
@@ -465,4 +483,10 @@ func relayMeta(meta mcp.Meta) mcp.Meta {
 	delete(forwarded, mcp.MetaKeyClientCapabilities)
 	delete(forwarded, mcp.MetaKeyClientInfo)
 	return forwarded
+}
+
+// Some peers report lost MCP state as a JSON-RPC error rather than HTTP 404.
+func initializeRequired(err error) bool {
+	var protocol *jsonrpc.Error
+	return errors.As(err, &protocol) && (strings.Contains(protocol.Message, "mcp_initialize_required") || strings.Contains(protocol.Message, "session_expired"))
 }
