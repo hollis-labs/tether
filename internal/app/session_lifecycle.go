@@ -505,6 +505,10 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			}
 		}
 	}()
+	runEnv, err := s.mintRunEnvironment(ctx, row)
+	if err != nil {
+		return nil, fmt.Errorf("mint run context: %w", err)
+	}
 	var startOpts agentsessions.StartOptions
 	if rt.Kind() == acp.Kind {
 		// An ACP agent (CW-20260930-0106 stage 1). go-agent-wrapper's ACP
@@ -654,6 +658,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 	}
 	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
+	startOpts.Env = mergeEnv(startOpts.Env, runEnv)
 	if plan.NativeResumeOnly {
 		// Planting owns the fresh inactive artifacts; native-only execution uses
 		// the separately validated, persisted source context instead of boot CWD.

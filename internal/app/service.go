@@ -34,6 +34,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/sessionhealth"
 	"github.com/hollis-labs/tether/internal/settings"
@@ -87,6 +88,7 @@ type Service struct {
 	// call tether_team_*; set by daemon startup from modules.teams.
 	TeamsEnabled bool
 
+	runTokens   runtoken.Authority
 	CatalogRoot string
 	// persisted reads the identity mode the operator has persisted in global.yaml.
 	persisted    persistedIdentity

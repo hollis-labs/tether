@@ -28,7 +28,7 @@ func runMCPForwardDaemon(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	opts := client.MCPOptions{}
+	opts := client.MCPOptions{RunToken: os.Getenv("TETHER_RUN_TOKEN")}
 	label := mcpClientLabel
 	if label == "" {
 		label = os.Getenv("TETHER_CLIENT_LABEL")

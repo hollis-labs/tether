@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -53,6 +54,7 @@ type HandlerConfig struct {
 }
 
 type admission struct {
+	run         runtoken.Claims
 	caller      Caller
 	options     mcpadapter.ProxyOptions
 	catalog     *config.Catalog
@@ -72,6 +74,7 @@ type transportView struct {
 	// agent token is refreshed in place, so the view follows the latest verified token (see adopt).
 	token                  string
 	tokenExp               time.Time
+	runExp                 time.Time
 	selectors              selectors
 	fingerprint, sessionID string
 	ready                  bool
@@ -225,6 +228,14 @@ func (h *Handler) admit(ctx context.Context, token string, s selectors) (admissi
 			return admission{}, identity.ErrInvalidToken
 		}
 	}
+	var run runtoken.Claims
+	if s.runToken != "" {
+		var runErr error
+		run, runErr = h.cfg.Service.VerifyRunToken(s.runToken, p)
+		if runErr != nil {
+			return admission{}, identity.ErrInvalidToken
+		}
+	}
 	ctx = identity.WithPrincipal(ctx, p)
 	cat, err := h.cfg.Resolver.Catalog(ctx)
 	if err != nil || cat == nil {
@@ -240,13 +251,16 @@ func (h *Handler) admit(ctx context.Context, token string, s selectors) (admissi
 	if err != nil {
 		return admission{}, err
 	}
-	a := admission{caller: caller, options: opts, catalog: cat}
+	a := admission{run: run, caller: caller, options: opts, catalog: cat}
 	if h.cfg.nativeOnly {
 		if _, err := selectedUpstreamOrigins(a); err != nil {
 			return admission{}, err
 		}
 	}
 	key, err := viewFingerprint(caller, token, opts)
+	if s.runToken != "" {
+		key += ":run:" + identity.HashToken(s.runToken)
+	}
 	a.fingerprint = key
 	return a, err
 }
@@ -304,6 +318,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Fields(values[0])
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		transportError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	s.runToken, err = runtoken.FromHeader(r.Header)
+	if err != nil {
 		transportError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -470,6 +489,9 @@ func boundedError(err error) string {
 
 func (h *Handler) prepare(ctx context.Context, a admission, token string, s selectors) (*transportView, error) {
 	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint, principalKey: a.caller.Principal.Kind + ":" + a.caller.Principal.ID, operator: identity.IsOperatorCredential(a.caller.Principal), lastUsed: time.Now()}
+	if a.run.RunID != "" {
+		v.runExp = time.Unix(a.run.Expires, 0)
+	}
 	if a.caller.Principal.ExpiresAt != nil {
 		v.tokenExp = *a.caller.Principal.ExpiresAt
 	}
@@ -565,11 +587,15 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 	if h.cfg.Service != nil && h.cfg.Service.Store != nil {
 		a.options.ProxyStore = h.cfg.Service.Store
 	}
+	viewCtx := identity.WithPrincipal(h.ctx, a.caller.Principal)
+	if a.run.RunID != "" {
+		viewCtx = runtoken.WithClaims(viewCtx, a.run)
+	}
 	var view *mcpadapter.GatewayView
 	if h.cfg.nativeOnly {
-		view, err = adapter.NewNativeView(identity.WithPrincipal(h.ctx, a.caller.Principal), a.options)
+		view, err = adapter.NewNativeView(viewCtx, a.options)
 	} else {
-		view, err = pool.NewGatewayView(identity.WithPrincipal(h.ctx, a.caller.Principal), adapter, a.options)
+		view, err = pool.NewGatewayView(viewCtx, adapter, a.options)
 	}
 	if err != nil {
 		return nil, stageErr(stageGateway, err)
@@ -591,6 +617,9 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 				return nil, fmt.Errorf("MCP credential or policy no longer valid")
 			}
 			ctx = identity.WithPrincipal(ctx, current.caller.Principal)
+			if current.run.RunID != "" {
+				ctx = runtoken.WithClaims(ctx, current.run)
+			}
 			if h.cfg.remoteOnly {
 				ctx = identity.WithRemoteContext(identity.WithConnectionContext(ctx, nil))
 			}
@@ -631,7 +660,7 @@ func (h *Handler) remove(v *transportView) {
 func (h *Handler) expireCredential(v *transportView) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if v.tokenExp.IsZero() || time.Now().Before(v.tokenExp) {
+	if (v.tokenExp.IsZero() || time.Now().Before(v.tokenExp)) && (v.runExp.IsZero() || time.Now().Before(v.runExp)) {
 		return false
 	}
 	v.cancelCalls()

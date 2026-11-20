@@ -164,6 +164,9 @@ type relayRig struct {
 }
 
 func newRelayRig(t *testing.T, hub *fakeHub, transport http.RoundTripper) *relayRig {
+	return newRunRelayRig(t, hub, transport, "")
+}
+func newRunRelayRig(t *testing.T, hub *fakeHub, transport http.RoundTripper, runToken string) *relayRig {
 	t.Helper()
 	hub.current = tokenOne
 	srv := httptest.NewServer(hub)
@@ -179,7 +182,7 @@ func newRelayRig(t *testing.T, hub *fakeHub, transport http.RoundTripper) *relay
 	if transport != nil {
 		client = &http.Client{Transport: transport}
 	}
-	r := &HTTPRelay{URL: srv.URL, TokenFile: file, Client: client, Stderr: stderr}
+	r := &HTTPRelay{URL: srv.URL, TokenFile: file, Client: client, RunToken: runToken, Stderr: stderr}
 	done := make(chan error, 1)
 	go func() {
 		err := r.Run(context.Background(), inR, outW)

@@ -32,6 +32,8 @@ type MCPOptions struct {
 	// every request. The daemon records it as an unverified claim in telemetry;
 	// it is never used for authorization (CW-20261024-0048).
 	ClientLabel string
+	// RunToken is frozen for this MCP view, separate from bearer authorization.
+	RunToken string
 }
 
 // ConnectMCP uses this client's frozen credential and daemon HTTP/UDS dialer.
@@ -55,11 +57,15 @@ func (c *Client) ConnectMCP(ctx context.Context, opts MCPOptions) (*mcpsdk.Clien
 	// SSE is a long-lived body. Dial/request contexts bound connection setup,
 	// while the SDK owns stream cancellation and DELETE on session close.
 	httpClient.Timeout = 0
+	if opts.RunToken != "" {
+		// Correlation is also a secret: refuse redirects even without a bearer.
+		httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	base := httpClient.Transport
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	httpClient.Transport = mcpErrorTransport{base: base, onSessionMissing: opts.OnSessionMissing, clientLabel: opts.ClientLabel}
+	httpClient.Transport = mcpErrorTransport{base: base, onSessionMissing: opts.OnSessionMissing, clientLabel: opts.ClientLabel, runToken: opts.RunToken}
 	// SDK retries resume SSE via GET/Last-Event-ID; they never resend POST.
 	// No OAuth handler is installed (the only SDK path that re-POSTs).
 	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &httpClient, MaxRetries: 1}
@@ -83,13 +89,19 @@ type mcpErrorTransport struct {
 	base             http.RoundTripper
 	onSessionMissing func()
 	clientLabel      string
+	runToken         string
 }
 
 func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.clientLabel != "" {
+	if t.clientLabel != "" || t.runToken != "" {
 		// RoundTrippers must not mutate the caller's request.
 		r = r.Clone(r.Context())
-		r.Header.Set("X-Tether-Client-Label", t.clientLabel)
+		if t.clientLabel != "" {
+			r.Header.Set("X-Tether-Client-Label", t.clientLabel)
+		}
+		if t.runToken != "" {
+			r.Header.Set("X-Run-Token", t.runToken)
+		}
 	}
 	response, err := t.base.RoundTrip(r)
 	if response != nil && response.StatusCode == http.StatusNotFound && r.Header.Get("Mcp-Session-Id") != "" && t.onSessionMissing != nil {

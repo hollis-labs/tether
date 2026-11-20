@@ -50,7 +50,7 @@ func main() {
 	cmd.AddCommand(relayCmd)
 	var httpURL, httpToken string
 	httpRelayCmd := &cobra.Command{Use: "mcp-http-relay", Hidden: true, SilenceUsage: true, Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
-		r := &workerruntime.HTTPRelay{URL: httpURL, TokenFile: httpToken, Stderr: os.Stderr}
+		r := &workerruntime.HTTPRelay{URL: httpURL, TokenFile: httpToken, RunToken: os.Getenv("TETHER_RUN_TOKEN"), Stderr: os.Stderr}
 		return r.Run(c.Context(), os.Stdin, os.Stdout)
 	}}
 	httpRelayCmd.Flags().StringVar(&httpURL, "url", "", "hub streamable-HTTP MCP endpoint (https)")
