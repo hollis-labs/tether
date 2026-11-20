@@ -1,0 +1,1 @@
+- CW-20261120-0002: Add optional bounded asynchronous Registry correlation registration after local and worker launches, with secret-free observed metadata and a concrete workstream authority reconciliation plan.

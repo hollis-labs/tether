@@ -840,6 +840,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		return nil, s.retainShimStartFailure(sessionID, err)
 	}
+	s.registerLaunchCorrelation(*row, runEnv)
 	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), sessionID, launchEvidence)
 	s.watchStdioTap(sessionID, stdioTap)
 	s.watchCodexTap(sessionID, codexTap)

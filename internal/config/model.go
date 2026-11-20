@@ -10,6 +10,7 @@ import (
 	"github.com/hollis-labs/libs/core/util/apppaths"
 	"github.com/hollis-labs/libs/harness/core/sandbox"
 
+	"github.com/hollis-labs/tether/internal/correlationregistry"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -264,6 +265,8 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 // DaemonConfig controls the long-lived tetherd process. See ADR 0002 for the
 // scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 type DaemonConfig struct {
+	// CorrelationRegistry registers launch observations asynchronously; empty URL disables it.
+	CorrelationRegistry correlationregistry.Config `yaml:"correlation_registry,omitempty"`
 	// EventStageMode is selected at startup; empty means shadow.
 	EventStageMode string `yaml:"event_stage_mode,omitempty"`
 	// EventIngest turns on POST /events, the generic publish route for apps.

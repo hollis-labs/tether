@@ -57,6 +57,9 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
+	correlationMu    sync.Mutex
+	correlationSlots chan struct{} // bounded best-effort Registry requests
+
 	messageEventsMu   sync.Mutex
 	messageEventsStop func()
 	admitMu           sync.Mutex        // guards admitPending
