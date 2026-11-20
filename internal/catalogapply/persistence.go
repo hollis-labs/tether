@@ -167,6 +167,14 @@ func (e *Engine) RestorePlans(ctx context.Context) error {
 		}
 		p.ID, p.CreatedAt, p.ExpiresAt, p.TTLSeconds = r.ID, r.CreatedAt, r.ExpiresAt, r.TTLSeconds
 		p.SurvivesRestart = true
+		// Approval comes from the current daemon setting, never the snapshot.
+		// Only fully rebuilt, still-live records may be autoapproved.
+		if e.ApprovalOff && !e.now().After(p.ExpiresAt) {
+			now := e.now().UTC()
+			p.State, p.ApprovedAt, p.ApprovedBy, p.AllowRunning = StateApproved, &now, "approval-disabled", true
+			p.ApprovalRequired = ""
+			p.SurvivesRestart = false
+		}
 		restored[p.ID] = p
 	}
 	e.mu.Lock()

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestApprovalOffAutoapprovesAndPreservesIntegrity(t *testing.T) {
@@ -160,23 +161,49 @@ func TestApplyRechecksAutoapprovedPlanIntegrity(t *testing.T) {
 	}
 }
 
-func TestApprovalOffRestoreStillRebuildsPlannedRecords(t *testing.T) {
-	e := newEngine(t)
-	e.PlansFile = filepath.Join(t.TempDir(), "plans.json")
-	p, err := e.PlanBundle(context.Background(), Bundle{Name: "restore", Files: []File{{Path: "agents/general.yaml", Content: "id: general\nname: Changed\n"}}}, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	next := &Engine{Root: e.Root, BackupRoot: e.BackupRoot, PlansFile: e.PlansFile, Validate: e.Validate, ApprovalOff: true}
-	if err = next.RestorePlans(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	restored, ok := next.Get(p.ID)
-	if !ok || restored.State != StatePlanned {
-		t.Fatalf("restored: %+v %v", restored, ok)
-	}
-	approved, err := next.Approve(ApprovalRequest{PlanID: p.ID, Digest: p.Digest})
-	if err != nil || approved.State != StateApproved || approved.ApprovedBy != "approval-disabled" {
-		t.Fatalf("approve restored: %+v %v", approved, err)
+func TestRestoreApprovalUsesCurrentModeAfterIntegrityChecks(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		off, expired bool
+	}{
+		{"on", false, false}, {"off", true, false}, {"expired-off", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEngine(t)
+			now := time.Now().UTC()
+			e.Now = func() time.Time { return now }
+			e.TTL = time.Minute
+			e.PlansFile = filepath.Join(t.TempDir(), "plans.json")
+			p, err := e.PlanBundle(context.Background(), Bundle{Name: "restore", Files: []File{{Path: "agents/general.yaml", Content: "id: general\nname: Changed\n"}}}, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.expired {
+				now = now.Add(2 * time.Minute)
+			}
+			next := &Engine{Root: e.Root, BackupRoot: e.BackupRoot, PlansFile: e.PlansFile, Validate: e.Validate, ApprovalOff: tc.off, Now: e.Now}
+			if err = next.RestorePlans(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			restored, ok := next.Get(p.ID)
+			if !ok {
+				t.Fatal("valid rebuilt plan was dropped")
+			}
+			if tc.off && !tc.expired {
+				if restored.State != StateApproved || restored.ApprovedBy != "approval-disabled" || restored.SurvivesRestart {
+					t.Fatalf("restored: %+v", restored)
+				}
+				if _, err = next.Apply(context.Background(), p.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if restored.State != StatePlanned || restored.ApprovedAt != nil || restored.ApprovedBy != "" {
+					t.Fatalf("unexpected approval: %+v", restored)
+				}
+				if _, err = next.Apply(context.Background(), p.ID); err == nil {
+					t.Fatal("on-mode or expired plan applied without approval")
+				}
+			}
+		})
 	}
 }

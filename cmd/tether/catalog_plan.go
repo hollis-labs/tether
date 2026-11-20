@@ -9,7 +9,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func init() {
+func init() { catalogCmd.AddCommand(newCatalogPlanCommand()) }
+
+func newCatalogPlanCommand() *cobra.Command {
 	var apply bool
 	command := &cobra.Command{
 		Use:   "plan <bundle.json>",
@@ -42,5 +44,5 @@ func init() {
 		},
 	}
 	command.Flags().BoolVar(&apply, "apply", false, "Immediately apply; requires daemon TETHER_CATALOG_APPROVAL=off")
-	catalogCmd.AddCommand(command)
+	return command
 }
