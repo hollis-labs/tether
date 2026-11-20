@@ -1912,10 +1912,8 @@ with `attribution.verified: false`; other call details remain caller assertions.
 
 ## Catalog
 
-Read-only list endpoints for the four catalog types. Writes (create /
-update / delete / reload) are deliberately not exposed in v0.0.2 —
-see [ADR 0012](../adr/0012-catalog-read-api.md) for the "reads now,
-writes deferred" rationale.
+Read-only list endpoints expose the four catalog types. Reviewed changes use
+the separate plan, approve and apply flow described below.
 
 Conventions (all four routes):
 
@@ -1932,6 +1930,48 @@ Conventions (all four routes):
   internal_error` with a message citing the offending path (e.g.
   `"catalog load failed: load global: read /…/global.yaml: no such
   file or directory"`).
+
+### Reviewed catalog changes
+
+`POST /catalog/plans` reviews a bundle without installing it;
+`GET /catalog/plans/{id}` returns its digest, validation, expiry and restart
+survival metadata. `POST /catalog/plans/{id}/apply` installs only an approved,
+unexpired plan whose digest and live base still match. Planning and apply keep
+the existing `catalog.write` scope and protected-definition checks. See
+[the MCP catalog guide](../mcp.md#catalog-changes-plan-approve-apply) for bundle
+fields, persistence, expiry and re-plan instructions.
+
+`POST /catalog/plans/{id}/approve` remains available for single-plan approval.
+`POST /catalog/plans/approve-batch` approves multiple plans with one operator
+passphrase verification. It uses the local-socket `catalogApprover` gate;
+session, device, service and remote callers cannot use this operator endpoint.
+The existing delegated single-plan approval route retains its existing policy.
+
+The batch request contains 1–64 unique plan ids:
+
+```json
+{"plans":[{"id":"cp_first","digest":"<full first digest>"},{"id":"cp_second","digest":"<full second digest>"}],"passphrase":"<operator passphrase>","ack_privileged":false,"allow_running":false}
+```
+
+A 200 response contains `results`, in request order, with each entry's `id` and
+exactly one of `plan` (the approved plan) or `error` (a reason string). An empty,
+duplicate-id or oversized batch returns 400. Admission or credential failure
+returns 403 and approves nothing. The shared acknowledgement flags apply to all
+entries; they retain their false defaults.
+
+Each batch entry binds its own plan id and full digest. The engine enforces the
+same expiry, validity, privileged-change and running-session checks for each
+entry. A successful batch request can contain both successful approvals and
+per-plan failures; consumers must inspect every result. A failed entry does not
+receive approval. Incorrect passphrases count as one failed attempt for the
+whole batch, not one attempt per entry; authentication failure approves nothing.
+
+The terminal CLI `tether catalog approve <id> [<id>...]` shows the plans and asks
+for one confirmation followed by one passphrase. For multiple plans, the
+confirmation is the first 12 hexadecimal characters of SHA-256 over the sorted
+list of full digests joined by one newline, with no trailing newline. Single-plan
+approval keeps the first 12 characters of that plan's digest. Privileged changes still require `--ack-privileged`, and
+changes used by running sessions still require `--allow-running`.
 
 ### `GET /catalog/projects`
 

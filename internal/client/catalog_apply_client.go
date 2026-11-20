@@ -138,3 +138,12 @@ func (cc *CatalogApplyClient) Backups(ctx context.Context) ([]catalogapply.Backu
 	}
 	return out.Backups, nil
 }
+
+// ApproveBatch approves exact plans with one operator passphrase verification.
+func (cc *CatalogApplyClient) ApproveBatch(ctx context.Context, req api.CatalogApproveBatchRequest) (*api.CatalogApproveBatchResponse, error) {
+	var out api.CatalogApproveBatchResponse
+	if err := cc.do(ctx, http.MethodPost, "/catalog/plans/approve-batch", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

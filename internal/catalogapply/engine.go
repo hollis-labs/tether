@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/hollis-labs/tether/internal/operatorattest"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,13 +69,15 @@ type PlannedFile struct {
 
 // Plan is a reviewed-but-not-installed change.
 type Plan struct {
-	ID               string        `json:"plan_id"`
-	Name             string        `json:"name"`
-	TaskID           string        `json:"task_id,omitempty"`
-	State            string        `json:"state"`
-	Digest           string        `json:"digest"`
-	CreatedAt        time.Time     `json:"created_at"`
-	ExpiresAt        time.Time     `json:"expires_at"`
+	ID        string    `json:"plan_id"`
+	Name      string    `json:"name"`
+	TaskID    string    `json:"task_id,omitempty"`
+	State     string    `json:"state"`
+	Digest    string    `json:"digest"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	// SurvivesRestart describes the planned record, never a persisted approval.
+	SurvivesRestart  bool          `json:"survives_restart"`
 	TTLSeconds       int           `json:"ttl_seconds"`
 	Files            []PlannedFile `json:"files"`
 	Diff             string        `json:"diff"`
@@ -151,6 +154,9 @@ type Engine struct {
 	// may approve by delegation. Empty means no delegation.
 	DelegatedApps []string
 
+	// PlansFile enables planned-only persistence. Set before RestorePlans and serving requests.
+	PlansFile string
+
 	mu      sync.Mutex
 	plans   map[string]*Plan
 	applyMu sync.Mutex
@@ -212,13 +218,52 @@ var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // PlanBundle reviews a bundle without touching the live catalog.
 func (e *Engine) PlanBundle(ctx context.Context, b Bundle, opt Options) (*Plan, error) {
-	return e.plan(ctx, b, opt, false)
+	return e.plan(ctx, b, opt, false, "")
 }
 
 // plan is PlanBundle; skipSecretScan is for a rollback, which restores
 // content the catalog already held (existing upstream definitions may carry
 // literals this tool would refuse to author).
-func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan bool) (*Plan, error) {
+func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan bool, rollbackOf string) (*Plan, error) {
+	p, err := e.buildPlan(ctx, b, opt, skipSecretScan, rollbackOf)
+	if err != nil {
+		return nil, err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.gcLocked()
+	// Replanning the same unapproved digest re-arms its id within rearmGrace.
+	// Digest includes the live base, so a changed catalog cannot reuse approval.
+	for id, old := range e.plans {
+		if old.State == StatePlanned && old.ApprovedAt == nil && old.Digest == p.Digest && old.Name == p.Name {
+			p.ID = id
+			break
+		}
+	}
+	if _, rearm := e.plans[p.ID]; !rearm && len(e.plans) >= maxPlans {
+		return nil, fmt.Errorf("too many open plans (%d); apply or let them expire", maxPlans)
+	}
+	if e.plans == nil {
+		e.plans = map[string]*Plan{}
+	}
+	previous := e.plans[p.ID]
+	e.plans[p.ID] = p
+	if err := e.persistLocked(); err != nil {
+		if previous == nil {
+			delete(e.plans, p.ID)
+		} else {
+			e.plans[p.ID] = previous
+		}
+		return nil, fmt.Errorf("persist catalog plan: %w", err)
+	}
+	if e.PlansFile != "" && p.State == StatePlanned && !p.SurvivesRestart {
+		slog.Warn("catalog plan remains memory-only: bundle contains pre-existing secret literals", "plan_id", p.ID)
+	}
+	return clonePlan(p), nil
+}
+
+// buildPlan re-derives all security-sensitive findings from bundle and live base.
+func (e *Engine) buildPlan(ctx context.Context, b Bundle, opt Options, skipSecretScan bool, rollbackOf string) (*Plan, error) {
 	if !nameRe.MatchString(b.Name) {
 		return nil, fmt.Errorf("bundle name %q must be 1-64 characters of letters, digits, '.', '_' or '-'", b.Name)
 	}
@@ -242,7 +287,7 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 
 	p := &Plan{
 		ID: newID(), Name: b.Name, TaskID: b.TaskID, State: StatePlanned,
-		CreatedAt: e.now().UTC(), PlannedBy: opt.Caller,
+		CreatedAt: e.now().UTC(), PlannedBy: opt.Caller, RollbackOf: rollbackOf,
 	}
 	p.ExpiresAt = p.CreatedAt.Add(e.ttl())
 	p.TTLSeconds = int(e.ttl() / time.Second)
@@ -356,26 +401,7 @@ func (e *Engine) plan(ctx context.Context, b Bundle, opt Options, skipSecretScan
 		p.ApprovalRequired = "sessions using the touched definitions are running; the approver must allow that explicitly"
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.gcLocked()
-	// Planning the same unapproved bundle again re-arms the existing plan (same
-	// id, fresh expiry) so an operator who was shown the id can still approve it.
-	// The digest covers the live base hashes, so a catalog that moved on does not match.
-	for id, old := range e.plans {
-		if old.State == StatePlanned && old.ApprovedAt == nil && old.Digest == p.Digest && old.Name == p.Name {
-			p.ID = id
-			break
-		}
-	}
-	if _, rearm := e.plans[p.ID]; !rearm && len(e.plans) >= maxPlans {
-		return nil, fmt.Errorf("too many open plans (%d); apply or let them expire", maxPlans)
-	}
-	if e.plans == nil {
-		e.plans = map[string]*Plan{}
-	}
-	e.plans[p.ID] = p
-	return clonePlan(p), nil
+	return p, nil
 }
 
 func (e *Engine) gcLocked() {
@@ -595,6 +621,10 @@ func (e *Engine) Approve(req ApprovalRequest) (*Plan, error) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.approveLocked(req, false)
+}
+
+func (e *Engine) approveLocked(req ApprovalRequest, credentialVerified bool) (*Plan, error) {
 	p, ok := e.plans[req.PlanID]
 	if !ok {
 		return nil, fmt.Errorf("plan %q not found or expired", req.PlanID)
@@ -623,13 +653,22 @@ func (e *Engine) Approve(req ApprovalRequest) (*Plan, error) {
 	if len(p.RunningSessions) > 0 && !req.AllowRunning {
 		return nil, fmt.Errorf("plan %q touches definitions used by running sessions %v; allow that explicitly or stop them", p.ID, p.RunningSessions)
 	}
-	if !req.Delegated {
+	if err := e.checkLiveBase(p); err != nil {
+		return nil, err
+	}
+	if !req.Delegated && !credentialVerified {
 		if err := e.Approver.Verify(req.Passphrase); err != nil {
 			return nil, err
 		}
 	}
 	now := e.now().UTC()
+	previous := *p
 	p.State, p.ApprovedAt, p.AllowRunning = StateApproved, &now, req.AllowRunning
+	p.SurvivesRestart = false
+	if err := e.persistLocked(); err != nil {
+		*p = previous
+		return nil, fmt.Errorf("persist catalog approval removal: %w", err)
+	}
 	return clonePlan(p), nil
 }
 

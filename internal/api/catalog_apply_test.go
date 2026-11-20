@@ -79,6 +79,18 @@ func newCatalogApplyDaemon(t *testing.T) *catalogApplyDaemon {
 				scopes = append(scopes, r.Header.Get("X-Test-Scope"))
 			}
 			r = r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, ID: "sess-mgr", Kind: "session", SessionID: "sess-mgr", Scopes: scopes}))
+		case "device", "agent", "service", "delegated-service", "unscoped-service":
+			kind := r.Header.Get("X-Test-Principal")
+			id := "msg://service/other/prod"
+			scopes := []string{"catalog.write"}
+			if kind == "delegated-service" || kind == "unscoped-service" {
+				kind = "service"
+				id = "msg://service/tachyon/prod"
+			}
+			if r.Header.Get("X-Test-Principal") == "unscoped-service" {
+				scopes = nil
+			}
+			r = r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, ID: id, Kind: kind, TokenID: "issued", Scopes: scopes}))
 		case "operator":
 			r = r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}))
 		}

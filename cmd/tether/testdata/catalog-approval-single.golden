@@ -1,0 +1,11 @@
+plan cp_one  "one"  state=planned
+expires 2026-11-20T13:00:00Z (remaining 1h0m0s; ttl 3600s); survives restart: true
+digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  create    agents/one.yaml
+validation: ok on a scratch copy
+
++ reviewed file
+
+Confirmation token:
+aaaaaaaaaaaa
+Type the confirmation token: Approval passphrase:\x20

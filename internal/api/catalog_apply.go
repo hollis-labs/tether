@@ -50,6 +50,7 @@ func (s *Server) registerCatalogApplyRoutes(router *http.ServeMux) {
 	}
 	router.HandleFunc("/catalog/plans", s.handleCatalogPlans)
 	router.HandleFunc("/catalog/plans/team-activation", s.handleTeamActivationPlan)
+	router.HandleFunc("/catalog/plans/approve-batch", s.handleCatalogApproveBatch)
 	router.HandleFunc("/catalog/plans/", s.handleCatalogPlanItem)
 	router.HandleFunc("/catalog/backups", s.handleCatalogBackups)
 	router.HandleFunc("/catalog/validate", s.handleCatalogValidate)
@@ -334,4 +335,49 @@ func (s *Server) callerDefinitionPaths(r *http.Request) []string {
 		paths = append(paths, "launches/"+row.LaunchID+".yaml", "launches/"+row.LaunchID+".yml")
 	}
 	return paths
+}
+
+// CatalogApproveBatchRequest shares one passphrase across exact plan digests.
+type CatalogApproveBatchRequest struct {
+	Plans         []catalogapply.ApprovalItem `json:"plans"`
+	Passphrase    string                      `json:"passphrase"`
+	AckPrivileged bool                        `json:"ack_privileged,omitempty"`
+	AllowRunning  bool                        `json:"allow_running,omitempty"`
+}
+
+type CatalogApproveBatchResponse struct {
+	Results []catalogapply.ApprovalResult `json:"results"`
+}
+
+func (s *Server) handleCatalogApproveBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !catalogApprover(r) {
+		writeError(w, http.StatusForbidden, CodeForbidden, "batch approval requires the local operator on the daemon's own socket and the operator passphrase")
+		return
+	}
+	var req CatalogApproveBatchRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	batch, ok := s.CatalogApply.(interface {
+		ApproveBatch(catalogapply.BatchApprovalRequest) ([]catalogapply.ApprovalResult, error)
+	})
+	if !ok {
+		writeError(w, http.StatusNotImplemented, CodeInternalError, "batch approval unavailable")
+		return
+	}
+	results, err := batch.ApproveBatch(catalogapply.BatchApprovalRequest{Plans: req.Plans, Passphrase: req.Passphrase,
+		AckPrivileged: req.AckPrivileged, AllowRunning: req.AllowRunning})
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, CatalogApproveBatchResponse{Results: results})
+	case errors.Is(err, catalogapply.ErrBadPassphrase), errors.Is(err, catalogapply.ErrNoPassphrase), errors.Is(err, catalogapply.ErrLockedOut):
+		writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
+	default:
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+	}
 }

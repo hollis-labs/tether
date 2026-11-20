@@ -1710,10 +1710,15 @@ touches the read-only catalog mount. Approval is a separate act by the operator.
    daemon defaults) and the running sessions that use the touched definitions. A
    session cannot plan a change to its own agent or launch.
 2. The operator runs `tether catalog show <plan_id>` and `tether catalog approve
-   <plan_id>` at a terminal and types the digest prefix and the approval
-   passphrase (`tether catalog approver set`, once). There is no MCP tool for
-   this step, and the daemon refuses an approval from any session, remote or
-   device principal.
+   <plan_id> [<plan_id>...]` at a terminal. The CLI prints the plan summary,
+   expiry and remaining time, then a confirmation token on its own line. For
+   several plans, one combined fingerprint covers the sorted plan digests;
+   confirm it once, then enter the approval passphrase once
+   (`tether catalog approver set`, once to configure it). Existing
+   `--ack-privileged` and `--allow-running` checks still apply. There is no MCP
+   approval tool, and the daemon refuses operator approval from a session,
+   remote or device principal. Batch results report each plan separately;
+   successful plans can be applied even when another plan fails approval.
 3. `tether_catalog_apply` — installs an approved, unexpired plan whose files still
    match what was reviewed: backs up the whole catalog, installs file by file,
    restores the touched files on any failure or if the catalog no longer
@@ -1743,6 +1748,33 @@ Review a catalog change without applying it.
 | `files` | array | — | Objects `{path, content}` or `{path, delete: true}`. |
 | `rollback_of` | string | — | Backup id to restore instead of sending files. |
 | `task_id` | string | — | Torque task id, for the audit trail. |
+
+Plans default to a **15-minute** lifetime. `TETHER_CATALOG_PLAN_TTL` accepts Go
+durations from `1m` through `168h` (7 days), for example `4h` or `168h`; `7d` is
+not Go duration syntax. An unset value keeps the default. Invalid values or
+values outside that range fall back to 15 minutes and emit a warning. Configure
+this in the daemon environment, not the MCP client environment.
+
+Planned bundles are persisted in `catalog-plans.json` beside the configured
+state database, with mode `0600`. Plan responses and `tether_catalog_plan_get`
+expose `expires_at`, `ttl_seconds` and `survives_restart`. Rollback records store
+backup references instead of copying backup contents; reload requires the same
+backup bytes and live base, so secret literals are not duplicated into records. Reload checks the stored bundle,
+digest and base hashes against the live catalog and revalidates the candidate;
+changed or invalid records cannot become approved. **Approval is never restored
+from disk.** A surviving plan needs approval in the current process before apply;
+it does not need to be planned again just because the daemon restarted. Approving
+a plan removes its planned record and sets `survives_restart` to false; an
+approved plan that was not applied before restart must be planned and approved
+again. Approval fields added to a snapshot cannot grant approval.
+
+An expired plan cannot be approved or applied. For up to one hour after expiry,
+call `tether_catalog_plan` again with the **same bundle** to re-arm the same plan
+id and digest if the live base still matches. For invalid plans, fix the reported
+validation problem and call `tether_catalog_plan` with the corrected bundle.
+Plans beyond the grace period or rejected during reload must be planned again.
+The existing 64-plan bound still applies. Persistence does not extend expiry or
+bypass the live-base and digest checks at approval and apply.
 
 #### `tether_catalog_validate`
 Validate the catalog and return structured findings, failures first: `{ok, failures, warnings, results[{name, status, message, remedy, entity}]}`. With no `files` it checks the **live** catalog; with `files` it checks the catalog as it would be with that draft applied, on a scratch copy. Nothing is stored or written. It runs the catalog-structural subset of `tether doctor` (`internal/catalogcheck`): the layered load and parse, MCP grants against the declared servers, references between agents, launches, projects and providers, sandbox profiles, MCP discovery modes, profiles, server names and credential files. It reads files only: no daemon, database or upstream is contacted, so host checks (daemon reachable, migrations, provider binaries) stay in `tether doctor`. Read-only; no scope required.

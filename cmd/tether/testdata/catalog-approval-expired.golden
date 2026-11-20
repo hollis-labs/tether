@@ -1,0 +1,8 @@
+plan cp_one  "one"  state=planned
+expires 2026-11-20T11:59:00Z (remaining expired; ttl 3600s); survives restart: true
+digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  create    agents/one.yaml
+validation: ok on a scratch copy
+
++ reviewed file
+ERROR: plan cp_one expired; re-plan: call tether_catalog_plan with name="one" and the original files bundle
