@@ -1,0 +1,4 @@
+# Grant-only origin: the standalone mcp-gateway owns its tools and health.
+id: shared-services
+served_by: external
+tags: [shared-services]
