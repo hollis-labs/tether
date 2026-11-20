@@ -83,7 +83,7 @@ func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messag
 		return true
 	}
 	// A principal that owns one form of an aliased address may send as the others.
-	if p.MayActAs(canonicalAddress(env.From)) || s.ownsAliasOf(r.Context(), p, canonicalAddress(env.From)) {
+	if p.MayActAs(canonicalAddress(env.From)) || (!identity.ServiceEventsRequest(r.Context()) && s.ownsAliasOf(r.Context(), p, canonicalAddress(env.From))) {
 		mark("verified")
 		return true
 	}

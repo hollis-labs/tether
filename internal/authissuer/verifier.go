@@ -3,6 +3,8 @@ package authissuer
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -79,11 +81,24 @@ func (v *Verifier) Verify(ctx context.Context, token string) (identity.Principal
 	default:
 		return identity.Principal{}, err
 	}
+	// Only inspect additional claims after the complete JWT has been verified.
+	// go-auth does not currently expose the additive addresses claim.
+	addresses := []string{p.ID}
+	if p.Kind == KindService {
+		var claims struct {
+			Addresses []string `json:"addresses"`
+		}
+		payload, decodeErr := base64.RawURLEncoding.DecodeString(strings.Split(token, ".")[1])
+		if decodeErr != nil || json.Unmarshal(payload, &claims) != nil {
+			return identity.Principal{}, identity.ErrInvalidToken
+		}
+		addresses = append(addresses, claims.Addresses...)
+	}
 	exp := p.ExpiresAt
 	display := p.Display
 	if display == "" {
 		display = "Issued token for " + p.ID
 	}
 	return identity.Principal{Verified: true, ID: p.ID, Kind: p.Kind, Display: display, Scopes: append([]string(nil), p.Scopes...),
-		SessionID: p.SessionID, Issuer: v.Issuer, Audience: p.Audience, TokenID: p.TokenID, Parent: p.Parent, ExpiresAt: &exp, Addresses: []string{p.ID}}, nil
+		SessionID: p.SessionID, Issuer: v.Issuer, Audience: p.Audience, TokenID: p.TokenID, Parent: p.Parent, ExpiresAt: &exp, Addresses: addresses}, nil
 }

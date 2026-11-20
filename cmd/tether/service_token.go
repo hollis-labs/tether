@@ -61,6 +61,7 @@ func newServiceTokenCommand(factory deviceAdminFactory) *cobra.Command {
 	issue.Flags().StringVar(&req.Env, "env", "", "environment segment of the principal (default dev)")
 	issue.Flags().StringVar(&req.Audience, "audience", "tether", "the app that verifies the token (tether for Tether's own API)")
 	issue.Flags().StringSliceVar(&req.Scopes, "scope", nil, "scope, <audience>.<verb> (for tether: events, read, messages); repeatable")
+	issue.Flags().StringSliceVar(&req.Addresses, "address", nil, "registered active agent URN to bind; repeatable (at most 16)")
 	issue.Flags().StringVar(&req.Label, "label", "", "short label shown in listings")
 	issue.Flags().BoolVar(&req.AllowWildcard, "allow-wildcard", false, "dev only: allow <audience>.*")
 	issue.Flags().StringVar(&outFile, "out-file", "", "write the token to this new 0600 file instead of stdout")

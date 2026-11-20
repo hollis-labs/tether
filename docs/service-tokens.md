@@ -36,7 +36,7 @@ tether service-token list [--json]           # metadata only, never a token
 ```
 
 HTTP: `POST /auth/service-tokens` (body `app`, `env`, `audience`, `scopes`,
-`label`, `allow_wildcard`) and `GET /auth/service-tokens`. Both are local-only:
+`label`, `allow_wildcard`, optional `addresses`) and `GET /auth/service-tokens`. Both are local-only:
 a remote caller, a device, a service, an agent or an operator-minted narrow token
 is refused. The issuer logs ids and scopes, never the token. Its metadata (jti,
 principal, audience, scopes, label, issuer, times; never the token) is kept in the
@@ -173,29 +173,64 @@ launches agents (Torque) does not need the operator to hand-issue each token.
 
 ## Reaching the hub from another host (remote listener)
 
-The hub's remote listener (behind Tailscale Serve, the URL the workers already
-use) accepts a service token on a **closed list of three exact routes**, so a
-service on agent-os or worker-1 needs no device pairing:
+The hub API (for example `https://tether.hub.example.com`, distinct from the
+web UI) accepts service JWTs on this closed route list. The existing network
+configuration is sufficient; issuing a bound token requires no pairing or mode change:
 
 | Route | Scope | Use |
 |---|---|---|
 | `POST /events` | `tether.events` | publish events |
 | `POST /messages` | `tether.messages` | send mail (stored, no wake) |
 | `POST /messages/notify` | `tether.messages` | send mail and wake the recipient |
+| `POST /messages/post` | `tether.messages` | typed mail; sender and attention/awaiting semantics derived by the server |
+| `GET /messages/list` | `tether.read` | list only an explicitly bound mailbox |
+| `POST /messages/{id}/read` | `tether.messages` | mark mail addressed to an explicitly bound mailbox read |
 
 A scope opens only its own routes: `tether.messages` does not publish events and
-`tether.events` does not send mail. `tether.messages` is send-only here: no mailbox
-read, inbox, consume or session route accepts a service token. The sender is
-stamped as the token's own principal (`msg://service/<app>/<env>`); a `from` naming
-any other address is refused under enforce. Unlike `POST /events`, the two mail
-routes need the `Tether-Protocol: 1` header like every other remote route. Paired
-worker devices keep working on the same routes.
+`tether.events` does not send mail. Inbox pull, archive, consume, individual
+message fetch and session routes remain unavailable to service JWTs. Except for
+`POST /events`, these routes require `Tether-Protocol: 1`.
+
+An operator can bind up to 16 registered, active agent URNs at issuance. Invalid,
+unregistered, inactive, merged or non-agent addresses return 400. The signed JWT
+and service metadata retain the bindings; key reissue preserves and revalidates
+them. Existing tokens without `addresses` retain their own service sender and
+cannot read agent mailboxes. Bindings last until token expiry/revocation; changing
+a registry row does not revoke an existing token.
+
+```sh
+# Run on the hub's local operator socket; this creates a new 0600 file.
+tether service-token issue --app surface --scope messages,read \
+  --address msg://agent/agent-mux/agt_wont4plvgw --out-file /path/to/surface.token
+```
+
+Untyped mail may supply a bound `from` and receives `from_verification=verified`.
+Other agent senders are marked unverified in observe mode or refused 403 in
+enforce mode. Typed mail omits `from` and uses the first bound agent address;
+its normal handle validation, attention and awaiting derivation still apply.
+Send routes accept no query, including typed `?as=`. No `message.send_as` scope
+is granted.
+
+Mailbox requests require `as=<bound URN>`; list also requires `to` equal to `as`.
+URL-encode the URN query values. A list may additionally use `kind`, `thread_id`,
+`include_archived`, `unread_only`, `limit`, `offset`. Mark-read accepts only `as`.
+Every key must occur exactly once; unknown keys, malformed query encodings and
+unequal list selectors are rejected. Mailbox access is always restricted, even
+in observe mode: aliases and logical seat names do not expand the bound set,
+and the underlying stored recipient must match the literal binding. A bound
+selector cannot mark a different recipient's message read (409).
+
+Example URL shapes (send the bearer privately, never in the URL):
+`POST https://tether.hub.example.com/messages/post`,
+`GET https://tether.hub.example.com/messages/list?to=<encoded-URN>&as=<encoded-URN>`,
+`POST https://tether.hub.example.com/messages/<id>/read?as=<encoded-URN>`.
 
 How it is checked, in this order, all required:
 
-1. The request is exactly one of the three routes above: no query string (not even a bare `?`),
-   no trailing slash, no subpath, no other case, no encoded or doubled slash, no
-   other method. Anything else, with the same token, is refused 401 as before.
+1. The request exactly matches a listed method and path; queries are permitted
+   only on the two mailbox routes as documented above. No bare `?`, trailing
+   slash, extra subpath, changed case, encoded path or doubled slash is accepted.
+   Anything else, with the same token, is refused 401 as before.
 2. The bearer is a three-part JWT (a `tth_` device credential never takes this
    path, and a JWT never takes the device path).
 3. The token verifies like it does for any external app: Ed25519 signature
@@ -204,7 +239,7 @@ How it is checked, in this order, all required:
 4. `kind` is `service`, the principal is `msg://service/<app>/<env>`, a `jti` is
    present, and that `jti` is a **live record of IssueService** (not revoked, not
    expired): a token the issuer minted any other way is not accepted here.
-5. The route's scope (`tether.events` or `tether.messages`) is granted (else 403 `scope_required`).
+5. The route's scope (`tether.events`, `tether.messages` or `tether.read`) is granted (else 403 `scope_required`).
 
 Then the ingest rules apply: the service is bound to its app (an event naming
 another app is 403 `app_mismatch`), the actor is the service principal, and the

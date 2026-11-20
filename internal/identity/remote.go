@@ -52,8 +52,8 @@ func remoteMiddleware(verifier Verifier, record func(context.Context, Observatio
 			next.ServeHTTP(w, r)
 			return
 		}
-		// The one route a service JWT may use remotely: exactly POST /events.
-		// Any other request, including every variant of this one, never enters.
+		// Only the closed service-JWT route list may enter this path.
+		// Noncanonical URL variants never enter.
 		if cfg.service != nil {
 			if token, ok := serviceJWTRequest(r); ok {
 				cfg.service.handle(w, r, token, record, next)

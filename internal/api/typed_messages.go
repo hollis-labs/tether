@@ -247,6 +247,10 @@ func (s *Server) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 	from := canonicalAddress(stub.From)
 	e.Normalize()
 	e.From = s.handleFor(ctx, from)
+	if identity.ServiceEventsRequest(ctx) {
+		// A mutable mailbox alias cannot rename the authenticated service sender.
+		e.From = s.handleForAddress(ctx, from)
+	}
 	if e.From == "" {
 		e.From = from
 	}
@@ -826,6 +830,14 @@ func (s *Server) seatAddressOfPrincipal(r *http.Request) (messaging.Address, boo
 	p, ok := verifiedPrincipal(r)
 	if !ok {
 		return messaging.Address{}, false
+	}
+	if p.Kind == "service" && identity.ServiceEventsRequest(r.Context()) {
+		for _, a := range p.Addresses {
+			if strings.HasPrefix(a, "msg://agent/") {
+				addr, err := messaging.ParseURN(a)
+				return addr, err == nil
+			}
+		}
 	}
 	candidates := append([]string{p.DefaultAddress()}, p.Addresses...)
 	for _, a := range candidates {

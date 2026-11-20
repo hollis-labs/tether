@@ -15,6 +15,28 @@ for the additive protocol contract and role/module selection.
 Over UDS, clients address the daemon with the `http://unix/<path>` convention;
 the path component of the URL carries the API route.
 
+## Agent-bound service mail (CW-20261118-0017)
+
+Local operator `POST /auth/service-tokens` accepts optional `addresses` (up to
+16 registered, active agent URNs). Invalid, inactive or non-agent bindings return
+400. Bindings appear in the signed JWT and the returned `record.addresses`.
+
+The remote service JWT allowlist adds `POST /messages/post` (`tether.messages`),
+`GET /messages/list` (`tether.read`) and `POST /messages/{id}/read`
+(`tether.messages`). Mail routes require `Tether-Protocol: 1`. Typed posts derive
+the sender from the first binding and retain typed attention/awaiting semantics.
+Untyped sends verify explicit bound `from` values. Other senders follow the
+configured observe/enforce policy. Existing tokens keep their service sender.
+
+List requires equal `to` and `as` selectors naming a literal binding; mark-read
+requires `as` and a message actually addressed to that binding. This restriction
+always applies, including observe mode, without seat-name or alias expansion.
+Only list additionally accepts `kind`, `thread_id`, `include_archived`,
+`unread_only`, `limit`, `offset`. Unknown or repeated query keys are refused.
+Send routes (including typed post) accept no query. Exact-path and URL ambiguity
+protections remain enforced. Tokens without bindings cannot read agent mailboxes.
+See [service token issuance and remote URL examples](../service-tokens.md#reaching-the-hub-from-another-host-remote-listener).
+
 ## Common conventions
 
 - All request/response bodies are JSON unless noted (attach is
