@@ -105,6 +105,13 @@ func TestGatewayRunHandoffAndWorkerRefreshResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "gateway.token")
+	alias := dir + "/../" + filepath.Base(dir) + "/gateway.token"
+	if _, err := Resume(alias, func(context.Context) (Credential, error) {
+		t.Fatal("noncanonical path reached mint")
+		return Credential{}, nil
+	}); err == nil {
+		t.Fatal("noncanonical tmpfs alias accepted")
+	}
 	if err := tokenfile.Write(path, "previous-worker-lease"); err != nil {
 		t.Fatal(err)
 	}

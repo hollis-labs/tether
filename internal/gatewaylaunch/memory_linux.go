@@ -20,7 +20,7 @@ func memoryDir() (string, error) {
 
 func validateMemoryPath(path string) error {
 	dir := filepath.Dir(path)
-	if filepath.Base(path) != "gateway.token" || filepath.Dir(dir) != "/dev/shm" || !strings.HasPrefix(filepath.Base(dir), "tether-gateway-") {
+	if !filepath.IsAbs(path) || path != filepath.Clean(path) || filepath.Base(path) != "gateway.token" || filepath.Dir(dir) != "/dev/shm" || !strings.HasPrefix(filepath.Base(dir), "tether-gateway-") {
 		return errors.New("invalid gateway tmpfs path")
 	}
 	st, err := os.Lstat(dir)
