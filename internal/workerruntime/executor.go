@@ -335,6 +335,10 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 			return nil, gatewayErr
 		}
 		stopGateway = stop
+		if spec.Sandbox != nil {
+			profile := gatewaylaunch.ReadableProfile(*spec.Sandbox, path)
+			spec.Sandbox = &profile
+		}
 		spec.Env[gatewaylaunch.TokenFileEnv] = path
 	}
 	gatewayStarted := false

@@ -38,7 +38,9 @@ hub-owned session grant. Its device token and the issuer keys stay outside the
 session handoff.
 
 Gateway bearer files live in private 0700 directories under Linux `/dev/shm`,
-with 0600 files. Each lease refreshes halfway through its actual remaining
+with 0600 files. A narrowed filesystem sandbox receives a read-only mount of
+only its own credential directory, preserving visibility across atomic refresh.
+Existing deny rules and network restrictions still apply. Each lease refreshes halfway through its actual remaining
 lifetime. Failed refreshes retry without extending the old lease; expired files
 are removed. Session completion or failed preparation joins the refresh worker
 and removes the directory. A restarted worker can resume refresh from its saved

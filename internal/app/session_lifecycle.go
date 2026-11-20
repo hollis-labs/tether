@@ -576,6 +576,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			return nil, gatewayErr
 		}
 		stopGateway = stop
+		profile = gatewaylaunch.ReadableProfile(profile, path)
 		server := gatewaylaunch.Server(tetherCommandPath(), endpoint, path)
 		gatewayServer = &server
 	}
