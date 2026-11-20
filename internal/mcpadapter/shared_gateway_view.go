@@ -219,6 +219,13 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		full := fullSnapshot()
 		_, collisions, _ := upstreams.namingDiagnostics()
 		full.Collisions = append(full.Collisions, collisions...)
+		entries := []mcpgateway.Entry{}
+		for _, entry := range full.Entries {
+			if entry.Origin == "tether" || upstreams.includes(entry.Origin) {
+				entries = append(entries, entry)
+			}
+		}
+		full.Entries = entries
 		origins := []mcpgateway.OriginStatus{}
 		for _, origin := range full.Origins {
 			if origin.ID == "tether" || upstreams.includes(origin.ID) {

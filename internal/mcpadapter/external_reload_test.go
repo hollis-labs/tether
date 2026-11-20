@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
@@ -54,6 +55,11 @@ func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
 			if err := runtime.Start(context.Background()); err != nil {
 				t.Fatal(err)
 			}
+			if started {
+				if err := runtime.registry.Register("changing", nil, []*mcpsdk.Tool{makeTool("changing_probe")}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "reload-reader", Kind: "service"})
 			a, err := NewVerifiedAdapter(ctx, svc, nil)
 			if err != nil {
@@ -66,6 +72,9 @@ func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
 			defer view.Close()
 			if origins := view.Service.Snapshot().Origins; len(origins) != 1 {
 				t.Fatalf("initial origins: %+v", origins)
+			}
+			if started && len(view.Service.Snapshot().Entries) != 1 {
+				t.Fatal("initial inventory missing")
 			}
 			if started && parseToolJSON(t, callHandler(t, a.handleHealth, nil))["ok"] != false {
 				t.Fatal("failed internal origin must fail health")
@@ -82,6 +91,9 @@ func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
 			}
 			if origins := view.Service.Snapshot().Origins; len(origins) != 0 {
 				t.Fatalf("existing view retained external origin: %+v", origins)
+			}
+			if entries := view.Service.Snapshot().Entries; len(entries) != 0 {
+				t.Fatalf("existing view retained external inventory: %+v", entries)
 			}
 			if statuses := a.upstreams.StatusSummary(); len(statuses) != 0 {
 				t.Fatalf("external health status: %+v", statuses)
@@ -103,6 +115,9 @@ func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
 			}
 			if origins := view.Service.Snapshot().Origins; len(origins) != 1 {
 				t.Fatalf("existing view after return to built-in: %+v", origins)
+			}
+			if started && len(view.Service.Snapshot().Entries) != 1 {
+				t.Fatal("returning internal inventory missing")
 			}
 			if started && parseToolJSON(t, callHandler(t, a.handleHealth, nil))["ok"] != false {
 				t.Fatal("returning internal failure must affect health again")
