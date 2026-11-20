@@ -10,6 +10,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workerhub"
 	"github.com/hollis-labs/tether/internal/workerwire"
@@ -251,6 +252,13 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
 		return nil, fmt.Errorf("extract_refs requires a worker session credential")
 	}
+	supported := s.Workers != nil && s.Workers.Supports(row.WorkerID, workerwire.FeatureExecutionRunToken)
+	runEnv, err := s.mintRunEnvironmentFor(ctx, row, supported)
+	if err != nil {
+		undoIdentity()
+		return nil, fmt.Errorf("mint run context: %w", err)
+	}
+	spec.Env = runtoken.SealMap(spec.Env, runEnv)
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		undoIdentity()

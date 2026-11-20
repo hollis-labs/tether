@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/tether/internal/devicepair"
 	"github.com/hollis-labs/tether/internal/environment/report"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/workerwire"
 	"log"
@@ -318,7 +319,7 @@ func (w *Worker) connect(ctx context.Context, welcomed func()) error {
 	if w.Restore != nil {
 		restored = w.Restore()
 	}
-	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureCodexResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents, workerwire.FeatureStopGate}, Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts, Restore: restored}); err != nil {
+	if err = w.Send(workerwire.Frame{T: "hello", Proto: 1, Features: workerFeatures(runtoken.HandoffSupported()), Bindings: bindings, Worker: &workerwire.Worker{Label: w.Config.Label, Version: w.Version, Platform: runtime.GOOS, Arch: runtime.GOARCH}, Caps: w.capabilities(ctx), Sessions: inventory, Hosts: hosts, Restore: restored}); err != nil {
 		return err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(45 * time.Second))
@@ -428,4 +429,12 @@ func (w *Worker) Request(ctx context.Context, f workerwire.Frame) (workerwire.Fr
 	case <-ctx.Done():
 		return workerwire.Frame{}, ctx.Err()
 	}
+}
+
+func workerFeatures(handoff bool) []string {
+	features := []string{"bind", "deliver", workerwire.FeatureActivity, workerwire.FeatureSessionCred, workerwire.FeatureExtractRefs, workerwire.FeatureEditableAgents, workerwire.FeatureAgentToken, workerwire.FeatureWorkerResume, workerwire.FeatureCodexResume, workerwire.FeatureProviderProcess, workerwire.FeatureAgentEvents, workerwire.FeatureStopGate}
+	if handoff {
+		features = append(features, workerwire.FeatureExecutionRunToken)
+	}
+	return features
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -40,6 +41,7 @@ type AdmissionPrincipal struct {
 // AdmissionResponse is the versioned, secret-free contract with the standalone
 // gateway. Every operation must obtain it afresh; Fingerprint is not a grant.
 type AdmissionResponse struct {
+	Run               *runtoken.Claims              `json:"run,omitempty"`
 	SchemaVersion     int                           `json:"schema_version"`
 	Principal         AdmissionPrincipal            `json:"principal"`
 	Policy            mcpgateway.SessionPolicy      `json:"policy"`
@@ -174,6 +176,11 @@ func (h *Handler) serveAdmission(w http.ResponseWriter, r *http.Request) {
 		transportError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	s.runToken, err = runtoken.FromHeader(r.Header)
+	if err != nil {
+		transportError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	a, err := h.admit(ctx, parts[1], s)
 	if err != nil {
 		admissionError(w, err)
@@ -193,6 +200,9 @@ func (h *Handler) serveAdmission(w http.ResponseWriter, r *http.Request) {
 		Principal: AdmissionPrincipal{Verified: p.Verified, ID: p.ID, Kind: p.Kind, Scopes: append([]string{}, p.Scopes...), SessionID: p.SessionID, ExpiresAt: p.ExpiresAt},
 		Policy:    a.caller.Policy, MachineAccess: access, Profile: a.options.Profile,
 		AuthorityProfiles: a.options.AuthorityProfiles, Selection: selection, Fingerprint: a.fingerprint,
+	}
+	if a.run.RunID != "" {
+		response.Run = &a.run
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)

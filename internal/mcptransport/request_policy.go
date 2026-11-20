@@ -17,6 +17,7 @@ import (
 )
 
 type selectors struct {
+	runToken        string // retained in memory only; never part of exported selectors
 	profiles, modes []mcpgateway.Selector
 }
 
