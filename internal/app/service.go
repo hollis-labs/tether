@@ -521,9 +521,13 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 // sweeps them all; survivors happen when the daemon ran outside a unit that
 // kills its children (`tether daemon start`, launchd).
 func (s *Service) ReconcileStaleState() {
-	now := time.Now().UTC().Format(time.RFC3339)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	s.reconcileStaleStateContext(ctx)
+}
+
+func (s *Service) reconcileStaleStateContext(ctx context.Context) {
+	now := time.Now().UTC().Format(time.RFC3339)
 	if err := s.reconcileRecordedExits(ctx); err != nil {
 		log.Printf("store: reconcile recorded exits: %v", err)
 	}

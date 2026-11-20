@@ -334,3 +334,30 @@ func capTeamMaxDuration(plan *launch.Plan, d time.Duration) {
 	merged := launchprofile.MergeLifecycle(plan.Lifecycle, &launchprofile.LifecyclePolicy{MaxDuration: &v})
 	plan.Lifecycle = merged
 }
+
+// TeamSessionRecoveryReady confirms a local observed end without issuing Stop.
+// A live execution, launch admission, remote placement or retained shim keeps
+// its own authority even when a stale row claims to be terminal.
+func (s *Service) TeamSessionRecoveryReady(ctx context.Context, id string) (bool, error) {
+	s.launchMu.Lock()
+	defer s.launchMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if gate := s.launches[id]; gate != nil && gate.refs > 0 {
+		return false, nil
+	}
+	row, err := s.Store.GetSession(id)
+	if err != nil {
+		return false, err
+	}
+	if row.WorkerID != "" || row.PID.Int64 != 0 || !session.State(row.State).Terminal() || s.sessionHeldLive(id, "") {
+		return false, nil
+	}
+	if _, err = s.Store.SessionShim(ctx, id); err == nil {
+		return false, nil
+	} else if !errors.Is(err, store.ErrSessionShimNotFound) {
+		return false, err
+	}
+	return true, nil
+}

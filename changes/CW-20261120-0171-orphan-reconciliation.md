@@ -1,2 +1,3 @@
 - CW-20261120-0171: Reconcile running sessions with durable recorded exits at startup and periodically within the shared reaper budget without rewriting their outcomes or treating absent local handles as remote exit evidence; stop succeeds repeatedly after exit.
 - CW-20261120-0171: Recover stale team run status after routing and all members completed teardown, preserve retained results, and let retained owners/admins repeat dissolve after restart, including missing current rosters backed by terminal snapshots.
+- CW-20261120-0171: Finish interrupted team teardown only after verifying acquisition ownership, session outcomes and keyed cleanup receipts; retain recorded session outcomes when startup repair fails or exhausts its budget.

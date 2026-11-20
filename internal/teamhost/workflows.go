@@ -120,10 +120,37 @@ func (h *Host) MarkDissolved(ctx context.Context, runID string) error {
 
 // ReconcileDissolvedRun uses the store's atomic teardown proof.
 func (h *Host) ReconcileDissolvedRun(ctx context.Context, id string) (bool, error) {
-	return h.store.ReconcileDissolvedRun(ctx, id)
+	settled, err := h.store.ReconcileDissolvedRun(ctx, id)
+	if err != nil || settled {
+		return settled, err
+	}
+	return h.recoverInterruptedDissolution(ctx, id)
 }
 
 // ReconcileDissolvedRuns repairs persisted runs after an interrupted teardown.
 func (h *Host) ReconcileDissolvedRuns(ctx context.Context, limit int) error {
-	return h.store.ReconcileDissolvedRuns(ctx, limit)
+	if limit < 1 {
+		limit = 50
+	}
+	if limit > 1024 {
+		limit = 1024
+	}
+	if err := h.store.ReconcileDissolvedRuns(ctx, limit); err != nil {
+		return err
+	}
+	ids, err := h.interruptedDissolutionPage(ctx, limit)
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(failures, err)...)
+		}
+		_, err := h.ReconcileDissolvedRun(ctx, id)
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }

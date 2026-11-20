@@ -12,47 +12,58 @@ import (
 // liveness from the hub's Manager. Serialize with launch admission and recheck
 // the durable snapshot at commit; a runtime or pending launch always wins.
 func (s *Service) reconcileRecordedExit(ctx context.Context, id string) (bool, error) {
-	s.launchMu.Lock()
-	defer s.launchMu.Unlock()
-	if gate := s.launches[id]; gate != nil && gate.refs > 0 {
-		return false, nil
+	var reconciled *store.SessionRow
+	changed, err := func() (bool, error) {
+		s.launchMu.Lock()
+		defer s.launchMu.Unlock()
+		if gate := s.launches[id]; gate != nil && gate.refs > 0 {
+			return false, nil
+		}
+		row, err := s.Store.GetSession(id)
+		if err != nil {
+			return false, err
+		}
+		terminal := session.State(row.State).Terminal()
+		if !terminal && (row.State != "running" || row.PID.Int64 != 0 || !row.EndedAt.Valid || row.EndedAt.String == "" || !row.ExitCode.Valid) {
+			return false, nil
+		}
+		// A retained shim has its own identity-checked recovery and stop
+		// authority, including its existing terminal-stop return contract.
+		if _, err := s.Store.SessionShim(ctx, id); err == nil {
+			return false, nil
+		} else if !errors.Is(err, store.ErrSessionShimNotFound) {
+			return false, err
+		}
+		if terminal {
+			// A failed launch acknowledgement can coexist with a live worker.
+			// Preserve explicit stop routing when that worker still holds it.
+			return row.WorkerID == "" || !s.sessionHeldLive(id, row.WorkerID), nil
+		}
+		if s.sessionHeldLive(id, row.WorkerID) {
+			return false, nil
+		}
+		changed, err := s.Store.ReconcileRecordedExit(ctx, *row)
+		if err != nil || !changed {
+			return false, err
+		}
+		reconciled = row
+		// These cleanups are fenced with launch admission so a new binding or
+		// credential for the same session cannot be revoked after a resume.
+		s.releaseWorkerIdentity(id)
+		if s.Registry != nil {
+			_, err = s.Registry.RevokeSessionBindings(ctx, id)
+		}
+		return true, err
+	}()
+	if reconciled == nil {
+		return changed, err
 	}
-	row, err := s.Store.GetSession(id)
-	if err != nil {
-		return false, err
-	}
-	terminal := session.State(row.State).Terminal()
-	if !terminal && (row.State != "running" || row.PID.Int64 != 0 || !row.EndedAt.Valid || row.EndedAt.String == "" || !row.ExitCode.Valid) {
-		return false, nil
-	}
-	// A retained shim has its own identity-checked recovery and stop
-	// authority, including its existing terminal-stop return contract.
-	if _, err := s.Store.SessionShim(ctx, id); err == nil {
-		return false, nil
-	} else if !errors.Is(err, store.ErrSessionShimNotFound) {
-		return false, err
-	}
-	if terminal {
-		// A failed launch acknowledgement can coexist with a live worker.
-		// Preserve explicit stop routing when that worker still holds it.
-		return row.WorkerID == "" || !s.sessionHeldLive(id, row.WorkerID), nil
-	}
-	if s.sessionHeldLive(id, row.WorkerID) {
-		return false, nil
-	}
-	changed, err := s.Store.ReconcileRecordedExit(ctx, *row)
-	if err != nil || !changed {
-		return false, err
-	}
+	row := reconciled
 	to := string(session.StateFailed)
 	if row.ExitCode.Int64 == 0 {
 		to = string(session.StateCompleted)
 	}
 	s.publishSessionStateChange(store.SessionStateChange{SessionID: id, LogicalAgentID: row.LogicalAgentID, From: row.State, To: to, Reason: "recorded_exit_reconciled"})
-	s.releaseWorkerIdentity(id)
-	if s.Registry != nil {
-		_, err = s.Registry.RevokeSessionBindings(ctx, id)
-	}
 	return true, err
 }
 

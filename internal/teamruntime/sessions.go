@@ -197,7 +197,21 @@ func (s *Sessions) cleanup(ctx context.Context, key string) error {
 	if record == nil {
 		return s.cleaned(ctx, "session", key)
 	}
-	if err = s.service.StopTeamSession(ctx, record.SessionID); err != nil {
+	if teamhost.DissolutionRecovery(ctx) {
+		ready, ok := s.service.(interface {
+			TeamSessionRecoveryReady(context.Context, string) (bool, error)
+		})
+		if !ok {
+			return teamhost.ErrSessionUnavailable
+		}
+		ended, err := ready.TeamSessionRecoveryReady(ctx, record.SessionID)
+		if err != nil {
+			return err
+		}
+		if !ended {
+			return teamhost.ErrSessionUnavailable
+		}
+	} else if err = s.service.StopTeamSession(ctx, record.SessionID); err != nil {
 		return err
 	}
 	return s.cleaned(ctx, "session", key)
@@ -208,4 +222,17 @@ func classifySession(err error) error {
 		return fmt.Errorf("%w: %w: %w", teams.ErrProvisionFailed, teamhost.ErrPermanent, err)
 	}
 	return err
+}
+
+// CanRecoverStop is an observation only. The host independently verifies the
+// keyed acquisition receipts before invoking cleanup, and storage rechecks the
+// terminal outcome and completed receipts at the final commit.
+func (s *Sessions) CanRecoverStop(ctx context.Context, m teams.Member) (bool, error) {
+	ready, ok := s.service.(interface {
+		TeamSessionRecoveryReady(context.Context, string) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return ready.TeamSessionRecoveryReady(ctx, m.SessionID)
 }

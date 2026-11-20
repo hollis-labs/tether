@@ -234,3 +234,117 @@ func TestRecordedExitStartupWalksPages(t *testing.T) {
 		t.Fatalf("settled=%d", settled)
 	}
 }
+
+func TestRecordedExitStartupFailurePreservesObservedOutcome(t *testing.T) {
+	for _, failure := range []string{"write-error", "expired-budget"} {
+		t.Run(failure, func(t *testing.T) {
+			svc := stopHarness(t)
+			recordedExitFixture(t, svc, "recorded", "", 1)
+			ctx := context.Background()
+			if failure == "write-error" {
+				if _, err := svc.Store.DB().Exec(`CREATE TRIGGER refuse_recorded_exit BEFORE UPDATE OF state ON sessions WHEN NEW.id='recorded' AND NEW.state='failed' AND NEW.exit_code=1 BEGIN SELECT RAISE(ABORT,'injected repair failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+				cancel()
+				ctx = expired
+			}
+			svc.reconcileStaleStateContext(ctx)
+			row, err := svc.Store.GetSession("recorded")
+			if err != nil || row.State != "running" || row.ExitCode.Int64 != 1 || row.EndedAt.String != "2026-11-19T00:00:00Z" {
+				t.Fatalf("recorded outcome overwritten: %+v %v", row, err)
+			}
+			if failure == "write-error" {
+				if _, err := svc.Store.DB().Exec(`DROP TRIGGER refuse_recorded_exit`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			svc.ReconcileStaleState()
+			row, err = svc.Store.GetSession("recorded")
+			if err != nil || row.State != "failed" || row.ExitCode.Int64 != 1 || row.EndedAt.String != "2026-11-19T00:00:00Z" {
+				t.Fatalf("repair did not remain retryable: %+v %v", row, err)
+			}
+		})
+	}
+}
+
+func TestRecordedExitCancelledConcurrentSweeps(t *testing.T) {
+	svc := stopHarness(t)
+	for i := 0; i < 70; i++ {
+		recordedExitFixture(t, svc, fmt.Sprintf("canceled-%03d", i), "", 1)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { done <- svc.SweepSessionReaper(ctx, time.Now()) }()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation hidden: %v", err)
+		}
+	}
+	var running int
+	if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM sessions WHERE state='running'`).Scan(&running); err != nil {
+		t.Fatal(err)
+	}
+	if running != 70 {
+		t.Fatalf("canceled sweep changed %d rows", 70-running)
+	}
+	// Concurrent successful passes serialize and share the same cursor/budget.
+	for i := 0; i < 2; i++ {
+		go func() { done <- svc.SweepSessionReaper(context.Background(), time.Now()) }()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM sessions WHERE state='failed'`).Scan(&running); err != nil {
+		t.Fatal(err)
+	}
+	if running != 64 {
+		t.Fatalf("two bounded sweeps settled=%d", running)
+	}
+}
+
+func TestTeamSessionRecoveryReadyGuards(t *testing.T) {
+	svc := stopHarness(t)
+	for _, id := range []string{"ended-ready", "pending-ready", "remote-ready", "pid-ready"} {
+		worker := ""
+		if id == "remote-ready" {
+			worker = "worker"
+		}
+		recordedExitFixture(t, svc, id, worker, 1)
+		if _, err := svc.reconcileRecordedExit(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE sessions SET pid=123456 WHERE id='pid-ready'`); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := svc.lockSessionLaunch(context.Background(), "pending-ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	rt, err := stub.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startSession(t, svc, "live-ready", rt)
+	if err = svc.Store.UpdateSessionState("live-ready", "failed", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = svc.Store.UpdateSessionState("live-ready", "running", 0, nil)
+		_ = svc.StopSession("live-ready")
+	})
+	for _, id := range []string{"ended-ready", "pending-ready", "remote-ready", "pid-ready", "live-ready"} {
+		ready, err := svc.TeamSessionRecoveryReady(context.Background(), id)
+		if err != nil || ready != (id == "ended-ready") {
+			t.Fatalf("%s ready=%v err=%v", id, ready, err)
+		}
+	}
+}
