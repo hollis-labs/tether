@@ -147,3 +147,27 @@ func TestNewFederatedMessageStore_ListMarkReadStayLocalEvenWhenFederated(t *test
 		t.Fatalf("mark read: %v", err)
 	}
 }
+
+// Production serves messages through this wrapper; recipient delivery evidence
+// must reach the same local store as watch/list/get.
+func TestFederatedStoreForwardsDeliveryEvidence(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "delivery.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	local := db.MessagingStore()
+	to := gomsg.Address{Kind: gomsg.KindAgent, Authority: "test", ID: "recipient"}
+	env, err := local.Send(context.Background(), gomsg.Envelope{Kind: gomsg.MsgKindNotice, From: to, To: to})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := &federatedMessageStore{InboxStore: local}
+	if err := wrapped.MarkDelivered(context.Background(), env.ID, to, "list", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := local.Get(context.Background(), env.ID)
+	if err != nil || got.DeliveredAt == nil {
+		t.Fatalf("delivery=%v err=%v", got.DeliveredAt, err)
+	}
+}

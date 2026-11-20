@@ -12,6 +12,7 @@ import (
 	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -32,7 +33,16 @@ func TestInbox_ConsumesOnlyForTheRecipientsOwnSession(t *testing.T) {
 		},
 		runtimeHealthOK: map[string]bool{"s-worker": true, "s-other": true},
 	}
-	srv := httptest.NewServer(NewHandler(Deps{Service: svc, MessageStore: db.MessagingStore()}))
+	h := NewHandler(Deps{Service: svc, MessageStore: db.MessagingStore()})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The recipient session owns both its session and actor addresses. Operator
+		// inspection retains permission to inspect, but conveys no recipient handoff.
+		p := identity.Principal{Verified: true, Kind: "operator", ID: identity.OperatorID, Scopes: []string{"*"}}
+		if r.URL.Query().Get("as_session") == "s-worker" {
+			p = identity.Principal{Verified: true, Kind: "session", ID: "msg://session/test/s-worker", SessionID: "s-worker", Addresses: []string{"msg://agent/test/worker"}}
+		}
+		h.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), p)))
+	}))
 	t.Cleanup(srv.Close)
 
 	actor := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
@@ -54,15 +64,16 @@ func TestInbox_ConsumesOnlyForTheRecipientsOwnSession(t *testing.T) {
 			ctx := context.Background()
 			ms := db.MessagingStore()
 			sent, err := ms.Send(ctx, messaging.Envelope{
-				Kind: messaging.MsgKindNotice,
-				From: messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"},
-				To:   tc.to,
+				Kind:     messaging.MsgKindNotice,
+				ThreadID: tc.name,
+				From:     messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"},
+				To:       tc.to,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			q := url.Values{"to": {tc.to.URN()}, "as": {tc.to.URN()}}
+			q := url.Values{"to": {tc.to.URN()}, "as": {tc.to.URN()}, "thread_id": {tc.name}}
 			if tc.asSession != "" {
 				q.Set("as_session", tc.asSession)
 			}

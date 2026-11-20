@@ -773,12 +773,14 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	if _, _, err := ds.Ack(ctx, delivery.AckRequest{Lease: lease, Stage: delivery.StageTurnSubmitted}); err != nil {
 		log.Printf("app: attempt wake: ack turn_submitted for delivery %s failed (best-effort receipt recording skipped): %v", deliveryID, err)
 	}
+	path := "wake_hub"
 	if strings.HasPrefix(sessionID, "outpost:") {
-		// A real adapter acknowledgement marks delivered, never read/consumed.
-		if _, err := st.DB().ExecContext(ctx, `UPDATE messages SET delivered_at=COALESCE(delivered_at,?) WHERE id=? AND to_urn=?`, time.Now().UTC().Format(time.RFC3339Nano), messageID, to.URN()); err != nil {
-			return api.WakeOutcome{Attempted: true, Delivered: true, SessionID: sessionID, Detail: "delivered timestamp: " + err.Error()}
-		}
+		path = "wake_outpost"
 	}
+	if err := st.MessagingStore().(store.DeliveryMarker).MarkDelivered(ctx, messageID, to, path, sessionID); err != nil {
+		return api.WakeOutcome{Attempted: true, Delivered: true, SessionID: sessionID, Detail: "delivered timestamp: " + err.Error()}
+	}
+
 	// Hold the lease, still at turn_submitted, for the recipient to consume
 	// -- see wakeConsumeWindow. Best-effort: on failure the lease lapses at
 	// wakeClaimLeaseDuration and the delivery is retried, as before.

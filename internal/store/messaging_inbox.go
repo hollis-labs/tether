@@ -1,8 +1,8 @@
 package store
 
 // messaging_inbox.go — non-destructive inbox semantics for the messages
-// table (CW-20260517-0003). The methods here never mutate delivered_at;
-// they implement repeatable listing, explicit read state, and soft-delete
+// table (CW-20260517-0003). These implement repeatable listing, explicit
+// read state (which also proves delivery), and soft-delete
 // archive. The atomic-delivery pull model (Inbox, in messaging_store.go)
 // stays intact for agent consumers — see ADR-0023 §4.
 
@@ -59,8 +59,8 @@ type ListPage struct {
 // InboxStore extends messaging.Store with non-destructive inbox semantics:
 // repeatable listing, explicit read state, and soft-delete archive. The
 // embedded messaging.Store keeps the atomic-delivery pull model (Inbox)
-// intact for agent consumers (ADR-0023 §4); the methods added here never
-// mutate delivered_at.
+// intact for agent consumers (ADR-0023 §4). An explicit read also implies
+// delivery when no earlier handoff was recorded.
 type InboxStore interface {
 	messaging.Store
 
@@ -71,7 +71,7 @@ type InboxStore interface {
 	// count of matching rows for pagination.
 	List(ctx context.Context, to messaging.Address, f ListFilter) (ListPage, error)
 
-	// MarkRead stamps read_at for (id, recipient). Idempotent: a second
+	// MarkRead stamps read_at and implies delivery for (id, recipient). Idempotent: a second
 	// call is a no-op. Returns messaging.ErrNotFound if the id is absent
 	// and ErrWrongRecipient if recipient is not the envelope's to_urn.
 	MarkRead(ctx context.Context, id string, recipient messaging.Address) error

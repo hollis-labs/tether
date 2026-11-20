@@ -206,6 +206,10 @@ func TestOutpostMailS2(t *testing.T) {
 	if err != nil || len(page.Messages) != 1 || page.Messages[0].DeliveredAt == nil || page.Messages[0].ReadAt != nil {
 		t.Fatalf("delivered/read %+v %v", page, err)
 	}
+	var deliveredEvents int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.message_id')=? AND json_extract(payload_json,'$.path')='wake_outpost' AND json_extract(payload_json,'$.session_id')=?`, env.ID, "outpost:"+r.ID).Scan(&deliveredEvents); err != nil || deliveredEvents != 1 {
+		t.Fatalf("outpost delivered events=%d err=%v", deliveredEvents, err)
+	}
 	agent, _ := messaging.ParseURN("msg://agent/else/denied")
 	denied := send(messaging.MsgKindRequest, agent)
 	_ = json.Unmarshal([]byte(denied.Metadata["tether.wake_outcome"]), &outcome)

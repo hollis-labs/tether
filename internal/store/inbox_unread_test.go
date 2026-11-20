@@ -36,6 +36,11 @@ func inboxFixture(t *testing.T) (*store.Store, string, string) {
 	if _, err := db.DB().Exec(`UPDATE messages SET read_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), read); err != nil {
 		t.Fatal(err)
 	}
+	// Explicitly reconstruct the historical skew: current read writes now imply
+	// delivery atomically, so an UPDATE of read_at alone cannot create this fixture.
+	if _, err := db.DB().Exec(`UPDATE messages SET delivered_at=NULL, delivery_path='' WHERE id=?`, read); err != nil {
+		t.Fatal(err)
+	}
 	return db, read, unread
 }
 
