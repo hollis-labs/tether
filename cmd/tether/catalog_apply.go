@@ -154,7 +154,7 @@ var catalogApproveCmd = &cobra.Command{
 				Digest: plan.Digest, Passphrase: string(pass), AckPrivileged: catalogApproveAckPrivileged, AllowRunning: catalogApproveAllowRunning,
 			})
 			if err != nil {
-				return err
+				return approvalFailure(plan, err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "approved plan %s (digest %s); the agent can now apply it\n", approved.ID, shortDigest(approved.Digest))
 		} else {
@@ -170,7 +170,14 @@ var catalogApproveCmd = &cobra.Command{
 			for _, r := range result.Results {
 				if r.Error != "" {
 					failed = true
-					fmt.Fprintf(cmd.OutOrStdout(), "plan %s: NOT approved: %s\n", r.ID, r.Error)
+					reason := errors.New(r.Error)
+					for _, p := range plans {
+						if p.ID == r.ID {
+							reason = approvalFailure(p, reason)
+							break
+						}
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "plan %s: NOT approved: %s\n", r.ID, reason)
 				} else {
 					fmt.Fprintf(cmd.OutOrStdout(), "approved plan %s (digest %s); the agent can now apply it\n", r.ID, shortDigest(r.Plan.Digest))
 				}
@@ -361,4 +368,16 @@ func readApproval(w io.Writer, r io.Reader, token string, password func() ([]byt
 	pass, err := password()
 	fmt.Fprintln(w)
 	return pass, err
+}
+
+// A plan may expire or become stale while the operator reviews it. Preserve
+// exact re-plan guidance for those server-side failures as well as preflight.
+func approvalFailure(p *catalogapply.Plan, err error) error {
+	reason := err.Error()
+	for _, fragment := range []string{"expired", "not found", "not valid", "stale plan", "digest mismatch"} {
+		if strings.Contains(reason, fragment) {
+			return fmt.Errorf("%w; %s", err, replanGuidance(p))
+		}
+	}
+	return err
 }

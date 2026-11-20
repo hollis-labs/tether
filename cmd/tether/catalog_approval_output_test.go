@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,5 +95,22 @@ func TestApprovalWrongConfirmationNeverPromptsPassphrase(t *testing.T) {
 	}
 	if calls != 0 || strings.Contains(out.String(), "Approval passphrase") {
 		t.Fatal("passphrase requested before confirmation")
+	}
+}
+
+func TestApprovalServerExpiryPreservesExactReplanGuidance(t *testing.T) {
+	p := &catalogapply.Plan{ID: "cp_one", Name: "one"}
+	expired := errors.New(`plan "cp_one" expired; plan the same bundle again to re-arm it`)
+	got := approvalFailure(p, expired)
+	if !errors.Is(got, expired) || !strings.Contains(got.Error(), `tether_catalog_plan with name="one" and the original files bundle`) {
+		t.Fatalf("missing re-plan guidance: %v", got)
+	}
+	p.RollbackOf = "catalog-pre-original"
+	if got := approvalFailure(p, expired); !strings.Contains(got.Error(), `rollback_of="catalog-pre-original"`) {
+		t.Fatal(got)
+	}
+	wrong := errors.New("approval passphrase is wrong")
+	if approvalFailure(p, wrong) != wrong {
+		t.Fatal("credential retry should not instruct re-planning")
 	}
 }
