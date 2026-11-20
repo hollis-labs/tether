@@ -1,0 +1,1 @@
+- CW-20261120-0005: Fill missing event task, workstream, team-linked run and provider session attribution from persisted session records, including background and transactional producers; add copy-only historical backfill tooling.
