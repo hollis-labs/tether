@@ -99,6 +99,7 @@ var clientMethodWrites = map[string]bool{
 	"CreateSessionWithInput":        true,
 	"CreateSessionWithBootPrompt":   true,
 	"LaunchSession":                 true,
+	"LaunchSessionWithInput":        true,
 	"StopSession":                   true,
 	"ResizeSession":                 true,
 	"SendInput":                     true,
