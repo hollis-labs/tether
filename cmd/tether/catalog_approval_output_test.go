@@ -110,7 +110,7 @@ func TestApprovalServerExpiryPreservesExactReplanGuidance(t *testing.T) {
 		t.Fatal(got)
 	}
 	wrong := errors.New("approval passphrase is wrong")
-	if approvalFailure(p, wrong) != wrong {
+	if got := approvalFailure(p, wrong); !errors.Is(got, wrong) || strings.Contains(got.Error(), "re-plan:") {
 		t.Fatal("credential retry should not instruct re-planning")
 	}
 }
