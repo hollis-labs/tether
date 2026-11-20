@@ -107,7 +107,7 @@ func (e *MCPServerEntry) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// IsEnabled returns true when the entry should be loaded. A missing enabled
+// IsEnabled returns true when the entry can be granted. A missing enabled
 // field (nil pointer) is treated as true.
 func (e *MCPServerEntry) IsEnabled() bool {
 	return e.Enabled == nil || *e.Enabled
@@ -306,7 +306,8 @@ func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 
 // LoadMCPServers reads all *.yaml files from <catalogDir>/mcp-servers/,
 // parses them as MCPServerEntry, expands ${VAR} references, resolves secret
-// references, and returns the enabled entries. A missing directory is silently
+// references, and returns enabled built-in entries. External entries are skipped
+// before credential resolution. A missing directory is silently
 // treated as empty.
 //
 // This is the spawn-time loader: every caller feeds the result to a ClientPool.
@@ -349,6 +350,7 @@ func LoadMCPServersContext(ctx context.Context, catalogDir string) ([]MCPServerE
 // set contributes nothing -- its credentials never reach the proxy's memory,
 // and a reference of its that fails to resolve cannot stop the proxy.
 //
+// External entries count as known grants but are never returned or resolved.
 // unknown lists the ids that name no enabled entry (a typo, a disabled or a
 // removed server), in the order given, so the caller can say so; they are
 // otherwise ignored, which narrows the confined set rather than widening it.

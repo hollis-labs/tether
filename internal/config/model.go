@@ -618,7 +618,8 @@ type InjectedFile struct {
 }
 
 type Catalog struct {
-	// MCPServerEnabled retains validation metadata only, never upstream credentials.
+	// MCPServerEnabled and MCPServerExternal retain validation/ownership metadata
+	// only, never upstream credentials.
 	MCPServerEnabled  map[string]bool
 	MCPServerExternal map[string]bool
 	BootMCPGrants     map[string][]string
