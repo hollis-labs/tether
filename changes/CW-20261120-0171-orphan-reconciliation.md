@@ -1,0 +1,2 @@
+- CW-20261120-0171: Reconcile running sessions with durable recorded exits at startup and periodically without rewriting their outcomes or treating absent local handles as remote exit evidence; stop succeeds repeatedly after exit.
+- CW-20261120-0171: Recover stale team run status after routing and all members completed teardown, preserve retained results, and let retained owners/admins repeat dissolve after restart.

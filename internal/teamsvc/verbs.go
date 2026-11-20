@@ -472,6 +472,9 @@ func admin(ctx context.Context, t teams.Team, store teams.RosterStore, provision
 }
 func (s *Service) Dissolve(ctx context.Context, req RunRequest) (Result, error) {
 	return s.call(ctx, string(mesh.TeamDissolve), req.Key, req, func(ctx context.Context, p Principal, scope Scope, record Record) (Result, error) {
+		if settled, err := s.recoverDissolved(ctx, req.RunID, p); settled || err != nil {
+			return Result{}, err
+		}
 		var plan terminationPlan
 		var t teams.Team
 		if len(record.Plan) == 0 {

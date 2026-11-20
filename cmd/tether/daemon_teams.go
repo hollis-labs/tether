@@ -104,6 +104,9 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 	if err != nil {
 		return nil, noop, err
 	}
+	if err := storage.ReconcileDissolvedRuns(context.Background(), teamloop.DefaultLimit); err != nil {
+		return nil, noop, err
+	}
 	complete = true
 	svc.BootTeamRecovery = host.RecoverSessions
 	stopLoop := teamloop.Start(context.Background(), teamloop.Config{

@@ -524,6 +524,9 @@ func (s *Service) ReconcileStaleState() {
 	now := time.Now().UTC().Format(time.RFC3339)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := s.reconcileRecordedExits(ctx); err != nil {
+		log.Printf("store: reconcile recorded exits: %v", err)
+	}
 	swept, spared, err := s.Store.SweepStaleSessions(now, func(row store.StaleSession) bool { return s.sessionProcessSurvivedContext(ctx, row) })
 	if err != nil {
 		log.Printf("store: startup sweep failed: %v", err)
@@ -553,6 +556,9 @@ func (s *Service) ReconcileStaleState() {
 // no earlier than the session was created and runs the session's launch
 // command. Anything that cannot be verified is not a survivor.
 func (s *Service) sessionProcessSurvivedContext(ctx context.Context, row store.StaleSession) bool {
+	if s.sessionLaunchPending(row.ID) || s.sessionHeldLive(row.ID, "") {
+		return true
+	}
 	if s.reconcileShimContext(ctx, row) {
 		return true
 	}

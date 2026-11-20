@@ -117,3 +117,13 @@ func (h *Host) FailWorkflow(ctx context.Context, key, reason string) error {
 func (h *Host) MarkDissolved(ctx context.Context, runID string) error {
 	return h.store.MarkRunDissolved(ctx, runID)
 }
+
+// ReconcileDissolvedRun uses the store's atomic teardown proof.
+func (h *Host) ReconcileDissolvedRun(ctx context.Context, id string) (bool, error) {
+	return h.store.ReconcileDissolvedRun(ctx, id)
+}
+
+// ReconcileDissolvedRuns repairs persisted runs after an interrupted teardown.
+func (h *Host) ReconcileDissolvedRuns(ctx context.Context, limit int) error {
+	return h.store.ReconcileDissolvedRuns(ctx, limit)
+}

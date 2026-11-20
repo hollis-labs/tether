@@ -624,3 +624,25 @@ func TestDaemonTeamsAdoptionPolicyBuilds(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonTeamsStartupReconcilesCompletedTeardown(t *testing.T) {
+	// Keep the periodic tick out of this assertion: build must do this itself.
+	t.Setenv("TETHER_TEAMS_LOOP_INTERVAL", "1h")
+	enabled := true
+	f := newDaemonTeamFixture(t, &enabled)
+	db := f.svc.Store.DB()
+	_, err := db.Exec(`INSERT INTO team_runs(run_id,session_group_id,team_id,team_version,payload,created_at) VALUES('old-run','old-group','old-team',1,'{"id":"old-run","team_id":"old-team","team_version":1,"status":"working","result":"retained"}','now')`)
+	teamRequire(t, err)
+	_, err = db.Exec(`INSERT INTO team_rosters(run_id,version,payload) VALUES('old-run',1,'{"run_id":"old-run","version":1,"members":[{"id":"owner","status":"released"}]}')`)
+	teamRequire(t, err)
+	_, err = db.Exec(`INSERT INTO team_host_routing(run_id,install_key,payload,channel,removed) VALUES('old-run','old-key','{}','old-channel',1)`)
+	teamRequire(t, err)
+	_, closeTeams, err := buildDaemonTeams(f.svc, f.cfg)
+	teamRequire(t, err)
+	defer closeTeams()
+	var status, result string
+	teamRequire(t, db.QueryRow(`SELECT json_extract(payload,'$.status'),json_extract(payload,'$.result') FROM team_runs WHERE run_id='old-run'`).Scan(&status, &result))
+	if status != "dissolved" || result != "retained" {
+		t.Fatalf("status=%q result=%q", status, result)
+	}
+}

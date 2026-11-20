@@ -221,12 +221,7 @@ func (s *Store) MarkRunDissolved(ctx context.Context, id string) error {
 		if RunEnded(run.Status) {
 			return nil
 		}
-		run.Status = RunDissolved
-		payload, err := encode(run)
-		if err != nil {
-			return err
-		}
-		_, err = conn.ExecContext(ctx, `UPDATE team_runs SET payload=? WHERE run_id=?`, payload, id)
+		_, err := conn.ExecContext(ctx, `UPDATE team_runs SET payload=json_set(payload,'$.status',?) WHERE run_id=?`, string(RunDissolved), id)
 		return err
 	})
 }

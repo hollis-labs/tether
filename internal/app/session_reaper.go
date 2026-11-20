@@ -179,6 +179,9 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 	if err := s.requireEventBus(); err != nil {
 		return err
 	}
+	if err := s.reconcileRecordedExits(ctx); err != nil {
+		return err
+	}
 	r := s.reaperState()
 	r.sweep.Lock()
 	defer r.sweep.Unlock()
@@ -207,6 +210,9 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 		row := rows[(start+i)%n]
 		if session.State(row.State).Terminal() || row.State == string(session.StateOrphaned) {
 			r.clear(row.ID)
+			continue
+		}
+		if s.sessionLaunchPending(row.ID) {
 			continue
 		}
 		sig := reaperSignature(row)
