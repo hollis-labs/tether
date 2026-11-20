@@ -314,7 +314,10 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	if err != nil {
 		return r, fail("invalid_request", "run token handoff refused")
 	}
-	defer closeRunHandoff()
+	possiblySubmitted := false
+	defer func() {
+		runtoken.FinishHandoff(spec.Env, closeRunHandoff, possiblySubmitted, func(ctx context.Context) bool { _, err := p.inspect(ctx, r); return err == nil })
+	}()
 	spec.Secret = hex.EncodeToString(secret[:])
 	raw, err = json.Marshal(spec) //nolint:gosec // Capability intentionally stored only in the private 0600 descriptor.
 	if err != nil {
@@ -365,6 +368,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		if e != nil {
 			return p.prechildFailure(r)
 		}
+		possiblySubmitted = true
 		r.HostPID = cmd.Process.Pid
 		// The owned child cannot reuse its PID before our waiter starts.
 		r.HostStartTime, _ = processStartTime(r.HostPID)
@@ -392,6 +396,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		if err = p.verifySubmissionIntent(dir, r); err != nil {
 			return r, err
 		}
+		possiblySubmitted = true
 		if _, err = p.cfg.Command(ctx, args); err != nil {
 			return r, fail("outcome_unknown", "unit submit may have happened; inspect before recovery")
 		}
@@ -409,6 +414,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 			if e = WritePrivateJSON(metadataPath(r), inspection.Receipt); e != nil {
 				return r, e
 			}
+			possiblySubmitted = false
 			return inspection.Receipt, nil
 		}
 		select {

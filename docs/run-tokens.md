@@ -11,7 +11,12 @@ the Torque identifiers introduced by PR #631. Contract review: 27483 and 27553.
 `runs.id`. Unknown remains unknown, including an absent environment variable.
 
 Every local/worker launch additionally mints a fresh execution UUID into
-`TETHER_EXECUTION_RUN_ID` and a signed token into `TETHER_RUN_TOKEN`.
+`TETHER_EXECUTION_RUN_ID`. A signed `TETHER_RUN_TOKEN` is minted only when the
+execution host supports nonpersistent handoff. Local support is probed; workers
+advertise `execution-run-token-v1` only when supported. Older/non-Linux workers
+and unsupported local hosts retain legacy authenticated operation without a
+verified execution. Reserved provider/ambient token values are removed before
+launch; no token is sent to an incapable worker.
 The signed claim `run_id` means that execution UUID; it is never substituted for
 the Torque field. `run_verified` validates the signed execution context, not the
 Torque identifier, identity flag, or durable writer provenance.
@@ -69,14 +74,17 @@ not a filesystem credential/config file. Descriptors contain only a numeric
 `/proc/<launcher-pid>/fd/<fd>` reference and a fresh binding id. The shim entrypoint
 accepts only owned 0600, zero-link, sealed anonymous memory, checks the binding id
 and session, then restores the token into the provider's in-memory environment.
-The launcher retains the memfd until the shim is ready, then closes it. Markers
+The launcher retains the memfd until the shim is ready, then closes it. If submission may have succeeded but the caller cancels or readiness times out, an independent observer retains it until authenticated readiness, verified process absence, or verified retirement. Caller cancellation alone never revokes a submitted runtime’s first read. A launcher process death before that first read closes the memfd and fails closed; recovery requires a fresh launch, rather than persisting a replayable token. Markers
 are removed from the provider environment.
 
 Inspection and controller recovery never restore tokens into persisted state.
 Reattachment to an existing live shim preserves its runtime. Replaying a stale
 handoff, recycled fd, different session or raw token-bearing descriptor fails
-closed; a new launch is required. Current nonpersistent handoff support is Linux;
-other platforms refuse token-bearing shim launch rather than persisting a secret.
+closed; a new launch is required. Current nonpersistent handoff support is Linux. Unsupported platforms do not
+receive a launcher token and continue legacy operation. An explicitly supplied
+token on an unsupported shim path is refused, never persisted or silently
+downgraded. Gateway verification is independent of delivery capability: supplied
+invalid/expired tokens are always rejected.
 
 `tether mcp --forward-daemon` and `tether-worker mcp-http-relay` read the runtime
 execution token and carry the distinct header on every POST/GET/DELETE, bearer

@@ -1,9 +1,11 @@
 package runtoken
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -23,6 +25,9 @@ type handoffPayload struct {
 // Only a bound reference to nonpersistent memory enters the durable environment.
 // The caller keeps release alive until the shim has read its descriptor and started.
 func PrepareEnvironment(env []string, session string) ([]string, func(), error) {
+	return prepareEnvironment(env, session, HandoffSupported())
+}
+func prepareEnvironment(env []string, session string, supported bool) ([]string, func(), error) {
 	out := make([]string, 0, len(env)+2)
 	token := ""
 	for _, entry := range env {
@@ -41,7 +46,7 @@ func PrepareEnvironment(env []string, session string) ([]string, func(), error) 
 	if token == "" {
 		return out, func() {}, nil
 	}
-	if len(token) > MaxSize || session == "" {
+	if !supported || len(token) > MaxSize || session == "" {
 		return nil, nil, ErrHandoff
 	}
 	payload := handoffPayload{ID: uuid.NewString(), Session: session, Token: token}
@@ -115,4 +120,52 @@ func SealEnvironment(env []string, authority map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// SealMap removes reserved execution claims before adding launcher-owned values.
+func SealMap(env, authority map[string]string) map[string]string {
+	out := make(map[string]string, len(env)+2)
+	for k, v := range env {
+		switch k {
+		case TokenEnv, IDEnv, handoffPathEnv, handoffIDEnv:
+		default:
+			out[k] = v
+		}
+	}
+	for _, k := range []string{IDEnv, TokenEnv} {
+		if v := authority[k]; v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// FinishHandoff closes completed/unsubmitted handoffs immediately. A possibly
+// submitted runtime owns an independent settlement lifetime: caller cancellation
+// cannot revoke its first read. The proof must mean readiness or verified absence.
+func FinishHandoff(env []string, release func(), uncertain bool, settled func(context.Context) bool) {
+	hasReference := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, handoffPathEnv+"=") {
+			hasReference = true
+		}
+	}
+	if !uncertain || !hasReference {
+		release()
+		return
+	}
+	go func() {
+		defer release()
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			done := settled(ctx)
+			cancel()
+			if done {
+				return
+			}
+			<-ticker.C
+		}
+	}()
 }

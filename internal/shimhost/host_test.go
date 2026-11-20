@@ -25,6 +25,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const testRuntimeRunToken = "synthetic-local-run-token-never-persist"
+
 func TestHostProcess(t *testing.T) {
 	if os.Getenv("TETHER_TEST_SHIM") != "" {
 		parent := os.Getppid()
@@ -44,6 +46,16 @@ func TestHostProcess(t *testing.T) {
 		if e != nil {
 			fmt.Fprintln(os.Stderr, "descriptor refused")
 			os.Exit(2)
+		}
+		for _, entry := range spec.Env {
+			if gate, ok := strings.CutPrefix(entry, "TETHER_TEST_RUN_GATE="); ok {
+				for {
+					if _, err := os.Stat(gate); err == nil {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
 		}
 		spec.Env, e = runtoken.RestoreEnvironment(spec.Env, spec.Session)
 		if e != nil {

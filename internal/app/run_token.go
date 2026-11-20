@@ -22,11 +22,22 @@ func runURN(row *store.SessionRow) string {
 // mintRunEnvironment never modifies or persists the launch plan. Parent is
 // inherited only from a verified run in the launching request's context.
 func (s *Service) mintRunEnvironment(ctx context.Context, row *store.SessionRow) (map[string]string, error) {
+	supported := runtoken.HandoffSupported()
+	if s.runTokenSupport != nil {
+		supported = s.runTokenSupport()
+	}
+	return s.mintRunEnvironmentFor(ctx, row, supported)
+}
+func (s *Service) mintRunEnvironmentFor(ctx context.Context, row *store.SessionRow, supported bool) (map[string]string, error) {
+	execution := uuid.NewString()
+	if !supported {
+		return map[string]string{runtoken.IDEnv: execution}, nil
+	}
 	key, err := s.runTokens.Key(s.Store.RunSigningKeyPath())
 	if err != nil {
 		return nil, err
 	}
-	c := runtoken.Claims{URN: runURN(row), Session: row.ID, RunID: uuid.NewString(), JTI: uuid.NewString(), Task: row.TaskID.String, Workstream: row.WorkstreamID.String, Expires: time.Now().Add(sessionTokenTTL()).Unix()}
+	c := runtoken.Claims{URN: runURN(row), Session: row.ID, RunID: execution, JTI: uuid.NewString(), Task: row.TaskID.String, Workstream: row.WorkstreamID.String, Expires: time.Now().Add(sessionTokenTTL()).Unix()}
 	if parent, ok := runtoken.FromContext(ctx); ok {
 		c.Parent = parent.RunID
 	}

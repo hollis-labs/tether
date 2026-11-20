@@ -62,3 +62,14 @@ func readMemoryHandoff(path string) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// HandoffSupported probes the trusted launcher context without any secret data.
+func HandoffSupported() bool {
+	path, release, err := memoryHandoff([]byte("probe"))
+	if err != nil {
+		return false
+	}
+	defer release()
+	_, err = readMemoryHandoff(path)
+	return err == nil
+}

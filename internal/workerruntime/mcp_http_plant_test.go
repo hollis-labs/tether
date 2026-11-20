@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/hollis-labs/tether/internal/runtoken"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -143,8 +146,15 @@ func TestLaunchPlantsHTTPRelayAndKeepsTheTokenFileWhereItPoints(t *testing.T) {
 	}
 }
 
-func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string) {
-	const runSecret = "synthetic-worker-run-token-never-persist"
+func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string, delayed ...bool) {
+	delay := len(delayed) > 0 && delayed[0]
+	gate := filepath.Join(t.TempDir(), "start")
+	var delayedDescriptor string
+	var delayedChild *exec.Cmd
+	runSecret := ""
+	if runtoken.HandoffSupported() {
+		runSecret = "synthetic-worker-run-token-never-persist"
+	}
 	for _, k := range []string{"TETHER_TASK_ID", "TETHER_WORKSTREAM_ID", "TETHER_PROJECT_ID", "TETHER_RUN_ID", runtoken.IDEnv, runtoken.TokenEnv} {
 		t.Setenv(k, "ambient-wrong")
 	}
@@ -181,6 +191,17 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string) {
 	e.Tokens = &TokenMinter{Hub: hub.URL, DeviceTokenFile: deviceFile}
 	var hosts []*shim.Host
 	e.Spawn = func(descriptor string) (*exec.Cmd, error) {
+		if delay {
+			delayedDescriptor = descriptor
+			executable, err := os.Executable()
+			if err != nil {
+				return nil, err
+			}
+			cmd := exec.Command(executable, "-test.run=^TestDelayedWorkerRunShimProcess$")
+			cmd.Env = append(os.Environ(), "TETHER_TEST_DELAYED_DESCRIPTOR="+descriptor, "TETHER_TEST_DELAYED_GATE="+gate)
+			delayedChild = cmd
+			return cmd, cmd.Start()
+		}
 		spec, err := shim.ReadLaunch(descriptor)
 		if err != nil {
 			return nil, err
@@ -189,7 +210,7 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string) {
 		if err != nil {
 			return nil, err
 		}
-		if strings.Contains(string(data), runSecret) {
+		if runSecret != "" && strings.Contains(string(data), runSecret) {
 			t.Fatal("run token persisted in durable worker descriptor")
 		}
 		env := strings.Join(spec.Env, "\n")
@@ -216,13 +237,81 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string) {
 	})
 	spec := workerwire.LaunchSpec{Env: map[string]string{"TETHER_TASK_ID": "CW-20261012-0062", "TETHER_PROJECT_ID": "PRJ-1"}, Session: "s-http", MCPPolicy: true, Actor: "msg://agent/agent-mux/agt_http_probe", Provider: "claude", Command: "missing-on-this-worker", RuntimeKind: "streaming-stdio",
 		Credential: "cred", MCPServers: []string{}, AgentTokens: []workerwire.AgentTokenSpec{{Aud: "tether", Scopes: []string{"tether.read"}}}}
-	spec.Env[runtoken.TokenEnv] = runSecret
+	if runSecret != "" {
+		spec.Env[runtoken.TokenEnv] = runSecret
+	}
 	spec.Env[runtoken.IDEnv] = "worker-execution"
 	if torque != "" {
 		spec.Env["TETHER_RUN_ID"] = torque
 	}
 	raw, _ := json.Marshal(spec)
-	if err := e.Command(context.Background(), workerwire.Frame{T: "launch", CmdID: "c1", Session: "s-http", Spec: raw}); err != nil {
+	launchCtx := context.Background()
+	if delay {
+		var cancel context.CancelFunc
+		launchCtx, cancel = context.WithTimeout(launchCtx, 150*time.Millisecond)
+		defer cancel()
+	}
+	launchErr := e.Command(launchCtx, workerwire.Frame{T: "launch", CmdID: "c1", Session: "s-http", Spec: raw})
+	if delay {
+		if launchErr == nil {
+			t.Fatal("delayed worker unexpectedly ready")
+		}
+		t.Cleanup(func() {
+			if delayedChild != nil && delayedChild.Process != nil {
+				_ = delayedChild.Process.Signal(syscall.SIGTERM)
+			}
+		})
+		if len(delayed) > 1 && delayed[1] {
+			if err := delayedChild.Process.Kill(); err != nil {
+				t.Fatal(err)
+			}
+			descriptor, err := shim.ReadLaunch(delayedDescriptor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				_, err := runtoken.RestoreEnvironment(descriptor.Env, descriptor.Session)
+				if errors.Is(err, runtoken.ErrHandoff) {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("terminated worker retained handoff")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			return
+		}
+		if err := os.WriteFile(gate, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(gate + ".ready"); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("cancellation revoked submitted worker token")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		descriptor, err := shim.ReadLaunch(delayedDescriptor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			_, err := runtoken.RestoreEnvironment(descriptor.Env, descriptor.Session)
+			if errors.Is(err, runtoken.ErrHandoff) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("ready worker retained handoff")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return
+	}
+	if err := launchErr; err != nil {
 		t.Fatal(err)
 	}
 	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -234,7 +323,7 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string) {
 			if e != nil {
 				return e
 			}
-			if strings.Contains(string(b), runSecret) {
+			if runSecret != "" && strings.Contains(string(b), runSecret) {
 				t.Fatal("run token persisted in worker state")
 			}
 		}
@@ -294,4 +383,54 @@ func valueInEnv(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func TestWorkerRunTokenSurvivesCallerCancellation(t *testing.T) {
+	if !runtoken.HandoffSupported() {
+		t.Skip("requires nonpersistent handoff")
+	}
+	testLaunchRunTokenPrivateDescriptor(t, "", true)
+}
+func TestDelayedWorkerRunShimProcess(t *testing.T) {
+	path := os.Getenv("TETHER_TEST_DELAYED_DESCRIPTOR")
+	if path == "" {
+		return
+	}
+	gate := os.Getenv("TETHER_TEST_DELAYED_GATE")
+	for {
+		if _, err := os.Stat(gate); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	spec, err := shim.ReadLaunch(path)
+	if err != nil {
+		os.Exit(21)
+	}
+	spec.Env, err = runtoken.RestoreEnvironment(spec.Env, spec.Session)
+	if err != nil {
+		os.Exit(22)
+	}
+	if valueInEnv(spec.Env, runtoken.TokenEnv) != "synthetic-worker-run-token-never-persist" {
+		os.Exit(23)
+	}
+	host, err := shim.Start(spec)
+	if err != nil {
+		os.Exit(24)
+	}
+	defer host.Close()
+	if err := os.WriteFile(gate+".ready", []byte("ready"), 0600); err != nil {
+		os.Exit(25)
+	}
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, syscall.SIGTERM)
+	defer signal.Stop(done)
+	<-done
+}
+
+func TestWorkerRunTokenReleasedAfterVerifiedExit(t *testing.T) {
+	if !runtoken.HandoffSupported() {
+		t.Skip("requires nonpersistent handoff")
+	}
+	testLaunchRunTokenPrivateDescriptor(t, "", true, true)
 }

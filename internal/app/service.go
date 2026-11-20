@@ -88,8 +88,9 @@ type Service struct {
 	// call tether_team_*; set by daemon startup from modules.teams.
 	TeamsEnabled bool
 
-	runTokens   runtoken.Authority
-	CatalogRoot string
+	runTokens       runtoken.Authority
+	runTokenSupport func() bool // trusted local capability probe; nil uses the platform
+	CatalogRoot     string
 	// persisted reads the identity mode the operator has persisted in global.yaml.
 	persisted    persistedIdentity
 	Catalog      *config.Catalog

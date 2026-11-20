@@ -14,8 +14,6 @@ import (
 	"github.com/hollis-labs/tether/internal/runtoken"
 )
 
-const testRuntimeRunToken = "synthetic-local-run-token-never-persist"
-
 func TestRuntimeRunTokenLocalDescriptorAndRecovery(t *testing.T) {
 	cfg, spec := hostSpec(t)
 	spec.Env[0] = "TETHER_TEST_SHIM=run-token-child"
@@ -76,5 +74,88 @@ func TestRuntimeRunTokenLocalDescriptorAndRecovery(t *testing.T) {
 	again, err := recovered.Place(ctx, "private-run", spec)
 	if err != nil || again.HostPID != r.HostPID {
 		t.Fatal("recovery resent runtime launch")
+	}
+}
+
+func TestRuntimeRunTokenSurvivesCallerCancellation(t *testing.T) {
+	cfg, spec := hostSpec(t)
+	gate := filepath.Join(spec.Cwd, "release-start")
+	spec.Env[0] = "TETHER_TEST_SHIM=run-token-child"
+	spec.Env = append(spec.Env, runtoken.TokenEnv+"="+testRuntimeRunToken, "TETHER_TEST_RUN_GATE="+gate)
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	r, err := p.Place(ctx, "delayed-private-run", spec)
+	cancel()
+	if err == nil {
+		t.Fatal("delayed launch unexpectedly ready")
+	}
+	t.Cleanup(func() { stopTestPlacement(t, p, r) })
+	if err := os.WriteFile(gate, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(spec.Cwd, "run-token-ready")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("canceled caller revoked submitted runtime token")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	descriptor, err := Descriptor(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		_, err := runtoken.RestoreEnvironment(descriptor.Env, spec.Session)
+		if errors.Is(err, runtoken.ErrHandoff) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ready runtime retained launcher handoff")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestRuntimeRunTokenReleasedAfterVerifiedExit(t *testing.T) {
+	cfg, spec := hostSpec(t)
+	spec.Env[0] = "TETHER_TEST_SHIM=run-token-child"
+	spec.Env = append(spec.Env, runtoken.TokenEnv+"="+testRuntimeRunToken, "TETHER_TEST_RUN_GATE="+filepath.Join(spec.Cwd, "never-start"))
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	r, err := p.Place(ctx, "terminated-private-run", spec)
+	cancel()
+	if err == nil || r.HostPID == 0 {
+		t.Fatal("expected uncertain submitted process")
+	}
+	process, err := os.FindProcess(r.HostPID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := Descriptor(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := runtoken.RestoreEnvironment(descriptor.Env, spec.Session)
+		if errors.Is(err, runtoken.ErrHandoff) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("verified exited local process retained handoff")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

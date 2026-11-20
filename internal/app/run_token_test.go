@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workerwire"
 )
 
 func TestRunLaunchEnvironmentBindingAndNoPersistence(t *testing.T) {
@@ -108,7 +109,7 @@ func TestRunLaunchEnvironmentBindingAndNoPersistence(t *testing.T) {
 }
 
 func TestWorkerLaunchReceivesUniqueBoundRunEnvironment(t *testing.T) {
-	rig := newIdentityRig(t, "session-cred", "agent-token")
+	rig := newIdentityRig(t, "session-cred", "agent-token", workerwire.FeatureExecutionRunToken)
 	spec, err := rig.launch("worker-run", "")
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +235,7 @@ func TestExecutionRunIDsPreserveKnownAndAbsentTorqueOnLocalAndWorker(t *testing.
 			for _, key := range []string{"TETHER_RUN_ID", runtoken.IDEnv, runtoken.TokenEnv} {
 				t.Setenv(key, "ambient-wrong")
 			}
-			rig := newIdentityRig(t, "session-cred", "agent-token")
+			rig := newIdentityRig(t, "session-cred", "agent-token", workerwire.FeatureExecutionRunToken)
 			id := "worker-execution"
 			row := store.SessionRow{ID: id, WorkerID: rig.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderKind: "cli", Workspace: t.TempDir(), State: "created", RunID: sql.NullString{String: torque, Valid: torque != ""}}
 			plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderBrand: "claude", Env: map[string]string{"TETHER_RUN_ID": "provider-wrong", runtoken.IDEnv: "provider-wrong", runtoken.TokenEnv: "provider-wrong"}}
@@ -278,5 +279,100 @@ func assertRunIDMapping(t *testing.T, svc *Service, id string, p identity.Princi
 	signed := api.ResolveCallerContext(runtoken.WithClaims(identity.WithPrincipal(context.Background(), p), c), svc.Store, nil)
 	if signed.RunID != torque || !signed.RunVerified || signed.ExecutionRunID != c.RunID || signed.TokenJTI != c.JTI {
 		t.Fatal("signed/Torque attribution conflated")
+	}
+}
+
+func TestUnsupportedExecutionHandoffPreservesLocalLaunch(t *testing.T) {
+	svc, rt, id, _ := credentialLaunch(t)
+	svc.runTokenSupport = func() bool { return false }
+	for _, key := range []string{"TETHER_RUN_ID", runtoken.IDEnv, runtoken.TokenEnv} {
+		t.Setenv(key, "ambient-wrong")
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE sessions SET run_id='42' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := svc.Store.GetLaunchPlan(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Env[runtoken.TokenEnv] = "provider-token"
+	plan.Env[runtoken.IDEnv] = "provider-id"
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=? WHERE session_id=?`, string(raw), id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LaunchSession(id); err != nil {
+		t.Fatal("optional correlation broke unsupported-platform launch", err)
+	}
+	env := map[string]string{}
+	for _, entry := range rt.options.Env {
+		k, v, _ := strings.Cut(entry, "=")
+		env[k] = v
+	}
+	if env[runtoken.TokenEnv] != "" || env[runtoken.IDEnv] == "" || env[runtoken.IDEnv] == "provider-id" || env["TETHER_RUN_ID"] != "42" {
+		t.Fatal("unsupported local environment lost legacy authority")
+	}
+	if _, err := os.Stat(svc.Store.RunSigningKeyPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("unsupported launch created signing material")
+	}
+	p, err := identity.NewStore(svc.Store.DB()).Verify(context.Background(), env["TETHER_TOKEN"])
+	if err != nil {
+		t.Fatal("legacy authentication failed", err)
+	}
+	snapshot := api.ResolveCallerContext(identity.WithPrincipal(context.Background(), p), svc.Store, nil)
+	if snapshot.RunVerified || snapshot.ExecutionRunID != "" || snapshot.RunID != "42" {
+		t.Fatal("unsupported local execution became verified")
+	}
+	// Delivery capability never weakens verification of a supplied token.
+	row, err := svc.Store.GetSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := svc.mintRunEnvironmentFor(context.Background(), row, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.VerifyRunToken(signed[runtoken.TokenEnv], p); err != nil {
+		t.Fatal("unsupported local delivery disabled remote token verification")
+	}
+	if _, err := svc.VerifyRunToken("explicit-invalid-token", p); !errors.Is(err, runtoken.ErrInvalid) {
+		t.Fatal("invalid supplied token downgraded")
+	}
+}
+func TestWorkerWithoutHandoffFeatureKeepsLegacy(t *testing.T) {
+	for _, torque := range []string{"", "42"} {
+		t.Run("torque-"+torque, func(t *testing.T) {
+			rig := newIdentityRig(t, "session-cred", "agent-token")
+			id := "legacy-handoff"
+			row := store.SessionRow{ID: id, WorkerID: rig.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderKind: "cli", Workspace: t.TempDir(), State: "created", RunID: sql.NullString{String: torque, Valid: torque != ""}}
+			plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderBrand: "claude", Env: map[string]string{runtoken.IDEnv: "provider-id", runtoken.TokenEnv: "provider-token", "TETHER_RUN_ID": "provider-wrong"}}
+			if err := rig.db.CreateSession(row, plan); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := rig.svc.launchWorkerSession(context.Background(), &row, plan); err != nil {
+				t.Fatal("legacy worker launch refused", err)
+			}
+			spec := <-rig.specs
+			if _, present := spec.Env[runtoken.TokenEnv]; present {
+				t.Fatal("raw execution token sent to old/non-Linux worker")
+			}
+			if spec.Env[runtoken.IDEnv] == "" || spec.Env[runtoken.IDEnv] == "provider-id" || spec.Env["TETHER_RUN_ID"] != torque {
+				t.Fatal("legacy worker execution/Torque ids lost")
+			}
+			if _, err := os.Stat(rig.svc.Store.RunSigningKeyPath()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("unsupported worker created signing material")
+			}
+			p, err := rig.ids.Verify(context.Background(), spec.Credential)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := api.ResolveCallerContext(identity.WithPrincipal(context.Background(), p), rig.db, nil)
+			if snapshot.RunVerified || snapshot.ExecutionRunID != "" || snapshot.RunID != torque {
+				t.Fatal("legacy worker acquired verified execution")
+			}
+		})
 	}
 }

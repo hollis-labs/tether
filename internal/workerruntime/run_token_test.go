@@ -1,6 +1,7 @@
 package workerruntime
 
 import (
+	"github.com/hollis-labs/tether/internal/workerwire"
 	"net/http"
 	"strings"
 	"sync"
@@ -39,5 +40,19 @@ func TestRunTokenRelayAllMethodsAndNoSecretDiagnostics(t *testing.T) {
 	}
 	if strings.Contains(g.stderr.String(), secret) {
 		t.Fatal("run token in diagnostics")
+	}
+}
+
+func TestWorkerAdvertisesExecutionHandoffOnlyWhenSupported(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		found := false
+		for _, feature := range workerFeatures(enabled) {
+			if feature == workerwire.FeatureExecutionRunToken {
+				found = true
+			}
+		}
+		if found != enabled {
+			t.Fatal("incorrect execution handoff feature advertisement")
+		}
 	}
 }
