@@ -42,7 +42,11 @@ func (a Alerts) Deliver(ctx context.Context, r Request) error {
 	if err != nil {
 		return fmt.Errorf("send request alert: %w", err)
 	}
-	return a.Backend.MarkAlerted(ctx, r.TaskID)
+	reason := "ack_timeout"
+	if !r.RecipientOnline {
+		reason = "recipient_offline"
+	}
+	return a.Backend.MarkAlerted(ctx, r.TaskID, reason)
 }
 
 func (a Alerts) Sweep(ctx context.Context) error {

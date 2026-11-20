@@ -45,6 +45,9 @@ func TestHTTPBackendContractAndCredentialRotation(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/api/v1/tasks/CW-20261120-9999/request/transition":
 			var in Transition
 			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in.State == "unacknowledged_alert" && in.Reason != "recipient_offline" {
+				t.Error("alert reason missing")
+			}
 			if in.State == "done" && (!strings.Contains(in.Summary, "https://example.test/evidence") || in.ActorURN != "msg://agent/agent-mux/worker") {
 				t.Error("final evidence or actor missing")
 			}
@@ -80,7 +83,7 @@ func TestHTTPBackendContractAndCredentialRotation(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("due %v %v", rows, err)
 	}
-	if err := b.MarkAlerted(t.Context(), row.TaskID); err != nil {
+	if err := b.MarkAlerted(t.Context(), row.TaskID, "recipient_offline"); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 5 {

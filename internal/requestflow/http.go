@@ -91,7 +91,7 @@ func (h *HTTPBackend) Transition(ctx context.Context, id string, in Transition) 
 	if len(in.Evidence) > 0 {
 		summary += "\n\nEvidence:\n- " + strings.Join(in.Evidence, "\n- ")
 	}
-	body := map[string]string{"state": in.State, "summary": summary, "author": in.ActorURN}
+	body := map[string]string{"state": in.State, "summary": summary, "author": in.ActorURN, "reason": in.Reason}
 	return h.call(ctx, http.MethodPost, "/api/v1/tasks/"+url.PathEscape(id)+"/request/transition", body, nil)
 }
 func (h *HTTPBackend) DueAlerts(ctx context.Context) ([]Request, error) {
@@ -117,6 +117,6 @@ func (h *HTTPBackend) DueAlerts(ctx context.Context) ([]Request, error) {
 		cursor = out.Next
 	}
 }
-func (h *HTTPBackend) MarkAlerted(ctx context.Context, id string) error {
-	return h.Transition(ctx, id, Transition{State: "unacknowledged_alert"})
+func (h *HTTPBackend) MarkAlerted(ctx context.Context, id, reason string) error {
+	return h.Transition(ctx, id, Transition{State: "unacknowledged_alert", Reason: reason})
 }

@@ -85,7 +85,7 @@ func (b *requestBackendFake) DueAlerts(context.Context) ([]requestflow.Request, 
 	}
 	return nil, nil
 }
-func (b *requestBackendFake) MarkAlerted(context.Context, string) error {
+func (b *requestBackendFake) MarkAlerted(context.Context, string, string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.marks++

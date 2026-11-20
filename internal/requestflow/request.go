@@ -19,16 +19,18 @@ type Submit struct {
 }
 
 type Request struct {
-	AlertedAt     *time.Time `json:"alerted_at"`
-	TaskID        string     `json:"task_id"`
-	RequesterURN  string     `json:"requester_urn"`
-	RecipientURN  string     `json:"recipient_urn"`
-	MailMessageID string     `json:"mail_message_id"`
-	State         string     `json:"state"`
-	DueAckAt      time.Time  `json:"due_ack_at"`
+	RecipientOnline bool       `json:"recipient_online"`
+	AlertedAt       *time.Time `json:"alerted_at"`
+	TaskID          string     `json:"task_id"`
+	RequesterURN    string     `json:"requester_urn"`
+	RecipientURN    string     `json:"recipient_urn"`
+	MailMessageID   string     `json:"mail_message_id"`
+	State           string     `json:"state"`
+	DueAckAt        time.Time  `json:"due_ack_at"`
 }
 
 type Transition struct {
+	Reason   string   `json:"reason,omitempty"`
 	ActorURN string   `json:"author"`
 	State    string   `json:"state"`
 	Summary  string   `json:"summary"`
@@ -42,5 +44,5 @@ type Backend interface {
 	AttachMessage(context.Context, string, string) error
 	Transition(context.Context, string, Transition) error
 	DueAlerts(context.Context) ([]Request, error)
-	MarkAlerted(context.Context, string) error
+	MarkAlerted(context.Context, string, string) error
 }

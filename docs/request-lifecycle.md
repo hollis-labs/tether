@@ -44,6 +44,9 @@ payload. The watcher marks the alert in Torque only after mail is durably queued
 A failed send stays eligible; a failed mark retries the same mail without duplicates.
 Torque publishes `request.submitted`, `request.acknowledged`,
 `request.state_changed`, `request.unacknowledged_alert`, and `request.closed`.
+The alert event carries `reason: recipient_offline|ack_timeout`, based on the
+persisted submission-time liveness snapshot. Event payloads use `requester_urn`,
+`recipient_urn`, and `mail_message_id`; the final summary is read from task comments.
 
 ## Configuration and rollout
 

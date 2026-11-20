@@ -18,7 +18,7 @@ type fakeBackend struct {
 }
 
 func (b *fakeBackend) DueAlerts(context.Context) ([]Request, error) { return b.rows, nil }
-func (b *fakeBackend) MarkAlerted(context.Context, string) error {
+func (b *fakeBackend) MarkAlerted(context.Context, string, string) error {
 	if b.markFailures > 0 {
 		b.markFailures--
 		return errors.New("mark unavailable")
