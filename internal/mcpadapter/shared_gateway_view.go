@@ -226,6 +226,26 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 			}
 		}
 		full.Entries = entries
+		lint := []mcpgateway.NameFinding{}
+		for _, finding := range full.Lint {
+			if finding.Origin == "tether" || upstreams.includes(finding.Origin) {
+				lint = append(lint, finding)
+			}
+		}
+		full.Lint = lint
+		visibleCollisions := []mcpgateway.NameCollision{}
+		for _, collision := range full.Collisions {
+			visible := true
+			for _, owner := range collision.Owners {
+				if owner.Origin != "tether" && !upstreams.includes(owner.Origin) {
+					visible = false
+				}
+			}
+			if visible {
+				visibleCollisions = append(visibleCollisions, collision)
+			}
+		}
+		full.Collisions = visibleCollisions
 		origins := []mcpgateway.OriginStatus{}
 		for _, origin := range full.Origins {
 			if origin.ID == "tether" || upstreams.includes(origin.ID) {

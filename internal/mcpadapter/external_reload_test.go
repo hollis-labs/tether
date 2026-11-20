@@ -56,7 +56,9 @@ func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
 				t.Fatal(err)
 			}
 			if started {
-				if err := runtime.registry.Register("changing", nil, []*mcpsdk.Tool{makeTool("changing_probe")}); err != nil {
+				tool := makeTool("changing_probe")
+				tool.Annotations = nil // retained metadata diagnostic must disappear too
+				if err := runtime.registry.Register("changing", nil, []*mcpsdk.Tool{tool}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -76,6 +78,9 @@ func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
 			if started && len(view.Service.Snapshot().Entries) != 1 {
 				t.Fatal("initial inventory missing")
 			}
+			if started && len(view.Service.Status("").Lint) == 0 {
+				t.Fatal("initial inventory diagnostic missing")
+			}
 			if started && parseToolJSON(t, callHandler(t, a.handleHealth, nil))["ok"] != false {
 				t.Fatal("failed internal origin must fail health")
 			}
@@ -94,6 +99,10 @@ func TestExternalReloadUpdatesExistingGatewayHealth(t *testing.T) {
 			}
 			if entries := view.Service.Snapshot().Entries; len(entries) != 0 {
 				t.Fatalf("existing view retained external inventory: %+v", entries)
+			}
+			status := view.Service.Status("")
+			if status.EligibleTools != 0 || status.AvailableTools != 0 || len(status.Lint) != 0 || len(status.Collisions) != 0 {
+				t.Fatalf("retained gateway inventory/diagnostics: %+v", status)
 			}
 			if statuses := a.upstreams.StatusSummary(); len(statuses) != 0 {
 				t.Fatalf("external health status: %+v", statuses)
@@ -151,6 +160,53 @@ func TestExternalGatewayPreservesKnownDisabledRefusal(t *testing.T) {
 					t.Fatal("known-disabled origin accepted")
 				}
 			})
+		}
+	}
+}
+
+func TestExternalReloadHidesRetainedGatewayCollision(t *testing.T) {
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "collision-reader", Kind: "service"})
+	svc := &app.Service{Catalog: &config.Catalog{MCPServerEnabled: map[string]bool{"changing": true}}}
+	runtime, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "changing", Transport: "stdio", Command: "unused"}}, daemonTestRoots(t), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	if err := runtime.registry.Register("changing", nil, []*mcpsdk.Tool{makeTool("changing_probe")}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := NewVerifiedAdapter(ctx, svc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := runtime.NewGatewayView(ctx, a, ProxyOptions{ServerFilter: []string{"changing"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	// A refresh collides with a native tool in this view's separate registry.
+	// The shared upstream registry has no native definitions and accepts it.
+	if _, err := runtime.registry.ReplaceServer("changing", nil, []*mcpsdk.Tool{makeTool("tether_health")}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.publish(ToolRefreshResult{ServerID: "changing"})
+	before := view.Service.Status("")
+	if len(before.Collisions) == 0 {
+		t.Fatal("expected retained native/upstream collision")
+	}
+	svc.Catalog = &config.Catalog{MCPServerEnabled: map[string]bool{"changing": true}, MCPServerExternal: map[string]bool{"changing": true}}
+	after := view.Service.Status("")
+	if len(after.Collisions) != 0 {
+		t.Fatalf("retained external collision: %+v", after.Collisions)
+	}
+	for _, finding := range after.Lint {
+		if finding.Origin == "changing" {
+			t.Fatalf("retained external lint: %+v", finding)
+		}
+	}
+	for _, entry := range view.Service.Snapshot().Entries {
+		if entry.Origin == "changing" {
+			t.Fatal("retained external inventory")
 		}
 	}
 }
