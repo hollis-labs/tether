@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -26,7 +27,7 @@ func agyWorkerArgv(binary string, opts agentsessions.StartOptions, systemPrompt 
 	// Environment belongs to the canonical shim Launch, never a duplicated
 	// command argument. Only the turn argv projection is needed by the worker.
 	template.Convention.Env = nil
-	cfg := shimagy.Config{Binary: binary, Launch: *template, ExtraArgs: opts.ExtraArgs, SystemPrompt: systemPrompt, ResumeID: opts.SessionIDPreset}
+	cfg := shimagy.Config{ChatControlVersion: shimagy.ChatControlVersion, Binary: binary, Launch: *template, ExtraArgs: opts.ExtraArgs, SystemPrompt: systemPrompt, ResumeID: opts.SessionIDPreset}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -138,4 +139,28 @@ func (a *shimAGYAdapter) ParseLineEvents(line []byte) ([]pevents.Event, error) {
 		return nil, nil
 	}
 	return a.AntigravityAdapter.ParseLineEvents(line)
+}
+
+// Retained hosts launched before the correlated-control protocol are refused
+// without sending an unknown control frame that could terminate their worker.
+func (s *Service) agyChatControlSupported(id string) bool {
+	row, err := s.Store.SessionShim(context.Background(), id)
+	if err != nil {
+		return false
+	}
+	spec, err := shimhost.ReadDescriptor(row.DescriptorPath)
+	if err != nil {
+		return false
+	}
+	for i, arg := range spec.Argv {
+		if arg == "--config" && i+1 < len(spec.Argv) {
+			var c struct {
+				Version int `json:"chat_control_version"`
+			}
+			if json.Unmarshal([]byte(spec.Argv[i+1]), &c) == nil {
+				return c.Version == shimagy.ChatControlVersion
+			}
+		}
+	}
+	return false
 }

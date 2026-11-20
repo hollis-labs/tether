@@ -8,6 +8,7 @@ import (
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 
+	"github.com/hollis-labs/tether/internal/chatbackend/agystdio"
 	"github.com/hollis-labs/tether/internal/chatbackend/claudestdio"
 )
 
@@ -30,10 +31,15 @@ const (
 
 func claudeBrand(brand string) bool { return brand == "claude" || brand == "claude-code" }
 
-// installStdioTap makes a local Claude streaming-stdio session's stdout reach a new tap and returns it (nil for any
-// other session).
+// installStdioTap registers local chat executors and taps raw streaming output
+// for Claude and shim-hosted agy sessions. Per-turn agy uses its runtime executor.
 func (s *Service) installStdioTap(id, brand string, rt agentsessions.Runtime, opts *agentsessions.StartOptions) *claudestdio.Tap {
-	if !claudeBrand(brand) || rt == nil || !rt.Caps().StreamingStdio {
+	if brand == "antigravity" {
+		if executor, ok := rt.(agystdio.Executor); ok {
+			s.agyExecutors.Store(id, executor)
+		}
+	}
+	if (!claudeBrand(brand) && brand != "antigravity") || rt == nil || !rt.Caps().StreamingStdio {
 		return nil
 	}
 	tap := claudestdio.NewTap()
@@ -45,12 +51,25 @@ func (s *Service) installStdioTap(id, brand string, rt agentsessions.Runtime, op
 	if old, loaded := s.stdioTaps.Swap(id, tap); loaded {
 		old.(*claudestdio.Tap).Close()
 	}
+	if brand == "antigravity" {
+		pending := 0
+		if opts.BootMode == "stdin" && opts.BootPrompt != "" {
+			pending++
+		} else if opts.AutoFireFirstTurn && len(opts.FirstTurnPayload) > 0 {
+			// The streaming runtime skips auto-fire when stdin already sent boot.
+			pending++
+		}
+		s.agyExecutors.Store(id, agystdio.NewHostedExecutor(agystdio.HostedConfig{Tap: tap, Send: stdioWriter{s: s, id: id}.Write, Busy: func() bool { _, ok := s.Manager.Get(id); return !ok }, InitialPending: pending, Probe: true}))
+	}
 	return tap
 }
 
 // watchStdioTap closes a local session's tap when the session ends.
 func (s *Service) watchStdioTap(id string, tap *claudestdio.Tap) {
 	if tap == nil {
+		if _, ok := s.agyExecutors.Load(id); ok {
+			go func() { _, _ = s.Manager.WaitSession(context.Background(), id); s.agyExecutors.Delete(id) }()
+		}
 		return
 	}
 	go func() {
@@ -62,10 +81,14 @@ func (s *Service) watchStdioTap(id string, tap *claudestdio.Tap) {
 // dropStdioTap closes the session's tap (only tap, when it is not nil) and forgets it.
 func (s *Service) dropStdioTap(id string, tap *claudestdio.Tap) {
 	v, ok := s.stdioTaps.Load(id)
+	if !ok && tap == nil {
+		s.agyExecutors.Delete(id)
+	}
 	if !ok || (tap != nil && v.(*claudestdio.Tap) != tap) {
 		return
 	}
 	if s.stdioTaps.CompareAndDelete(id, v) {
+		s.agyExecutors.Delete(id)
 		v.(*claudestdio.Tap).Close()
 	}
 }

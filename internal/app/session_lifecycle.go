@@ -779,6 +779,10 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		req.Runtime = scratchRuntime
 	}
+	if plan.ProviderBrand == "antigravity" && req.Runtime.Caps().StreamingStdio {
+		s.agyExecutors.Delete(sessionID)
+		stdioTap = s.installStdioTap(sessionID, plan.ProviderBrand, req.Runtime, &req.Options)
+	}
 	launchCtx := ctx
 	if s.shimSessionRetained(sessionID) {
 		// After placement, client cancellation cannot abandon bridge startup or

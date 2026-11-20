@@ -5,6 +5,7 @@ import (
 
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 
+	"github.com/hollis-labs/tether/internal/chatbackend/agystdio"
 	"github.com/hollis-labs/tether/internal/chatbackend/claudepty"
 	"github.com/hollis-labs/tether/internal/chatbackend/claudestdio"
 	"github.com/hollis-labs/tether/internal/chatbackend/claudetranscript"
@@ -46,6 +47,8 @@ func (s *Service) ChatRuntime(id string) (chatwire.Runtime, error) {
 		return chatwire.RuntimeClaudeStdio, nil
 	case claudeBrand(plan.ProviderBrand) && kind == config.RuntimeKindPTY:
 		return chatwire.RuntimeClaudePTY, nil
+	case brand == "antigravity" && (kind == config.RuntimeKindSubprocess || kind == config.RuntimeKindStreamingStdio):
+		return chatwire.RuntimeAgyStdio, nil
 	case brand == "codex" && kind == config.RuntimeKindJSONRPCStdio:
 		return chatwire.RuntimeCodexAppServer, nil
 	}
@@ -55,6 +58,15 @@ func (s *Service) ChatRuntime(id string) (chatwire.Runtime, error) {
 // ChatBackend implements chatwire.Sessions.
 func (s *Service) ChatBackend(id string, rt chatwire.Runtime) (chatwire.Backend, error) {
 	switch rt {
+	case chatwire.RuntimeAgyStdio:
+		if v, ok := s.agyExecutors.Load(id); ok {
+			if s.stdioTap(id) != nil && !s.agyChatControlSupported(id) {
+				return nil, &chatwire.UnsupportedRuntimeError{SessionID: id, Runtime: rt, Reason: "retained agy host lacks correlated chat controls; start a new seat"}
+			}
+			return agystdio.New(agystdio.Config{Executor: v.(agystdio.Executor)}), nil
+		}
+		return nil, &chatwire.UnsupportedRuntimeError{SessionID: id, Runtime: rt, Reason: "agy chat requires a local per-turn runtime launched by this daemon; worker seats are not supported"}
+
 	case chatwire.RuntimeClaudeStdio:
 		b, err := s.ClaudeStdioBackend(id, claudestdio.Config{})
 		if err != nil {

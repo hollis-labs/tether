@@ -5,6 +5,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/hollis-labs/libs/ui/ui-go/chatstream"
+	"github.com/hollis-labs/tether/internal/chatbackend"
+	"github.com/hollis-labs/tether/internal/chatwire"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,5 +181,228 @@ func TestShimAGYBootInputFramingAndBoundedLaunch(t *testing.T) {
 	opts.Launch.Convention.Mode = runtimes.ModeSubprocessPerTurn
 	if _, err = agyWorkerArgv("/bin/agy", opts, strings.Repeat("x", shimagy.MaxConfig), nil); err == nil {
 		t.Fatal("oversized worker argument admitted")
+	}
+}
+
+func shimAGYChatFixture(t *testing.T, boot string, firstTurn ...string) (*shimAppFixture, chatwire.Backend, context.Context) {
+	t.Helper()
+	f := shimFixture(t)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.shimHosting.agyWorker = []string{exe, "-test.run=^TestShimAGYWorkerProcess$", "--"}
+	binary := filepath.Join(f.root, "agy")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$AGY_ARGS"
+case "$*" in *boot*) sleep 0.3;; esac
+printf '%s\n' '{"event":"init","conversation_id":"native-chat"}'
+case "$*" in *slow*) exec sleep 60;; esac
+printf '%s\n' '{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"agent_response","text_delta":"hello"}}'
+printf '%s\n' '{"event":"result","result":{"conversation_id":"native-chat","status":"SUCCESS","response":"hello"}}'
+`
+	if err = os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f.plan.Command, f.plan.ProviderBrand, f.plan.ProviderID, f.plan.RuntimeKind = binary, "antigravity", "antigravity", "subprocess"
+	f.req.Runtime, err = antigravity.New(f.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boot != "" {
+		f.req.Options.BootMode = "stdin"
+		f.req.Options.BootPrompt = boot
+	}
+	if len(firstTurn) > 0 {
+		f.req.Options.AutoFireFirstTurn = true
+		f.req.Options.FirstTurnPayload = []byte(firstTurn[0])
+	}
+	f.svc.turnFeeds = map[string]turnFeedRegistration{"antigravity": {}}
+	f.req.Options.OnSessionID = func(id string) { _ = f.svc.Store.UpsertSessionProviderMapping(f.req.ID, "tether", "antigravity", id) }
+	f.req.Options.Env = append(f.req.Options.Env, "AGY_ARGS="+filepath.Join(f.root, "argv.log"))
+	f.req.Options.Launch = &agentlaunch.TurnTemplate{Convention: gop.LaunchConvention{Executable: binary, Mode: runtimes.ModeSubprocessPerTurn, Argv: []gop.ArgTemplate{{Kind: gop.ArgResume, Value: "--conversation"}, {Kind: gop.ArgPromptInline, Value: "-p="}}}}
+	encoded, _ := json.Marshal(f.plan)
+	if _, err = f.svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=? WHERE session_id=?`, string(encoded), f.req.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.svc.Store.DB().Exec(`UPDATE sessions SET provider_id=? WHERE id=?`, "antigravity", f.req.ID); err != nil {
+		t.Fatal(err)
+	}
+	req, err := f.svc.prepareShimStart(context.Background(), f.plan, f.req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tap := f.svc.installStdioTap(req.ID, "antigravity", req.Runtime, &req.Options)
+	if tap == nil {
+		t.Fatal("missing hosted agy tap")
+	}
+	if err = f.svc.Manager.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.watchStdioTap(req.ID, tap)
+	f.svc.leaseActorBinding(req.ID, "worker")
+	f.svc.watchSessionBindings(req.ID)
+	rt, err := f.svc.ChatRuntime(req.ID)
+	if err != nil || rt != chatwire.RuntimeAgyStdio {
+		t.Fatalf("runtime %s: %v", rt, err)
+	}
+	b, err := f.svc.ChatBackend(req.ID, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); _ = b.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-stopped })
+	return f, b, ctx
+
+}
+
+func TestShimAGYChatCancelAndContinue(t *testing.T) {
+	f, b, ctx := shimAGYChatFixture(t, "")
+	var err error
+	read := func(r chatbackend.Run) []chatstream.Event {
+		t.Helper()
+		done := make(chan []chatstream.Event, 1)
+		go func() {
+			var evs []chatstream.Event
+			for ev := range r.Events() {
+				evs = append(evs, ev)
+			}
+			done <- evs
+		}()
+		select {
+		case evs := <-done:
+			return evs
+		case <-time.After(15 * time.Second):
+			t.Fatal("chat run stuck")
+			return nil
+		}
+	}
+	r, err := b.Submit(ctx, chatbackend.Turn{Text: "slow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimAwait(t, "agy child init", func() bool { data, _ := os.ReadFile(filepath.Join(f.root, "argv.log")); return len(data) > 0 })
+	if _, err = b.Submit(ctx, chatbackend.Turn{Text: "busy"}); !errors.Is(err, chatbackend.ErrBusy) {
+		t.Fatalf("busy %v", err)
+	}
+	r.Cancel()
+	evs := read(r)
+	if evs[len(evs)-1].Verb != chatstream.VerbRunAbort {
+		t.Fatalf("terminal %+v", evs)
+	}
+	// The hosted result is emitted only after the child exits; the next turn must
+	// use its native conversation while retaining the same shim process.
+	var next chatbackend.Run
+	shimAwait(t, "backend releases canceled run", func() bool {
+		next, err = b.Submit(ctx, chatbackend.Turn{Text: "next", Context: json.RawMessage(`{"private":"only-input"}`)})
+		return err == nil
+	})
+	evs = read(next)
+	terminals := 0
+	for _, ev := range evs {
+		if ev.IsTerminal() {
+			terminals++
+		}
+	}
+	data, _ := json.Marshal(evs)
+	if terminals != 1 || evs[len(evs)-1].Verb != chatstream.VerbRunFinish || strings.Contains(string(data), "only-input") {
+		t.Fatalf("events %s", data)
+	}
+	args, _ := os.ReadFile(filepath.Join(f.root, "argv.log"))
+	if !strings.Contains(string(args), "--conversation native-chat") || !strings.Contains(string(args), "app-context") {
+		t.Fatalf("argv %s", args)
+	}
+}
+
+func readAGYChat(t *testing.T, r chatbackend.Run) []chatstream.Event {
+	t.Helper()
+	done := make(chan []chatstream.Event, 1)
+	go func() {
+		var evs []chatstream.Event
+		for ev := range r.Events() {
+			evs = append(evs, ev)
+		}
+		done <- evs
+	}()
+	select {
+	case evs := <-done:
+		return evs
+	case <-time.After(15 * time.Second):
+		r.Cancel()
+		t.Fatal("chat run stuck")
+		return nil
+	}
+}
+func TestShimAGYChatRefusesDelayedBoot(t *testing.T) {
+	for _, combined := range []bool{false, true} {
+		name := "stdin_boot"
+		var firstTurn []string
+		if combined {
+			name = "stdin_boot_with_autofire"
+			firstTurn = []string{"kickoff"}
+		}
+		t.Run(name, func(t *testing.T) {
+			f, b, ctx := shimAGYChatFixture(t, "boot", firstTurn...)
+			if _, err := b.Submit(ctx, chatbackend.Turn{Text: "slow"}); !errors.Is(err, chatbackend.ErrBusy) {
+				t.Fatalf("boot accepted chat input: %v", err)
+			}
+			var r chatbackend.Run
+			shimAwait(t, "boot completion before chat admission", func() bool { var err error; r, err = b.Submit(ctx, chatbackend.Turn{Text: "next"}); return err == nil })
+			evs := readAGYChat(t, r)
+			if evs[len(evs)-1].Verb != chatstream.VerbRunFinish {
+				t.Fatalf("next turn failed: %+v", evs)
+			}
+			args, _ := os.ReadFile(filepath.Join(f.root, "argv.log"))
+			if strings.Contains(string(args), "slow") {
+				t.Fatalf("busy chat was delivered: %s", args)
+			}
+			if strings.Contains(string(args), "kickoff") {
+				t.Fatalf("auto-fire must be suppressed by stdin boot: %s", args)
+			}
+		})
+	}
+}
+func TestShimAGYChatRefusesActiveReattach(t *testing.T) {
+	f, _, _ := shimAGYChatFixture(t, "slow boot")
+	shimAwait(t, "active native boot", func() bool {
+		m, e := f.svc.Store.GetSessionProviderMapping(f.req.ID, "tether", "antigravity")
+		return e == nil && m.NativeSessionID.String == "native-chat"
+	})
+	drain, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := f.svc.DrainSessions(drain); err != nil {
+		t.Fatal(err)
+	}
+	manager, stops := newSessionManager(f.svc.Store, f.svc.Bus)
+	restarted := &Service{Catalog: f.svc.Catalog, Store: f.svc.Store, Bus: f.svc.Bus, Registry: f.svc.Registry, Manager: manager, stops: stops, shimHosting: f.svc.shimHosting, turnFeeds: f.svc.turnFeeds}
+	t.Cleanup(func() { _ = restarted.StopSession(f.req.ID); _ = manager.Shutdown(context.Background()) })
+	restarted.ReconcileStaleState()
+	rt, err := restarted.ChatRuntime(f.req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := restarted.ChatBackend(f.req.ID, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = b.Run(ctx) }()
+	defer func() { stop(); <-done }()
+	if _, err = b.Submit(ctx, chatbackend.Turn{Text: "must not be attributed to boot"}); !errors.Is(err, chatbackend.ErrBusy) {
+		t.Fatalf("active reattach accepted input: %v", err)
+	}
+	interrupt, finish := context.WithTimeout(ctx, 5*time.Second)
+	defer finish()
+	if err = (stdioWriter{s: restarted, id: f.req.ID}).Write(interrupt, gop.NewClaudeAdapter().InterruptRequest("owner-stop")); err != nil {
+		t.Fatal(err)
+	}
+	var next chatbackend.Run
+	shimAwait(t, "reattached boot drains before next chat turn", func() bool { next, err = b.Submit(ctx, chatbackend.Turn{Text: "next"}); return err == nil })
+	evs := readAGYChat(t, next)
+	if evs[len(evs)-1].Verb != chatstream.VerbRunFinish {
+		t.Fatalf("next reattached turn failed: %+v", evs)
 	}
 }

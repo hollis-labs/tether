@@ -32,6 +32,9 @@ func TestChatRuntime(t *testing.T) {
 		{"codex", "app-server", chatwire.RuntimeCodexAppServer},
 		{"codex", config.RuntimeKindSubprocess, ""},
 		{"gemini", config.RuntimeKindPTY, ""},
+		{"antigravity", config.RuntimeKindSubprocess, chatwire.RuntimeAgyStdio},
+		{"antigravity", config.RuntimeKindPTY, ""},
+		{"antigravity", config.RuntimeKindAPI, ""},
 	}
 	for _, c := range cases {
 		set(c.brand, c.kind)
@@ -45,6 +48,9 @@ func TestChatRuntime(t *testing.T) {
 		if err != nil || got != c.want {
 			t.Errorf("%s/%s: ChatRuntime = %q, %v; want %q", c.brand, c.kind, got, err, c.want)
 		}
+	}
+	if _, err := s.ChatBackend("s1", chatwire.RuntimeAgyStdio); !errors.Is(err, chatwire.ErrUnsupportedRuntime) {
+		t.Errorf("worker agy backend: %v", err)
 	}
 	// A worker PTY session's transcript is on the worker: refused with the typed error.
 	if _, err := s.ChatBackend("s1", chatwire.RuntimeClaudePTY); !errors.Is(err, chatwire.ErrUnsupportedRuntime) {

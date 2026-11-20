@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,16 +23,20 @@ import (
 )
 
 const MaxConfig = 64 << 10
+
+// ChatControlVersion identifies the target-correlated status/interrupt protocol.
+const ChatControlVersion = 1
 const maxLine = 4 << 20
 
 // Config carries the already resolved provider launch, without credentials or
 // authority. Every actual turn is resolved through the published template.
 type Config struct {
-	Binary       string                   `json:"binary"`
-	Launch       agentlaunch.TurnTemplate `json:"launch"`
-	ExtraArgs    []string                 `json:"extra_args,omitempty"`
-	SystemPrompt string                   `json:"system_prompt,omitempty"`
-	ResumeID     string                   `json:"resume_id,omitempty"`
+	ChatControlVersion int                      `json:"chat_control_version,omitempty"`
+	Binary             string                   `json:"binary"`
+	Launch             agentlaunch.TurnTemplate `json:"launch"`
+	ExtraArgs          []string                 `json:"extra_args,omitempty"`
+	SystemPrompt       string                   `json:"system_prompt,omitempty"`
+	ResumeID           string                   `json:"resume_id,omitempty"`
 }
 
 func (c Config) Validate() error {
@@ -42,42 +47,153 @@ func (c Config) Validate() error {
 	return err
 }
 
-// Run serializes framed turns. EOF never cancels a turn already accepted by
-// the host; daemon bridge detachment leaves this input channel open. It does
-// not advertise active-turn interruption or silently replace a native ID.
+// Run serializes framed turns while reading internal interrupt controls. EOF
+// drains accepted turns; bridge detachment never cancels the active child.
 func Run(ctx context.Context, c Config, input io.Reader, output, stderr io.Writer) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 4096), maxLine)
-	native := c.ResumeID
-	for scanner.Scan() {
-		var frame struct {
-			Type    string `json:"type"`
-			Message struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil || frame.Type != "user" || frame.Message.Role != "user" {
-			return errors.New("AGY worker refused an invalid user frame")
-		}
-		id := uuid.NewString()
-		next, err := runTurn(ctx, c, frame.Message.Content, native, id, output, stderr)
-		if err != nil {
-			failure := map[string]any{"event": "result", "uuid": id, "result": map[string]string{"status": "ERROR", "error": "hosted AGY turn failed"}}
-			if writeErr := json.NewEncoder(output).Encode(failure); writeErr != nil {
-				return writeErr
-			}
-			return err
-		}
-		native = next
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	output = &lockedWriter{w: output}
+	type frame struct {
+		Type         string `json:"type"`
+		ClientTurnID string `json:"tether_turn_id"`
+		RequestID    string `json:"request_id"`
+		Request      struct {
+			Subtype      string `json:"subtype"`
+			TargetTurnID string `json:"target_turn_id"`
+		} `json:"request"`
+		Message struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"message"`
 	}
-	return scanner.Err()
+	frames := make(chan frame)
+	scanErr := make(chan error, 1)
+	go func() {
+		defer close(frames)
+		scanner := bufio.NewScanner(input)
+		scanner.Buffer(make([]byte, 4096), maxLine)
+		for scanner.Scan() {
+			var f frame
+			if err := json.Unmarshal(scanner.Bytes(), &f); err != nil {
+				scanErr <- err
+				return
+			}
+			select {
+			case frames <- f:
+			case <-ctx.Done():
+				scanErr <- ctx.Err()
+				return
+			}
+		}
+		scanErr <- scanner.Err()
+	}()
+	type completion struct {
+		native string
+		err    error
+	}
+	var done chan completion
+	var cancel context.CancelFunc
+	defer func() {
+		if cancel != nil {
+			cancel()
+			<-done
+		}
+	}()
+	native := c.ResumeID
+	type queuedTurn struct{ text, clientID string }
+	var queue []queuedTurn
+	activeClientID := ""
+	for {
+		if done == nil && len(queue) > 0 {
+			turn := queue[0]
+			activeClientID = turn.clientID
+			queue = queue[1:]
+			turnCtx, turnCancel := context.WithCancel(ctx)
+			cancel = turnCancel
+			done = make(chan completion, 1)
+			result := done
+			previous := native
+			go func() {
+				id := uuid.NewString()
+				next, err := runTurn(turnCtx, c, turn.text, previous, id, turn.clientID, output, stderr)
+				if err != nil && turnCtx.Err() != nil {
+					aborted := map[string]any{"event": "result", "uuid": id, "tether_turn_id": turn.clientID, "result": map[string]string{"conversation_id": previous, "status": "ERROR", "finished_reason": "interrupted"}}
+					err = json.NewEncoder(output).Encode(aborted)
+					next = previous
+				}
+				if err != nil {
+					failure := map[string]any{"event": "result", "uuid": id, "tether_turn_id": turn.clientID, "result": map[string]string{"status": "ERROR", "error": "hosted AGY turn failed"}}
+					if writeErr := json.NewEncoder(output).Encode(failure); writeErr != nil {
+						err = writeErr
+					}
+				}
+				result <- completion{next, err}
+			}()
+		}
+		if frames == nil && done == nil && len(queue) == 0 {
+			return <-scanErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case f, ok := <-frames:
+			if !ok {
+				frames = nil
+				continue
+			}
+			if f.Type == "control_request" && f.RequestID != "" {
+				response := map[string]any{"subtype": "success", "request_id": f.RequestID, "protocol": ChatControlVersion}
+				switch f.Request.Subtype {
+				case "status":
+					response["active"] = done != nil
+					response["queued"] = len(queue)
+				case "interrupt":
+					if cancel != nil && (f.Request.TargetTurnID == "" || f.Request.TargetTurnID == activeClientID) {
+						cancel()
+					}
+				default:
+					return errors.New("AGY worker refused an invalid control frame")
+				}
+				if err := json.NewEncoder(output).Encode(map[string]any{"type": "control_response", "response": response}); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if f.Type != "user" || f.Message.Role != "user" {
+				return errors.New("AGY worker refused an invalid user frame")
+			}
+			if len(queue) >= 256 {
+				return errors.New("AGY worker input queue full")
+			}
+			queue = append(queue, queuedTurn{f.Message.Content, f.ClientTurnID})
+		case result := <-done:
+			cancel()
+			cancel = nil
+			done = nil
+			if result.err != nil {
+				return result.err
+			}
+			native = result.native
+		}
+	}
 }
 
-func runTurn(ctx context.Context, c Config, prompt, native, id string, output, stderr io.Writer) (string, error) {
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.w.Write(p)
+}
+
+func runTurn(ctx context.Context, c Config, prompt, native, id, clientID string, output, stderr io.Writer) (string, error) {
 	args, err := c.Launch.TurnArgv(gop.TurnInput{Prompt: prompt, SystemPrompt: c.SystemPrompt, ResumeID: native}, c.ExtraArgs...)
 	if err != nil {
 		return "", err
@@ -128,6 +244,7 @@ func runTurn(ctx context.Context, c Config, prompt, native, id string, output, s
 		_ = json.Unmarshal(raw["event"], &event)
 		_ = json.Unmarshal(raw["conversation_id"], &conversation)
 		raw["uuid"], _ = json.Marshal(id)
+		raw["tether_turn_id"], _ = json.Marshal(clientID)
 		if event == "init" {
 			if observed != "" || conversation == "" || (native != "" && native != conversation) {
 				readErr = errors.New("hosted AGY native conversation unavailable")
@@ -164,6 +281,16 @@ func runTurn(ctx context.Context, c Config, prompt, native, id string, output, s
 	}
 	close(readerDone)
 	waitErr := <-processDone
+	if ctx.Err() != nil {
+		if observed == "" {
+			observed = native
+		}
+		failure := map[string]any{"event": "result", "uuid": id, "tether_turn_id": clientID, "result": map[string]string{"conversation_id": observed, "status": "ERROR", "finished_reason": "interrupted"}}
+		if err := json.NewEncoder(output).Encode(failure); err != nil {
+			return "", err
+		}
+		return observed, nil
+	}
 	adapter := gop.NewAntigravityAdapter()
 	if readErr != nil || waitErr != nil || adapter.IsSessionLost(tail.tail) || adapter.IsNotAuthenticated(tail.tail) || observed == "" || terminal == nil {
 		return "", errors.New("hosted AGY turn did not complete under its native conversation")

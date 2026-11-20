@@ -269,6 +269,8 @@ func (s *fakeSessions) ChatBackend(session string, rt Runtime) (Backend, error) 
 			}
 			return nil
 		}}), nil
+	case RuntimeAgyStdio:
+		// Agy uses the dedicated executor fixture in its integration tests.
 	}
 	return nil, &UnsupportedRuntimeError{SessionID: session, Runtime: rt, Reason: "no fake"}
 }

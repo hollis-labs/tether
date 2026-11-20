@@ -192,6 +192,9 @@ type Service struct {
 	// exit (chat_stdio.go, CW-20261118-0010).
 	stdioTaps sync.Map
 
+	// agyExecutors borrows local per-turn runtimes for chat.
+	agyExecutors sync.Map
+
 	// codexTaps copies the existing local app-server stdout for the chat wire.
 	codexTaps sync.Map
 

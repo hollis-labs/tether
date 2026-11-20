@@ -61,7 +61,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hollis-labs/libs/core/util v0.6.0 // indirect
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0 // indirect
-	github.com/hollis-labs/libs/ui/ui-go v0.5.0
+	github.com/hollis-labs/libs/ui/ui-go v0.5.1-0.20261119185925-7ffb9de63ff8
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

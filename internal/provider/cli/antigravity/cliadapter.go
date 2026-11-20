@@ -39,7 +39,8 @@ import (
 func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 	adapter := gop.NewAntigravityAdapter()
 	adapter.Permission = permission(plan.PermissionMode)
-	return claudestream.NewWithAdapter(plan, adapter, "antigravity", agentsessions.Capabilities{
+	bridge := &chatRuntime{}
+	rt, err := claudestream.NewWithAdapter(plan, &chatAdapter{AntigravityAdapter: adapter, bridge: bridge}, "antigravity", agentsessions.Capabilities{
 		PTY:               false,
 		Resize:            false,
 		ProviderSessionID: true,
@@ -49,6 +50,11 @@ func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 		// until go-providers drops the oauth_creds.json stat (CW-20260930-0221 R1)
 		claudestream.WithoutPreflight(),
 	)
+	if err != nil {
+		return nil, err
+	}
+	bridge.Runtime = rt
+	return bridge, nil
 }
 
 func permission(mode string) string {
