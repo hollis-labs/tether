@@ -721,6 +721,13 @@ func TestHTTPRelayReconnectAfter401PreservesRunTokenAndDoesNotReplayMutation(t *
 				t.Fatal("old view's delayed 401 retired the replacement stream")
 			}
 
+			// Consume the replacement stream's notification before closing stdin.
+			// The rig uses an unbuffered stdout pipe: leaving this unread can
+			// block emit (and shutdown) if the later POST response wins the race.
+			if msg := g.recv(); msg["method"] != "notifications/tools/list_changed" {
+				t.Fatal("replacement stream did not deliver its notification")
+			}
+
 			g.send(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
 			for {
 				msg := g.recv()

@@ -41,7 +41,8 @@ type HTTPRelay struct {
 	mu       sync.Mutex // guards session, protocol, initMsg, wg ordering of the first request
 	session  string
 	protocol string
-	initMsg  []byte // the agent's latest initialize request, replayed to start a replacement hub session
+	initMsg  []byte     // the agent's latest initialize request, replayed to start a replacement hub session
+	logMu    sync.Mutex // serializes diagnostics from concurrent requests
 	outMu    sync.Mutex
 	out      io.Writer
 	wg       sync.WaitGroup // in-flight forwards
@@ -98,6 +99,8 @@ func (r *HTTPRelay) client() *http.Client {
 }
 
 func (r *HTTPRelay) logf(format string, args ...any) {
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
 	if r.Stderr != nil {
 		_, _ = fmt.Fprintf(r.Stderr, "mcp-http-relay: "+format+"\n", args...)
 	}
