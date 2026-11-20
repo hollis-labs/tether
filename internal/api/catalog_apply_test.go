@@ -344,3 +344,34 @@ func TestFilesAndAuditRoutes(t *testing.T) {
 		t.Fatalf("audit = %d %s", code, b)
 	}
 }
+
+func TestApprovalOffSessionPlanAndApply(t *testing.T) {
+	d := newCatalogApplyDaemon(t)
+	d.engine.ApprovalOff = true
+	d.engine.Approver = nil
+	d.engine.RunningSessions = func(context.Context, []string) ([]string, error) { return []string{"sess-mgr"}, nil }
+	req := api.CatalogPlanRequest{Name: "own-definition", Apply: true, Files: []catalogapply.File{{Path: "agents/manager.yaml", Content: "id: manager\nname: Changed\n"}}}
+	code, b := d.call("POST", "/catalog/plans", req, asSession)
+	if code != 200 {
+		t.Fatalf("plan+apply: %d %s", code, b)
+	}
+	var p catalogapply.Plan
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.State != catalogapply.StateApplied || p.ApprovedBy != "approval-disabled" || p.Result == nil || !p.Result.Applied {
+		t.Fatalf("response: %s", b)
+	}
+	code, b = d.call("GET", "/catalog/approvers", nil, asSession)
+	if code != 200 || !bytes.Contains(b, []byte(`"approval":"off"`)) {
+		t.Fatalf("mode: %d %s", code, b)
+	}
+}
+
+func TestPlanApplyRejectedWithApprovalOn(t *testing.T) {
+	d := newCatalogApplyDaemon(t)
+	code, b := d.call("POST", "/catalog/plans", api.CatalogPlanRequest{Name: "requires-approval", Apply: true, Files: helperFiles}, asSession)
+	if code != http.StatusForbidden {
+		t.Fatalf("plan+apply: %d %s", code, b)
+	}
+}

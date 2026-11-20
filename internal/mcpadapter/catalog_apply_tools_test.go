@@ -153,3 +153,23 @@ func TestCatalogFileInputGuards(t *testing.T) {
 		t.Fatal("plan without catalog.write accepted")
 	}
 }
+
+func TestCatalogPlanApplyOffTransport(t *testing.T) {
+	root := t.TempDir()
+	reloads := 0
+	eng := &catalogapply.Engine{Root: root, BackupRoot: t.TempDir(), ApprovalOff: true, Validate: func(string) error { return nil }, Reload: func(context.Context) ([]string, error) { reloads++; return nil, nil }}
+	srv := httptest.NewServer(api.NewHandler(api.Deps{CatalogApply: eng}))
+	defer srv.Close()
+	a := &Adapter{token: "test", scopes: map[string]struct{}{ScopeCatalogWrite: {}}, client: client.New("tcp:"+strings.TrimPrefix(srv.URL, "http://"), client.WithToken(""))}
+	result := callHandler(t, a.handleCatalogPlan, map[string]any{"name": "immediate", "apply": true, "files": []any{map[string]any{"path": "launches/dev.yaml", "content": "id: dev\nagent: dev\n"}}})
+	if result.IsError {
+		t.Fatalf("plan+apply: %+v", result)
+	}
+	body := parseToolJSON(t, result)
+	if body["state"] != "applied" || body["approved_by"] != "approval-disabled" || reloads != 1 {
+		t.Fatalf("response: %+v reloads=%d", body, reloads)
+	}
+	if _, err := os.Stat(filepath.Join(root, "launches/dev.yaml")); err != nil {
+		t.Fatal(err)
+	}
+}

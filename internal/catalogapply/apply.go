@@ -84,7 +84,7 @@ func (e *Engine) Apply(ctx context.Context, planID string) (*Result, error) {
 			return nil, err
 		}
 	}
-	if e.RunningSessions != nil && len(cp.Touches) > 0 && !cp.AllowRunning {
+	if e.RunningSessions != nil && len(cp.Touches) > 0 && !cp.AllowRunning && !e.ApprovalOff {
 		ids, err := e.RunningSessions(ctx, cp.Touches)
 		if err != nil {
 			return nil, fmt.Errorf("check running sessions: %w", err)
@@ -231,7 +231,7 @@ func (e *Engine) audit(res *Result, p *Plan) {
 	rec := AuditRecord{
 		At: e.now().UTC().Format(time.RFC3339), PlanID: p.ID, Name: p.Name, TaskID: p.TaskID,
 		Digest: p.Digest, Files: res.Changed, BackupID: res.BackupID, Activation: res.Activation,
-		Privileged: p.Privileged, RollbackOf: p.RollbackOf, PlannedBy: p.PlannedBy, ApprovedAt: p.ApprovedAt,
+		Privileged: p.Privileged, RollbackOf: p.RollbackOf, PlannedBy: p.PlannedBy, ApprovedAt: p.ApprovedAt, ApprovedBy: p.ApprovedBy,
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
