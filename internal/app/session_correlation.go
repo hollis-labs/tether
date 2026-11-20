@@ -6,5 +6,5 @@ import (
 )
 
 func sessionCorrelation(row store.SessionRow) launch.Correlation {
-	return launch.Correlation{TaskID: row.TaskID.String, ProjectID: row.ProjectID, WorkstreamID: row.WorkstreamID.String}
+	return launch.Correlation{TaskID: row.TaskID.String, RunID: row.RunID.String, ProjectID: row.ProjectID, WorkstreamID: row.WorkstreamID.String}
 }

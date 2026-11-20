@@ -24,6 +24,7 @@ type Snapshot struct {
 	AgentURN        string `json:"agent_urn,omitempty"`
 	WorkstreamID    string `json:"workstream_id,omitempty"`
 	TaskID          string `json:"task_id,omitempty"`
+	RunID           string `json:"run_id,omitempty"`
 	LaunchID        string `json:"launch_id,omitempty"`
 	ProjectID       string `json:"project_id,omitempty"`
 	LogicalAgentID  string `json:"logical_agent_id,omitempty"`

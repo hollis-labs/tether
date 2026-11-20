@@ -113,6 +113,8 @@ type CreateSessionInput struct {
 	// well-formed; never decoded from a client into this struct. Stored on the session
 	// row and planted as TETHER_TASK_ID; no existence check against Torque.
 	TaskID string
+	// RunID is the optional launcher-asserted Torque run; never a team run.
+	RunID string
 
 	// App is the app the launch path stamps on the session row (CW-20261020-0036).
 	// Server-set after the API has checked the caller is the operator and the id is
@@ -126,6 +128,9 @@ type CreateSessionInput struct {
 // TaskIDEnv is the environment variable that carries the launcher-asserted task id
 // into the agent's process (hub-local and Outpost launches alike).
 const TaskIDEnv = "TETHER_TASK_ID"
+
+// RunIDEnv carries the Torque run, never a Tether team-run identifier.
+const RunIDEnv = "TETHER_RUN_ID"
 
 // LaunchOverride mirrors the JSON shape accepted in CreateSessionInput.Override.
 // Defined as a named type so the JSON contract is auditable in one place.

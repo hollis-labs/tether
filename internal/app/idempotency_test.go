@@ -392,3 +392,12 @@ func TestCreateKeyedReplace_BuildFailureKeepsBinding(t *testing.T) {
 		t.Fatalf("after failed replace = %+v, %v; want replay of %s", again, err, first.SessionID)
 	}
 }
+
+func TestCreateDigestIncludesTorqueRun(t *testing.T) {
+	a := CreateSessionInput{LaunchID: "l", TaskID: "task", RunID: "42"}
+	b := a
+	b.RunID = "43"
+	if createRequestDigest(a) == createRequestDigest(b) {
+		t.Fatal("different Torque runs share a request digest")
+	}
+}

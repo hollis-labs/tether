@@ -218,6 +218,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		}
 		// A resume continues the same work, so it keeps the launcher's task stamp
 		// (CW-20261012-0062a); only the original launch ever asserts one.
+		stampRunID(plan, parent.RunID.String)
 		if parent.TaskID.Valid {
 			stampTaskID(plan, parent.TaskID.String)
 		}
@@ -342,6 +343,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		Intent:          "resume",
 		ParentSessionID: sql.NullString{String: sourceID, Valid: sourceID != ""},
 		TaskID:          nullableTaskID(plan.TaskID),
+		RunID:           nullableTaskID(plan.RunID),
 	}
 	if key != nil {
 		// Audit only: the parent the resolver chose, outside the digest.

@@ -291,6 +291,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.TaskID = taskID
+	runID, runOK := s.runStamp(w, r, req.RunID)
+	if !runOK {
+		return
+	}
+	req.RunID = runID
 	appID, appOK := s.appStamp(w, r, req.App)
 	if !appOK {
 		return
@@ -332,6 +337,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		ReplaceIdempotency:   req.ReplaceIdempotency,
 		IdempotencyPrincipal: idemPrincipal,
 		TaskID:               req.TaskID,
+		RunID:                req.RunID,
 		App:                  req.App,
 		Continuity:           req.Continuity,
 	})

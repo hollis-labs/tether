@@ -64,7 +64,8 @@ type sessionBootstrapRequest struct {
 	ParentSessionID  string                            `json:"parent_session_id,omitempty"`
 	LogicalAgentID   string                            `json:"logical_agent_id,omitempty"` // set for a durable-actor bootstrap
 	Publication      string                            `json:"publication,omitempty"`      // private-local|published-local|tether-hosted; default "private-local"
-	TaskID           string                            `json:"task_id,omitempty"`          // launcher-asserted Torque task id; applied only when the row is created (CW-20261012-0062a)
+	RunID            string                            `json:"run_id,omitempty"`
+	TaskID           string                            `json:"task_id,omitempty"` // launcher-asserted Torque task id; applied only when the row is created (CW-20261012-0062a)
 	ProviderMappings []sessionBootstrapProviderMapping `json:"provider_mappings,omitempty"`
 }
 
@@ -104,6 +105,11 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	req.TaskID = taskID
+	runID, runOK := s.runStamp(w, r, req.RunID)
+	if !runOK {
+		return
+	}
+	req.RunID = runID
 
 	principal := store.IdempotencyPrincipalAnonymous
 	if caller, ok := identity.FromContext(r.Context()); ok && caller.Verified && caller.ID != "" {
@@ -129,6 +135,7 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			// A later bootstrap of an existing session never reaches this literal, so a
 			// second claim cannot rebind the task (CW-20261012-0062a).
 			TaskID: sql.NullString{String: req.TaskID, Valid: req.TaskID != ""},
+			RunID:  sql.NullString{String: req.RunID, Valid: req.RunID != ""},
 			// This endpoint records identity and launches nothing, so no
 			// .mcp.json is planted and no `tether mcp --session` carries this
 			// id. The session's proxied calls therefore cannot be attributed
