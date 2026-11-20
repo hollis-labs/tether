@@ -286,18 +286,7 @@ func (e *Engine) PlanRollback(ctx context.Context, backupID string, opt Options)
 	if len(name) > 64 {
 		name = name[:64]
 	}
-	p, err := e.plan(ctx, Bundle{Name: name, Files: files}, opt, true)
-	if err != nil {
-		return nil, err
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if q, ok := e.plans[p.ID]; ok {
-		q.RollbackOf = backupID
-		q.Digest = digestOf(q)
-		p = clonePlan(q)
-	}
-	return p, nil
+	return e.plan(ctx, Bundle{Name: name, Files: files}, opt, true, backupID)
 }
 
 // listAllowed reads every allowlisted catalog file under root.

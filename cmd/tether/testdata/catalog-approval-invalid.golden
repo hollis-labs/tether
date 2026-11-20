@@ -1,0 +1,8 @@
+plan cp_one  "one"  state=invalid
+expires 2026-11-20T13:00:00Z (remaining 1h0m0s; ttl 3600s); survives restart: true
+digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  create    agents/one.yaml
+validation: FAILED: invalid YAML
+
++ reviewed file
+ERROR: plan cp_one invalid: invalid YAML; re-plan: call tether_catalog_plan with name="one" and the original files bundle

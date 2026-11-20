@@ -34,7 +34,9 @@ func TestCatalogValidatePreflightsCandidateRunningMCPGrants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	stateDB := filepath.Join(t.TempDir(), "state.db")
+	cat.Global.Catalog.Defaults.StateDB = stateDB
+	db, err := store.Open(stateDB)
 	if err != nil {
 		t.Fatal(err)
 	}

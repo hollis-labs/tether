@@ -2,9 +2,13 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,7 +35,7 @@ here, on a terminal, with the approval passphrase:
 
   tether catalog approver set       set the passphrase (once)
   tether catalog show <plan_id>     read the diff, validation and privileged changes
-  tether catalog approve <plan_id>  approve by digest, then the agent can apply
+  tether catalog approve <plan_id> [<plan_id>...]  approve by digest, then the agent can apply
   tether catalog backups            list the backups an apply left
 
 The passphrase is the guarantee: an agent that does not know it cannot approve
@@ -104,9 +108,9 @@ func init() {
 }
 
 var catalogApproveCmd = &cobra.Command{
-	Use:   "approve <plan_id>",
-	Short: "Approve a planned catalog change so the agent can apply it",
-	Args:  cobra.ExactArgs(1),
+	Use:   "approve <plan_id> [<plan_id>...]",
+	Short: "Approve planned catalog changes so the agent can apply them",
+	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil || !term.IsTerminal(int(tty.Fd())) {
@@ -117,42 +121,64 @@ var catalogApproveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		plan, err := h.CatalogApply().Get(cmd.Context(), args[0])
+		if len(args) > 64 {
+			return errors.New("approve accepts at most 64 plans")
+		}
+		var plans []*catalogapply.Plan
+		seen := map[string]bool{}
+		for _, id := range args {
+			if seen[id] {
+				return fmt.Errorf("duplicate plan id %q", id)
+			}
+			seen[id] = true
+			plan, err := h.CatalogApply().Get(cmd.Context(), id)
+			if err != nil {
+				return fmt.Errorf("plan %s unavailable: %w; re-plan: call tether_catalog_plan with the original bundle (name and files, or rollback_of)", id, err)
+			}
+			plans = append(plans, plan)
+		}
+		now := time.Now()
+		if err := printApprovalReview(tty, plans, now, catalogApproveAckPrivileged, catalogApproveAllowRunning); err != nil {
+			return err
+		}
+		token := approvalFingerprint(plans)
+		pass, err := readApproval(tty, tty, token, func() ([]byte, error) { return term.ReadPassword(int(tty.Fd())) })
 		if err != nil {
 			return err
 		}
-		printPlan(tty, plan, true)
-		if plan.State == catalogapply.StateInvalid {
-			return fmt.Errorf("plan is invalid and cannot be approved: %s", plan.ValidationError)
+		defer clear(pass)
+
+		if len(plans) == 1 {
+			plan := plans[0]
+			approved, err := h.CatalogApply().Approve(cmd.Context(), plan.ID, api.CatalogApproveRequest{
+				Digest: plan.Digest, Passphrase: string(pass), AckPrivileged: catalogApproveAckPrivileged, AllowRunning: catalogApproveAllowRunning,
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "approved plan %s (digest %s); the agent can now apply it\n", approved.ID, shortDigest(approved.Digest))
+		} else {
+			req := api.CatalogApproveBatchRequest{Passphrase: string(pass), AckPrivileged: catalogApproveAckPrivileged, AllowRunning: catalogApproveAllowRunning}
+			for _, p := range plans {
+				req.Plans = append(req.Plans, catalogapply.ApprovalItem{ID: p.ID, Digest: p.Digest})
+			}
+			result, err := h.CatalogApply().ApproveBatch(cmd.Context(), req)
+			if err != nil {
+				return err
+			}
+			failed := false
+			for _, r := range result.Results {
+				if r.Error != "" {
+					failed = true
+					fmt.Fprintf(cmd.OutOrStdout(), "plan %s: NOT approved: %s\n", r.ID, r.Error)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "approved plan %s (digest %s); the agent can now apply it\n", r.ID, shortDigest(r.Plan.Digest))
+				}
+			}
+			if failed {
+				return errors.New("some plans were not approved; review the per-plan results and re-plan failures with tether_catalog_plan using the original bundle")
+			}
 		}
-		if len(plan.Privileged) > 0 && !catalogApproveAckPrivileged {
-			return errors.New("this plan makes privileged changes (listed above); re-run with --ack-privileged to confirm them")
-		}
-		if len(plan.RunningSessions) > 0 && !catalogApproveAllowRunning {
-			return errors.New("running sessions use the touched definitions (listed above); re-run with --allow-running to approve anyway")
-		}
-		fmt.Fprintf(tty, "\nTo approve, type the first 12 characters of the digest (%s): ", plan.Digest[:12])
-		line, err := bufio.NewReader(tty).ReadString('\n')
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(line) != plan.Digest[:12] {
-			return errors.New("digest not confirmed; nothing approved")
-		}
-		fmt.Fprint(tty, "Approval passphrase: ")
-		pass, err := term.ReadPassword(int(tty.Fd()))
-		fmt.Fprintln(tty)
-		if err != nil {
-			return err
-		}
-		approved, err := h.CatalogApply().Approve(cmd.Context(), plan.ID, api.CatalogApproveRequest{
-			Digest: plan.Digest, Passphrase: string(pass),
-			AckPrivileged: catalogApproveAckPrivileged, AllowRunning: catalogApproveAllowRunning,
-		})
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "approved plan %s (digest %s); the agent can now apply it\n", approved.ID, approved.Digest[:12])
 		return nil
 	},
 }
@@ -214,7 +240,20 @@ var catalogApproverSetCmd = &cobra.Command{
 }
 
 func printPlan(w interface{ Write([]byte) (int, error) }, p *catalogapply.Plan, withDiff bool) {
-	fmt.Fprintf(w, "plan %s  %q  state=%s  expires %s (ttl %ds)\n", p.ID, p.Name, p.State, p.ExpiresAt.Local().Format("15:04:05"), p.TTLSeconds)
+	now := time.Now()
+	printPlanAt(w, p, withDiff, now)
+	if err := planApprovalError(p, now); err != nil {
+		fmt.Fprintln(w, err)
+	}
+}
+
+func printPlanAt(w interface{ Write([]byte) (int, error) }, p *catalogapply.Plan, withDiff bool, now time.Time) {
+	fmt.Fprintf(w, "plan %s  %q  state=%s\n", p.ID, p.Name, p.State)
+	remaining := p.ExpiresAt.Sub(now).Truncate(time.Second).String()
+	if !now.Before(p.ExpiresAt) {
+		remaining = "expired"
+	}
+	fmt.Fprintf(w, "expires %s (remaining %s; ttl %ds); survives restart: %t\n", p.ExpiresAt.UTC().Format(time.RFC3339), remaining, p.TTLSeconds, p.SurvivesRestart)
 	fmt.Fprintf(w, "digest %s\n", p.Digest)
 	for _, f := range p.Files {
 		mark := ""
@@ -243,4 +282,83 @@ func printPlan(w interface{ Write([]byte) (int, error) }, p *catalogapply.Plan, 
 	if withDiff && p.Diff != "" {
 		fmt.Fprintf(w, "\n%s", p.Diff)
 	}
+}
+
+func shortDigest(digest string) string {
+	if len(digest) > 12 {
+		return digest[:12]
+	}
+	return digest
+}
+
+// approvalFingerprint hashes sorted full digests separated by a single newline,
+// with no trailing newline. Single-plan approval retains the original token.
+func approvalFingerprint(plans []*catalogapply.Plan) string {
+	if len(plans) == 1 {
+		return shortDigest(plans[0].Digest)
+	}
+	digests := make([]string, 0, len(plans))
+	for _, p := range plans {
+		digests = append(digests, p.Digest)
+	}
+	sort.Strings(digests)
+	sum := sha256.Sum256([]byte(strings.Join(digests, "\n")))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func printApprovalConfirmation(w interface{ Write([]byte) (int, error) }, token string) {
+	fmt.Fprintf(w, "\nConfirmation token:\n%s\nType the confirmation token: ", token)
+}
+
+func replanGuidance(p *catalogapply.Plan) string {
+	if p.RollbackOf != "" {
+		return fmt.Sprintf("re-plan: call tether_catalog_plan with rollback_of=%q", p.RollbackOf)
+	}
+	return fmt.Sprintf("re-plan: call tether_catalog_plan with name=%q and the original files bundle", p.Name)
+}
+
+func planApprovalError(p *catalogapply.Plan, now time.Time) error {
+	switch {
+	case !now.Before(p.ExpiresAt):
+		return fmt.Errorf("plan %s expired; %s", p.ID, replanGuidance(p))
+	case p.State == catalogapply.StateInvalid:
+		return fmt.Errorf("plan %s invalid: %s; %s", p.ID, strings.Join(strings.Fields(p.ValidationError), " "), replanGuidance(p))
+	case p.State == catalogapply.StateApplied:
+		return fmt.Errorf("plan %s already applied", p.ID)
+	case len(p.Digest) != 64:
+		return fmt.Errorf("plan %s has an invalid digest; %s", p.ID, replanGuidance(p))
+	}
+	return nil
+}
+
+func printApprovalReview(w interface{ Write([]byte) (int, error) }, plans []*catalogapply.Plan, now time.Time, ackPrivileged, allowRunning bool) error {
+	for _, p := range plans {
+		printPlanAt(w, p, len(plans) == 1, now)
+		if err := planApprovalError(p, now); err != nil {
+			return err
+		}
+		if len(p.Privileged) > 0 && !ackPrivileged {
+			return fmt.Errorf("plan %s makes privileged changes (listed above); re-run with --ack-privileged to confirm them", p.ID)
+		}
+		if len(p.RunningSessions) > 0 && !allowRunning {
+			return fmt.Errorf("running sessions use plan %s touched definitions (listed above); re-run with --allow-running to approve anyway", p.ID)
+		}
+	}
+	return nil
+}
+
+// The caller establishes a real local terminal before entering this interaction.
+func readApproval(w io.Writer, r io.Reader, token string, password func() ([]byte, error)) ([]byte, error) {
+	printApprovalConfirmation(w, token)
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(line) != token {
+		return nil, errors.New("digest not confirmed; nothing approved")
+	}
+	fmt.Fprint(w, "Approval passphrase: ")
+	pass, err := password()
+	fmt.Fprintln(w)
+	return pass, err
 }

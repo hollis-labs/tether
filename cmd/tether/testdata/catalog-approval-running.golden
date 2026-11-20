@@ -1,0 +1,9 @@
+plan cp_one  "one"  state=planned
+expires 2026-11-20T13:00:00Z (remaining 1h0m0s; ttl 3600s); survives restart: true
+digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  create    agents/one.yaml
+validation: ok on a scratch copy
+RUNNING SESSIONS use these definitions: session-one
+
++ reviewed file
+ERROR: running sessions use plan cp_one touched definitions (listed above); re-run with --allow-running to approve anyway
