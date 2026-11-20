@@ -1,0 +1,2 @@
+- Persist planned catalog bundles across daemon restarts with integrity and live-base checks; approval remains process-local. Allow validated plan TTLs up to 7 days and log invalid-value fallback to the unchanged 15-minute default. (CW-20261120-0097)
+- Add batch catalog approval with one passphrase verification, a combined confirmation fingerprint, and per-plan results. Show expiry, remaining time, selectable confirmation tokens and re-plan guidance in the CLI. (CW-20261120-0097)
