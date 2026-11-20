@@ -542,10 +542,20 @@ func (e *Engine) scheduleExpiryLocked(now time.Time) {
 	if e.window == nil || e.windowTimer != nil {
 		return
 	}
+	scheduledWindow := e.window
 	e.windowTimer = time.AfterFunc(e.window.ExpiresAt.Sub(now), func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
+		// A stopped timer can already be waiting for this lock. It must
+		// never close a replacement window opened in the meantime.
+		if e.window != scheduledWindow {
+			return
+		}
 		e.windowTimer = nil
+		if e.now().UTC().Before(scheduledWindow.ExpiresAt) {
+			_ = e.invalidateWindowLocked(errors.New("breakglass expiry clock did not advance"))
+			return
+		}
 		p, _, err := e.policyLocked()
 		if err == nil {
 			err = e.windowLocked(p, e.now().UTC())

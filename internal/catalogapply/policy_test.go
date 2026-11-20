@@ -317,3 +317,21 @@ func TestBreakglassRejectsChangedIssuerInRunningProcess(t *testing.T) {
 		t.Fatal("running process resealed window with changed issuer")
 	}
 }
+
+func TestBreakglassMonotonicDeadlineFailsClosedWithFrozenClock(t *testing.T) {
+	e, _ := policyEngine(t) // deliberately frozen wall clock
+	if _, err := e.Breakglass(delegateURN, "clock stopped", 30*time.Millisecond, passphrase, false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		e.mu.Lock()
+		closed := e.window == nil && e.windowErr != nil
+		e.mu.Unlock()
+		if closed {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("monotonic expiry rearmed authority while wall clock was frozen")
+}
