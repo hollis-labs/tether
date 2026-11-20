@@ -58,5 +58,17 @@ func TestExternalMCPNeverConnectsOrDegradesGateway(t *testing.T) {
 		if len(a.upstreams.StatusSummary()) != 0 {
 			t.Fatal("external upstream affects health")
 		}
+
+		// Switching ownership back to the built-in gateway needs a restart.
+		a.svc.Catalog = &config.Catalog{MCPServerEnabled: map[string]bool{entry.ID: true}}
+		pending, err := runtime.NewGatewayView(ctx, a, ProxyOptions{Only: true, ServerFilter: []string{entry.ID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		origins := pending.Service.Snapshot().Origins
+		pending.Close()
+		if len(origins) != 1 || origins[0].Status != "pending_restart" {
+			t.Fatalf("ownership transition: %+v", origins)
+		}
 	}
 }

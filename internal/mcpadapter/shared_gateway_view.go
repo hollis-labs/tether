@@ -65,7 +65,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 			known[id] = true
 			continue
 		}
-		if _, running := r.known[id]; id != "tether" && !running && !slices.Contains(pending, id) {
+		if _, running := r.known[id]; id != "tether" && (!running || r.external[id]) && !slices.Contains(pending, id) {
 			pending = append(pending, id)
 			known[id] = true // lets SelectOrigins pass it through; it is removed again below
 		}
