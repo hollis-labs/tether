@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 )
@@ -118,5 +119,103 @@ func TestDeliveryMigrationBackfillsReadWithoutDeliveryRow(t *testing.T) {
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("events=%d err=%v", count, err)
+	}
+}
+
+// Queue ordering can differ from the order in which callers capture timestamps.
+// A committed handoff must never be moved (or re-journaled) by a stale read.
+func TestConcurrentMarkReadAndDelivery(t *testing.T) {
+	for n := range 20 {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			t.Parallel()
+			st, err := Open(filepath.Join(t.TempDir(), "mail.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			ctx := context.Background()
+			to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "recipient"}
+			from := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"}
+			ms := st.MessagingStore()
+			for range 10 {
+				env, err := ms.Send(ctx, messaging.Envelope{Kind: messaging.MsgKindNotice, From: from, To: to})
+				if err != nil {
+					t.Fatal(err)
+				}
+				start := make(chan struct{})
+				results := make(chan error, 2)
+				go func() { <-start; results <- ms.MarkRead(ctx, env.ID, to) }()
+				go func() { <-start; results <- ms.(DeliveryMarker).MarkDelivered(ctx, env.ID, to, "watch_stream", "s") }()
+				close(start)
+				for range 2 {
+					if err := <-results; err != nil {
+						t.Fatal(err)
+					}
+				}
+				assertDeliveryReadEvent(t, st, env.ID)
+			}
+		})
+	}
+}
+
+func assertDeliveryReadEvent(t *testing.T, st *Store, id string) {
+	t.Helper()
+	var delivered, read, eventAt, path, eventPath string
+	var count int
+	if err := st.db.QueryRow(`SELECT delivered_at,read_at,delivery_path FROM messages WHERE id=?`, id).Scan(&delivered, &read, &path); err != nil {
+		t.Fatal(err)
+	}
+	d, err := time.Parse(time.RFC3339Nano, delivered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := time.Parse(time.RFC3339Nano, read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.After(r) {
+		t.Fatalf("delivered %s > read %s", delivered, read)
+	}
+	if err := st.db.QueryRow(`SELECT count(*),at,json_extract(payload_json,'$.delivery.path') FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.message_id')=?`, id).Scan(&count, &eventAt, &eventPath); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || eventAt != delivered || eventPath != path {
+		t.Fatalf("events=%d eventAt=%s delivered=%s eventPath=%s path=%s", count, eventAt, delivered, eventPath, path)
+	}
+	var readEvents int
+	var readEventAt string
+	if err := st.db.QueryRow(`SELECT count(*),at FROM message_event_journal WHERE kind='message.read' AND json_extract(payload_json,'$.message_id')=?`, id).Scan(&readEvents, &readEventAt); err != nil {
+		t.Fatal(err)
+	}
+	if readEvents != 1 || readEventAt != read {
+		t.Fatalf("read events=%d eventAt=%s read=%s", readEvents, readEventAt, read)
+	}
+}
+
+func TestMarkReadClampsToCommittedDelivery(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "recipient"}
+	from := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "sender"}
+	for _, stamp := range []string{"2099-01-01T00:00:00Z", "2099-01-01T00:00:00.1Z", "2099-01-01T00:00:00.123456789Z"} {
+		env, err := st.MessagingStore().Send(ctx, messaging.Envelope{Kind: messaging.MsgKindNotice, From: from, To: to})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Deterministically model a delivery committed with a timestamp newer
+		// than MarkRead's candidate, without scheduler or clock dependencies.
+		if _, err := st.db.Exec(`UPDATE messages SET delivered_at=?, delivery_path='watch_stream', delivery_session_id='s' WHERE id=?`, stamp, env.ID); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			if err := st.MessagingStore().MarkRead(ctx, env.ID, to); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertDeliveryReadEvent(t, st, env.ID)
 	}
 }

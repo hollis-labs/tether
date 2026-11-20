@@ -1,1 +1,2 @@
 - CW-20261120-0176: Record one delivery event with its path on recipient watch, list, get, inbox and successful hub/outpost wake; infer delivery from reads and backfill historical read messages.
+- CW-20261120-0176: Clamp read timestamps atomically against committed delivery evidence so concurrent handoffs preserve delivery-before-read ordering and a single consistent event.

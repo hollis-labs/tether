@@ -225,12 +225,22 @@ func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, re
 	if !mine {
 		return ErrWrongRecipient
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	nowTime := time.Now().UTC()
+	now := nowTime.Format(time.RFC3339Nano)
 	switch {
 	case col == "read_at" && !clr:
+		// The candidate time was captured before acquiring the SQL connection.
+		// A handoff can commit while this write is queued, so clamp against
+		// the delivery timestamp in the UPDATE itself. Normalize UTC fractions
+		// to nine digits for exact comparison (julianday loses nanoseconds).
+		// Preserve delivered_at and its already-journaled event unchanged.
 		_, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET read_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NULL`,
-			now, id, toURN)
+			`UPDATE messages SET read_at=CASE
+			 WHEN delivered_at IS NOT NULL AND
+			 substr(replace(delivered_at,'Z','') || CASE WHEN instr(delivered_at,'.')=0 THEN '.' ELSE '' END || '000000000',1,29) > ?
+			 THEN delivered_at ELSE ? END
+			 WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NULL`,
+			nowTime.Format("2006-01-02T15:04:05.000000000"), now, id, toURN)
 	case col == "read_at" && clr:
 		_, err = ms.db.ExecContext(ctx,
 			`UPDATE messages SET read_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NOT NULL`,
