@@ -54,7 +54,7 @@ func TestStatusSummaryIsCompactAndExplainsIncomplete(t *testing.T) {
 
 func TestStatusSummaryCompleteSaysSo(t *testing.T) {
 	st := Status{Complete: true, Exclusions: map[string]int{}, Origins: []OriginStatus{{ID: "a", Status: "connected"}}}
-	if s := st.Summary(); !s.Complete || !strings.HasPrefix(s.Explanation, "complete: all 1 origins") {
+	if s := st.Summary(); !s.Complete || !strings.HasPrefix(s.Explanation, "complete: all expected origins") {
 		t.Fatalf("%+v", s)
 	}
 }

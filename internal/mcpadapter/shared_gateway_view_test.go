@@ -381,6 +381,9 @@ func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
 				}
 			}
 			call("two_read", false)
+			if status := v.Service.Status(""); !status.Complete || len(status.MissingExpected) != 0 || len(status.External) != 1 {
+				t.Fatalf("all expected origins present: %+v", status)
+			}
 			if a.upstreams.(*UpstreamView).servers["outside"] || a.upstreams.(*UpstreamView).servers["tether"] {
 				t.Fatal("non-pool origin granted to pool")
 			}
@@ -397,6 +400,9 @@ func TestSharedGatewayView_LiveGrantNarrowsWithoutDisconnect(t *testing.T) {
 			delete(svc.Catalog.MCPServerExternal, "two")
 			call("two_read", false)
 			live.Store(1)
+			if status := v.Service.Status(""); status.Complete || !slices.Contains(status.MissingExpected, "two") {
+				t.Fatalf("live grant hid expected origin without degrading completeness: %+v", status)
+			}
 			call("one_read", false)
 			call("two_read", true)
 			names := listToolNames(t, cs)

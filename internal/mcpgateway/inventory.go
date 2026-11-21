@@ -36,11 +36,19 @@ type OriginStatus struct {
 	AnnotatedTools    int `json:"annotated_tools"`
 	TitledTools       int `json:"titled_tools"`
 }
+type ExternalOrigin struct {
+	ID       string `json:"id"`
+	Status   string `json:"status"`
+	ServedAt string `json:"served_at"`
+}
+
 type Snapshot struct {
-	Entries    []Entry
-	Origins    []OriginStatus
-	Lint       []NameFinding
-	Collisions []NameCollision
+	ExpectedOrigins []string
+	External        []ExternalOrigin
+	Entries         []Entry
+	Origins         []OriginStatus
+	Lint            []NameFinding
+	Collisions      []NameCollision
 }
 type Item struct {
 	Name        string                  `json:"name"`
@@ -498,6 +506,9 @@ func withArgHint(result *mcpsdk.CallToolResult, tool *mcpsdk.Tool, args map[stri
 }
 
 type Status struct {
+	ExpectedOrigins []string         `json:"expected_origins"`
+	MissingExpected []string         `json:"missing_expected"`
+	External        []ExternalOrigin `json:"external"`
 	Selection
 	Profile         string          `json:"profile,omitempty"`
 	ProfileSource   string          `json:"profile_source,omitempty"`
@@ -515,9 +526,8 @@ type Status struct {
 	AnnotatedTools    int            `json:"annotated_tools"`
 	TitledTools       int            `json:"titled_tools"`
 	Exclusions        map[string]int `json:"exclusions"`
-	// Complete is false only for an origin that is temporarily absent
-	// (IncompleteServers) or a name collision; an origin that is known to be down
-	// is listed in UnavailableServers with its reason and does not flip it.
+	// Complete also requires every catalog expectation to be connected and visible
+	// to this caller. Permanent failures remain incomplete when expected.
 	Complete           bool              `json:"complete"`
 	UnavailableServers []string          `json:"unavailable_servers"`
 	UnavailableReasons map[string]string `json:"unavailable_reasons,omitempty"`
@@ -536,6 +546,29 @@ func (s *Service) Status(name string) Status {
 	}
 	unavailable, ids, incomplete, reasons := availability(snapshot)
 	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: append([]OriginStatus{}, snapshot.Origins...), EligibleTools: len(snapshot.Entries), Complete: len(incomplete) == 0 && len(original.Collisions) == 0, UnavailableServers: ids, UnavailableReasons: reasons, IncompleteServers: incomplete, Name: name, Exclusions: map[string]int{}}
+	out.ExpectedOrigins = append([]string{}, original.ExpectedOrigins...)
+	out.External = append([]ExternalOrigin{}, original.External...)
+	out.MissingExpected = []string{}
+	connected := map[string]bool{}
+	visibleOrigins := map[string]bool{}
+	for _, entry := range snapshot.Entries {
+		visibleOrigins[entry.Origin] = true
+	}
+	for _, origin := range snapshot.Origins {
+		selected := s.Policy == nil || s.Policy.originSelected(origin.ID)
+		// A connected empty inventory is valid; a wholly filtered inventory is not.
+		connected[origin.ID] = origin.Status == "connected" && !origin.Degraded && selected && (origin.ToolCount == 0 || visibleOrigins[origin.ID])
+	}
+	for _, id := range out.ExpectedOrigins {
+		if !connected[id] {
+			out.MissingExpected = append(out.MissingExpected, id)
+		}
+	}
+	sort.Strings(out.ExpectedOrigins)
+	sort.Strings(out.MissingExpected)
+	if len(out.MissingExpected) > 0 {
+		out.Complete = false
+	}
 	byOrigin := map[string]int{}
 	for i := range out.Origins {
 		origin := &out.Origins[i]

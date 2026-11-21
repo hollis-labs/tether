@@ -21,10 +21,13 @@ func TestExternalMCPServerLoadAndGrant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("id: shared-services\nserved_by: external\ntoken: file:///does-not-exist\n")
+	write("id: shared-services\nserved_by: external\nserved_at: standalone gateway :18190\ntoken: file:///does-not-exist\n")
 	cat, err := LoadLayered(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if cat.MCPServerServedAt["shared-services"] != "standalone gateway :18190" {
+		t.Fatal("external serving location missing")
 	}
 	if !cat.MCPServerExternal["shared-services"] {
 		t.Fatal("external metadata missing")

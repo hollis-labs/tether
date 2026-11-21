@@ -78,6 +78,8 @@ import (
 // granting catalog YAML writes, and vice versa.
 const ScopeRegistryWrite = "registry.write"
 
+const directoryDescriptionPrefix = "Tether agent/project DIRECTORY (mail addresses, profiles). NOT the shared Registry: for Registry records use registry_record_search / ops_registry_search. "
+
 // registerRegistryTools wires the tether_registry_* native tools onto s.
 // Every tool routes through a.client to the daemon's /registry HTTP
 // surface (T08). Read tools (lookup, lookup_by, search) are

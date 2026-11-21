@@ -20,6 +20,7 @@ type SharedUpstreams struct {
 	known       map[string]bool
 	tags        map[string][]string
 	external    map[string]bool
+	servedAt    map[string]string
 	lifecycle   sync.Mutex
 	started     bool
 	closed      bool
@@ -36,13 +37,14 @@ func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRo
 	if err != nil {
 		return nil, err
 	}
-	r := &SharedUpstreams{registry: NewToolRegistry(), known: map[string]bool{}, external: map[string]bool{}, tags: map[string][]string{}, subscribers: map[uint64]func(ToolRefreshResult){}}
+	r := &SharedUpstreams{registry: NewToolRegistry(), known: map[string]bool{}, external: map[string]bool{}, servedAt: map[string]string{}, tags: map[string][]string{}, subscribers: map[uint64]func(ToolRefreshResult){}}
 	for _, entry := range entries {
 		if _, exists := r.known[entry.ID]; exists || entry.ID == "" || entry.ID == "tether" {
 			return nil, fmt.Errorf("duplicate, empty or reserved daemon MCP upstream ID")
 		}
 		r.known[entry.ID] = entry.IsEnabled()
 		r.external[entry.ID] = entry.IsExternal()
+		r.servedAt[entry.ID] = entry.ServedAt
 		r.tags[entry.ID] = append([]string(nil), entry.Tags...)
 	}
 	local := []config.MCPServerEntry{}

@@ -43,3 +43,11 @@ func TestModePrecedenceAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExpectedOriginsValidation(t *testing.T) {
+	for _, id := range []string{"", " registry", "registry "} {
+		if err := (Config{ExpectedOrigins: []string{id}}).Validate(); err == nil {
+			t.Fatalf("accepted invalid expected origin %q", id)
+		}
+	}
+}
