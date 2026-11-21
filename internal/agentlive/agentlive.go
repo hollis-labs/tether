@@ -25,6 +25,8 @@ const (
 	StateAwake    = "awake"
 	StateSleeping = "sleeping"
 	StateUnknown  = "unknown"
+	// StateStale is a kit seat not re-registered within its stale threshold.
+	StateStale = "stale"
 
 	// Raw busy/idle observations.
 	RawBusy = "busy"
@@ -33,8 +35,12 @@ const (
 	DefaultStaleAfter = 10 * time.Minute
 	MinStaleAfter     = time.Second
 	MaxStaleAfter     = 24 * time.Hour
-	DefaultLimit      = 200
-	MaxLimit          = 1000
+	// Kit-seat heartbeat thresholds: awake within DefaultSeatAwakeAfter of the
+	// last registration, sleeping until DefaultSeatStaleAfter, stale beyond.
+	DefaultSeatAwakeAfter = 10 * time.Minute
+	DefaultSeatStaleAfter = 2 * time.Hour
+	DefaultLimit          = 200
+	MaxLimit              = 1000
 )
 
 // Query is the validated filter set.
@@ -46,6 +52,26 @@ type Query struct {
 	Limit        int
 	// Offset is decoded from the opaque cursor.
 	Offset int
+	// SeatAwakeAfter and SeatStaleAfter are the kit-seat heartbeat thresholds;
+	// zero means the defaults.
+	SeatAwakeAfter time.Duration
+	SeatStaleAfter time.Duration
+	// staleSet records an explicit stale_after_seconds.
+	staleSet bool
+}
+
+func (q Query) seatThresholds() (awake, stale time.Duration) {
+	awake, stale = q.SeatAwakeAfter, q.SeatStaleAfter
+	if awake <= 0 {
+		awake = DefaultSeatAwakeAfter
+	}
+	if stale <= 0 {
+		stale = DefaultSeatStaleAfter
+	}
+	if stale < awake {
+		stale = awake
+	}
+	return awake, stale
 }
 
 // ParseQuery validates raw filter values. staleSeconds 0 means the default;
@@ -60,6 +86,7 @@ func ParseQuery(host, kind string, includeStale bool, staleSeconds, limit int, c
 	}
 	if staleSeconds > 0 {
 		q.StaleAfter = time.Duration(staleSeconds) * time.Second
+		q.staleSet = true
 	}
 	if limit < 0 || limit > MaxLimit {
 		return q, errors.New("invalid limit: want 1..1000")
@@ -248,6 +275,19 @@ func Build(in Inputs, q Query) Response {
 		seenURN[k.URN] = true
 		ev := Evidence{At: k.LastRegisteredAt, Source: "registration"}.newer(in.Presence[k.URN])
 		state, raw, sum, at := declaredState(k.Declared)
+		awakeAfter, staleAfter := q.seatThresholds()
+		age := now.Sub(k.LastRegisteredAt)
+		regState := StateStale
+		switch {
+		case age <= awakeAfter:
+			regState = StateAwake
+		case age <= staleAfter:
+			regState = StateSleeping
+		}
+		if k.Declared == nil {
+			// No explicit declaration: the registration heartbeat decides.
+			state = regState
+		}
 		r := Row{ID: "seat:" + k.URN + ":" + k.Session, Kind: KindKitSeat, Agent: AgentRef{URN: k.URN, Name: k.Name}, Host: k.Host,
 			State: state, RawState: raw, SessionID: k.Session, RunID: k.RunID, TaskID: k.TaskID, WorkstreamID: k.WorkstreamID,
 			LastActivity: oneLine(k.Summary), LastActivityAt: timePtr(at)}
@@ -259,11 +299,19 @@ func Build(in Inputs, q Query) Response {
 		}
 		if r.LastActivityAt != nil {
 			r.LastActivitySource = "seat_status"
+		} else if !k.LastRegisteredAt.IsZero() {
+			r.LastActivityAt, r.LastActivitySource = timePtr(k.LastRegisteredAt), "registration"
 		}
 		if r.Agent.Name == "" {
 			r.Agent.Name = k.URN[strings.LastIndex(k.URN, "/")+1:]
 		}
-		rows = append(rows, finish(r, ev, now, q))
+		// A seat stays listed through its sleeping window even when the query's
+		// stale_after is shorter: it is stale once past the seat threshold.
+		qs := q
+		if !qs.staleSet || staleAfter > qs.StaleAfter {
+			qs.StaleAfter = staleAfter
+		}
+		rows = append(rows, finish(r, ev, now, qs))
 	}
 	// Watcher/binding-only agents: presence with no session or registration.
 	for urn, ev := range in.Presence {

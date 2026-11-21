@@ -31,6 +31,9 @@ type CorrelationRegisterRequest struct {
 	Host        string `json:"host,omitempty"`
 	DisplayName string `json:"display_name,omitempty"`
 	Summary     string `json:"summary,omitempty"`
+	// ActivitySummary is a heartbeat's one-line activity; when set it takes
+	// precedence over Summary.
+	ActivitySummary string `json:"activity_summary,omitempty"`
 }
 
 type CorrelationRegisterResponse struct {
@@ -47,7 +50,7 @@ func (in CorrelationRegisterRequest) Validate() error {
 	if !strings.HasPrefix(in.URN, "msg://agent/") || strings.TrimPrefix(in.URN, "msg://agent/") == "" || in.Session == "" {
 		return errors.New("agent urn and session required")
 	}
-	for _, v := range []string{in.URN, in.Session, in.RunID, in.TaskID, in.WorkstreamID, in.ManifestDigest, in.ExportReceiptID, in.ActivitySHA256, in.ProviderSessionID, in.Host, in.DisplayName, in.Summary} {
+	for _, v := range []string{in.URN, in.Session, in.RunID, in.TaskID, in.WorkstreamID, in.ManifestDigest, in.ExportReceiptID, in.ActivitySHA256, in.ProviderSessionID, in.Host, in.DisplayName, in.Summary, in.ActivitySummary} {
 		if len(v) > 2048 || strings.TrimSpace(v) != v || strings.ContainsAny(v, "\x00\r\n\t") {
 			return errors.New("invalid correlation fact")
 		}

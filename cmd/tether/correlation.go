@@ -33,6 +33,10 @@ func newCorrelationCommand() *cobra.Command {
 	f.StringVar(&in.ExportReceiptID, "export-receipt-id", "", "boot export receipt identifier")
 	f.StringVar(&in.ActivitySHA256, "activity-sha256", "", "ACTIVITY.md SHA-256 (64 hex characters)")
 	f.StringVar(&in.ProviderSessionID, "provider-session-id", "", "provider native session identifier")
+	f.StringVar(&in.Host, "host", "", "machine the seat runs on (shown by tether_agents_live)")
+	f.StringVar(&in.DisplayName, "display-name", "", "human-readable seat name (shown by tether_agents_live)")
+	f.StringVar(&in.Summary, "summary", "", "one-line seat summary")
+	f.StringVar(&in.ActivitySummary, "activity-summary", "", "one-line current activity; overrides --summary on a heartbeat")
 	root.AddCommand(register)
 	return root
 }

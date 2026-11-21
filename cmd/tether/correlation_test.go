@@ -36,11 +36,11 @@ func TestCorrelationRegisterCLI(t *testing.T) {
 	cmd := newCorrelationCommand()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"register", "--urn", "msg://agent/local/kit", "--session", "native-session", "--run-id", "execution-run", "--task", "CW-7", "--workstream", "workstream:01M7VQ2QWYB5RZR86W2BWG8PW3", "--activity-sha256", strings.Repeat("a", 64), "--export-receipt-id", "receipt:boot"})
+	cmd.SetArgs([]string{"register", "--urn", "msg://agent/local/kit", "--session", "native-session", "--run-id", "execution-run", "--task", "CW-7", "--workstream", "workstream:01M7VQ2QWYB5RZR86W2BWG8PW3", "--activity-sha256", strings.Repeat("a", 64), "--export-receipt-id", "receipt:boot", "--host", "agent-os", "--display-name", "Kit Lead", "--summary", "booting", "--activity-summary", "reviewing"})
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || got.RunID != "execution-run" || got.Session != "native-session" || got.TaskID != "CW-7" || got.ExportReceiptID != "receipt:boot" || got.ActivitySHA256 != strings.Repeat("a", 64) || !strings.Contains(out.String(), `"queued":true`) {
+	if calls != 1 || got.RunID != "execution-run" || got.Session != "native-session" || got.TaskID != "CW-7" || got.ExportReceiptID != "receipt:boot" || got.Host != "agent-os" || got.DisplayName != "Kit Lead" || got.Summary != "booting" || got.ActivitySummary != "reviewing" || got.ActivitySHA256 != strings.Repeat("a", 64) || !strings.Contains(out.String(), `"queued":true`) {
 		t.Fatal("wrong CLI contract", got, out.String())
 	}
 	for _, args := range [][]string{{"register", "--urn", "msg://agent/local/kit"}, {"register", "--urn", "msg://agent/local/kit", "--session", "s", "--workstream", "legacy"}, {"register", "--urn", "msg://agent/local/kit", "--session", "s", "--activity-sha256", "bad"}, {"register", "--urn", "msg://agent/local/kit", "--session", "s", "--id", "caller-minted"}} {

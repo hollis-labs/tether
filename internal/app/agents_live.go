@@ -27,6 +27,14 @@ func (s *Service) AgentsLive(ctx context.Context, q agentlive.Query, watch *agen
 		}
 		return "msg://agent/agent-mux/" + id
 	}
+	if cat != nil {
+		if d, err := time.ParseDuration(cat.Global.AgentsLive.KitSeatAwakeAfter); err == nil && d > 0 && q.SeatAwakeAfter == 0 {
+			q.SeatAwakeAfter = d
+		}
+		if d, err := time.ParseDuration(cat.Global.AgentsLive.KitSeatStaleAfter); err == nil && d > 0 && q.SeatStaleAfter == 0 {
+			q.SeatStaleAfter = d
+		}
+	}
 	hostName, _ := os.Hostname()
 	workerLabels := map[string]string{}
 	hostOf := func(workerID string) string {
