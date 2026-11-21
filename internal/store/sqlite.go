@@ -350,6 +350,9 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := referenceRegistryWorkstreamTx(context.Background(), tx, row.WorkstreamID.String); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`INSERT INTO sessions
 		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json, worker_id, task_id, run_id, app, requesting_principal)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

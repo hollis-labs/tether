@@ -10,6 +10,7 @@ import (
 	"github.com/hollis-labs/libs/core/util/apppaths"
 	"github.com/hollis-labs/libs/harness/core/sandbox"
 
+	"github.com/hollis-labs/tether/internal/agencyregistry"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -17,16 +18,18 @@ import (
 )
 
 type Global struct {
-	Role        string            `yaml:"role,omitempty"`
-	Modules     map[string]bool   `yaml:"modules,omitempty"`
-	Environment EnvironmentConfig `yaml:"environment,omitempty"`
-	Teams       TeamsConfig       `yaml:"teams"`
-	MCP         mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
-	Version     string            `yaml:"version"`
-	Catalog     CatalogRoots      `yaml:"catalog"`
-	Daemon      DaemonConfig      `yaml:"daemon"`
-	AI          AIConfig          `yaml:"ai"`
-	Identity    IdentityConfig    `yaml:"identity"`
+	// AgencyRegistry is the daemon-only outbound correlation service.
+	AgencyRegistry agencyregistry.Config `yaml:"agency_registry,omitempty" json:"agency_registry,omitempty"`
+	Role           string                `yaml:"role,omitempty"`
+	Modules        map[string]bool       `yaml:"modules,omitempty"`
+	Environment    EnvironmentConfig     `yaml:"environment,omitempty"`
+	Teams          TeamsConfig           `yaml:"teams"`
+	MCP            mcpgateway.Config     `yaml:"mcp" json:"mcp,omitempty"`
+	Version        string                `yaml:"version"`
+	Catalog        CatalogRoots          `yaml:"catalog"`
+	Daemon         DaemonConfig          `yaml:"daemon"`
+	AI             AIConfig              `yaml:"ai"`
+	Identity       IdentityConfig        `yaml:"identity"`
 	// Federation is the authority-routing messaging block. Its zero value
 	// (enabled: false) is a standalone install — no peers, no routing,
 	// behavior identical to pre-federation Tether. See internal/federation

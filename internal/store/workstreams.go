@@ -282,6 +282,14 @@ func (s *Store) EnsureSessionWorkstream(sessionID string, seed WorkstreamRow) (W
 		}
 	}
 
+	// A task-linked lineage must be assigned by the dispatcher, never minted
+	// from a caller-provided seed (including a plausible-looking Registry ID).
+	for _, row := range chain {
+		if row.TaskID.String != "" {
+			return WorkstreamRow{}, ErrRegistryWorkstreamRequired
+		}
+	}
+
 	// Step 3: nothing in the lineage has one.
 	created, err := s.CreateWorkstream(seed)
 	if err != nil {
