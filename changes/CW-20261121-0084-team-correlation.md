@@ -1,0 +1,1 @@
+- Accept optional task and workstream IDs at team formation and persist them for every initial and later member session, including run-token claims (CW-20261121-0084).

@@ -12,9 +12,11 @@ import (
 )
 
 type FormRequest struct {
-	Key    string
-	Team   teams.Team
-	Launch teams.LaunchRequest
+	TaskID       string `json:",omitempty"`
+	WorkstreamID string `json:",omitempty"`
+	Key          string
+	Team         teams.Team
+	Launch       teams.LaunchRequest
 }
 type RunRequest struct{ Key, RunID string }
 type AddMemberRequest struct {
@@ -53,6 +55,17 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 		// attempt, which stops and releases every member already started,
 		// instead of leaving them running with no team run owning them.
 		launcher.MaxAttempts = 1
+		if req.TaskID != "" || req.WorkstreamID != "" {
+			correlation, ok := s.deps.Runs.(interface {
+				PrepareLaunchCorrelation(context.Context, string, string, string) error
+			})
+			if !ok {
+				return Result{}, ErrUnavailable
+			}
+			if err := correlation.PrepareLaunchCorrelation(ctx, launch.Key, req.TaskID, req.WorkstreamID); err != nil {
+				return Result{}, err
+			}
+		}
 		run, err := launcher.Launch(ctx, launch)
 		if err != nil {
 			return Result{}, err

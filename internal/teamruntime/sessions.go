@@ -120,6 +120,13 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 	if err != nil {
 		return "", err
 	}
+	run, task, workstream, err := teamhost.SessionCorrelation(ctx, s.db, in.Provision)
+	if err != nil {
+		return "", err
+	}
+	if task != "" || workstream != "" {
+		boot.RunID, boot.Slot, boot.TaskID, boot.WorkstreamID = run, provision.Slot.Name, task, workstream
+	}
 	var launched *app.Launched
 	if timeout := in.Provision.Limits.Timeout; timeout > 0 {
 		limited, ok := s.service.(limitedSessionService)

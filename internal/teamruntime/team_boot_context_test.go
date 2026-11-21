@@ -129,3 +129,51 @@ func TestLaunchEnforcesSpawnTimeoutAtCreate(t *testing.T) {
 		t.Fatal(effects.timeouts)
 	}
 }
+
+func TestFormationCorrelationAllSlotsAndLaterJoin(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		t.Run(map[bool]string{false: "absent", true: "present"}[present], func(t *testing.T) {
+			f, host, _ := newStageBFixture(t, stageBPolicy)
+			effects := &bootContextEffects{sessionEffects: f.effects}
+			f.sessions.service = effects
+			request := teamsvc.FormRequest{Key: "correlation", Team: stageBTeam(f.registerWorkers("w1", "w2", "w3")), Launch: teams.LaunchRequest{Counts: map[string]int{"workers": 2}}}
+			if present {
+				request.TaskID = "CW-20261121-0084"
+				request.WorkstreamID = "workstream:01M7VQ2QWYB5RZR86W2BWG8PW3"
+			}
+			owner := serviceContext(t, dispatcher)
+			formed, err := f.svc.Form(owner, request)
+			check(t, err)
+			if present && len(effects.accepted) != 4 {
+				t.Fatalf("not all initial members received context: %d", len(effects.accepted))
+			}
+			// The persisted record survives host reconstruction; no process-local context is used.
+			var task, workstream string
+			if present {
+				check(t, f.effects.db.DB().QueryRow(`SELECT task_id,workstream_id FROM team_run_correlation WHERE run_id=?`, formed.Run.ID).Scan(&task, &workstream))
+				if task != request.TaskID || workstream != request.WorkstreamID {
+					t.Fatal("run correlation differs")
+				}
+			}
+			check(t, host.PrepareLaunchCorrelation(context.Background(), "independent", "CW-other", "other"))
+			_, err = f.svc.AddMember(owner, teamsvc.AddMemberRequest{Key: "later", RunID: formed.Run.ID, Slot: "workers"})
+			check(t, err)
+			if present {
+				if len(effects.accepted) != 5 {
+					t.Fatalf("join omitted context: %d", len(effects.accepted))
+				}
+				for _, boot := range effects.accepted {
+					if boot.RunID != formed.Run.ID || boot.TaskID != request.TaskID || boot.WorkstreamID != request.WorkstreamID {
+						t.Fatal("member correlation mismatch", boot)
+					}
+				}
+			} else {
+				for _, boot := range effects.accepted {
+					if boot.TaskID != "" || boot.WorkstreamID != "" {
+						t.Fatal("absent fields gained correlation", boot)
+					}
+				}
+			}
+		})
+	}
+}

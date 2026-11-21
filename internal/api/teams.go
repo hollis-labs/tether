@@ -61,6 +61,8 @@ type TeamRequest struct {
 
 // TeamLaunchRequest contains formation options without a second caller key.
 type TeamLaunchRequest struct {
+	TaskID         string                `json:"task_id,omitempty"`
+	WorkstreamID   string                `json:"workstream_id,omitempty"`
 	Counts         map[string]int        `json:"counts,omitempty"`
 	Limits         mesh.Limits           `json:"limits,omitempty,omitzero"`
 	PoolIdentities map[string][]mesh.URN `json:"pool_identities,omitempty"`
@@ -233,7 +235,10 @@ func CallTeam(ctx context.Context, ops TeamOps, verb, key string, r TeamRequest)
 		if r.Team == nil {
 			return teamsvc.Result{}, teamsvc.ErrInvalidRequest
 		}
-		return ops.Form(ctx, teamsvc.FormRequest{Key: key, Team: *r.Team, Launch: teams.LaunchRequest{Counts: r.Launch.Counts, Limits: r.Launch.Limits, PoolIdentities: r.Launch.PoolIdentities}})
+		if (r.Launch.TaskID != "" && !ValidLaunchCorrelationID(r.Launch.TaskID)) || (r.Launch.WorkstreamID != "" && !ValidLaunchWorkstreamID(r.Launch.WorkstreamID)) {
+			return teamsvc.Result{}, invalidTeamField("launch", "invalid task_id or workstream_id")
+		}
+		return ops.Form(ctx, teamsvc.FormRequest{Key: key, Team: *r.Team, TaskID: r.Launch.TaskID, WorkstreamID: r.Launch.WorkstreamID, Launch: teams.LaunchRequest{Counts: r.Launch.Counts, Limits: r.Launch.Limits, PoolIdentities: r.Launch.PoolIdentities}})
 	case "dissolve":
 		return ops.Dissolve(ctx, teamsvc.RunRequest{Key: key, RunID: r.RunID})
 	case "member_add":
