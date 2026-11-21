@@ -1049,3 +1049,35 @@ func TestTeamSurfacesDefaultAddress(t *testing.T) {
 
 func (p *refusalPorts) MarkDissolved(context.Context, string) error { return teamsvc.ErrNotFound }
 func (requiredRun) MarkDissolved(context.Context, string) error     { return nil }
+
+func TestTeamMCPDaemonBridgePreservesCorrelation(t *testing.T) {
+	t.Setenv("TETHER_TOKEN", "")
+	for _, present := range []bool{false, true} {
+		t.Run(fmt.Sprint(present), func(t *testing.T) {
+			capture := &teamCapture{}
+			daemon := teamHTTP(t, capture)
+			adapter := New(nil, "test-token", []string{ScopeTeamWrite})
+			adapter.SetTeams(clientTeamOps{c: teamDaemonClient(daemon)})
+			server := adapter.newBareServer()
+			adapter.registerTeamTools(server)
+			session := connectInMemory(t, server)
+			input := teamInputs("form")
+			task, workstream := "", ""
+			if present {
+				task = "CW-20261121-0084"
+				workstream = "workstream:01M7VQ2QWYB5RZR86W2BWG8PW3"
+				launch := input["launch"].(map[string]any)
+				launch["task_id"] = task
+				launch["workstream_id"] = workstream
+			}
+			result, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_team_form", Arguments: map[string]any{"key": "bridge", "request": input}})
+			if err != nil || result.IsError {
+				t.Fatalf("MCP bridge failed: %+v %v", result, err)
+			}
+			request, ok := capture.request.(teamsvc.FormRequest)
+			if !ok || request.TaskID != task || request.WorkstreamID != workstream || request.Launch.Counts["worker"] != 1 {
+				t.Fatalf("daemon lost launch fields: %+v", capture.request)
+			}
+		})
+	}
+}

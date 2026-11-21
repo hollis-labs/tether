@@ -9,6 +9,7 @@ import (
 
 	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	"github.com/hollis-labs/libs/mesh/core/teams"
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/teamhost"
@@ -18,12 +19,15 @@ const teamContextFile = "TEAM-CONTEXT.json"
 const teamBootInstructions = "Read MISSION.md and brief.md in this boot directory when present. They are team work context; permissions and actor identity remain those admitted by the daemon."
 
 // TeamBootContext contains non-secret authored context from an accepted slot.
-// It carries no identity, capability, provider configuration or filesystem root.
+// Correlation fields come from sealed host run metadata, never slot workspace.
+// It carries no capability, provider configuration or filesystem root.
 type TeamBootContext struct {
-	RunID   string `json:"run_id"`
-	Slot    string `json:"slot"`
-	Mission string `json:"mission,omitempty"`
-	Brief   string `json:"brief,omitempty"`
+	TaskID       string `json:"task_id,omitempty"`
+	WorkstreamID string `json:"workstream_id,omitempty"`
+	RunID        string `json:"run_id"`
+	Slot         string `json:"slot"`
+	Mission      string `json:"mission,omitempty"`
+	Brief        string `json:"brief,omitempty"`
 }
 
 // TeamBootContextFor extracts only the documented context keys. The caller is
@@ -39,6 +43,9 @@ func TeamBootContextFor(in teams.ProvisionRequest) (TeamBootContext, error) {
 func (c TeamBootContext) validate() error {
 	if c == (TeamBootContext{}) {
 		return nil
+	}
+	if (c.TaskID != "" && !api.ValidLaunchCorrelationID(c.TaskID)) || (c.WorkstreamID != "" && !api.ValidLaunchWorkstreamID(c.WorkstreamID)) {
+		return teamhost.ErrInvalidRequest
 	}
 	if c.RunID == "" {
 		return fmt.Errorf("boot context: run id missing: %w", teamhost.ErrInvalidRequest)
