@@ -81,6 +81,20 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
+		Name:        "tether_message_watch",
+		Description: "Replay a mailbox watch through its synchronized cursor and return messages plus next_cursor. Omit after_seq to establish a cursor from now; pass it on subsequent calls (0 replays history). Successful recipient handoff records delivery, never read. Operator inspection is unchanged unless as_recipient explicitly declares delivery to the live agent (audited).",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("to", "Recipient URN", true),
+			gomcp.NumberProp("after_seq", "Resume strictly after this nonnegative cursor; omit to start from now", false),
+			gomcp.BooleanProp("as_recipient", "Operator declaration that this watch delivers to the live recipient agent", false),
+			gomcp.StringProp("kind", "Comma-separated kind filter", false),
+			gomcp.StringProp("thread_id", "Thread ID filter", false),
+			gomcp.BooleanProp("unread_only", "Only messages not yet marked read", false),
+		),
+		Handler: a.handleMessageWatch,
+	}, Writes())
+
+	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_list",
 		Description: "List a recipient's messages non-destructively. Repeatable: does not mark read. Unread messages returned to the authenticated recipient are marked delivered; operator inspection has no delivery side effect. Each message carries read_at/archived_at state and a subject/body payload projection. Archived messages are excluded unless include_archived is set.",
 		InputSchema: gomcp.InputSchema(
@@ -576,3 +590,43 @@ func boolArg(args map[string]any, key string) bool {
 // (CW-20261114-0013): seats were sending kind "answer" or a top-level body here.
 const typedMessageHint = " To message a seat by @handle (question, update, decision, approval_request, an answer...), use tether_message_post" +
 	" with kind, to:[\"@handle\"] and body; an answer is a reply with in_reply_to and answer.option."
+
+func (a *Adapter) handleMessageWatch(ctx context.Context, args map[string]any) (any, error) {
+	to := str(args, "to")
+	if _, err := messaging.ParseURN(to); err != nil {
+		return nil, toolError("invalid_request", "valid to URN required")
+	}
+	if a.client == nil {
+		return nil, toolError("internal_error", "tether_message_watch requires daemon routing; start MCP with tether mcp")
+	}
+	q := client.MailboxWatchQuery{To: to, Kind: str(args, "kind"), ThreadID: str(args, "thread_id"), UnreadOnly: boolArg(args, "unread_only"), AsRecipient: boolArg(args, "as_recipient")}
+	if _, ok := args["after_seq"]; ok {
+		seq := int64(intArg(args, "after_seq", -1))
+		if seq < 0 {
+			return nil, toolError("invalid_request", "after_seq must be nonnegative")
+		}
+		q.AfterSeq = &seq
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	events, errors, err := a.client.MailboxWatch(ctx, q)
+	if err != nil {
+		return nil, classifyClientErr(err, to)
+	}
+	messages := make([]client.MailboxWatchMessage, 0)
+	for ev := range events {
+		switch ev.Type {
+		case "message":
+			messages = append(messages, ev.Message)
+		case "synchronized", "gap":
+			return toolJSON(map[string]any{"ok": true, "messages": messages, "next_cursor": ev.Seq, "event": ev.Type, "reason": ev.Reason}), nil
+		}
+	}
+	if err := <-errors; err != nil {
+		return nil, classifyClientErr(err, to)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, toolError("internal_error", "mailbox watch ended before synchronization")
+}

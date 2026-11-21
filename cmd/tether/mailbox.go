@@ -19,6 +19,7 @@ var (
 	mailboxKind         string
 	mailboxThread       string
 	mailboxUnreadOnly   bool
+	mailboxAsRecipient  bool
 	mailboxWatchBackoff = time.Second
 	mailboxWatchMaxWait = 30 * time.Second
 )
@@ -34,7 +35,8 @@ var mailboxWatchCmd = &cobra.Command{
 	Long: `Stream a recipient's mailbox over SSE until interrupted.
 
 Successful writes to the authenticated recipient record delivery, without marking
-read. Operator inspection leaves delivery state unchanged. Without --after-seq
+read. Operator inspection leaves delivery state unchanged unless --as-recipient declares
+that this watch hands messages to the live recipient agent. Without --after-seq
 only messages that arrive after the watch starts are
 shown. The command reconnects with backoff, resumes from the last seen seq and
 skips anything it already printed. With --json each delivery is one line with
@@ -53,7 +55,7 @@ A hub without the route fails fast, so callers can fall back to polling.`,
 			after = &mailboxAfterSeq
 		}
 		return classifyErr(watchMailbox(cmdCtx(cmd), c, client.MailboxWatchQuery{
-			To: args[0], Kind: mailboxKind, ThreadID: mailboxThread, UnreadOnly: mailboxUnreadOnly,
+			To: args[0], Kind: mailboxKind, ThreadID: mailboxThread, UnreadOnly: mailboxUnreadOnly, AsRecipient: mailboxAsRecipient,
 		}, after))
 	},
 }
@@ -142,6 +144,7 @@ func handleMailboxEvent(ev client.MailboxWatchEvent, cursor **int64) error {
 }
 
 func init() {
+	mailboxWatchCmd.Flags().BoolVar(&mailboxAsRecipient, "as-recipient", false, "operator declaration: deliver this stream to the live recipient (audited; does not mark read)")
 	mailboxWatchCmd.Flags().BoolVar(&mailboxJSONFlag, "json", false, "print one JSON object per line")
 	mailboxWatchCmd.Flags().Int64Var(&mailboxAfterSeq, "after-seq", 0, "resume strictly after this seq (default: only new messages)")
 	mailboxWatchCmd.Flags().StringVar(&mailboxKind, "kind", "", "comma-separated kind filter")

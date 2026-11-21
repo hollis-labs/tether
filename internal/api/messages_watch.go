@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -87,6 +88,25 @@ func (s *Server) handleMessagesWatch(w http.ResponseWriter, r *http.Request) {
 		writeChannelError(w, channels.ErrMailboxOperation)
 		return
 	}
+	deliveryPath := "watch_stream"
+	asRecipient := false
+	if raw := q.Get("as_recipient"); raw != "" {
+		var err error
+		asRecipient, err = strconv.ParseBool(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid as_recipient")
+			return
+		}
+	}
+	if asRecipient {
+		p, _ := verifiedPrincipal(r)
+		if identity.IsOperatorCredential(p) {
+			deliveryPath = "operator-declared-watch"
+		} else if !s.isDeliveryRecipient(r, to.URN()) {
+			writeError(w, http.StatusForbidden, CodeForbidden, "as_recipient requires the operator credential or the authenticated recipient")
+			return
+		}
+	}
 	var f store.ListFilter
 	if ks := q.Get("kind"); ks != "" {
 		for _, k := range strings.Split(ks, ",") {
@@ -116,6 +136,10 @@ func (s *Server) handleMessagesWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if deliveryPath == "operator-declared-watch" {
+		p, _ := verifiedPrincipal(r)
+		s.auditOperatorReply(r, p, "operator_declared_watch", map[string]any{"recipient": to.URN(), "path": deliveryPath})
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -153,7 +177,7 @@ func (s *Server) handleMessagesWatch(w http.ResponseWriter, r *http.Request) {
 			if !emitEvent("message", e.Seq, mailboxWatchMessage{Seq: e.Seq, Message: e.Message}) {
 				return
 			}
-			if err := s.markMessageDelivered(r, e.ID, e.To, "watch_stream"); err != nil {
+			if err := s.markWatchMessageDelivered(r, e.ID, e.To, deliveryPath); err != nil {
 				return
 			}
 			after = e.Seq
