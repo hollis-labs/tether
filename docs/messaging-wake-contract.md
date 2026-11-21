@@ -148,14 +148,18 @@ kind.
 
 | Call | Side effects | Settles the delivery (stops wake retries) |
 |---|---|---|
-| `tether_message_list` | None. Repeatable. | No |
-| `tether_message_get` | None. | No |
+| `tether_message_list` | Repeatable; verified recipient reads stamp `delivered_at` and `read_at`. Operator inspection changes neither. | For the verified recipient |
+| `tether_message_get` | Verified recipient reads stamp `delivered_at` and `read_at`; sender/operator inspection changes neither. | For the verified recipient |
 | `tether_message_mark_read` | Sets `read_at`. | Yes |
 | `tether_message_consume` | Sets `consumed_at`. | Yes |
-| `tether_message_inbox` | **Takes the batch**: stamps `delivered_at` on every message returned, which then never comes back from `inbox`. Consumes each one only when the caller is the recipient's own bound session. | Only for the recipient's own session |
+| `tether_message_inbox` | **Takes the batch** for the verified recipient: stamps delivery and read; consumes each one when the caller is the recipient's own live bound session. Operator inspection changes neither timestamp. | For the verified recipient |
 
-An agent reading its mail should `list` (unread only) and `mark_read` each
-message it handled. `inbox` is for a recipient session pulling its own mail.
+An agent can `list` unread mail or `get` a message: returning the payload to its
+verified recipient records a read. `inbox` is for a recipient session pulling its
+own mail. Successful wake injection and retained team-session injection record
+delivery on both hub and outposts; injection alone does not record a read.
+Count-only notification hooks use `delivery_only=true` on list, which preserves
+unread state until the model fetches the payload.
 
 ## Retries and redrive
 

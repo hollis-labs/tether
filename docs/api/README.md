@@ -2361,10 +2361,10 @@ RFC 8030 Web Push vocabulary.
 |---|---|---|
 | `/messages` | `POST` | Store an envelope. Body: `{"from":"msg://...","to":"msg://...","kind":"notice","payload":{...}}`. |
 | `/messages/notify` | `POST` | Store an envelope, count unread messages for `to`, and wake a live recipient session when resolvable. |
-| `/messages/{id}` | `GET` | Fetch one message. |
-| `/messages/inbox?to=<urn>` | `GET` | Agent pull model. Destructive: returned messages are marked delivered. With `as_session=<id>` naming a live session that is the recipient itself (the session address, or a session of the recipient actor), they are also consumed, settling their deliveries. Any other caller gets the listing only. |
+| `/messages/{id}` | `GET` | Fetch one message; verified recipient reads stamp delivery and read. Sender/operator inspection changes neither timestamp. |
+| `/messages/inbox?to=<urn>` | `GET` | Agent pull model. Destructive for the verified recipient: returned messages are marked delivered and read. With `as_session=<id>` naming a live session that is the recipient itself (the session address, or a session of the recipient actor), they are also consumed, settling their deliveries. Any other caller gets the listing only. |
 | `/messages/watch?to=<urn>&as=<urn>` | `GET` | Resumable SSE mailbox watch; optional `as_recipient=true` declares operator handoff to the live recipient. |
-| `/messages/list?to=<urn>` | `GET` | Operator/UI model. Non-destructive; supports `unread_only`, `include_archived`, `limit`, `offset`. |
+| `/messages/list?to=<urn>` | `GET` | Repeatable; verified recipient payload reads stamp delivery and read, operator inspection changes neither timestamp. `delivery_only=true` preserves unread state for notification hooks. Supports `unread_only`, `include_archived`, `limit`, `offset`. |
 | `/messages/{id}/read?as=<urn>` | `POST` | Mark read. |
 | `/messages/{id}/archive?as=<urn>` | `POST` | Archive for recipient. |
 | `/messages/{id}/consume?as=<urn>` | `POST` | Mark consumed. |

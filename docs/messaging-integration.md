@@ -89,10 +89,10 @@ daemon-hosted session. **Two different calls, and the distinction matters:**
 
 - `tether_message_list` / the client's list read is **non-destructive and
   repeatable**. This is the polling call. Unread messages returned to their
-  authenticated recipient count as delivery, without marking them read. Operator
-  inspection does not count as delivery.
+  authenticated recipient are marked delivered and read. Operator
+  inspection changes neither timestamp.
 - `tether_message_inbox` / `Inbox` is an **atomic-delivery pull**: returned
-  messages are marked delivered and **will not come back on a later inbox
+  messages are marked delivered and read and **will not come back on a later inbox
   call** when pulled by the authenticated recipient. Operator inspection leaves
   delivery state unchanged.
 

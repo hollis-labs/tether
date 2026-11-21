@@ -21,7 +21,7 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 	to := messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "recipient"}
 	from := messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "sender"}
 	for _, path := range []string{"list", "get", "inbox", "watch_stream", "operator-declared-watch"} {
-		for _, actor := range []string{"recipient", "bound_jwt", "unrelated_jwt", "sender", "admin", "scoped_admin", "anonymous"} {
+		for _, actor := range []string{"recipient", "bound_jwt", "team_jwt", "unrelated_jwt", "sender", "admin", "scoped_admin", "anonymous"} {
 			t.Run(path+"/"+actor, func(t *testing.T) {
 				db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
 				if err != nil {
@@ -36,15 +36,19 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 				svc := &fakeLaunchService{getRes: map[string]*store.SessionRow{
 					"s-own":   {ID: "s-own", LogicalAgentID: to.ID},
 					"s-other": {ID: "s-other", LogicalAgentID: from.ID},
+					"s-team":  {ID: "s-team", LogicalAgentID: "team-worker#unique"},
 				}}
-				h := NewHandler(Deps{MessageStore: ms, Service: svc})
+				h := NewHandler(Deps{MessageStore: ms, Service: boundLaunchService{fakeLaunchService: svc, bound: map[string]string{to.ID: "s-team"}}})
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					p := identity.Principal{Verified: true, Kind: "session", ID: from.URN(), SessionID: "s1"}
 					if actor == "recipient" {
 						p.ID = to.URN()
 					}
-					if actor == "bound_jwt" || actor == "unrelated_jwt" {
+					if actor == "bound_jwt" || actor == "team_jwt" || actor == "unrelated_jwt" {
 						sid := "s-own"
+						if actor == "team_jwt" {
+							sid = "s-team"
+						}
 						if actor == "unrelated_jwt" {
 							sid = "s-other"
 						}
@@ -86,7 +90,7 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if path == "operator-declared-watch" && actor != "admin" && actor != "recipient" && actor != "bound_jwt" {
+				if path == "operator-declared-watch" && actor != "admin" && actor != "recipient" && actor != "bound_jwt" && actor != "team_jwt" {
 					if resp.StatusCode != http.StatusForbidden {
 						t.Fatalf("status=%d want 403", resp.StatusCode)
 					}
@@ -111,13 +115,21 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if (got.DeliveredAt != nil) == (actor == "recipient" || actor == "bound_jwt" || (actor == "admin" && path == "operator-declared-watch")) {
+					if (got.DeliveredAt != nil) == (actor == "recipient" || actor == "bound_jwt" || actor == "team_jwt" || (actor == "admin" && path == "operator-declared-watch")) {
 						break
 					}
 					if time.Now().After(deadline) {
 						t.Fatalf("delivered=%v actor=%s", got.DeliveredAt, actor)
 					}
 					time.Sleep(time.Millisecond)
+				}
+				page, err := ms.List(context.Background(), to, store.ListFilter{})
+				if err != nil || len(page.Messages) != 1 {
+					t.Fatalf("page=%+v err=%v", page, err)
+				}
+				wantRead := (actor == "recipient" || actor == "bound_jwt" || actor == "team_jwt") && (path == "get" || path == "list" || path == "inbox")
+				if (page.Messages[0].ReadAt != nil) != wantRead {
+					t.Fatalf("read=%v want=%v", page.Messages[0].ReadAt, wantRead)
 				}
 				cancel()
 				_ = resp.Body.Close()
@@ -130,7 +142,7 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 					t.Fatal(err)
 				}
 				want := 0
-				if actor == "recipient" || actor == "bound_jwt" || (actor == "admin" && path == "operator-declared-watch") {
+				if actor == "recipient" || actor == "bound_jwt" || actor == "team_jwt" || (actor == "admin" && path == "operator-declared-watch") {
 					want = 1
 				}
 				if count != want {

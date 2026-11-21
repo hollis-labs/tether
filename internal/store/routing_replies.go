@@ -478,8 +478,8 @@ type RoutingReplySettlement struct {
 }
 
 // SettleRoutingReply records a terminal outcome. delivered stamps the message
-// consumed and undeliverable stamps it canceled, so retention treats both as
-// finished. Only a non-terminal reply can be settled.
+// delivered and consumed; undeliverable stamps it canceled. Retention treats
+// both as finished. Only a non-terminal reply can be settled.
 func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, in RoutingReplySettlement) error {
 	if !in.State.Terminal() {
 		return fmt.Errorf("routing reply: %q is not a terminal state", in.State)
@@ -502,6 +502,21 @@ func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, in Routi
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return ErrRoutingReplyState
+	}
+	if in.State == RoutingReplyDelivered {
+		// The dispatcher settles only after the retained runtime accepted the
+		// turn (also for outpost relays). Commit handoff evidence with settlement.
+		path := "session_hub"
+		var worker string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(worker_id,'') FROM sessions WHERE id=?`, in.DeliveredTo).Scan(&worker); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if worker != "" {
+			path = "session_outpost"
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET delivered_at=COALESCE(read_at,?), delivery_path=?, delivery_session_id=? WHERE id=? AND delivered_at IS NULL`, now, path, in.DeliveredTo, replyID); err != nil {
+			return err
+		}
 	}
 	column := "consumed_at"
 	if in.State == RoutingReplyUndeliverable {

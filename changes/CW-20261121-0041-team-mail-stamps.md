@@ -1,0 +1,1 @@
+- CW-20261121-0041: Stamp successful retained team-session and legacy wake injection delivery on hub and outposts, and mark get/list/inbox payloads read only for verified recipients. Preserve unread state for count-only notification hooks.

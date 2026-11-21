@@ -1040,12 +1040,25 @@ func (c *Client) MessageInboxAsSession(ctx context.Context, to, kind, threadID, 
 }
 
 // MessageList fetches a repeatable page. Unread returns to the authenticated
-// recipient mark delivery; operator inspection does not. Neither marks read.
+// recipient mark delivery and read; operator inspection changes neither.
 //
 // T05 (messaging vNext, ADR 0045): the daemon requires ?as= to equal ?to= for
 // a mailbox read, so `to` doubles as the caller's identity claim here.
 func (c *Client) MessageList(ctx context.Context, to, kind, threadID string, includeArchived, unreadOnly bool, limit, offset int) (MessageListResult, error) {
+	return c.messageList(ctx, to, kind, threadID, includeArchived, unreadOnly, limit, offset, false)
+}
+
+// MessageListDeliveryOnly polls for notifications without acknowledging a payload
+// read. This is for hooks that emit a count rather than return mail to the model.
+func (c *Client) MessageListDeliveryOnly(ctx context.Context, to, kind, threadID string, includeArchived, unreadOnly bool, limit, offset int) (MessageListResult, error) {
+	return c.messageList(ctx, to, kind, threadID, includeArchived, unreadOnly, limit, offset, true)
+}
+
+func (c *Client) messageList(ctx context.Context, to, kind, threadID string, includeArchived, unreadOnly bool, limit, offset int, deliveryOnly bool) (MessageListResult, error) {
 	params := url.Values{}
+	if deliveryOnly {
+		params.Set("delivery_only", "true")
+	}
 	params.Set("to", to)
 	params.Set("as", to)
 	if kind != "" {

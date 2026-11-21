@@ -61,7 +61,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_get",
-		Description: "Get a message envelope by ID. A read by the authenticated recipient records delivery; sender and operator inspection do not.",
+		Description: "Get a message envelope by ID. A read by the authenticated recipient records delivery and read timestamps; sender and operator inspection do not.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID", true),
 			gomcp.StringProp("as", "Sender or recipient URN claiming this read", true),
@@ -71,7 +71,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_inbox",
-		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE for the authenticated recipient: returned messages are marked delivered and will not appear in a future inbox call; operator inspection does not mark delivery; when the calling session is the recipient itself, they are also marked consumed. For a non-destructive, repeatable listing use tether_message_list instead.",
+		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE for the authenticated recipient: returned messages are marked delivered and read and will not appear in a future inbox call; operator inspection does not mark delivery or read; when the calling session is the recipient itself, they are also marked consumed. For a non-destructive, repeatable listing use tether_message_list instead.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("to", "Recipient URN; omit to read your own inbox (the address from tether_whoami)", false),
 			gomcp.StringProp("kind", "Comma-separated kind filter: request, response, notice, status_update, handoff, escalation", false),
@@ -96,7 +96,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_message_list",
-		Description: "List a recipient's messages non-destructively. Repeatable: does not mark read. Unread messages returned to the authenticated recipient are marked delivered; operator inspection has no delivery side effect. Each message carries read_at/archived_at state and a subject/body payload projection. Archived messages are excluded unless include_archived is set.",
+		Description: "List a recipient's messages repeatably. Unread messages returned to the authenticated recipient are marked delivered and read; operator inspection changes neither timestamp. Each message carries read_at/archived_at state and a subject/body payload projection. Archived messages are excluded unless include_archived is set.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("to", "Recipient URN", true),
 			gomcp.StringProp("kind", "Comma-separated kind filter: request, response, notice, status_update, handoff, escalation", false),

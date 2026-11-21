@@ -67,3 +67,15 @@ func (s *Server) markWatchMessageDelivered(r *http.Request, id string, to messag
 	}
 	return s.markMessageDelivered(r, id, to, path)
 }
+
+// Reading a payload as its verified recipient is read evidence. Keep the
+// transport's delivery path before MarkRead supplies its fallback evidence.
+func (s *Server) markMessageRead(r *http.Request, id string, to messaging.Address, path string) error {
+	if !s.isDeliveryRecipient(r, to.URN()) {
+		return nil
+	}
+	if err := s.markMessageDelivered(r, id, to, path); err != nil {
+		return err
+	}
+	return s.MessageStore.MarkRead(r.Context(), id, to)
+}
