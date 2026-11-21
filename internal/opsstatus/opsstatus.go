@@ -36,13 +36,16 @@ const (
 
 // Post is one ops_status_post call.
 type Post struct {
-	State          string     `json:"state"`
-	Kind           string     `json:"kind"`
-	Summary        string     `json:"summary"`
-	Body           string     `json:"body,omitempty"`
-	WorkstreamID   string     `json:"workstream_id,omitempty"`
-	Task           string     `json:"task,omitempty"`
-	Session        string     `json:"session"`
+	State        string `json:"state"`
+	Kind         string `json:"kind"`
+	Summary      string `json:"summary"`
+	Body         string `json:"body,omitempty"`
+	WorkstreamID string `json:"workstream_id,omitempty"`
+	Task         string `json:"task,omitempty"`
+	// Session is carried in Evidence (tether://session/<id>) and the
+	// idempotency key; status_post has no session argument and refuses
+	// unknown fields.
+	Session        string     `json:"-"`
 	Evidence       []Evidence `json:"evidence,omitempty"`
 	IdempotencyKey string     `json:"idempotency_key"`
 	// RunID is sent as a header, not an argument.
