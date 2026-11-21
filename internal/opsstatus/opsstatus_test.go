@@ -180,8 +180,16 @@ func TestClientParsesOpsResponses(t *testing.T) {
 	if gotAuth != "Bearer secret" || gotActor != "msg://service/tether/test" || gotTask != "CW-1" {
 		t.Fatalf("headers: %q %q %q", gotAuth, gotActor, gotTask)
 	}
-	if gotArgs["kind"] != KindSessionStarted || gotArgs["idempotency_key"] != "tether:abc:session_started" || gotArgs["RunID"] != nil {
+	if gotArgs["kind"] != KindSessionStarted || gotArgs["idempotency_key"] != "tether:abc:session_started" {
 		t.Fatalf("args: %v", gotArgs)
+	}
+	// The live status_post schema (additionalProperties: false) accepts only these.
+	allowed := map[string]bool{"state": true, "kind": true, "summary": true, "body": true, "workstream_id": true, "task": true,
+		"evidence": true, "idempotency_key": true, "ops_id": true, "ref": true, "stage_hint": true, "awaiting": true, "transition_sequence": true}
+	for k := range gotArgs {
+		if !allowed[k] {
+			t.Fatalf("argument %q is not in the status_post schema", k)
+		}
 	}
 
 	var retry *RetryableError
