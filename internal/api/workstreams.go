@@ -299,10 +299,12 @@ func (s *Server) handleSessionWorkstream(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// writeAssignError maps the two not-found cases the assign/ensure paths can
-// produce onto 404 and everything else onto 500.
+// writeAssignError distinguishes assignment-required conflicts, invalid seeds,
+// missing references, and unexpected storage failures.
 func writeAssignError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrRegistryWorkstreamRequired):
+		writeError(w, http.StatusConflict, CodeConflict, err.Error())
 	case errors.Is(err, store.ErrWorkstreamProject):
 		writeError(w, 400, CodeInvalidRequest, err.Error())
 	case errors.Is(err, store.ErrWorkstreamNotFound), errors.Is(err, store.ErrSessionNotFound):

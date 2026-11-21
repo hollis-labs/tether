@@ -785,10 +785,8 @@ func (a *Adapter) validateCorrelationStamps(task, workstream string) error {
 	if a.principal == nil || !identity.IsOperatorCredential(*a.principal) || a.principal.SessionID != "" {
 		return toolError("forbidden", "task_id/workstream_id require the operator credential")
 	}
-	for _, id := range []string{task, workstream} {
-		if id != "" && !api.ValidLaunchCorrelationID(id) {
-			return toolError("invalid_request", "correlation id must be 1-64 letters, digits, '.', '_' or '-', beginning with a letter or digit")
-		}
+	if (task != "" && !api.ValidLaunchCorrelationID(task)) || (workstream != "" && !api.ValidLaunchWorkstreamID(workstream)) {
+		return toolError("invalid_request", "malformed task or workstream id")
 	}
 	return nil
 }

@@ -39,7 +39,12 @@ func (s *Store) FillSessionLaunchCorrelation(ctx context.Context, id, task, work
 	}
 	fillTask, fillWorkstream := task != "" && oldTask.String == "", workstream != "" && oldWorkstream.String == ""
 	if !fillTask && !fillWorkstream {
-		return nil
+		// Sessions admitted before reference rows existed (CW-20261120-0135)
+		// retain their exact external identity on their next launch.
+		if err := referenceRegistryWorkstreamTx(ctx, tx, oldWorkstream.String); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	if state != "created" {
 		return fmt.Errorf("%w: stamps may only be filled before launch", ErrSessionCorrelationConflict)
@@ -71,6 +76,9 @@ func (s *Store) FillSessionLaunchCorrelation(ctx context.Context, id, task, work
 	}
 	encoded, err := json.Marshal(&plan)
 	if err != nil {
+		return err
+	}
+	if err := referenceRegistryWorkstreamTx(ctx, tx, workstream); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE sessions SET task_id=?,workstream_id=?,updated_at=? WHERE id=?`, sql.NullString{String: task, Valid: task != ""}, sql.NullString{String: workstream, Valid: workstream != ""}, time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {

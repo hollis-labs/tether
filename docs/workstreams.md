@@ -2,7 +2,10 @@
 
 The [Registry reconciliation plan](registry-workstream-reconciliation.md)
 describes the proposed retirement of local ID minting and its prerequisites.
-It is documentation only; the behavior below remains the current implementation.
+Task-linked launches now retain [Registry references](launch-registry-correlation.md)
+and register launch correlation asynchronously. Standalone and historical local
+containers retain the behavior below; task-linked unassigned ensure calls require
+a dispatcher-owned assignment.
 
 A **workstream** is the durable container for work that outlives any one
 session. A **session ref** records what a session touched. The **digest**
