@@ -2,7 +2,10 @@
 // Transports supply inventory/dispatch seams; they do not choose discovery policy.
 package mcpgateway
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Mode string
 
@@ -42,11 +45,34 @@ type ToolRules struct {
 }
 
 type Config struct {
-	DiscoveryMode *string            `yaml:"discovery_mode" json:"discovery_mode,omitempty"`
-	Profiles      map[string]Profile `yaml:"profiles" json:"profiles,omitempty"`
+	// ExpectedOrigins overrides the default enabled, built-in catalog origins.
+	// nil means default; an explicit empty list expects none.
+	ExpectedOrigins []string           `yaml:"expected_origins" json:"expected_origins"`
+	DiscoveryMode   *string            `yaml:"discovery_mode" json:"discovery_mode,omitempty"`
+	Profiles        map[string]Profile `yaml:"profiles" json:"profiles,omitempty"`
+}
+
+// MarshalYAML preserves omission versus an explicitly empty expectation list.
+// YAML otherwise encodes a nil slice as [], silently disabling the default
+// expectations when a catalog editing tool rewrites global.yaml.
+func (c Config) MarshalYAML() (any, error) {
+	var expected *[]string
+	if c.ExpectedOrigins != nil {
+		expected = &c.ExpectedOrigins
+	}
+	return struct {
+		ExpectedOrigins *[]string          `yaml:"expected_origins,omitempty"`
+		DiscoveryMode   *string            `yaml:"discovery_mode,omitempty"`
+		Profiles        map[string]Profile `yaml:"profiles,omitempty"`
+	}{expected, c.DiscoveryMode, c.Profiles}, nil
 }
 
 func (c Config) Validate() error {
+	for _, id := range c.ExpectedOrigins {
+		if id == "" || strings.TrimSpace(id) != id {
+			return fmt.Errorf("mcp.expected_origins: origin IDs must be nonempty without surrounding whitespace")
+		}
+	}
 	if c.DiscoveryMode != nil {
 		if err := ValidateMode(*c.DiscoveryMode); err != nil {
 			return fmt.Errorf("mcp.discovery_mode: %w", err)

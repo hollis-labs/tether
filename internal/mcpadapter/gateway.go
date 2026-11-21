@@ -55,6 +55,11 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 				snapshot.Origins = append(snapshot.Origins, status)
 			}
 			sort.Slice(snapshot.Origins, func(i, j int) bool { return snapshot.Origins[i].ID < snapshot.Origins[j].ID })
+			if a.svc != nil {
+				if cat := a.svc.CurrentCatalog(); cat != nil {
+					applyOriginExpectations(&snapshot, cat.Global.MCP.ExpectedOrigins, cat.MCPServerEnabled, cat.MCPServerExternal, cat.MCPServerServedAt)
+				}
+			}
 			return snapshot
 		},
 		Dispatch: func(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
@@ -179,7 +184,7 @@ func (a *Adapter) registerGatewayStatus(s *gomcp.Server, gateway *mcpgateway.Ser
 		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": mcpgateway.MaxStatusLint, "default": mcpgateway.DefaultStatusLint, "description": "detail=full only: lint findings per page"},
 		"cursor": map[string]any{"type": "string", "description": "detail=full only: next_cursor from the previous page"},
 	}}
-	a.addTool(s, gomcp.Tool{Name: "tether_gateway_status", Description: "Explain gateway mode and upstream health. Default is a compact summary (a few KB): effective profile/mode, cataloged/eligible/available tool counts, which origins are connected or unavailable and why, lint totals by code, collisions, and what complete means. An optional exact name reports that tool's visibility, authored annotations and its own lint findings. Use detail=full (with limit/cursor) for every lint finding. Cached or unexamined inventory never proves availability.", InputSchema: schema, Handler: func(_ context.Context, args map[string]any) (any, error) {
+	a.addTool(s, gomcp.Tool{Name: "tether_gateway_status", Description: "Explain gateway mode and upstream health. Default is a compact summary (a few KB): effective profile/mode, cataloged/eligible/available tool counts, which origins are connected or unavailable and why, missing_expected origins from the catalog (including profile/grant-hidden or failed origins), external origins and their serving locations, lint totals by code, collisions, and what complete means. An optional exact name reports that tool's visibility, authored annotations and its own lint findings. Use detail=full (with limit/cursor) for every lint finding. Cached or unexamined inventory never proves availability.", InputSchema: schema, Handler: func(_ context.Context, args map[string]any) (any, error) {
 		name, _ := args["name"].(string)
 		detail, _ := args["detail"].(string)
 		if detail != "" && detail != "summary" && detail != "full" {

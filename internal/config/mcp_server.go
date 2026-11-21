@@ -36,6 +36,8 @@ const MCPConfineRemoteEnv = "TETHER_MCP_CONFINE_REMOTE"
 type MCPServerEntry struct {
 	// ServedBy is empty for built-in upstreams or external for grant-only entries.
 	ServedBy string `yaml:"served_by"`
+	// ServedAt is a public description of the external gateway location, never credentials.
+	ServedAt string `yaml:"served_at"`
 	// AllowUnconfinedRemote is an operator opt-in for HTTP/SSE upstreams that
 	// cannot inherit a protected Codex proxy's local filesystem confinement.
 	AllowUnconfinedRemote bool              `yaml:"allow_unconfined_remote"`

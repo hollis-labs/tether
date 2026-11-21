@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,7 +101,14 @@ func TestSharedNamingTypedCollisionKeepsDiagnosticsAndViewNames(t *testing.T) {
 			if err != nil || result.IsError {
 				t.Fatalf("call %v %v", result, err)
 			}
-			raw, _ := json.Marshal(v.Service.Status(""))
+			status := v.Service.Status("")
+			// Catalog expectations intentionally name missing origins, even
+			// outside this grant. Tool names and collision details stay private.
+			if !slices.Contains(status.ExpectedOrigins, hidden) || !slices.Contains(status.MissingExpected, hidden) {
+				t.Fatalf("hidden expected origin was silently omitted: %+v", status)
+			}
+			status.ExpectedOrigins, status.MissingExpected = nil, nil
+			raw, _ := json.Marshal(status)
 			if strings.Contains(string(raw), hidden) {
 				t.Fatalf("hidden owner leaked: %s", raw)
 			}

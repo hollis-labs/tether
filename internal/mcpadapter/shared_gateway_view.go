@@ -243,6 +243,9 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	fullSnapshot := gateway.Snapshot
 	gateway.Snapshot = func() mcpgateway.Snapshot {
 		full := fullSnapshot()
+		if a.svc == nil || a.svc.CurrentCatalog() == nil {
+			applyOriginExpectations(&full, nil, r.known, r.external, r.servedAt)
+		}
 		if opts.LiveServers != nil {
 			ids, err := opts.LiveServers()
 			if err != nil {
