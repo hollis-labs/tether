@@ -1,9 +1,10 @@
 # Registry workstream reconciliation plan
 
-Status: implementation held; documentation only. CW-20261120-0002 permits a
-merged reconciliation plan while Registry server prerequisite CW-20261120-0090
-is prepared separately. This document changes no runtime, schema, credentials,
-or historical rows and does not authorize deployment.
+Status: reconciliation design, with the launch-registration slice implemented
+by CW-20261121-0030. See [launcher correlation registration](launch-registry-correlation.md)
+for the current runtime contract, configuration and best-effort limitations.
+The broader historical migration and retirement plan below remains future work;
+its original prerequisite notes describe the state when the plan was authored.
 
 The approved design (Tesseract item `01M7TVAPAJ9MX44KPQTQK10NM5`, revision 4,
 section 5 and decision D4) assigns workstream and correlation identity to the

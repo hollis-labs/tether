@@ -16,7 +16,7 @@ func TestLaunchWorkstreamFlag(t *testing.T) {
 	oldTarget, oldLaunch, oldWorkstream := remoteTarget, launchID, launchWorkstream
 	defer func() { remoteTarget, launchID, launchWorkstream = oldTarget, oldLaunch, oldWorkstream }()
 	t.Setenv("TETHER_TOKEN", "test-operator-token")
-	for _, id := range []string{"", "01M7VQ2QWYB5RZR86W2BWG8PW3", "019a9e45-6789-7123-8123-0123456789ab"} {
+	for _, id := range []string{"", "workstream:01M7VQ2QWYB5RZR86W2BWG8PW3", "01M7VQ2QWYB5RZR86W2BWG8PW3", "019a9e45-6789-7123-8123-0123456789ab"} {
 		t.Run(id, func(t *testing.T) {
 			var received api.LaunchRequest
 			var creates, starts int

@@ -20,6 +20,8 @@ func TestWorkstreamStampPolicy(t *testing.T) {
 		status int
 		want   string
 	}{
+		{"Registry", op, "workstream:01M7VQ2QWYB5RZR86W2BWG8PW3", 201, "workstream:01M7VQ2QWYB5RZR86W2BWG8PW3"},
+		{"invalid Registry", op, "workstream:not-ulid", 400, ""},
 		{"ULID", op, "01M7VQ2QWYB5RZR86W2BWG8PW3", 201, "01M7VQ2QWYB5RZR86W2BWG8PW3"},
 		{"UUIDv7", op, "019a9e45-6789-7123-8123-0123456789ab", 201, "019a9e45-6789-7123-8123-0123456789ab"},
 		{"opaque", op, "external.work-1_ref", 201, "external.work-1_ref"},
@@ -95,4 +97,12 @@ func (f *correlationLaunchFake) LaunchSessionWithCorrelation(_ context.Context, 
 		return LaunchResult{}, store.ErrSessionCorrelationConflict
 	}
 	return f.LaunchSession(id)
+}
+
+func TestTaskLinkedEnsureRequiresRegistryAssignment(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeAssignError(w, store.ErrRegistryWorkstreamRequired)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "Registry dispatcher") {
+		t.Fatalf("unexpected assignment response: %d %s", w.Code, w.Body.String())
+	}
 }

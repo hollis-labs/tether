@@ -329,6 +329,7 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 	if err = s.Store.UpdateSessionState(row.ID, "running", result.PID, nil); err != nil {
 		return nil, err
 	}
+	s.queueLaunchCorrelation(ctx, row, runEnv, p.ResumeProviderSessionID, "")
 	s.recordTeamLaunchEvidence(context.WithoutCancel(ctx), row.ID, launchEvidence)
 	if spec.Provider == "claude" && spec.Credential != "" && s.Workers.Supports(row.WorkerID, workerwire.FeatureExtractRefs) {
 		attribution := store.RefAttributionNone

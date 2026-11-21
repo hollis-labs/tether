@@ -327,10 +327,8 @@ func (s *Service) LaunchSessionWithCorrelation(ctx context.Context, sessionID st
 		if !ok || !identity.IsOperatorCredential(p) || p.SessionID != "" {
 			return nil, fmt.Errorf("%w: correlation stamping requires the operator credential", ErrLaunchRefused)
 		}
-		for _, id := range []string{input.TaskID, input.WorkstreamID} {
-			if id != "" && !api.ValidLaunchCorrelationID(id) {
-				return nil, fmt.Errorf("%w: malformed correlation id", ErrLaunchRefused)
-			}
+		if (input.TaskID != "" && !api.ValidLaunchCorrelationID(input.TaskID)) || (input.WorkstreamID != "" && !api.ValidLaunchWorkstreamID(input.WorkstreamID)) {
+			return nil, fmt.Errorf("%w: malformed correlation id", ErrLaunchRefused)
 		}
 	}
 	unlock, err := s.lockSessionLaunch(ctx, sessionID)
@@ -338,10 +336,8 @@ func (s *Service) LaunchSessionWithCorrelation(ctx context.Context, sessionID st
 		return nil, err
 	}
 	defer unlock()
-	if input.TaskID != "" || input.WorkstreamID != "" {
-		if err := s.Store.FillSessionLaunchCorrelation(ctx, sessionID, input.TaskID, input.WorkstreamID); err != nil {
-			return nil, err
-		}
+	if err := s.Store.FillSessionLaunchCorrelation(ctx, sessionID, input.TaskID, input.WorkstreamID); err != nil {
+		return nil, err
 	}
 	l, err := s.launchSessionWithContext(ctx, sessionID)
 	s.settleLaunchPromptInput(sessionID, err == nil)
@@ -595,6 +591,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			}
 		}
 	}()
+	var manifestDigest string
 	var startOpts agentsessions.StartOptions
 	if rt.Kind() == acp.Kind {
 		// An ACP agent (CW-20260930-0106 stage 1). go-agent-wrapper's ACP
@@ -675,6 +672,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, fmt.Errorf("prepare shared launch: %w", err)
 		}
+		manifestDigest = launchManifestDigest(prepared.PlantedBootDir)
 		// Stamped AFTER the planting succeeded, not before: the column records
 		// what was planted, and a failed prepare planted nothing. Best-effort --
 		// a launch must not fail because an audit field could not be written, and
@@ -935,6 +933,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	s.watchStdioTap(sessionID, stdioTap)
 	s.watchCodexTap(sessionID, codexTap)
 	launched = true
+	s.queueLaunchCorrelation(ctx, row, runEnv, plan.ResumeProviderSessionID, manifestDigest)
 	if gatewayServer != nil {
 		go func() { _, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID); stopGateway() }()
 	}

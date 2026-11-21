@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // taskIDPattern bounds the launch-time task stamp (CW-20261012-0062a). The value is the
@@ -46,6 +47,11 @@ func (s *Server) workstreamStamp(w http.ResponseWriter, r *http.Request, id stri
 // ValidLaunchCorrelationID accepts opaque identifiers without consulting their owner.
 func ValidLaunchCorrelationID(id string) bool { return taskIDPattern.MatchString(id) }
 
+// ValidLaunchWorkstreamID also accepts the canonical Registry wire identity.
+func ValidLaunchWorkstreamID(id string) bool {
+	return ValidLaunchCorrelationID(id) || store.IsRegistryWorkstreamID(id)
+}
+
 // runStamp applies the task-stamp caller boundary to an optional Torque run.
 // It validates only bounded identifier syntax, never invents or rewrites an ID.
 func (s *Server) runStamp(w http.ResponseWriter, r *http.Request, runID string) (string, bool) {
@@ -70,7 +76,7 @@ func (s *Server) launchCorrelationStamp(w http.ResponseWriter, r *http.Request, 
 		}
 		return "", true
 	}
-	if !taskIDPattern.MatchString(taskID) {
+	if !taskIDPattern.MatchString(taskID) && (dimension != "workstream" || !store.IsRegistryWorkstreamID(taskID)) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, dimension+"_id must be a bare "+dimension+" id (letters, digits, '.', '_' or '-', at most 64 characters)")
 		return "", false
 	}
