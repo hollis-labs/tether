@@ -1,0 +1,1 @@
+- CW-20261120-0007: Add local-operator `tether correlation register` and async external kit-session registration through the launcher's bounded Registry queue, with optional boot digest facts and no duplicate registration of Tether sessions.

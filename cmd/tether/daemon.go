@@ -411,6 +411,7 @@ var daemonRunCmd = &cobra.Command{
 			EventIngest:         eventIngest,
 			Catalog:             &catalogLoader{root: svc.CatalogRoot},
 			GroupStore:          svc.Store,
+			Correlations:        svc,
 			Workstreams:         svc.Store,
 			SessionRefs:         svc.Store,
 			Digests:             svc.Store,
