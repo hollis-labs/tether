@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -245,7 +246,11 @@ func TestLaunchManifestDigest(t *testing.T) {
 func TestHungRegistryIsCanceledAtShutdown(t *testing.T) {
 	svc, _, id, _ := credentialLaunch(t)
 	entered := make(chan struct{}, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { entered <- struct{}{}; <-r.Context().Done() }))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		entered <- struct{}{}
+		<-r.Context().Done()
+	}))
 	defer srv.Close()
 	t.Cleanup(svc.stopLaunchCorrelations)
 	path := filepath.Join(t.TempDir(), "credential")
