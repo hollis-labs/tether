@@ -8,9 +8,9 @@ import (
 
 func TestStatusExpectedOrigins(t *testing.T) {
 	for _, tc := range []struct {
-		name, status                  string
-		absent, profile, floor, tools bool
-		want                          bool
+		name, status                                   string
+		absent, profile, floor, tools, readOnly, empty bool
+		want                                           bool
 	}{
 		{name: "connected", status: "connected", want: true},
 		{name: "absent", absent: true},
@@ -19,12 +19,21 @@ func TestStatusExpectedOrigins(t *testing.T) {
 		{name: "profile hidden", status: "connected", profile: true},
 		{name: "grant floor hidden", status: "connected", floor: true},
 		{name: "all tools hidden", status: "connected", tools: true},
+		{name: "read-only hides every tool", status: "connected", readOnly: true},
+		{name: "successful empty inventory", status: "connected", empty: true, want: true},
+		{name: "empty inventory under read-only", status: "connected", empty: true, readOnly: true, want: true},
+		{name: "empty inventory hidden by profile", status: "connected", empty: true, profile: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot := Snapshot{ExpectedOrigins: []string{"registry"}, External: []ExternalOrigin{{ID: "ops", Status: "external", ServedAt: "standalone gateway"}}}
 			if !tc.absent {
 				snapshot.Origins = []OriginStatus{{ID: "registry", Status: tc.status, ToolCount: 1}}
-				snapshot.Entries = []Entry{{Origin: "registry", Tool: &mcpsdk.Tool{Name: "registry_read"}}}
+				snapshot.Entries = []Entry{{Origin: "registry", Tool: &mcpsdk.Tool{Name: "registry_read", Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: false}}}}
+			}
+			if tc.empty {
+				snapshot.Origins[0].ToolCount = 0
+				snapshot.Origins[0].InventoryExamined = true
+				snapshot.Entries = nil
 			}
 			svc := Service{Snapshot: func() Snapshot { return snapshot }}
 			if tc.profile {
@@ -35,6 +44,9 @@ func TestStatusExpectedOrigins(t *testing.T) {
 			}
 			if tc.tools {
 				svc.Policy = &Policy{Selection: ProfileSelection{Profile: &Profile{Tools: ToolRules{Deny: []string{"*"}}}}}
+			}
+			if tc.readOnly {
+				svc.Policy = &Policy{Selection: ProfileSelection{Profile: &Profile{ReadOnly: true}}}
 			}
 			st := svc.Status("")
 			if st.Complete != tc.want {
@@ -49,7 +61,7 @@ func TestStatusExpectedOrigins(t *testing.T) {
 			}
 			summary := st.Summary()
 			page, err := st.Page(10, "")
-			if err != nil || !reflect.DeepEqual(summary.MissingExpected, want) || !reflect.DeepEqual(page.MissingExpected, want) || len(summary.External) != 1 {
+			if err != nil || summary.Complete != st.Complete || page.Complete != st.Complete || !reflect.DeepEqual(summary.MissingExpected, want) || !reflect.DeepEqual(page.MissingExpected, want) || len(summary.External) != 1 {
 				t.Fatalf("lost expected/external metadata: %+v %+v %v", summary, page, err)
 			}
 		})
