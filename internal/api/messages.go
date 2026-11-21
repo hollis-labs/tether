@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/libs/mesh/core/messaging/delivery"
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/messaging/envelope"
 	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
@@ -574,13 +575,21 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id str
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	if !s.sameAddress(r.Context(), as, env.From.URN()) && !s.sameAddress(r.Context(), as, env.To.URN()) {
+	isParty := func(target string) bool {
+		if identity.ServiceEventsRequest(r.Context()) {
+			// Bound service mailbox grants stay literal: mutable seat or
+			// address aliases must never widen JWT access to another mailbox.
+			return as == target
+		}
+		return s.sameAddress(r.Context(), as, target)
+	}
+	if !isParty(env.From.URN()) && !isParty(env.To.URN()) {
 		writeError(w, http.StatusForbidden, CodeForbidden, "as must be the message's sender or recipient")
 		return
 	}
 	// A verified recipient payload read records both timestamps. Sender and
 	// operator inspection leave them unchanged.
-	if s.sameAddress(r.Context(), as, env.To.URN()) && s.isDeliveryRecipient(r, env.To.URN()) {
+	if isParty(env.To.URN()) && s.isDeliveryRecipient(r, env.To.URN()) {
 		if err := s.markMessageRead(r, id, env.To, "get"); err != nil {
 			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 			return

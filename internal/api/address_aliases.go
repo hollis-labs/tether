@@ -211,7 +211,7 @@ func (s *Server) guardMailbox(next http.HandlerFunc) http.HandlerFunc {
 		canonical(w, r)
 	})
 	return func(w http.ResponseWriter, r *http.Request) {
-		if identity.ServiceEventsRequest(r.Context()) && (r.URL.Path == "/messages/list" || strings.HasSuffix(r.URL.Path, "/read")) {
+		if identity.ServiceEventsRequest(r.Context()) && serviceBoundMailboxRoute(r) {
 			// The remote admission already checked the literal bound mailbox.
 			// Do not expand its authority via mutable seat or address aliases.
 			p, ok := verifiedPrincipal(r)
@@ -234,6 +234,21 @@ func (s *Server) guardMailbox(next http.HandlerFunc) http.HandlerFunc {
 		}
 		guarded(w, r)
 	}
+}
+
+// serviceBoundMailboxRoute reports whether r is one of the mailbox routes that
+// remote service JWTs may reach with a bound ?as= agent address (list, single
+// message fetch, mark-read).
+func serviceBoundMailboxRoute(r *http.Request) bool {
+	if r.Method == http.MethodGet {
+		if r.URL.Path == "/messages/list" {
+			return true
+		}
+		id, ok := strings.CutPrefix(r.URL.Path, "/messages/")
+		return ok && id != "" && !strings.Contains(id, "/") &&
+			id != "inbox" && id != "subscribe" && id != "watch" && id != "notify" && id != "request" && id != "post" && id != "aliases" && id != "pending-replies" && id != "thread" && id != "retention"
+	}
+	return r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read")
 }
 
 // deviceReadRoute is the allowlist of the device read exception: list, watch, thread and a single item.

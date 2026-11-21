@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -377,5 +378,134 @@ func TestServiceJWTMessagesRouteGateMatchesEvents(t *testing.T) {
 		if w := do(h, "POST", "/messages/notify", testJWT); w.Code != c.want || *reached != 0 {
 			t.Errorf("%s: %d reached=%d, want %d", c.name, w.Code, *reached, c.want)
 		}
+	}
+}
+
+// CW-20261121-0142: service JWTs with read scope may fetch bound messages by id
+// and read registry agent profiles, while registry writes and path variants
+// remain closed.
+func TestServiceJWTMessageGetAndRegistryAgentRead(t *testing.T) {
+	const bound = "msg://agent/agent-mux/agt_lb01cdaeym"
+	const other = "msg://agent/agent-mux/agt_other12345"
+	readSvc := func(scopes []string, addresses []string) Principal {
+		p := goodService()
+		p.ID = "msg://service/basalisk/dev"
+		p.TokenID = "jti-live-3"
+		p.Scopes = scopes
+		p.Addresses = addresses
+		return p
+	}
+	boundQ := url.QueryEscape(bound)
+	otherQ := url.QueryEscape(other)
+	escapedURN := url.PathEscape(other)
+	colonEscapedURN := strings.ReplaceAll(escapedURN, ":", "%3A")
+
+	// Bound read+messages token succeeds on GET /messages/{id}?as=<bound> and GET /registry/agents/{escaped-urn}.
+	h, reached, _ := remoteWith(ServiceJWT{Verify: stubJWT{p: readSvc([]string{"tether.messages", "tether.read"}, []string{bound})}, Known: live("jti-live-3")}, deviceStub{})
+	for _, target := range []string{
+		"/messages/msg_123?as=" + boundQ,
+		"/registry/agents/" + escapedURN,
+		"/registry/agents/" + colonEscapedURN,
+		"/registry/agents/" + strings.ToLower(colonEscapedURN),
+		"/registry/agents/" + url.PathEscape("msg://user/chrispian"),
+	} {
+		before := *reached
+		if w := do(h, "GET", target, testJWT); w.Code != 204 || *reached != before+1 {
+			t.Fatalf("GET %s: status=%d reached=%d body=%s", target, w.Code, *reached, w.Body)
+		}
+	}
+
+	// Route names for audit log use fixed templates, never the caller's path.
+	if got := serviceRouteName("/messages/msg_123"); got != "/messages/{id}" {
+		t.Fatalf("serviceRouteName(/messages/msg_123) = %q, want /messages/{id}", got)
+	}
+	if got := serviceRouteName("/registry/agents/" + colonEscapedURN); got != "/registry/agents/{urn}" {
+		t.Fatalf("serviceRouteName(registry agent) = %q, want /registry/agents/{urn}", got)
+	}
+
+	// Bound check on GET /messages/{id}: another address or unbound token -> 403.
+	if w := do(h, "GET", "/messages/msg_123?as="+otherQ, testJWT); w.Code != 403 {
+		t.Fatalf("GET /messages/{id} with foreign as: %d, want 403", w.Code)
+	}
+	hUnbound, reachedUnbound, _ := remoteWith(ServiceJWT{Verify: stubJWT{p: readSvc([]string{"tether.read"}, nil)}, Known: live("jti-live-3")}, deviceStub{})
+	if w := do(hUnbound, "GET", "/messages/msg_123?as="+boundQ, testJWT); w.Code != 403 || *reachedUnbound != 0 {
+		t.Fatalf("unbound token GET /messages/{id}: %d reached=%d, want 403", w.Code, *reachedUnbound)
+	}
+	// Unbound token with read (or registry_read) still reads registry agents.
+	if w := do(hUnbound, "GET", "/registry/agents/"+colonEscapedURN, testJWT); w.Code != 204 || *reachedUnbound != 1 {
+		t.Fatalf("unbound read token GET /registry/agents/{urn}: %d reached=%d", w.Code, *reachedUnbound)
+	}
+	hRegRead, reachedRegRead, _ := remoteWith(ServiceJWT{Verify: stubJWT{p: readSvc([]string{"tether.registry_read"}, nil)}, Known: live("jti-live-3")}, deviceStub{})
+	if w := do(hRegRead, "GET", "/registry/agents/"+colonEscapedURN, testJWT); w.Code != 204 || *reachedRegRead != 1 {
+		t.Fatalf("registry_read token GET /registry/agents/{urn}: %d reached=%d", w.Code, *reachedRegRead)
+	}
+	if w := do(hRegRead, "GET", "/messages/msg_123?as="+boundQ, testJWT); w.Code != 403 {
+		t.Fatalf("registry_read token must not fetch messages: %d, want 403", w.Code)
+	}
+
+	// Token without read scope is refused with 403 on both new routes.
+	hNoRead, reachedNoRead, _ := remoteWith(ServiceJWT{Verify: stubJWT{p: readSvc([]string{"tether.messages"}, []string{bound})}, Known: live("jti-live-3")}, deviceStub{})
+	if w := do(hNoRead, "GET", "/messages/msg_123?as="+boundQ, testJWT); w.Code != 403 || !strings.Contains(w.Body.String(), "tether.read") {
+		t.Fatalf("messages-only token GET /messages/{id}: %d %s", w.Code, w.Body)
+	}
+	if w := do(hNoRead, "GET", "/registry/agents/"+colonEscapedURN, testJWT); w.Code != 403 || !strings.Contains(w.Body.String(), "tether.registry_read") {
+		t.Fatalf("messages-only token GET /registry/agents/{urn}: %d %s", w.Code, w.Body)
+	}
+	if *reachedNoRead != 0 {
+		t.Fatalf("%d refused requests reached handler", *reachedNoRead)
+	}
+
+	// Registry writes and path variants are never admitted (401), even with broad scopes.
+	hBroad, reachedBroad, _ := remoteWith(ServiceJWT{Verify: stubJWT{p: readSvc([]string{"tether.read", "tether.messages", "tether.registry", "tether.admin"}, []string{bound})}, Known: live("jti-live-3")}, deviceStub{})
+	for _, c := range []struct{ method, target string }{
+		// Message-get path/method/query variants
+		{"GET", "/messages/msg_123"},
+		{"GET", "/messages/msg_123?as="},
+		{"GET", "/messages/msg_123?as=" + boundQ + "&to=" + boundQ},
+		{"GET", "/messages/msg_123?as=" + boundQ + "&unknown=1"},
+		{"GET", "/messages/msg_123?as=" + boundQ + "&as=" + otherQ},
+		{"GET", "/messages/msg_123/extra?as=" + boundQ},
+		{"GET", "/messages/msg_123/?as=" + boundQ},
+		{"GET", "/messages/msg_123%2Fextra?as=" + boundQ},
+		{"GET", "/messages/inbox?as=" + boundQ},
+		{"GET", "/messages/watch?as=" + boundQ},
+		{"GET", "/messages/subscribe?as=" + boundQ},
+		{"GET", "/messages/aliases?as=" + boundQ},
+		{"GET", "/messages/pending-replies?as=" + boundQ},
+		{"POST", "/messages/msg_123?as=" + boundQ},
+		{"DELETE", "/messages/msg_123?as=" + boundQ},
+		// Registry path/query variants and all write routes
+		{"GET", "/registry/agent"},
+		{"GET", "/registry/agent/" + colonEscapedURN},
+		{"GET", "/registry/agents"},
+		{"GET", "/registry/agents/"},
+		{"GET", "/registry/agents/not-a-urn"},
+		{"GET", "/registry/agents/" + other},
+		{"GET", "/registry/agents/" + colonEscapedURN + "/extra"},
+		{"GET", "/registry/agents/" + colonEscapedURN + "/"},
+		{"GET", "/registry/agents/" + colonEscapedURN + "?full=true"},
+		{"GET", "/registry/agents/" + colonEscapedURN + "?include=callback"},
+		{"GET", "/registry/agents/msg%3A%2F%2Fagent%2F..%2Fagt_1"},
+		{"GET", "/%72egistry/agents/" + colonEscapedURN},
+		{"GET", "/registry/%61gents/" + colonEscapedURN},
+		{"GET", "/registry/agents/%6Dsg%3A%2F%2Fagent%2Fagent-mux%2Fagt_1"},
+		{"GET", "/registry/projects/" + url.PathEscape("msg://agent/agent-mux/prj_1")},
+		{"GET", "/registry/groups/" + url.PathEscape("msg://group/agent-mux/grp_1")},
+		{"POST", "/registry/agents"},
+		{"PATCH", "/registry/agents/" + colonEscapedURN},
+		{"PUT", "/registry/agents/" + colonEscapedURN},
+		{"DELETE", "/registry/agents/" + colonEscapedURN},
+		{"POST", "/registry/agents/" + colonEscapedURN + "/sync"},
+		{"POST", "/registry/agents/" + colonEscapedURN + "/merge"},
+		{"POST", "/registry/agents/" + colonEscapedURN + "/external-id"},
+		{"POST", "/registry/bootstrap"},
+		{"POST", "/registry/handles"},
+	} {
+		if w := do(hBroad, c.method, c.target, testJWT); w.Code != 401 {
+			t.Errorf("%s %s: status=%d, want 401 (body=%s)", c.method, c.target, w.Code, w.Body)
+		}
+	}
+	if *reachedBroad != 0 {
+		t.Fatalf("%d refused requests reached handler", *reachedBroad)
 	}
 }
