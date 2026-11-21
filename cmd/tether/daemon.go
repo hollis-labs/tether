@@ -29,6 +29,7 @@ import (
 	"github.com/hollis-labs/libs/security/secrets/redact"
 	"github.com/hollis-labs/tether/internal/a2aadapter"
 	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/agentlive"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/app/turnrouting"
@@ -1146,8 +1147,16 @@ func (a *serviceAdapter) ListSessions(opts store.ListSessionsOptions) ([]store.S
 // (api.CallerIdentityLookup). Without it the optional lookup is silently skipped.
 func (a *serviceAdapter) SessionIdentityURN(id string) string { return a.svc.SessionIdentityURN(id) }
 
+// AgentsLive serves GET /agents/live (api.AgentsLiveService). Without it the
+// optional route registration is silently skipped and the daemon 404s the
+// path even though it is mounted (CW-20261121-0168).
+func (a *serviceAdapter) AgentsLive(ctx context.Context, q agentlive.Query, watch *agentlive.Tracker) (agentlive.Response, error) {
+	return a.svc.AgentsLive(ctx, q, watch)
+}
+
 var _ api.CallerIdentityLookup = (*serviceAdapter)(nil)
 var _ api.ChatLauncher = (*serviceAdapter)(nil)
+var _ api.AgentsLiveService = (*serviceAdapter)(nil)
 
 func (a *serviceAdapter) GetSession(id string) (*store.SessionRow, error) {
 	return a.svc.GetSession(id)

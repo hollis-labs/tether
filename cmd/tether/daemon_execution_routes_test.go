@@ -18,6 +18,8 @@ import (
 // The execution routes register only when the wired service implements the
 // optional interfaces, so a fake service cannot prove the daemon serves them.
 // This builds the server through daemonRunCmd and requests the real handler.
+// /agents/live is the same class (CW-20261121-0168): mounted, but 404 until
+// serviceAdapter forwarded AgentsLive.
 func TestDaemonServesExecutionPolicyAndCapacity(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	oldFactory, oldRun, oldCatalog := newDaemonService, runDaemonServer, catalogPath
@@ -34,7 +36,7 @@ func TestDaemonServesExecutionPolicyAndCapacity(t *testing.T) {
 	expected := errors.New("serve failure")
 	runDaemonServer = func(server *daemon.Server, _ context.Context) error {
 		h := server.Handler()
-		for _, path := range []string{"/execution/policy", "/capacity"} {
+		for _, path := range []string{"/execution/policy", "/capacity", "/agents/live"} {
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 			if rec.Code != http.StatusOK {
