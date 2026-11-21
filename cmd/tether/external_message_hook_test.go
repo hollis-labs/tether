@@ -80,7 +80,7 @@ func TestExternalMessageHookRealMailboxRecordsDeliveryWithoutReading(t *testing.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		q := r.URL.Query()
-		if r.Method != http.MethodGet || r.URL.Path != "/messages/list" || q.Get("as") != externalHookRecipient || q.Get("to") != externalHookRecipient || q.Get("unread_only") != "true" || q.Get("limit") != "1" || q.Get("include_archived") != "" {
+		if r.Method != http.MethodGet || r.URL.Path != "/messages/list" || q.Get("as") != externalHookRecipient || q.Get("to") != externalHookRecipient || q.Get("unread_only") != "true" || q.Get("limit") != "1" || q.Get("include_archived") != "" || q.Get("delivery_only") != "true" {
 			t.Error("poll escaped the configured read-only mailbox query")
 		}
 		if r.Header.Get("Authorization") != "Bearer synthetic-hook-credential" {
@@ -197,7 +197,7 @@ func TestExternalMessageHookDenialNeverBecomesWake(t *testing.T) {
 
 type externalHookListerFunc func(context.Context, string, string, string, bool, bool, int, int) (client.MessageListResult, error)
 
-func (f externalHookListerFunc) MessageList(ctx context.Context, to, kind, thread string, archived, unread bool, limit, offset int) (client.MessageListResult, error) {
+func (f externalHookListerFunc) MessageListDeliveryOnly(ctx context.Context, to, kind, thread string, archived, unread bool, limit, offset int) (client.MessageListResult, error) {
 	return f(ctx, to, kind, thread, archived, unread, limit, offset)
 }
 

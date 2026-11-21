@@ -428,3 +428,62 @@ func TestLinkTeamSessionCannotWidenTheApp(t *testing.T) {
 		}
 	}
 }
+
+// Exercise the dispatcher, not only settlement: queued/rejected turns have no
+// delivery evidence; successful retained hub and worker turns have one event.
+func TestTeamInjectionDeliveryEvidence(t *testing.T) {
+	for _, worker := range []string{"", "outpost-worker"} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("worker=%s/fail=%v", worker, fail), func(t *testing.T) {
+				h := newReplyHarness(t)
+				h.rt.setAlive("retained", true, agentsessions.LiveStateIdle)
+				h.setBusy("retained", true)
+				if err := h.st.CreateSession(store.SessionRow{ID: "retained", State: "running", WorkerID: worker}, nil); err != nil {
+					t.Fatal(err)
+				}
+				if fail {
+					h.rt.setSendErr("retained", errors.New("relay refused"))
+				}
+				d := teams.Delivery{IdempotencyKey: "evidence", From: "msg://agent/local/sender", Body: "steer", Recipient: teams.Member{Actor: "msg://agent/local/worker", SessionID: "retained"}, Delivery: mesh.DeliveryAtIdle}
+				if err := h.svc.QueueTeamDelivery(t.Context(), d); err != nil {
+					t.Fatal(err)
+				}
+				rows, err := h.st.RoutingRepliesForParent(t.Context(), "team-delivery:evidence")
+				if err != nil || len(rows) != 1 {
+					t.Fatal(rows, err)
+				}
+				id := rows[0].ReplyID
+				assertEvidence := func(want int) {
+					t.Helper()
+					env, err := h.st.MessagingStore().Get(t.Context(), id)
+					if err != nil || (env.DeliveredAt != nil) != (want == 1) {
+						t.Fatalf("envelope=%+v err=%v want=%d", env, err, want)
+					}
+					var n int
+					path := "session_hub"
+					if worker != "" {
+						path = "session_outpost"
+					}
+					if err := h.st.DB().QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.message_id')=? AND json_extract(payload_json,'$.path')=? AND json_extract(payload_json,'$.session_id')='retained'`, id, path).Scan(&n); err != nil || n != want {
+						t.Fatalf("events=%d want=%d err=%v", n, want, err)
+					}
+				}
+				h.waitQuiet()
+				assertEvidence(0)
+				h.setBusy("retained", false)
+				h.d.notify("retained")
+				if fail {
+					h.waitState(id, store.RoutingReplyUndeliverable)
+					assertEvidence(0)
+				} else {
+					h.waitState(id, store.RoutingReplyDelivered)
+					assertEvidence(1)
+					if err := h.svc.QueueTeamDelivery(t.Context(), d); err != nil {
+						t.Fatal(err)
+					}
+					assertEvidence(1)
+				}
+			})
+		}
+	}
+}

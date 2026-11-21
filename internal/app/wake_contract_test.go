@@ -9,6 +9,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -269,5 +271,42 @@ func TestWakeContract_ReadOrConsumeSettlesTheWake(t *testing.T) {
 				t.Fatalf("settled mail woke again: %d turns", n)
 			}
 		})
+	}
+}
+
+// Legacy/untracked messages still use the direct wake path. Delivery is
+// evidence of successful runtime injection, independent of delivery-core rows.
+func TestLegacyTeamWakeDeliveryEvidence(t *testing.T) {
+	for _, worker := range []string{"", "outpost-worker"} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("worker=%s/fail=%v", worker, fail), func(t *testing.T) {
+				r := newContractRig(t, nil)
+				r.bind("s1")
+				if _, err := r.st.DB().Exec(`UPDATE sessions SET worker_id=? WHERE id='s1'`, worker); err != nil {
+					t.Fatal(err)
+				}
+				// Insert an old message with no delivery-core obligation.
+				if _, err := r.st.DB().Exec(`INSERT INTO messages(id,kind,channel,from_urn,to_urn,thread_id,in_reply_to,payload,content_type,metadata,created_at) VALUES('legacy','notice','','msg://user/local/owner',?,'','','{}','application/json','{}',?)`, r.to.URN(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+					t.Fatal(err)
+				}
+				r.rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+				if fail {
+					r.rt.setSendErr("s1", errors.New("relay refused"))
+				}
+				out := attemptWake(t.Context(), r.st, r.reg, r.sm, "legacy", r.to, "s1", "steer")
+				env, err := r.st.MessagingStore().Get(t.Context(), "legacy")
+				if err != nil || out.Delivered == fail || (env.DeliveredAt != nil) == fail {
+					t.Fatalf("out=%+v env=%+v err=%v", out, env, err)
+				}
+				path := "wake_hub"
+				if worker != "" {
+					path = "wake_outpost"
+				}
+				var n int
+				if err := r.st.DB().QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.message_id')='legacy' AND json_extract(payload_json,'$.path')=? AND json_extract(payload_json,'$.session_id')='s1'`, path).Scan(&n); err != nil || (n == 1) == fail {
+					t.Fatalf("events=%d err=%v", n, err)
+				}
+			})
+		}
 	}
 }

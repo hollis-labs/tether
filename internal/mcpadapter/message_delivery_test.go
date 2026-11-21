@@ -16,8 +16,8 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-func TestMCPRecipientListAndGetRecordDelivery(t *testing.T) {
-	for _, tool := range []string{"tether_message_list", "tether_message_get", "tether_message_watch"} {
+func TestMCPRecipientPayloadReadsRecordDeliveryAndRead(t *testing.T) {
+	for _, tool := range []string{"tether_message_list", "tether_message_get", "tether_message_inbox", "tether_message_watch"} {
 		for _, recipient := range []bool{true, false} {
 			t.Run(tool+map[bool]string{true: "/recipient", false: "/operator"}[recipient], func(t *testing.T) {
 				db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
@@ -44,7 +44,7 @@ func TestMCPRecipientListAndGetRecordDelivery(t *testing.T) {
 				}
 				h := identity.MiddlewareWithScopes(identity.Enforce, ids, nil, identity.ScopePolicy{}, api.NewHandler(api.Deps{MessageStore: db.MessagingStore(), Service: &daemonOnlyService{db: db}}))
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Query().Get("as_session") != "" {
+					if tool != "tether_message_inbox" && r.URL.Query().Get("as_session") != "" {
 						t.Error("list/get unexpectedly relies on as_session")
 					}
 					h.ServeHTTP(w, r)
@@ -63,6 +63,13 @@ func TestMCPRecipientListAndGetRecordDelivery(t *testing.T) {
 				}
 				if (got.DeliveredAt != nil) != (recipient || tool == "tether_message_watch") {
 					t.Fatalf("delivery=%v recipient=%v", got.DeliveredAt, recipient)
+				}
+				page, err := db.MessagingStore().List(t.Context(), to, store.ListFilter{})
+				if err != nil || len(page.Messages) != 1 {
+					t.Fatalf("page=%+v err=%v", page, err)
+				}
+				if (page.Messages[0].ReadAt != nil) != (recipient && tool != "tether_message_watch") {
+					t.Fatalf("read=%v recipient=%v tool=%s", page.Messages[0].ReadAt, recipient, tool)
 				}
 			})
 		}

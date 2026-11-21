@@ -40,7 +40,7 @@ type externalMessageHookOutput struct {
 }
 
 type externalMessageLister interface {
-	MessageList(context.Context, string, string, string, bool, bool, int, int) (client.MessageListResult, error)
+	MessageListDeliveryOnly(context.Context, string, string, string, bool, bool, int, int) (client.MessageListResult, error)
 }
 
 // Exit 2 has a special meaning for Claude asyncRewake hooks. Configuration,
@@ -129,9 +129,8 @@ func runExternalMessageHook(ctx context.Context, c externalMessageLister, input 
 	}
 	for {
 		requestCtx, cancel := context.WithTimeout(ctx, opts.timeout)
-		// List is read-only. Inbox would stamp delivered_at and could lose
-		// messages before the model actually handles them.
-		page, err := c.MessageList(requestCtx, opts.recipient, "", "", false, true, 1, 0)
+		// Delivery-only listing leaves mail unread for the model.
+		page, err := c.MessageListDeliveryOnly(requestCtx, opts.recipient, "", "", false, true, 1, 0)
 		cancel()
 		if err != nil {
 			if opts.wait > 0 && ctx.Err() == context.DeadlineExceeded {

@@ -578,10 +578,10 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id str
 		writeError(w, http.StatusForbidden, CodeForbidden, "as must be the message's sender or recipient")
 		return
 	}
-	// A sender inspection is not a recipient handoff. Read messages already
-	// have read_implied delivery; the marker preserves that first observation.
+	// A verified recipient payload read records both timestamps. Sender and
+	// operator inspection leave them unchanged.
 	if s.sameAddress(r.Context(), as, env.To.URN()) && s.isDeliveryRecipient(r, env.To.URN()) {
-		if err := s.markMessageDelivered(r, id, env.To, "get"); err != nil {
+		if err := s.markMessageRead(r, id, env.To, "get"); err != nil {
 			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 			return
 		}
@@ -649,6 +649,12 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
+	for _, msg := range result.Messages {
+		if err := s.markMessageRead(r, msg.ID, msg.To, "inbox"); err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -688,7 +694,7 @@ func (s inboxSessionLookup) LogicalAgentID(id string) (string, error) {
 //
 // Non-destructive, repeatable listing of a recipient's messages. Unlike
 // /messages/inbox this remains repeatable. Unread messages returned to their
-// verified recipient are marked delivered; operator inspection has no effect.
+// verified recipient are marked delivered and read; operator inspection has no effect.
 // Archived messages are excluded unless
 // include_archived=true. Each message carries read_at/archived_at/
 // canceled_at state and a subject/body payload projection.
@@ -756,7 +762,11 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, msg := range page.Messages {
 		if msg.ReadAt == nil {
-			if err := s.markMessageDelivered(r, msg.ID, msg.To, "list"); err != nil {
+			mark := s.markMessageRead
+			if q.Get("delivery_only") == "true" {
+				mark = s.markMessageDelivered
+			}
+			if err := mark(r, msg.ID, msg.To, "list"); err != nil {
 				writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 				return
 			}

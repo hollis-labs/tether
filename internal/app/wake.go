@@ -608,6 +608,19 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	}
 	if st != nil {
 		defer func() {
+			if out.Delivered {
+				path := "wake_hub"
+				if strings.HasPrefix(sessionID, "outpost:") {
+					path = "wake_outpost"
+				} else if row, err := st.GetSession(sessionID); err == nil && row.WorkerID != "" {
+					path = "wake_outpost"
+				}
+				if err := st.MessagingStore().(store.DeliveryMarker).MarkDelivered(context.WithoutCancel(ctx), messageID, to, path, sessionID); err != nil {
+					out.Detail = "delivered timestamp: " + err.Error()
+				}
+			}
+		}()
+		defer func() {
 			if err := st.RecordMessageWake(context.WithoutCancel(ctx), messageID, to.URN(), "wake.outcome", observationAttempt, observationNumber, observationGeneration, submitted, out.Delivered, out.Reason); err != nil {
 				log.Printf("app: record wake outcome: %v", err)
 			}
@@ -772,13 +785,6 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 
 	if _, _, err := ds.Ack(ctx, delivery.AckRequest{Lease: lease, Stage: delivery.StageTurnSubmitted}); err != nil {
 		log.Printf("app: attempt wake: ack turn_submitted for delivery %s failed (best-effort receipt recording skipped): %v", deliveryID, err)
-	}
-	path := "wake_hub"
-	if strings.HasPrefix(sessionID, "outpost:") {
-		path = "wake_outpost"
-	}
-	if err := st.MessagingStore().(store.DeliveryMarker).MarkDelivered(ctx, messageID, to, path, sessionID); err != nil {
-		return api.WakeOutcome{Attempted: true, Delivered: true, SessionID: sessionID, Detail: "delivered timestamp: " + err.Error()}
 	}
 
 	// Hold the lease, still at turn_submitted, for the recipient to consume

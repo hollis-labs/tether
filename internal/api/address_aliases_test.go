@@ -240,7 +240,8 @@ func TestAddressAliasSendAndListThroughEveryAddress(t *testing.T) {
 			t.Fatalf("list via %s = %v, want %v", addr, got, canonical)
 		}
 	}
-	// The old mail kept its address and its state.
+	// Old mail keeps its addresses and archive state. Listing as the mailbox
+	// owner now also records a payload read, through every alias.
 	page, err := h.db.MessagingStore().List(ctx, mustURN(t, aliasCanonicalURN), store.ListFilter{IncludeArchived: true})
 	if err != nil {
 		t.Fatal(err)
@@ -252,10 +253,10 @@ func TestAddressAliasSendAndListThroughEveryAddress(t *testing.T) {
 	if m := state[old[0].ID]; m.ReadAt == nil || m.ArchivedAt != nil || m.To.URN() != identity.OperatorID {
 		t.Fatalf("read message = %+v", m)
 	}
-	if m := state[old[1].ID]; m.ArchivedAt == nil || m.ReadAt != nil || m.To.URN() != identity.OperatorID {
+	if m := state[old[1].ID]; m.ArchivedAt == nil || m.ReadAt == nil || m.To.URN() != identity.OperatorID {
 		t.Fatalf("archived message = %+v", m)
 	}
-	if m := state[old[2].ID]; m.ReadAt != nil || m.ArchivedAt != nil || m.To.URN() != h.agentURN {
+	if m := state[old[2].ID]; m.ReadAt == nil || m.ArchivedAt != nil || m.To.URN() != h.agentURN {
 		t.Fatalf("agent-row message = %+v", m)
 	}
 
