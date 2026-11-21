@@ -42,7 +42,7 @@ func (o clientTeamOps) call(ctx context.Context, verb, key string, req api.TeamR
 
 func (o clientTeamOps) Form(ctx context.Context, r teamsvc.FormRequest) (teamsvc.Result, error) {
 	team := r.Team
-	return o.call(ctx, "form", r.Key, api.TeamRequest{Team: &team, Launch: api.TeamLaunchRequest{Counts: r.Launch.Counts, Limits: r.Launch.Limits, PoolIdentities: r.Launch.PoolIdentities}})
+	return o.call(ctx, "form", r.Key, api.TeamRequest{Team: &team, Launch: api.TeamLaunchRequest{TaskID: r.TaskID, WorkstreamID: r.WorkstreamID, Counts: r.Launch.Counts, Limits: r.Launch.Limits, PoolIdentities: r.Launch.PoolIdentities}})
 }
 func (o clientTeamOps) Dissolve(ctx context.Context, r teamsvc.RunRequest) (teamsvc.Result, error) {
 	return o.call(ctx, "dissolve", r.Key, api.TeamRequest{RunID: r.RunID})

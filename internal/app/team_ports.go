@@ -209,10 +209,10 @@ func (s *Service) CreateTeamSessionWithLimits(ctx context.Context, key, launchID
 	// falls back to the hub (createWorkerSessionWith fails closed when the
 	// worker is unknown or offline). No worker configured = hub, unchanged.
 	if w := s.launchWorker(launchID); w != "" {
-		return s.createWorkerSessionWith(CreateSessionInput{LaunchID: launchID, Worker: w, IdempotencyKey: key, IdempotencyPrincipal: store.IdempotencyPrincipalTeam}, digest, mutate)
+		return s.createWorkerSessionWith(CreateSessionInput{LaunchID: launchID, TaskID: boot.TaskID, WorkstreamID: boot.WorkstreamID, Worker: w, IdempotencyKey: key, IdempotencyPrincipal: store.IdempotencyPrincipalTeam}, digest, mutate)
 	}
 	return s.createKeyed(store.IdempotencyPrincipalTeam, key, digest, func() (*launch.Plan, error) {
-		plan, err := s.BuildLaunchPlan(CreateSessionInput{LaunchID: launchID})
+		plan, err := s.BuildLaunchPlan(CreateSessionInput{LaunchID: launchID, TaskID: boot.TaskID, WorkstreamID: boot.WorkstreamID})
 		if err != nil {
 			return nil, err
 		}

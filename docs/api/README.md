@@ -119,7 +119,7 @@ exception affects verification only, never membership, grants or host ceilings.
 
 | Route | Body fields |
 |---|---|
-| `/teams/form` | `team`, optional `launch` (`counts`, `limits`, `pool_identities`) |
+| `/teams/form` | `team`, optional `launch` (`counts`, `limits`, `pool_identities`, `task_id`, `workstream_id`) |
 | `/teams/dissolve` | `run_id` |
 | `/teams/member_add` | `run_id`, `slot`, optional `limits` |
 | `/teams/member_remove` | `run_id`, `member_id` |
