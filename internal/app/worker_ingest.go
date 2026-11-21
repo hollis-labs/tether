@@ -91,7 +91,7 @@ func (s *Service) ingestWorkerFrame(workerID string, f workerwire.Frame) error {
 				_, _ = s.Registry.RevokeSessionBindings(context.Background(), row.ID)
 			}
 		}
-		payload := map[string]any{"from": row.State, "to": state, "exit_code": f.ExitCode}
+		payload := map[string]any{"from": row.State, "to": state, "exit_code": f.ExitCode, "worker_id": workerID}
 		if endReason != "" {
 			payload["reason"] = endReason
 		}

@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/hollis-labs/libs/mesh/core/teams"
+	"github.com/hollis-labs/tether/internal/session"
 )
 
 // InterruptedDissolution observes the durable whole-roster termination plan.
@@ -133,19 +134,20 @@ func terminationProof(ctx context.Context, c *sql.Conn, runID string, m teams.Me
 			return false, err
 		}
 	}
-	var adoptionRun, actor, session string
+	var adoptionRun, actor, adoptedSession string
 	var released bool
-	err = c.QueryRowContext(ctx, `SELECT run_id,actor,session_id,released FROM team_host_adoptions WHERE intent_key=?`, req.IdempotencyKey).Scan(&adoptionRun, &actor, &session, &released)
+	err = c.QueryRowContext(ctx, `SELECT run_id,actor,session_id,released FROM team_host_adoptions WHERE intent_key=?`, req.IdempotencyKey).Scan(&adoptionRun, &actor, &adoptedSession, &released)
 	if err == nil {
-		return mode == "release" && adoptionRun == runID && actor == string(m.Actor) && session == m.SessionID && (!cleaned || released), nil
+		return mode == "release" && adoptionRun == runID && actor == string(m.Actor) && adoptedSession == m.SessionID && (!cleaned || released), nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
 	// The retained session nonce must still own exactly this member/session.
 	var nonce, state, ended string
+	var observedSequence int64
 	var payload, portRequest []byte
-	err = c.QueryRowContext(ctx, `SELECT nonce,state,ended,payload,request FROM team_port_intents WHERE port_kind='session' AND intent_key=?`, req.IdempotencyKey).Scan(&nonce, &state, &ended, &payload, &portRequest)
+	err = c.QueryRowContext(ctx, `SELECT nonce,state,ended,payload,request,observed_sequence FROM team_port_intents WHERE port_kind='session' AND intent_key=?`, req.IdempotencyKey).Scan(&nonce, &state, &ended, &payload, &portRequest, &observedSequence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -168,9 +170,22 @@ func terminationProof(ctx context.Context, c *sql.Conn, runID string, m teams.Me
 		return false, nil
 	}
 	var endedSession bool
-	err = c.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sessions s JOIN session_idempotency i ON i.session_id=s.id WHERE s.id=? AND i.principal_id='team-runtime' AND i.key=? AND s.state IN ('completed','failed','killed') AND COALESCE(s.pid,0)=0 AND s.worker_id='' AND NOT EXISTS(SELECT 1 FROM session_shims WHERE session_id=s.id))`, m.SessionID, "team-port:"+nonce).Scan(&endedSession)
+	err = c.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sessions s JOIN session_idempotency i ON i.session_id=s.id WHERE s.id=? AND i.principal_id='team-runtime' AND i.key=? AND s.state IN ('completed','failed','killed') AND COALESCE(s.pid,0)=0 AND NOT EXISTS(SELECT 1 FROM session_shims WHERE session_id=s.id))`, m.SessionID, "team-port:"+nonce).Scan(&endedSession)
 	if err != nil || !endedSession {
 		return false, err
+	}
+	var worker string
+	if err = c.QueryRowContext(ctx, `SELECT worker_id FROM sessions WHERE id=?`, m.SessionID).Scan(&worker); err != nil {
+		return false, err
+	}
+	if worker != "" {
+		exitSequence, custodySequence, err := session.WorkerExitEvidence(ctx, c, m.SessionID, worker)
+		if err != nil || exitSequence == 0 {
+			return false, err
+		}
+		if cleaned && (observedSequence < exitSequence || observedSequence < custodySequence) {
+			return false, nil
+		}
 	}
 	var enrollmentActor, enrollmentState, enrollmentEnd string
 	var bindingEnded bool

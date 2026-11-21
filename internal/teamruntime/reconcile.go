@@ -72,17 +72,21 @@ func (r Reconciler) reconcile(ctx context.Context, limit int, now time.Time) err
 	}
 	var failures []error
 	for _, entry := range entries {
-		// Host tombstones take precedence over still-pending port acquisitions.
-		if entry.end == "" && entry.kind != "delivery" {
-			var tombstone string
-			err = receipts.db.QueryRowContext(ctx, `SELECT tombstone FROM team_host_intents WHERE intent_key=?`, entry.key).Scan(&tombstone)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				failures = append(failures, err)
-				continue
-			}
-			if tombstone != "" {
-				entry.end = tombstone
-			}
+		// The durable host observation fence survives a crash before the port
+		// tombstone, and applies to enrollment cleanup as well as session cleanup.
+		recoveryCtx := ctx
+		var tombstone string
+		var observationOnly bool
+		err = receipts.db.QueryRowContext(ctx, `SELECT tombstone,observation_only FROM team_host_intents WHERE intent_key=?`, entry.key).Scan(&tombstone, &observationOnly)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			failures = append(failures, err)
+			continue
+		}
+		if entry.end == "" && tombstone != "" {
+			entry.end = tombstone
+		}
+		if observationOnly {
+			recoveryCtx = teamhost.WithDissolutionRecovery(ctx)
 		}
 		mode := fmt.Sprintf("%s/%t", entry.end, entry.binding)
 		ready, retryErr := receipts.store.RecoveryReady(ctx, entry.kind, entry.key, mode, now)
@@ -93,10 +97,16 @@ func (r Reconciler) reconcile(ctx context.Context, limit int, now time.Time) err
 		if !ready {
 			continue
 		}
+		if observationOnly && entry.kind == "enrollment" {
+			if err = r.Sessions.Stop(recoveryCtx, entry.key); err != nil {
+				failures = append(failures, err)
+				continue
+			}
+		}
 		switch entry.kind {
 		case "session":
 			if entry.end != "" {
-				err = r.Sessions.Stop(ctx, entry.key)
+				err = r.Sessions.Stop(recoveryCtx, entry.key)
 			} else {
 				var in teamhost.SessionRequest
 				err = json.Unmarshal(entry.request, &in)
@@ -106,11 +116,11 @@ func (r Reconciler) reconcile(ctx context.Context, limit int, now time.Time) err
 			}
 		case "enrollment":
 			if entry.end == "retire" {
-				err = r.Enroller.Retire(ctx, entry.key)
+				err = r.Enroller.Retire(recoveryCtx, entry.key)
 			} else if entry.end != "" {
-				err = r.Enroller.Release(ctx, entry.key)
+				err = r.Enroller.Release(recoveryCtx, entry.key)
 			} else if entry.binding {
-				err = r.Enroller.ReleaseBinding(ctx, entry.key)
+				err = r.Enroller.ReleaseBinding(recoveryCtx, entry.key)
 			} else {
 				var in teamhost.EnrollmentRequest
 				err = json.Unmarshal(entry.request, &in)

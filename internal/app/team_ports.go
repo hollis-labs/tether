@@ -335,8 +335,8 @@ func capTeamMaxDuration(plan *launch.Plan, d time.Duration) {
 	plan.Lifecycle = merged
 }
 
-// TeamSessionRecoveryReady confirms a local observed end without issuing Stop.
-// A live execution, launch admission, remote placement or retained shim keeps
+// TeamSessionRecoveryReady confirms an observed end without issuing Stop.
+// A live execution, launch admission, unconfirmed remote placement or retained shim keeps
 // its own authority even when a stale row claims to be terminal.
 func (s *Service) TeamSessionRecoveryReady(ctx context.Context, id string) (bool, error) {
 	s.launchMu.Lock()
@@ -351,8 +351,30 @@ func (s *Service) TeamSessionRecoveryReady(ctx context.Context, id string) (bool
 	if err != nil {
 		return false, err
 	}
-	if row.WorkerID != "" || row.PID.Int64 != 0 || !session.State(row.State).Terminal() || s.sessionHeldLive(id, "") {
+	if row.PID.Int64 != 0 || !session.State(row.State).Terminal() || s.sessionHeldLive(id, "") || s.sessionHeldLive(id, row.WorkerID) {
 		return false, nil
+	}
+	if row.WorkerID != "" {
+		exitSequence, custodySequence, err := session.WorkerExitEvidence(ctx, s.Store.DB(), id, row.WorkerID)
+		if err != nil || exitSequence == 0 {
+			return false, err
+		}
+		complete, connected := false, false
+		if s.Workers != nil {
+			inventory, known, online := s.Workers.Inventory(row.WorkerID)
+			complete, connected = known, online
+			if online {
+				if _, held := inventory[id]; held && inventory[id] != "exited" {
+					return false, nil
+				}
+			}
+		}
+		if connected && !complete {
+			return false, nil
+		}
+		if custodySequence > exitSequence && (!connected || !complete) {
+			return false, nil
+		}
 	}
 	if _, err = s.Store.SessionShim(ctx, id); err == nil {
 		return false, nil

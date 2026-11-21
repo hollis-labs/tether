@@ -50,6 +50,10 @@ type identityRig struct {
 // newIdentityRig wires a real hub, a real registry and the real daemon route table around a fake
 // websocket worker that advertises features and records every launch spec it is sent.
 func newIdentityRig(t *testing.T, features ...string) *identityRig {
+	return newIdentityRigWithRestore(t, nil, features...)
+}
+
+func newIdentityRigWithRestore(t *testing.T, restore *workerwire.RestoreCounts, features ...string) *identityRig {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "hub.db"))
 	if err != nil {
@@ -80,7 +84,7 @@ func newIdentityRig(t *testing.T, features ...string) *identityRig {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ws.Close() })
-		if err = ws.WriteJSON(workerwire.Frame{T: "hello", Proto: 1, Features: features, Worker: &workerwire.Worker{Label: "fake-worker", Platform: "linux", Arch: "amd64"}}); err != nil {
+		if err = ws.WriteJSON(workerwire.Frame{T: "hello", Proto: 1, Features: features, Restore: restore, Worker: &workerwire.Worker{Label: "fake-worker", Platform: "linux", Arch: "amd64"}}); err != nil {
 			t.Fatal(err)
 		}
 		var welcome workerwire.Frame

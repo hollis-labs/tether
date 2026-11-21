@@ -348,3 +348,25 @@ func TestTeamSessionRecoveryReadyGuards(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordedExitPersistentErrorDoesNotStarveOrdinaryReaper(t *testing.T) {
+	svc := stopHarness(t)
+	recordedExitFixture(t, svc, "bad-recorded", "", 1)
+	if _, err := svc.Store.DB().Exec(`CREATE TRIGGER reject_repair BEFORE UPDATE OF state ON sessions WHEN NEW.id='bad-recorded' AND NEW.state='failed' BEGIN SELECT RAISE(ABORT,'persistent repair failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := stub.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startSession(t, svc, "ordinary-runtime", rt)
+	t.Cleanup(func() { _ = svc.StopSession("ordinary-runtime") })
+	for i := 0; i < 3; i++ {
+		if err := svc.SweepSessionReaper(context.Background(), time.Now()); err == nil {
+			t.Fatal("repair error swallowed")
+		}
+		if svc.reaperState().lastExamined < 2 {
+			t.Fatal("ordinary reaper starved by repair failure")
+		}
+	}
+}

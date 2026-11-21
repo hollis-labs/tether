@@ -11,6 +11,11 @@ import (
 
 type dissolutionRecoveryKey struct{}
 
+// WithDissolutionRecovery restores a persisted observation-only cleanup fence.
+func WithDissolutionRecovery(ctx context.Context) context.Context {
+	return context.WithValue(ctx, dissolutionRecoveryKey{}, true)
+}
+
 // DissolutionRecovery identifies cleanup that may acknowledge an observed end
 // but must never issue a new runtime stop to manufacture recovery evidence.
 func DissolutionRecovery(ctx context.Context) bool {
@@ -68,7 +73,7 @@ func (h *Host) recoverInterruptedDissolution(ctx context.Context, id string) (bo
 		if m.Resolution == teams.Fresh {
 			mode = "retire"
 		}
-		if err = h.end(context.WithValue(ctx, dissolutionRecoveryKey{}, true), m, mode); err != nil {
+		if err = h.end(WithDissolutionRecovery(ctx), m, mode); err != nil {
 			return false, err
 		}
 	}

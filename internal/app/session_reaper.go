@@ -190,14 +190,19 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 	// permanently retained recorded-exit candidates cannot starve that work.
 	next, recorded, err := s.reconcileRecordedExitBatch(ctx, r.recordedExitCursor, reaperMaxPerSweep/2)
 	r.recordedExitCursor = next
+	var failures []error
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return err
+		}
+		// Per-row repair failures consume their budget but cannot starve ordinary
+		// lifecycle enforcement. Report them after the rest of this bounded tick.
+		failures = append(failures, err)
 	}
 	rows, err := s.Store.ReaperCandidates(ctx)
 	if err != nil {
-		return err
+		return errors.Join(append(failures, err)...)
 	}
-	var failures []error
 	examined, skipped := recorded, 0
 	n := len(rows)
 	start := 0

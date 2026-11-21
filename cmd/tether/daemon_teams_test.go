@@ -23,6 +23,7 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
@@ -651,7 +652,7 @@ func TestDaemonTeamsStartupReconcilesCompletedTeardown(t *testing.T) {
 
 func TestDaemonTeamsStartupReconcilesInterruptedMixedRoster(t *testing.T) {
 	t.Setenv("TETHER_TEAMS_LOOP_INTERVAL", "1h")
-	for _, state := range []string{"failed", "running", "launching"} {
+	for _, state := range []string{"failed", "running", "launching", "remote-completed"} {
 		t.Run(state, func(t *testing.T) {
 			enabled := true
 			f := newDaemonTeamFixture(t, &enabled)
@@ -662,6 +663,12 @@ func TestDaemonTeamsStartupReconcilesInterruptedMixedRoster(t *testing.T) {
 			req := teams.ProvisionRequest{IdempotencyKey: "reviewer-intent", RunID: "retained", MemberID: "reviewer", Slot: daemonTeamDefinition().Slots[0]}
 			member := teams.Member{ID: "reviewer", Slot: "reviewer", Actor: "msg://agent/fixture/reviewer", Kind: mesh.ActorAgent, SessionID: "reviewer-session", Resolution: teams.Fresh, Status: "stopping", Intent: &req}
 			teamRequire(t, f.svc.Store.CreateSessionKeyed(store.SessionRow{ID: member.SessionID, State: state}, &launch.Plan{}, &store.SessionIdempotency{PrincipalID: store.IdempotencyPrincipalTeam, Key: "team-port:reviewer-nonce", Operation: store.IdempotencyOpCreate, RequestDigest: "fixture"}))
+			if state == "remote-completed" {
+				_, err = db.Exec(`UPDATE sessions SET state='completed',worker_id='remote-worker',pid=0,exit_code=NULL,ended_at='2026-11-20T19:45:36Z' WHERE id=?`, member.SessionID)
+				teamRequire(t, err)
+				_, _, err = f.svc.Store.InsertEvent(events.ScopeSession, member.SessionID, events.KindSessionStateChanged, `{"from":"killed","to":"completed","exit_code":null,"reason":"worker_exit","worker_id":"remote-worker"}`)
+				teamRequire(t, err)
+			}
 			raw := func(v any) []byte { b, err := json.Marshal(v); teamRequire(t, err); return b }
 			acquired := member
 			acquired.Status = "active"
@@ -685,7 +692,7 @@ func TestDaemonTeamsStartupReconcilesInterruptedMixedRoster(t *testing.T) {
 			run, err := storage.GetRun(context.Background(), "retained")
 			teamRequire(t, err)
 			want := "working"
-			if state == "failed" {
+			if state == "failed" || state == "remote-completed" {
 				want = "dissolved"
 			}
 			if string(run.Run.Status) != want {
@@ -693,7 +700,7 @@ func TestDaemonTeamsStartupReconcilesInterruptedMixedRoster(t *testing.T) {
 			}
 			roster, err := storage.Snapshot(context.Background(), "retained")
 			teamRequire(t, err)
-			if state == "failed" {
+			if state == "failed" || state == "remote-completed" {
 				if roster.Members[0].Status != "released" || roster.Members[3].Status != "stopped" {
 					t.Fatalf("unfinished roster: %+v", roster)
 				}
