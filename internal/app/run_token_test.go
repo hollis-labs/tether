@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,7 +120,7 @@ func TestRunLaunchEnvironmentBindingAndNoPersistence(t *testing.T) {
 }
 
 func TestWorkerLaunchReceivesUniqueBoundRunEnvironment(t *testing.T) {
-	rig := newIdentityRig(t, "session-cred", "agent-token", workerwire.FeatureExecutionRunToken)
+	rig := newIdentityRig(t, "session-cred", "agent-token", workerwire.FeatureRunTokenFile)
 	spec, err := rig.launch("worker-run", "")
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +246,7 @@ func TestExecutionRunIDsPreserveKnownAndAbsentTorqueOnLocalAndWorker(t *testing.
 			for _, key := range []string{"TETHER_RUN_ID", runtoken.IDEnv, runtoken.TokenEnv} {
 				t.Setenv(key, "ambient-wrong")
 			}
-			rig := newIdentityRig(t, "session-cred", "agent-token", workerwire.FeatureExecutionRunToken)
+			rig := newIdentityRig(t, "session-cred", "agent-token", workerwire.FeatureRunTokenFile)
 			id := "worker-execution"
 			row := store.SessionRow{ID: id, WorkerID: rig.worker, LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderKind: "cli", Workspace: t.TempDir(), State: "created", RunID: sql.NullString{String: torque, Valid: torque != ""}}
 			plan := &launch.Plan{LaunchID: "pm", ProjectID: "tether", LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderBrand: "claude", Env: map[string]string{"TETHER_RUN_ID": "provider-wrong", runtoken.IDEnv: "provider-wrong", runtoken.TokenEnv: "provider-wrong"}}
@@ -479,5 +480,28 @@ func TestLocalRunProofEnvironmentFallbackRequiresLaunchFlag(t *testing.T) {
 	}
 	if env[runtoken.TokenEnv] == "" || env[runtoken.FileEnv] != "" || env[runtoken.EnvFallback] != "1" {
 		t.Fatal("explicit compatibility flag was not honored")
+	}
+}
+
+func TestOldWorkerProofDeliveryRequiresExplicitFallback(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		t.Run(fmt.Sprint(allow), func(t *testing.T) {
+			rig := newIdentityRig(t, "session-cred", "agent-token", workerwire.FeatureExecutionRunToken)
+			row := store.SessionRow{ID: "legacy-env-worker", WorkerID: rig.worker, LogicalAgentID: "portfolio-manager", ProviderID: "claude", ProviderKind: "cli", Workspace: t.TempDir(), State: "created"}
+			plan := &launch.Plan{ProviderID: "claude", ProviderBrand: "claude", Env: map[string]string{}}
+			if allow {
+				plan.Env[runtoken.EnvFallback] = "1"
+			}
+			if err := rig.db.CreateSession(row, plan); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := rig.svc.launchWorkerSession(context.Background(), &row, plan); err != nil {
+				t.Fatal(err)
+			}
+			spec := <-rig.specs
+			if (spec.Env[runtoken.TokenEnv] != "") != allow {
+				t.Fatal("old worker proof delivery ignored explicit compatibility flag")
+			}
+		})
 	}
 }

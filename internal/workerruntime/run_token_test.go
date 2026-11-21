@@ -47,7 +47,7 @@ func TestWorkerAdvertisesExecutionHandoffOnlyWhenSupported(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		found := false
 		for _, feature := range workerFeatures(enabled) {
-			if feature == workerwire.FeatureExecutionRunToken {
+			if feature == workerwire.FeatureRunTokenFile {
 				found = true
 			}
 		}

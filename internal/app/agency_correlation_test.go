@@ -150,7 +150,7 @@ func TestCorrelationCapacityAndShutdownAreBounded(t *testing.T) {
 }
 
 func TestWorkerLaunchRegistersKnownExecutionFacts(t *testing.T) {
-	r := newIdentityRig(t, workerwire.FeatureSessionCred, workerwire.FeatureExecutionRunToken)
+	r := newIdentityRig(t, workerwire.FeatureSessionCred, workerwire.FeatureRunTokenFile)
 	got := make(chan agencyregistry.Facts, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var f agencyregistry.Facts

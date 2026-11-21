@@ -13,7 +13,10 @@ the Torque identifiers introduced by PR #631. Contract review: 27483 and 27553.
 Every local/worker launch additionally mints a fresh execution UUID into
 `TETHER_EXECUTION_RUN_ID`. A signed `TETHER_RUN_TOKEN` is minted only when the
 execution host supports nonpersistent handoff. Local support is probed; workers
-advertise `execution-run-token-v1` only when supported. Older/non-Linux workers
+advertise `execution-run-token-v1` and `execution-run-token-file-v1` only when
+supported. The hub requires the file feature before sending a signed proof by
+default. An older worker advertising only the environment feature receives no
+proof unless the launch explicitly sets `TETHER_RUN_TOKEN_ENV_FALLBACK=1`. Older/non-Linux workers
 and unsupported local hosts retain legacy authenticated operation without a
 verified execution. Reserved provider/ambient token values are removed before
 launch; no token is sent to an incapable worker.
