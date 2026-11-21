@@ -276,7 +276,9 @@ func Build(in Inputs, q Query) Response {
 		ev := Evidence{At: k.LastRegisteredAt, Source: "registration"}.newer(in.Presence[k.URN])
 		state, raw, sum, at := declaredState(k.Declared)
 		awakeAfter, staleAfter := q.seatThresholds()
-		age := now.Sub(k.LastRegisteredAt)
+		// Newest evidence (registration, watcher or binding), the same the
+		// stale flag uses, so state and stale agree.
+		age := now.Sub(ev.At)
 		regState := StateStale
 		switch {
 		case age <= awakeAfter:

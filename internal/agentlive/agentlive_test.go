@@ -239,3 +239,40 @@ func TestKitSeatStateFromHeartbeat(t *testing.T) {
 		t.Errorf("fallback: %+v", r)
 	}
 }
+
+func TestKitSeatListedUntilSeatStaleThreshold(t *testing.T) {
+	urn := "msg://agent/agent-mux/listed"
+	seat := func(age time.Duration, secs int, include bool) Response {
+		in := Inputs{Now: t0, Seats: []SeatInput{{URN: urn, Session: "k", LastRegisteredAt: t0.Add(-age)}}}
+		return Build(in, q(t, "", "", include, secs))
+	}
+	// stale_after_seconds=60 no longer hides a 2-minute-old seat: it stays
+	// listed (sleeping) until max(stale_after_seconds, kit_seat_stale_after).
+	if got := seat(2*time.Minute, 60, false); got.Count != 1 || got.Agents[0].Stale || got.Agents[0].State != StateAwake {
+		t.Errorf("2m seat with 60s: %+v", got.Agents)
+	}
+	if got := seat(30*time.Minute, 60, false); got.Count != 1 || got.Agents[0].State != StateSleeping {
+		t.Errorf("30m seat listed as sleeping: %+v", got.Agents)
+	}
+	if got := seat(3*time.Hour, 60, false); got.Count != 0 {
+		t.Errorf("3h seat hidden by default: %+v", got.Agents)
+	}
+	// A longer explicit stale_after_seconds extends the listing.
+	if got := seat(3*time.Hour, 4*3600, false); got.Count != 1 {
+		t.Errorf("4h stale_after keeps 3h seat: %+v", got.Agents)
+	}
+}
+
+func TestKitSeatStateUsesWatcherEvidence(t *testing.T) {
+	urn := "msg://agent/agent-mux/watched"
+	in := Inputs{Now: t0, Seats: []SeatInput{{URN: urn, Session: "k", LastRegisteredAt: t0.Add(-5 * time.Hour)}},
+		Presence: map[string]Evidence{urn: {At: t0, Source: "watcher"}}}
+	r := Build(in, q(t, "", "", false, 0)).Agents[0]
+	if r.State != StateAwake || r.Stale {
+		t.Errorf("live watcher with old registration: state and stale must agree: %+v", r)
+	}
+	in.Presence = map[string]Evidence{urn: {At: t0.Add(-30 * time.Minute), Source: "watcher"}}
+	if r := Build(in, q(t, "", "", false, 0)).Agents[0]; r.State != StateSleeping || r.Stale {
+		t.Errorf("30m-old watcher: %+v", r)
+	}
+}
