@@ -290,3 +290,54 @@ func TestRunTokenBackendAdmissionNativeAndBearerRefresh(t *testing.T) {
 		requireBackendStatus(t, request(path, refreshed, "forged-run-secret", id), 401)
 	}
 }
+
+func TestRunRevocationEndsRetainedView(t *testing.T) {
+	for _, kind := range []string{"jti", "run"} {
+		t.Run(kind, func(t *testing.T) {
+			f, bearer, key, c := runFixture(t)
+			token := signRun(t, key, c)
+			response := f.request(t, http.MethodPost, "/mcp", bearer, "", runHeader(token))
+			id := response.Header.Get("Mcp-Session-Id")
+			status := response.StatusCode
+			closeResponse(response)
+			if status != 200 || id == "" {
+				t.Fatal("run initialization failed")
+			}
+			target := c.JTI
+			if kind == "run" {
+				target = c.RunID
+			}
+			if err := f.db.RevokeRunToken(context.Background(), target); err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				f.handler.mu.Lock()
+				view := f.handler.sessions[id]
+				f.handler.mu.Unlock()
+				if view == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("monitor retained revoked execution")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			response = f.request(t, http.MethodPost, "/mcp", bearer, id, runHeader(token))
+			status = response.StatusCode
+			closeResponse(response)
+			if status != 401 {
+				t.Fatalf("revoked readmission status %d", status)
+			}
+			if kind == "run" {
+				c.JTI = "another-jti"
+				response = f.request(t, http.MethodPost, "/mcp", bearer, "", runHeader(signRun(t, key, c)))
+				status = response.StatusCode
+				closeResponse(response)
+				if status != 401 {
+					t.Fatal("revoked execution accepted another jti")
+				}
+			}
+		})
+	}
+}

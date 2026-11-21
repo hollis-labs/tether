@@ -9,7 +9,6 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/identity"
-	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -57,7 +56,7 @@ func TestLaunchFillsCorrelationUnderGateBeforeTokenMint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := svc.VerifyRunToken(env[runtoken.TokenEnv], p)
+	claims, err := svc.VerifyRunToken(testRunProof(t, env), p)
 	if err != nil || claims.Task != input.TaskID || claims.Workstream != input.WorkstreamID {
 		t.Fatal("filled stamps absent in minted run token")
 	}

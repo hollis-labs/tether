@@ -561,9 +561,27 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, fmt.Errorf("mint run context: %w", err)
 	}
 
+	providerRunSource := runtoken.SealEnvironment(nil, runEnv)
+	if plan.Env[runtoken.EnvFallback] == "1" {
+		providerRunSource = append(providerRunSource, runtoken.EnvFallback+"=1")
+	}
+	providerRunEnv, stopRunToken, err := runtoken.ProviderEnvironment(providerRunSource)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if !launched && !s.shimSessionRetained(sessionID) {
+			stopRunToken()
+		}
+	}()
+	runtimeRunEnv := make(map[string]string)
+	for _, entry := range providerRunEnv {
+		k, v, _ := strings.Cut(entry, "=")
+		runtimeRunEnv[k] = v
+	}
 	var gatewayServer *agentlaunch.MCPServerSpec
 	var gatewayTokenPath string
-	stopGateway := func() {}
+	stopGateway := stopRunToken
 	if endpoint := plan.Env[gatewaylaunch.URLenv]; endpoint != "" {
 		if rt.Kind() == acp.Kind || plan.NativeResumeOnly {
 			return nil, fmt.Errorf("gateway wiring requires a freshly planted CLI launch")
@@ -572,7 +590,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		if gatewayErr != nil {
 			return nil, gatewayErr
 		}
-		stopGateway = stop
+		stopGateway = func() { stop(); stopRunToken() }
 		gatewayTokenPath = path
 		profile, gatewayErr = gatewaylaunch.ReadableProfile(profile, path, plan.EffectiveWorkRoot())
 		if gatewayErr != nil {
@@ -586,7 +604,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		if !launched {
 			if !s.shimSessionRetained(sessionID) {
 				stopGateway()
-			} else if gatewayServer != nil {
+			} else {
 				go s.finishGatewayAfterSettlement(context.WithoutCancel(ctx), sessionID, stopGateway)
 			}
 		}
@@ -743,7 +761,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 	}
 	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
-	startOpts.Env = runtoken.SealEnvironment(startOpts.Env, runEnv)
+	startOpts.Env = runtoken.SealEnvironment(startOpts.Env, runtimeRunEnv)
 	if plan.NativeResumeOnly {
 		// Planting owns the fresh inactive artifacts; native-only execution uses
 		// the separately validated, persisted source context instead of boot CWD.
@@ -835,6 +853,22 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		if err := gatewaylaunch.CheckHidden(startOpts.HiddenPaths, path, startOpts.Workdir); err != nil {
 			return nil, err
+		}
+	}
+	if path := runtimeRunEnv[runtoken.FileEnv]; path != "" {
+		startOpts.Profile, err = gatewaylaunch.ReadableProfile(startOpts.Profile, path, startOpts.Workdir)
+		if err != nil {
+			return nil, err
+		}
+		if err := gatewaylaunch.CheckHidden(startOpts.HiddenPaths, path, startOpts.Workdir); err != nil {
+			return nil, err
+		}
+		startOpts.SandboxPolicy, err = runtoken.ReadablePolicy(startOpts.SandboxPolicy, path)
+		if err != nil {
+			return nil, err
+		}
+		if startOpts.PreparedExecution != nil {
+			return nil, fmt.Errorf("run token file requires an inspectable sandbox policy")
 		}
 	}
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
@@ -934,7 +968,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	s.watchCodexTap(sessionID, codexTap)
 	launched = true
 	s.queueLaunchCorrelation(ctx, row, runEnv, plan.ResumeProviderSessionID, manifestDigest)
-	if gatewayServer != nil {
+	if gatewayServer != nil || runtimeRunEnv[runtoken.FileEnv] != "" {
 		go func() { _, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID); stopGateway() }()
 	}
 	if scratch != nil {

@@ -49,7 +49,13 @@ func TestRuntimeRunTokenLocalDescriptorAndRecovery(t *testing.T) {
 				return e
 			}
 			if strings.Contains(string(b), testRuntimeRunToken) {
-				t.Fatal("run token persisted in local placement state")
+				// File delivery is the sole permitted on-disk proof. Descriptors,
+				// journals and other placement state must remain proof-free.
+				st, e := os.Stat(path)
+				parent, pe := os.Stat(filepath.Dir(path))
+				if e != nil || pe != nil || filepath.Base(path) != "run.token" || !strings.HasPrefix(filepath.Base(filepath.Dir(path)), "tether-run-token-") || st.Mode().Perm() != 0600 || parent.Mode().Perm() != 0700 {
+					t.Fatal("run token persisted outside protected provider file")
+				}
 			}
 		}
 		return nil

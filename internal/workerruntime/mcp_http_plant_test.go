@@ -225,6 +225,12 @@ func testLaunchRunTokenPrivateDescriptor(t *testing.T, torque string, delayed ..
 		if valueInEnv(spec.Env, runtoken.TokenEnv) != runSecret || valueInEnv(spec.Env, runtoken.IDEnv) != "worker-execution" || valueInEnv(spec.Env, "TETHER_RUN_ID") != torque {
 			t.Fatal("runtime handoff or Torque/execution source lost")
 		}
+		providerEnv, releaseProof, proofErr := runtoken.ProviderEnvironment(spec.Env)
+		if proofErr != nil {
+			panic("provider proof file setup failed")
+		}
+		defer releaseProof()
+		spec.Env = providerEnv
 		h, err := shim.Start(spec)
 		if err == nil {
 			hosts = append(hosts, h)
@@ -450,6 +456,12 @@ func TestDelayedWorkerRunShimProcess(t *testing.T) {
 	if valueInEnv(spec.Env, runtoken.TokenEnv) != "synthetic-worker-run-token-never-persist" {
 		os.Exit(23)
 	}
+	providerEnv, releaseProof, proofErr := runtoken.ProviderEnvironment(spec.Env)
+	if proofErr != nil {
+		panic("provider proof file setup failed")
+	}
+	defer releaseProof()
+	spec.Env = providerEnv
 	host, err := shim.Start(spec)
 	if err != nil {
 		os.Exit(24)

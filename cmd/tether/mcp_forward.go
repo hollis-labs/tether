@@ -10,6 +10,7 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpforward"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 )
@@ -28,7 +29,11 @@ func runMCPForwardDaemon(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	opts := client.MCPOptions{RunToken: os.Getenv("TETHER_RUN_TOKEN")}
+	runToken, err := runtoken.ReadEnvironment()
+	if err != nil {
+		return err
+	}
+	opts := client.MCPOptions{RunToken: runToken}
 	label := mcpClientLabel
 	if label == "" {
 		label = os.Getenv("TETHER_CLIENT_LABEL")

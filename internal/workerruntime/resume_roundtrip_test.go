@@ -141,6 +141,12 @@ func TestWorkerResumeRoundTripWithFakeHub(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
+		providerEnv, releaseProof, proofErr := runtoken.ProviderEnvironment(spec.Env)
+		if proofErr != nil {
+			panic("provider proof file setup failed")
+		}
+		defer releaseProof()
+		spec.Env = providerEnv
 		h, err := shim.Start(spec)
 		if err == nil {
 			hosts = append(hosts, h)

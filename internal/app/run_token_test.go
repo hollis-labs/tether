@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -29,7 +30,16 @@ func TestRunLaunchEnvironmentBindingAndNoPersistence(t *testing.T) {
 		k, v, _ := strings.Cut(v, "=")
 		env[k] = v
 	}
-	token := env[runtoken.TokenEnv]
+	token := testRunProof(t, env)
+	if env[runtoken.TokenEnv] != "" || env[runtoken.FileEnv] == "" {
+		t.Fatal("provider received raw run proof")
+	}
+	if info, err := os.Stat(env[runtoken.FileEnv]); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("provider proof file not private")
+	}
+	if serialized, err := json.Marshal(env); err != nil || strings.Contains(string(serialized), token) {
+		t.Fatal("shell snapshot would contain run proof")
+	}
 	if token == "" || env[runtoken.IDEnv] == "" {
 		t.Fatal("run environment missing")
 	}
@@ -148,7 +158,7 @@ func TestRunKeyCustodyDoesNotTrustPermissiveDatabaseOrWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	env, err := svc.mintRunEnvironment(context.Background(), row)
-	if err != nil || env[runtoken.TokenEnv] == "" {
+	if err != nil || testRunProof(t, env) == "" {
 		t.Fatal("private custody unavailable beside permissive database")
 	}
 	key, err := svc.runTokens.Key(path)
@@ -225,7 +235,7 @@ func TestExecutionRunIDsPreserveKnownAndAbsentTorqueOnLocalAndWorker(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			c, err := svc.VerifyRunToken(env[runtoken.TokenEnv], p)
+			c, err := svc.VerifyRunToken(testRunProof(t, env), p)
 			if err != nil || c.RunID != env[runtoken.IDEnv] || c.RunID == torque {
 				t.Fatal("execution token reused Torque identity")
 			}
@@ -312,7 +322,7 @@ func TestUnsupportedExecutionHandoffPreservesLocalLaunch(t *testing.T) {
 		k, v, _ := strings.Cut(entry, "=")
 		env[k] = v
 	}
-	if env[runtoken.TokenEnv] != "" || env[runtoken.IDEnv] == "" || env[runtoken.IDEnv] == "provider-id" || env["TETHER_RUN_ID"] != "42" {
+	if testRunProof(t, env) != "" || env[runtoken.IDEnv] == "" || env[runtoken.IDEnv] == "provider-id" || env["TETHER_RUN_ID"] != "42" {
 		t.Fatal("unsupported local environment lost legacy authority")
 	}
 	if _, err := os.Stat(svc.Store.RunSigningKeyPath()); !errors.Is(err, os.ErrNotExist) {
@@ -374,5 +384,100 @@ func TestWorkerWithoutHandoffFeatureKeepsLegacy(t *testing.T) {
 				t.Fatal("legacy worker acquired verified execution")
 			}
 		})
+	}
+}
+
+func testRunProof(t *testing.T, env map[string]string) string {
+	t.Helper()
+	token, err := runtoken.ReadProviderToken(env[runtoken.FileEnv], env[runtoken.TokenEnv], true)
+	if err != nil {
+		t.Fatal("run proof unavailable:", err)
+	}
+	return token
+}
+
+func TestRunProofExpiryAndRevocation(t *testing.T) {
+	for _, target := range []string{"jti", "run"} {
+		t.Run(target, func(t *testing.T) {
+			svc, _, id, _ := credentialLaunch(t)
+			row, err := svc.Store.GetSession(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env, err := svc.mintRunEnvironment(context.Background(), row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := identity.Principal{Verified: true, ID: identity.SessionPrincipalIDPrefix + id, Kind: "session", SessionID: id}
+			c, err := svc.VerifyRunToken(env[runtoken.TokenEnv], p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if remaining := time.Until(time.Unix(c.Expires, 0)); remaining > 6*time.Hour || remaining < 5*time.Hour {
+				t.Fatal("unbounded execution proof")
+			}
+			denied := c.JTI
+			if target == "run" {
+				denied = c.RunID
+			}
+			if err := svc.RevokeRunToken(context.Background(), denied); err != nil {
+				t.Fatal(err)
+			}
+			reopened := &Service{Store: svc.Store}
+			if _, err := reopened.VerifyRunToken(env[runtoken.TokenEnv], p); !errors.Is(err, runtoken.ErrInvalid) {
+				t.Fatal("revoked proof accepted")
+			}
+			next, err := svc.mintRunEnvironment(context.Background(), row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.VerifyRunToken(next[runtoken.TokenEnv], p); err != nil {
+				t.Fatal("unrelated execution revoked")
+			}
+		})
+	}
+}
+
+func TestRunProofUsesLifecycleDeadline(t *testing.T) {
+	svc, _, id, _ := credentialLaunch(t)
+	row, err := svc.Store.GetSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=json_set(plan_json,'$.lifecycle',json('{"max_duration":"20m"}')) WHERE session_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	row.CreatedAt = now.Add(-24 * time.Hour).Format(time.RFC3339)
+	expires, err := svc.runTokenExpiry(row, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !expires.Equal(now.Add(25 * time.Minute)) {
+		t.Fatal("lifecycle deadline ignored")
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=json_set(plan_json,'$.lifecycle',json('{"max_duration":"invalid"}')) WHERE session_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.runTokenExpiry(row, now); err == nil {
+		t.Fatal("invalid lifecycle silently downgraded")
+	}
+}
+
+func TestLocalRunProofEnvironmentFallbackRequiresLaunchFlag(t *testing.T) {
+	svc, rt, id, _ := credentialLaunch(t)
+	if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=json_set(plan_json,'$.env.TETHER_RUN_TOKEN_ENV_FALLBACK','1') WHERE session_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.LaunchSession(id); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, entry := range rt.options.Env {
+		k, v, _ := strings.Cut(entry, "=")
+		env[k] = v
+	}
+	if env[runtoken.TokenEnv] == "" || env[runtoken.FileEnv] != "" || env[runtoken.EnvFallback] != "1" {
+		t.Fatal("explicit compatibility flag was not honored")
 	}
 }

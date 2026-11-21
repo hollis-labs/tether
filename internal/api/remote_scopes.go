@@ -97,6 +97,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/auth/renew", "/auth/renew", map[string]string{"POST": selfScope}),
 	routeScope("/auth/token", "/auth/token", map[string]string{"POST": selfScope}),
 	routeScope(WorkloadTrustPath, WorkloadTrustPath, map[string]string{"POST": identity.WorkloadTrustScope}),
+	routeScope(RunTokenRevokePath, RunTokenRevokePath, map[string]string{"POST": localScope}),
 	routeScope(ServiceTokensPath, ServiceTokensPath, map[string]string{"GET": localScope, "POST": localScope}),
 	routeScope(ServiceTokensPath+"/revoke", ServiceTokensPath+"/revoke", map[string]string{"POST": localScope}),
 	routeScope(ServiceTokensPath+"/rotate-key", ServiceTokensPath+"/rotate-key", map[string]string{"POST": localScope}),

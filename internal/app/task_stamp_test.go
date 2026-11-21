@@ -5,7 +5,6 @@ import (
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/identity"
-	"github.com/hollis-labs/tether/internal/runtoken"
 	"github.com/hollis-labs/tether/internal/store"
 	"strings"
 	"testing"
@@ -109,7 +108,7 @@ func TestCreateSessionStampsTaskIDAndRunID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := svc.VerifyRunToken(env[runtoken.TokenEnv], principal)
+	claims, err := svc.VerifyRunToken(testRunProof(t, env), principal)
 	if err != nil || claims.Task != row.TaskID.String || claims.Workstream != row.WorkstreamID.String {
 		t.Fatal("minted run token lost task/workstream binding")
 	}
