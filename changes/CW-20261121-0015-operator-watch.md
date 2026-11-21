@@ -1,0 +1,1 @@
+- CW-20261121-0015: Add audited operator recipient declarations to CLI/API mailbox watches and a cursor-based MCP watch tool, recording delivery after successful handoff while preserving separate read state.

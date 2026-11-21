@@ -341,14 +341,35 @@ recipient. It does not replay historical mail; use `inbox` or `list` for
 history. A connected UI or keeper process can subscribe and react immediately,
 but durable delivery still lives in the message store.
 
-`GET /messages/watch?to=<urn>&as=<urn>[&after_seq=N][&kind=..][&thread_id=..][&unread_only=true]`
+`GET /messages/watch?to=<urn>&as=<urn>[&after_seq=N][&kind=..][&thread_id=..][&unread_only=true][&as_recipient=true]`
 is the resumable form (CLI: `tether mailbox watch <urn> [--after-seq N] [--json]`).
 It uses the environment-stream framing (`id: <seq>`, `event: message`,
 `synchronized`, `gap`, `: ping` keepalives every 15s) over durable rows. `seq` is
 a per-hub, increasing, non-contiguous cursor. Without `after_seq` (or
 `Last-Event-ID`) the stream starts from now; with it, replay resumes strictly
-after that seq, so a reconnect does not duplicate. Like `list`, it never marks
-anything delivered or read and does not wake a session. `gap` with reason
+after that seq, so a reconnect does not duplicate. A successful flush to the
+verified recipient records first delivery; inspection by the operator leaves
+delivery unchanged. The stream never marks read or wakes a session.
+
+An operator watch delivering mail to a live agent can explicitly declare that
+handoff with `tether mailbox watch <urn> --as-recipient` (HTTP query
+`as_recipient=true`). Each accepted operator declaration is recorded in the
+identity audit as `operator_declared_watch`, naming the canonical recipient.
+Successful message flushes stamp `delivered_at` and emit `message.delivered` with
+`path=operator-declared-watch`. Replay preserves the original timestamp and emits
+no second delivery event. Read and consumed state remain separate. Use this flag
+only on the watcher connected to the live recipient, so stopped agents' mail
+stays queued. The declaration confers no authority on other credentials:
+nonoperators may use it only for their authenticated recipient address, with
+ordinary recipient delivery semantics; scoped operator-issued tokens do not
+count as the operator credential.
+
+The MCP equivalent is `tether_message_watch(to, after_seq?, as_recipient?, kind?,
+thread_id?, unread_only?)`. It returns replayed `messages`, `next_cursor`, and
+`event` when the stream reaches `synchronized` (or `gap`); it does not leave a
+background watcher running. Omit `after_seq` to establish a cursor from now, pass
+that cursor to retrieve subsequent mail, or pass `0` to replay history. Use the
+CLI or HTTP stream for a continuously connected kit watcher. `gap` with reason
 `ahead` means the cursor is newer than the hub's newest row (hub reset); resume
 from the `high_water_seq` it carries. Needs the `read` scope on remote listeners.
 

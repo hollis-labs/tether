@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,5 +50,33 @@ func TestMailboxWatchStatusError(t *testing.T) {
 	var se *MailboxWatchStatusError
 	if !errors.As(err, &se) || se.Status != http.StatusBadGateway {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMailboxWatchRecipientDeclarationQuery(t *testing.T) {
+	for _, declare := range []bool{false, true} {
+		t.Run(fmt.Sprint(declare), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				want := ""
+				if declare {
+					want = "true"
+				}
+				if got := r.URL.Query().Get("as_recipient"); got != want {
+					t.Errorf("as_recipient=%q want %q", got, want)
+				}
+				fmt.Fprint(w, "id: 0\nevent: synchronized\ndata: {\"seq\":0}\n\n")
+			}))
+			defer srv.Close()
+			c := New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+			events, errs, err := c.MailboxWatch(t.Context(), MailboxWatchQuery{To: "msg://agent/a/b", AsRecipient: declare})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range events {
+			}
+			if err := <-errs; err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

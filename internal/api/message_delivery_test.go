@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,8 +20,8 @@ import (
 func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 	to := messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "recipient"}
 	from := messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "sender"}
-	for _, path := range []string{"list", "get", "inbox", "watch_stream"} {
-		for _, actor := range []string{"recipient", "bound_jwt", "unrelated_jwt", "sender", "admin", "anonymous"} {
+	for _, path := range []string{"list", "get", "inbox", "watch_stream", "operator-declared-watch"} {
+		for _, actor := range []string{"recipient", "bound_jwt", "unrelated_jwt", "sender", "admin", "scoped_admin", "anonymous"} {
 			t.Run(path+"/"+actor, func(t *testing.T) {
 				db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
 				if err != nil {
@@ -48,10 +50,13 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 						}
 						p = identity.Principal{Verified: true, Kind: "agent", ID: identity.SessionPrincipalIDPrefix + sid, SessionID: sid, TokenID: "issued", Scopes: []string{"message.send_as"}}
 					}
-					if actor == "admin" {
+					if actor == "admin" || actor == "scoped_admin" {
 						p.Kind = "operator"
 						p.ID = identity.OperatorID
 						p.Scopes = []string{"*"}
+						if actor == "scoped_admin" {
+							p.TokenID = "narrow"
+						}
 					}
 					if actor != "anonymous" {
 						r = r.WithContext(identity.WithPrincipal(r.Context(), p))
@@ -67,9 +72,12 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 						q.Set("as", from.URN())
 					}
 				}
-				if path == "watch_stream" {
+				if path == "watch_stream" || path == "operator-declared-watch" {
 					endpoint = "/messages/watch"
 					q.Set("after_seq", "0")
+					if path == "operator-declared-watch" {
+						q.Set("as_recipient", "true")
+					}
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
@@ -78,10 +86,21 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				if path == "operator-declared-watch" && actor != "admin" && actor != "recipient" && actor != "bound_jwt" {
+					if resp.StatusCode != http.StatusForbidden {
+						t.Fatalf("status=%d want 403", resp.StatusCode)
+					}
+					resp.Body.Close()
+					got, _ := ms.Get(context.Background(), env.ID)
+					if got.DeliveredAt != nil {
+						t.Fatal("forbidden watch stamped delivery")
+					}
+					return
+				}
 				if resp.StatusCode != 200 {
 					t.Fatalf("status=%d", resp.StatusCode)
 				}
-				if path != "watch_stream" {
+				if path != "watch_stream" && path != "operator-declared-watch" {
 					_, _ = io.Copy(io.Discard, resp.Body)
 					_ = resp.Body.Close()
 				}
@@ -92,7 +111,7 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if (got.DeliveredAt != nil) == (actor == "recipient" || actor == "bound_jwt") {
+					if (got.DeliveredAt != nil) == (actor == "recipient" || actor == "bound_jwt" || (actor == "admin" && path == "operator-declared-watch")) {
 						break
 					}
 					if time.Now().After(deadline) {
@@ -103,11 +122,15 @@ func TestRecipientDeliveryHTTPPaths(t *testing.T) {
 				cancel()
 				_ = resp.Body.Close()
 				var count int
-				if err := db.DB().QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.path')=?`, path).Scan(&count); err != nil {
+				eventPath := path
+				if path == "operator-declared-watch" && actor != "admin" {
+					eventPath = "watch_stream"
+				}
+				if err := db.DB().QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.path')=?`, eventPath).Scan(&count); err != nil {
 					t.Fatal(err)
 				}
 				want := 0
-				if actor == "recipient" || actor == "bound_jwt" {
+				if actor == "recipient" || actor == "bound_jwt" || (actor == "admin" && path == "operator-declared-watch") {
 					want = 1
 				}
 				if count != want {
@@ -135,29 +158,102 @@ func (w *failedDeliveryWriter) Flush()            {}
 func (w *failedDeliveryWriter) FlushError() error { return io.ErrClosedPipe }
 
 func TestWatchFailedWriteOrFlushDoesNotDeliver(t *testing.T) {
-	for _, failFlush := range []bool{false, true} {
-		t.Run(map[bool]string{false: "write", true: "flush"}[failFlush], func(t *testing.T) {
-			db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
-			if err != nil {
-				t.Fatal(err)
+	for _, operator := range []bool{false, true} {
+		for _, failFlush := range []bool{false, true} {
+			t.Run(fmt.Sprint(operator)+"/"+map[bool]string{false: "write", true: "flush"}[failFlush], func(t *testing.T) {
+				db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				to := messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "worker"}
+				env, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindNotice, From: to, To: to})
+				if err != nil {
+					t.Fatal(err)
+				}
+				q := url.Values{"to": {to.URN()}, "as": {to.URN()}, "after_seq": {"0"}}
+				if operator {
+					q.Set("as_recipient", "true")
+				}
+				req := httptest.NewRequest(http.MethodGet, "/messages/watch?"+q.Encode(), nil)
+				p := identity.Principal{Verified: true, Kind: "session", ID: to.URN()}
+				if operator {
+					p = identity.Principal{Verified: true, Kind: "operator", ID: identity.OperatorID, Scopes: []string{"*"}}
+				}
+				req = req.WithContext(identity.WithPrincipal(req.Context(), p))
+				NewHandler(Deps{MessageStore: db.MessagingStore()}).ServeHTTP(&failedDeliveryWriter{header: make(http.Header), failFlush: failFlush}, req)
+				got, err := db.MessagingStore().Get(context.Background(), env.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.DeliveredAt != nil {
+					t.Fatalf("failed %v stamped delivery", failFlush)
+				}
+			})
+		}
+	}
+}
+
+func TestOperatorDeclaredWatchReplayAndAudit(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ms := db.MessagingStore()
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "worker"}
+	env, err := ms.Send(t.Context(), messaging.Envelope{Kind: messaging.MsgKindNotice, From: to, To: to})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audits := make(chan identity.Observation, 4)
+	h := NewHandler(Deps{MessageStore: ms, IdentityAudit: func(_ context.Context, o identity.Observation) error { audits <- o; return nil }})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, Kind: "operator", ID: identity.OperatorID, Scopes: []string{"*"}})))
+	}))
+	defer srv.Close()
+	var first time.Time
+	for i := 0; i < 2; i++ {
+		q := watchQuery(to, "0")
+		q.Set("as_recipient", "true")
+		frames, stop := watchOpen(t, srv.URL, q)
+		if f := nextFrame(t, frames); f.event != "message" {
+			t.Fatalf("frame=%+v", f)
+		}
+		if f := nextFrame(t, frames); f.event != "synchronized" {
+			t.Fatalf("frame=%+v", f)
+		}
+		stop()
+		got, err := ms.Get(t.Context(), env.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.DeliveredAt == nil || got.ConsumedAt != nil {
+			t.Fatalf("state=%+v", got)
+		}
+		page, err := ms.List(t.Context(), to, store.ListFilter{})
+		if err != nil || len(page.Messages) != 1 || page.Messages[0].ReadAt != nil {
+			t.Fatalf("read state changed: %+v, %v", page, err)
+		}
+		if i == 0 {
+			first = *got.DeliveredAt
+		} else if !first.Equal(*got.DeliveredAt) {
+			t.Fatal("replay restamped delivery")
+		}
+		select {
+		case o := <-audits:
+			if o.Event != "operator_declared_watch" || o.PrincipalID != identity.OperatorID || !strings.Contains(o.Detail, to.URN()) {
+				t.Fatalf("audit=%+v", o)
 			}
-			defer db.Close()
-			to := messaging.Address{Kind: messaging.KindAgent, Authority: "agent-mux", ID: "worker"}
-			env, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindNotice, From: to, To: to})
-			if err != nil {
-				t.Fatal(err)
-			}
-			q := url.Values{"to": {to.URN()}, "as": {to.URN()}, "after_seq": {"0"}}
-			req := httptest.NewRequest(http.MethodGet, "/messages/watch?"+q.Encode(), nil)
-			req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{Verified: true, Kind: "session", ID: to.URN()}))
-			NewHandler(Deps{MessageStore: db.MessagingStore()}).ServeHTTP(&failedDeliveryWriter{header: make(http.Header), failFlush: failFlush}, req)
-			got, err := db.MessagingStore().Get(context.Background(), env.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.DeliveredAt != nil {
-				t.Fatalf("failed %v stamped delivery", failFlush)
-			}
-		})
+		case <-time.After(time.Second):
+			t.Fatal("missing declaration audit")
+		}
+	}
+	var count int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM message_event_journal WHERE kind='message.delivered' AND json_extract(payload_json,'$.path')='operator-declared-watch'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("delivery events=%d want 1", count)
 	}
 }

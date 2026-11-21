@@ -30,11 +30,12 @@ func (e *MailboxWatchStatusError) Unwrap() error { return e.Err }
 // MailboxWatchQuery selects one recipient's stream. AfterSeq nil means "from
 // now"; a non-nil cursor resumes strictly after it.
 type MailboxWatchQuery struct {
-	To         string
-	AfterSeq   *int64
-	Kind       string
-	ThreadID   string
-	UnreadOnly bool
+	To          string
+	AfterSeq    *int64
+	Kind        string
+	ThreadID    string
+	UnreadOnly  bool
+	AsRecipient bool
 }
 
 // MailboxWatchEvent is one SSE frame of GET /messages/watch. Type is
@@ -53,8 +54,9 @@ type MailboxWatchMessage struct {
 }
 
 // MailboxWatch opens the stream once. It does not reconnect; the caller owns
-// resume (see cmd/tether mailbox watch). The stream never marks anything
-// delivered or read. The returned channels close when the stream ends; a
+// resume (see cmd/tether mailbox watch). Successful server writes record
+// recipient delivery; AsRecipient lets the operator explicitly declare delivery.
+// Read state is unchanged. The returned channels close when the stream ends; a
 // transport failure is sent on the error channel first.
 func (c *Client) MailboxWatch(ctx context.Context, q MailboxWatchQuery) (<-chan MailboxWatchEvent, <-chan error, error) {
 	params := url.Values{}
@@ -71,6 +73,9 @@ func (c *Client) MailboxWatch(ctx context.Context, q MailboxWatchQuery) (<-chan 
 	}
 	if q.UnreadOnly {
 		params.Set("unread_only", "true")
+	}
+	if q.AsRecipient {
+		params.Set("as_recipient", "true")
 	}
 	parent := ctx
 	ctx, cancel := context.WithCancel(parent)

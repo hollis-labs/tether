@@ -54,3 +54,16 @@ func (s *Server) markMessageDelivered(r *http.Request, id string, to messaging.A
 	p, _ := verifiedPrincipal(r)
 	return marker.MarkDelivered(r.Context(), id, to, path, p.SessionID)
 }
+
+// The declaration is accepted only by handleMessagesWatch after checking the
+// authenticated operator credential; it never changes list/get/inbox semantics.
+func (s *Server) markWatchMessageDelivered(r *http.Request, id string, to messaging.Address, path string) error {
+	p, _ := verifiedPrincipal(r)
+	if path == "operator-declared-watch" && identity.IsOperatorCredential(p) {
+		if marker, ok := s.MessageStore.(store.DeliveryMarker); ok {
+			return marker.MarkDelivered(r.Context(), id, to, path, p.SessionID)
+		}
+		return nil
+	}
+	return s.markMessageDelivered(r, id, to, path)
+}
