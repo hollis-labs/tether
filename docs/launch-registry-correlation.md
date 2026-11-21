@@ -80,3 +80,48 @@ re-keying is part of this change. Fake Registry tests cover the real launcher,
 remote-worker path, stable retries, outages, capacity, HTTP classification,
 redirect refusal and credential handling. Live acceptance needs a separately
 configured Registry and Cerberus-provisioned credential.
+
+## External kit SessionStart hooks
+
+Kit seats that were not launched by Tether can use the local daemon:
+
+```sh
+tether correlation register --urn msg://agent/local/my-seat --session "$SESSION_ID" \
+  --task CW-20261120-0007 --workstream workstream:01M7VQ2QWYB5RZR86W2BWG8PW3
+```
+
+`POST /correlation/register` accepts the same named string facts as this CLI:
+`urn` and `session` are required; `run_id`, `task_id`, `workstream_id`,
+`manifest_digest`, `export_receipt_id`, `activity_sha256` and
+`provider_session_id` are optional. The CLI uses `--run-id`, `--task`,
+`--workstream`, `--manifest-digest`, `--export-receipt-id`, `--activity-sha256`
+and `--provider-session-id`. `activity_sha256` is 64 hexadecimal characters.
+Only a canonical `workstream:ULID` is accepted as a workstream. No token,
+JTI, Registry id, authority or publication assertion is accepted.
+
+Admission requires the existing local operator credential (the CLI's normal
+operator.token resolution, or `--token-file`); remote device and session tokens
+cannot use the launcher's Registry authority. No credential or grant is created.
+If a hook inherits a session `TETHER_TOKEN`, use the existing operator token file
+explicitly rather than forwarding the session credential.
+
+`run_id` defaults to the external provider session identifier when no distinct
+launcher execution run is known; it is never the Torque team run. Repeated
+hooks must send the same facts for that session/run. Registry mints the
+correlation identity. The retry key is `tether-hook:<session>:<run_id>`.
+Known local Tether session IDs return `reason: tether_session` without queueing;
+0030's launch path owns those registrations. Hooks should also skip themselves
+when a Tether launch environment is present, including when a runtime supplies
+a different native session id.
+
+HTTP 202 / CLI JSON `{"queued":true}` means queue admission only, not Registry
+persistence. `{"queued":false,"reason":"disabled"}` or
+`queue_unavailable` means best-effort registration was skipped. Retries, capacity
+and shutdown use the existing launcher bounds described above. Registry outages
+never hold this endpoint open. Run the CLI in the hook's background best-effort
+job so local daemon failures cannot delay startup either.
+
+The hook owns writing the boot-digest pointer to Tesseract. This endpoint carries
+Registry-supported digest/receipt facts; it does not write Tesseract or send an
+unsupported `boot_digest` field. Send digest facts on the initial registration;
+late changes require Registry's separate conditional enrichment contract.

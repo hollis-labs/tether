@@ -122,6 +122,8 @@ type Server struct {
 	Catalog api.CatalogLoader
 	// GroupStore is optional; when set, /session-groups endpoints are mounted.
 	GroupStore api.SessionGroupStore
+	// Correlations enables external kit-session registration.
+	Correlations api.CorrelationRegistrar
 	// Workstreams is optional; when set, /workstreams endpoints and the
 	// per-session workstream sub-resource are mounted (S1, CW-20260912-0059).
 	Workstreams api.WorkstreamStore
@@ -666,7 +668,7 @@ func (s *Server) handler(remote bool) http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || s.EventIngest != nil || api.HasTeamOps(teams) {
+	if s.Correlations != nil || s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Forums != nil || s.Routing != nil || s.EventIngest != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
 			Requests:            s.Requests,
 			Forums:              s.Forums,
@@ -685,6 +687,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			EventIngestMode:     s.Config.IdentityModeFor("local_api"),
 			Catalog:             s.Catalog,
 			GroupStore:          s.GroupStore,
+			Correlations:        s.Correlations,
 			Workstreams:         s.Workstreams,
 			SessionRefs:         s.SessionRefs,
 			Digests:             s.Digests,
@@ -1081,6 +1084,7 @@ func (s *Server) apiMounts() []apiMount {
 		// as the subtree covering /{id} and /{id}/refs. Registering only the
 		// subtree would leave the collection reachable solely via ServeMux's
 		// redirect.
+		{"/correlation/register", s.Correlations != nil},
 		{"/workstreams", s.Workstreams != nil},
 		{"/workstreams/", s.Workstreams != nil},
 
