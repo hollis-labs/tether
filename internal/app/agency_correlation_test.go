@@ -110,7 +110,7 @@ func TestLaunchRegistersCorrelationAsynchronouslyWithStableRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := svc.VerifyRunToken(env[runtoken.TokenEnv], p)
+	claims, err := svc.VerifyRunToken(testRunProof(t, env), p)
 	if err != nil || f.TokenJTI != claims.JTI {
 		t.Fatal("wrong JTI")
 	}
@@ -119,7 +119,7 @@ func TestLaunchRegistersCorrelationAsynchronouslyWithStableRetry(t *testing.T) {
 	if len(requests) != 2 || requests[0] != requests[1] || keys[0] != keys[1] || keys[0] == "" {
 		t.Fatal("retry changed identity or facts")
 	}
-	if strings.Contains(requests[0], env[runtoken.TokenEnv]) || strings.Contains(requests[0], env["TETHER_TOKEN"]) {
+	if strings.Contains(requests[0], testRunProof(t, env)) || strings.Contains(requests[0], env["TETHER_TOKEN"]) {
 		t.Fatal("token leaked into facts")
 	}
 	if _, err := svc.Store.GetWorkstream(workstream); err != nil {
@@ -150,7 +150,7 @@ func TestCorrelationCapacityAndShutdownAreBounded(t *testing.T) {
 }
 
 func TestWorkerLaunchRegistersKnownExecutionFacts(t *testing.T) {
-	r := newIdentityRig(t, workerwire.FeatureSessionCred, workerwire.FeatureExecutionRunToken)
+	r := newIdentityRig(t, workerwire.FeatureSessionCred, workerwire.FeatureRunTokenFile)
 	got := make(chan agencyregistry.Facts, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var f agencyregistry.Facts

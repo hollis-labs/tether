@@ -29,7 +29,7 @@ func PrepareEnvironment(env []string, session string) ([]string, func(), error) 
 }
 func prepareEnvironment(env []string, session string, supported bool) ([]string, func(), error) {
 	out := make([]string, 0, len(env)+2)
-	token := ""
+	token, file := "", ""
 	for _, entry := range env {
 		k, v, _ := strings.Cut(entry, "=")
 		switch k {
@@ -38,9 +38,19 @@ func prepareEnvironment(env []string, session string, supported bool) ([]string,
 				return nil, nil, ErrHandoff
 			}
 			token = v
+		case FileEnv:
+			file = v
+			out = append(out, entry)
 		case handoffPathEnv, handoffIDEnv:
 		default:
 			out = append(out, entry)
+		}
+	}
+	if token == "" && file != "" {
+		var err error
+		token, err = ReadProviderToken(file, "", false)
+		if err != nil {
+			return nil, nil, ErrHandoff
 		}
 	}
 	if token == "" {
@@ -109,12 +119,12 @@ func SealEnvironment(env []string, authority map[string]string) []string {
 	for _, entry := range env {
 		k, _, _ := strings.Cut(entry, "=")
 		switch k {
-		case TokenEnv, IDEnv, handoffPathEnv, handoffIDEnv:
+		case TokenEnv, FileEnv, IDEnv, handoffPathEnv, handoffIDEnv:
 		default:
 			out = append(out, entry)
 		}
 	}
-	for _, k := range []string{IDEnv, TokenEnv} {
+	for _, k := range []string{IDEnv, TokenEnv, FileEnv} {
 		if v := authority[k]; v != "" {
 			out = append(out, k+"="+v)
 		}
@@ -127,12 +137,12 @@ func SealMap(env, authority map[string]string) map[string]string {
 	out := make(map[string]string, len(env)+2)
 	for k, v := range env {
 		switch k {
-		case TokenEnv, IDEnv, handoffPathEnv, handoffIDEnv:
+		case TokenEnv, FileEnv, IDEnv, handoffPathEnv, handoffIDEnv:
 		default:
 			out[k] = v
 		}
 	}
-	for _, k := range []string{IDEnv, TokenEnv} {
+	for _, k := range []string{IDEnv, TokenEnv, FileEnv} {
 		if v := authority[k]; v != "" {
 			out[k] = v
 		}

@@ -17,8 +17,8 @@ tether mcp-http-relay --url <endpoint> --token-file <jwt-tmpfs-path> --run-token
 ```
 
 On workers the command is `tether-worker mcp-http-relay`. The relay reads the
-current bearer for every HTTP request. The launcher copies its sealed
-`TETHER_RUN_TOKEN` into a second protected tmpfs file; the relay reads that fixed
+current bearer for every HTTP request. The launcher copies its signed execution proof
+into a second protected tmpfs file; the relay reads that fixed
 run token once and sends `X-Run-Token` on POST, GET and DELETE. Explicit file
 handoff survives CLI filtering of stdio-child environment variables. No bearer or run token
 is written into the new provider entry or command arguments. This also avoids

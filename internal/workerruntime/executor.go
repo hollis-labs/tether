@@ -416,6 +416,27 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 	}()
 	cmd.Env = append(cmd.Env, tokenEnv...)
+	providerEnv, stopRunToken, err := runtoken.ProviderEnvironment(cmd.Env)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = providerEnv
+	previousStopGateway := stopGateway
+	stopGateway = func() { previousStopGateway(); stopRunToken() }
+	var runTokenPath string
+	for _, entry := range cmd.Env {
+		k, v, _ := strings.Cut(entry, "=")
+		if k == runtoken.FileEnv {
+			runTokenPath = v
+		}
+	}
+	if spec.Sandbox != nil && runTokenPath != "" {
+		readable, err := gatewaylaunch.ReadableProfile(*spec.Sandbox, runTokenPath, cwd)
+		if err != nil {
+			return nil, err
+		}
+		spec.Sandbox = &readable
+	}
 	sandboxed := false
 	if spec.Sandbox != nil {
 		if _, err := sandbox.Apply(cmd, *spec.Sandbox, cwd); err == nil {
@@ -487,7 +508,7 @@ func (e *Executor) launch(ctx context.Context, spec workerwire.LaunchSpec) (*exe
 		}
 		_ = logFile.Close()
 	}
-	if possiblySubmitted && spec.Env[gatewaylaunch.TokenFileEnv] != "" {
+	if possiblySubmitted && (spec.Env[gatewaylaunch.TokenFileEnv] != "" || runTokenPath != "") {
 		gatewayPending = func() {
 			go retainGatewayUntilExit(filepath.Join(launchSpec.ControlDir, "control.sock"), secret, spec.Session, childExited, stopGateway)
 		}

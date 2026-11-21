@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"crypto/ed25519"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,7 +39,11 @@ func (s *Service) mintRunEnvironmentFor(ctx context.Context, row *store.SessionR
 	if err != nil {
 		return nil, err
 	}
-	c := runtoken.Claims{URN: runURN(row), Session: row.ID, RunID: execution, JTI: uuid.NewString(), Task: row.TaskID.String, Workstream: row.WorkstreamID.String, Expires: time.Now().Add(sessionTokenTTL()).Unix()}
+	expires, err := s.runTokenExpiry(row, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	c := runtoken.Claims{URN: runURN(row), Session: row.ID, RunID: execution, JTI: uuid.NewString(), Task: row.TaskID.String, Workstream: row.WorkstreamID.String, Expires: expires.Unix()}
 	if parent, ok := runtoken.FromContext(ctx); ok {
 		c.Parent = parent.RunID
 	}
@@ -63,6 +69,10 @@ func (s *Service) VerifyRunToken(token string, p identity.Principal) (runtoken.C
 	if err != nil {
 		return runtoken.Claims{}, runtoken.ErrInvalid
 	}
+	denied, err := s.Store.RunTokenDenied(context.Background(), c.JTI, c.RunID)
+	if err != nil || denied {
+		return runtoken.Claims{}, runtoken.ErrInvalid
+	}
 	row, err := s.Store.GetSession(p.SessionID)
 	if err != nil || row == nil || c.Session != p.SessionID || c.URN != runURN(row) || c.Task != row.TaskID.String || c.Workstream != row.WorkstreamID.String {
 		return runtoken.Claims{}, runtoken.ErrInvalid
@@ -72,4 +82,39 @@ func (s *Service) VerifyRunToken(token string, p identity.Principal) (runtoken.C
 		return runtoken.Claims{}, runtoken.ErrInvalid
 	}
 	return c, nil
+}
+
+// Run proofs are fixed to one execution, not the ten-year session bearer lease.
+// Long/unbounded sessions must start a new execution after the six-hour cap.
+func (s *Service) runTokenExpiry(row *store.SessionRow, now time.Time) (time.Time, error) {
+	expires := now.Add(6 * time.Hour)
+	plan, err := s.Store.GetLaunchPlan(row.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return expires, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	d, err := plan.Lifecycle.Durations()
+	if err != nil {
+		return time.Time{}, err
+	}
+	if d.MaxDuration > 0 {
+		// Minting begins a new execution, even for a session preassigned long
+		// before launch. Its duration must not start at session creation.
+		expires = minTime(expires, now.Add(d.MaxDuration).Add(5*time.Minute))
+	}
+	return expires, nil
+}
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+// RevokeRunToken permanently denies an exact jti or execution run identifier.
+// No signed proof or credential is accepted or retained by this control path.
+func (s *Service) RevokeRunToken(ctx context.Context, id string) error {
+	return s.Store.RevokeRunToken(ctx, id)
 }

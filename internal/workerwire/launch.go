@@ -59,6 +59,10 @@ const FeatureStandaloneGateway = "standalone-gateway-v1"
 // FeatureExecutionRunToken promises nonpersistent execution-token handoff.
 const FeatureExecutionRunToken = "execution-run-token-v1"
 
+// FeatureRunTokenFile promises protected provider file delivery by default.
+// Older execution-token workers require an explicit environment compatibility flag.
+const FeatureRunTokenFile = "execution-run-token-file-v1"
+
 // AgentTokenSpec is one token the outpost keeps for a session: audience (one
 // app) and the scopes the launch policy grants.
 type AgentTokenSpec struct {

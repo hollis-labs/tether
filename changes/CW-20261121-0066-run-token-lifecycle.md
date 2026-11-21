@@ -1,0 +1,1 @@
+- CW-20261121-0066: Bound execution run proofs to six hours or the launch lifecycle duration plus five minutes; persist exact jti/run revocations through the operator-only `tether runtoken revoke` command and enforce them during verification. Deliver provider proofs through private 0600 files, with raw environment compatibility requiring `TETHER_RUN_TOKEN_ALLOW_ENV=1`.

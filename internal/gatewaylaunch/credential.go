@@ -14,6 +14,7 @@ import (
 
 	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	"github.com/hollis-labs/libs/security/secrets/tokenfile"
+	"github.com/hollis-labs/tether/internal/runtoken"
 )
 
 const Name = "gateway"
@@ -155,7 +156,7 @@ func RunTokenPath(path string) string { return filepath.Join(filepath.Dir(path),
 // relay invocation may instead use its runtime environment.
 func ReadRunToken(path, environment string) (string, error) {
 	if path == "" {
-		return environment, nil
+		return runtoken.ReadProviderToken(os.Getenv(runtoken.FileEnv), environment, os.Getenv(runtoken.EnvFallback) == "1")
 	}
 	token, err := tokenfile.Read(path)
 	if err != nil {
