@@ -303,12 +303,25 @@ func TestRunRevocationEndsRetainedView(t *testing.T) {
 			if status != 200 || id == "" {
 				t.Fatal("run initialization failed")
 			}
+			stream := f.request(t, http.MethodGet, "/mcp", bearer, id, runHeader(token))
+			if stream.StatusCode != http.StatusOK {
+				closeResponse(stream)
+				t.Fatal("run stream failed", stream.StatusCode)
+			}
+			defer closeResponse(stream)
+			streamDone := make(chan struct{})
+			go func() { _, _ = io.Copy(io.Discard, stream.Body); close(streamDone) }()
 			target := c.JTI
 			if kind == "run" {
 				target = c.RunID
 			}
 			if err := f.db.RevokeRunToken(context.Background(), target); err != nil {
 				t.Fatal(err)
+			}
+			select {
+			case <-streamDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("revoked run left stream open")
 			}
 			deadline := time.Now().Add(5 * time.Second)
 			for {
