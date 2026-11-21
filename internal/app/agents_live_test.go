@@ -83,13 +83,13 @@ func TestAgentsLiveMergesSessionsAndKitSeats(t *testing.T) {
 		t.Errorf("default hides stale: %+v", got.Agents)
 	}
 	// A seat's presence decays: backdate its registration past the threshold.
-	if _, err := svc.Store.DB().Exec(`UPDATE kit_seats SET last_seen_at=?`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := svc.Store.DB().Exec(`UPDATE kit_seats SET last_seen_at=?`, time.Now().Add(-3*time.Hour).UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := svc.AgentsLive(ctx, def, nil); got.Count != 0 {
 		t.Errorf("old registration alone must be stale: %+v", got.Agents)
 	}
-	long, _ := agentlive.ParseQuery("", agentlive.KindKitSeat, false, 7200, 0, "")
+	long, _ := agentlive.ParseQuery("", agentlive.KindKitSeat, false, 86400, 0, "")
 	if got, _ := svc.AgentsLive(ctx, long, nil); got.Count != 1 {
 		t.Errorf("custom threshold keeps it fresh: %+v", got.Agents)
 	}
@@ -116,5 +116,39 @@ func TestKitSeatReregisterKeepsKnownFacts(t *testing.T) {
 	}
 	if rows, _ := svc.Store.ListKitSeats(ctx, time.Time{}, 0); len(rows) != 1 || rows[0].Session != "s2" {
 		t.Fatalf("pruned: %+v", rows)
+	}
+}
+
+func TestKitSeatHeartbeatRefreshesWithoutBlanking(t *testing.T) {
+	svc, _, _, _ := credentialLaunch(t)
+	ctx := context.Background()
+	urn := "msg://agent/agent-mux/hb"
+	if _, err := svc.RegisterExternalCorrelation(ctx, api.CorrelationRegisterRequest{URN: urn, Session: "s", Host: "sol", DisplayName: "HB", Summary: "boot"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE kit_seats SET last_seen_at=?`, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := agentlive.ParseQuery("", agentlive.KindKitSeat, true, 0, 0, "")
+	got, _ := svc.AgentsLive(ctx, q, nil)
+	if got.Count != 1 || got.Agents[0].State != agentlive.StateSleeping {
+		t.Fatalf("30m old seat is sleeping: %+v", got.Agents)
+	}
+	// Bare heartbeat: refreshes, keeps host/name/summary, adds no row.
+	if _, err := svc.RegisterExternalCorrelation(ctx, api.CorrelationRegisterRequest{URN: urn, Session: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = svc.AgentsLive(ctx, q, nil)
+	r := got.Agents[0]
+	if got.Count != 1 || r.State != agentlive.StateAwake || r.Host != "sol" || r.Agent.Name != "HB" || r.LastActivity != "boot" {
+		t.Fatalf("heartbeat: %+v", got.Agents)
+	}
+	// Heartbeat with an activity summary replaces the summary.
+	if _, err := svc.RegisterExternalCorrelation(ctx, api.CorrelationRegisterRequest{URN: urn, Session: "s", Summary: "ignored", ActivitySummary: "reviewing PR"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = svc.AgentsLive(ctx, q, nil)
+	if got.Count != 1 || got.Agents[0].LastActivity != "reviewing PR" {
+		t.Fatalf("activity summary: %+v", got.Agents)
 	}
 }

@@ -20,16 +20,18 @@ import (
 type Global struct {
 	// AgencyRegistry is the daemon-only outbound correlation service.
 	AgencyRegistry agencyregistry.Config `yaml:"agency_registry,omitempty" json:"agency_registry,omitempty"`
-	Role           string                `yaml:"role,omitempty"`
-	Modules        map[string]bool       `yaml:"modules,omitempty"`
-	Environment    EnvironmentConfig     `yaml:"environment,omitempty"`
-	Teams          TeamsConfig           `yaml:"teams"`
-	MCP            mcpgateway.Config     `yaml:"mcp" json:"mcp,omitempty"`
-	Version        string                `yaml:"version"`
-	Catalog        CatalogRoots          `yaml:"catalog"`
-	Daemon         DaemonConfig          `yaml:"daemon"`
-	AI             AIConfig              `yaml:"ai"`
-	Identity       IdentityConfig        `yaml:"identity"`
+	// AgentsLive tunes tether_agents_live kit-seat presence thresholds.
+	AgentsLive  AgentsLiveConfig  `yaml:"agents_live,omitempty" json:"agents_live,omitempty"`
+	Role        string            `yaml:"role,omitempty"`
+	Modules     map[string]bool   `yaml:"modules,omitempty"`
+	Environment EnvironmentConfig `yaml:"environment,omitempty"`
+	Teams       TeamsConfig       `yaml:"teams"`
+	MCP         mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
+	Version     string            `yaml:"version"`
+	Catalog     CatalogRoots      `yaml:"catalog"`
+	Daemon      DaemonConfig      `yaml:"daemon"`
+	AI          AIConfig          `yaml:"ai"`
+	Identity    IdentityConfig    `yaml:"identity"`
 	// Federation is the authority-routing messaging block. Its zero value
 	// (enabled: false) is a standalone install — no peers, no routing,
 	// behavior identical to pre-federation Tether. See internal/federation
@@ -41,6 +43,16 @@ type Global struct {
 	// a reload that finds a block other than the approved one is refused. Nil
 	// leaves the feature off.
 	OperatorAttestation *operatorattest.RawConfig `yaml:"operator_attestation,omitempty"`
+}
+
+// AgentsLiveConfig holds Go duration strings (for example "10m", "2h"). Empty
+// or invalid values use the defaults, 10m and 2h.
+type AgentsLiveConfig struct {
+	// KitSeatAwakeAfter: a kit seat re-registered within this is awake.
+	KitSeatAwakeAfter string `yaml:"kit_seat_awake_after,omitempty" json:"kit_seat_awake_after,omitempty"`
+	// KitSeatStaleAfter: beyond this since its last registration a kit seat is
+	// stale; between the two it is sleeping.
+	KitSeatStaleAfter string `yaml:"kit_seat_stale_after,omitempty" json:"kit_seat_stale_after,omitempty"`
 }
 
 // TeamsConfig controls optional team surfaces and host activation.

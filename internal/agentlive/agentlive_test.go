@@ -67,19 +67,17 @@ func TestSeatFreshnessAndThreshold(t *testing.T) {
 	seat := func(age time.Duration) Inputs {
 		return Inputs{Now: t0, Seats: []SeatInput{{URN: urn, Session: "k1", LastRegisteredAt: t0.Add(-age), Host: "h"}}}
 	}
-	// Boundary: exactly at the threshold is fresh, one nanosecond past is stale.
-	if r := Build(seat(10*time.Minute), q(t, "", "", true, 0)).Agents[0]; r.Stale {
+	// Boundary: exactly at the seat stale threshold (2h) is fresh, one
+	// nanosecond past is stale; the sleeping window stays listed.
+	if r := Build(seat(2*time.Hour), q(t, "", "", true, 0)).Agents[0]; r.Stale {
 		t.Error("exactly at threshold must be fresh")
 	}
-	if r := Build(seat(10*time.Minute+time.Nanosecond), q(t, "", "", true, 0)).Agents[0]; !r.Stale {
+	if r := Build(seat(2*time.Hour+time.Nanosecond), q(t, "", "", true, 0)).Agents[0]; !r.Stale {
 		t.Error("past threshold must be stale")
 	}
-	// Custom threshold.
-	if r := Build(seat(2*time.Minute), q(t, "", "", true, 60)).Agents[0]; !r.Stale {
-		t.Error("custom 60s threshold")
-	}
-	if r := Build(seat(2*time.Minute), q(t, "", "", true, 180)).Agents[0]; r.Stale {
-		t.Error("custom 180s threshold")
+	// A longer stale_after than the seat threshold wins.
+	if r := Build(seat(3*time.Hour), q(t, "", "", true, 4*3600)).Agents[0]; r.Stale {
+		t.Error("custom 4h threshold")
 	}
 	// A very old registration is not perpetually fresh.
 	if r := Build(seat(72*time.Hour), q(t, "", "", true, 0)).Agents[0]; !r.Stale || r.PresenceSource != "registration" {
@@ -92,7 +90,7 @@ func TestSeatFreshnessAndThreshold(t *testing.T) {
 		t.Errorf("watcher: %+v", r)
 	}
 	// A disconnected watcher decays with its disconnect time.
-	in.Presence = map[string]Evidence{urn: {At: t0.Add(-20 * time.Minute), Source: "watcher"}}
+	in.Presence = map[string]Evidence{urn: {At: t0.Add(-3 * time.Hour), Source: "watcher"}}
 	if r := Build(in, q(t, "", "", true, 0)).Agents[0]; !r.Stale {
 		t.Errorf("disconnected watcher: %+v", r)
 	}
@@ -122,7 +120,7 @@ func TestSeatDeclaredStateAndPresenceOnlyRows(t *testing.T) {
 	if r := by["msg://agent/agent-mux/asleep"]; r.State != StateSleeping || r.RawState != "paused" {
 		t.Errorf("explicit pause is sleeping: %+v", r)
 	}
-	if r := by["msg://agent/agent-mux/none"]; r.State != StateUnknown || r.LastActivityAt != nil {
+	if r := by["msg://agent/agent-mux/none"]; r.State != StateAwake || r.LastActivityAt == nil || r.LastActivitySource != "registration" {
 		t.Errorf("no declaration: %+v", r)
 	}
 	if r := by["msg://agent/agent-mux/ghost"]; r.Kind != KindKitSeat || r.SessionID != "" || r.Agent.Name != "ghost" || r.Stale {
@@ -194,5 +192,87 @@ func TestTracker(t *testing.T) {
 	now = now.Add(48 * time.Hour)
 	if _, ok := tr.Snapshot(now, 24*time.Hour)["u"]; ok {
 		t.Fatal("old entry must be dropped")
+	}
+}
+
+func TestKitSeatStateFromHeartbeat(t *testing.T) {
+	urn := "msg://agent/agent-mux/hb"
+	state := func(age time.Duration, mod func(*Query)) Row {
+		qq := q(t, "", "", true, 0)
+		if mod != nil {
+			mod(&qq)
+		}
+		in := Inputs{Now: t0, Seats: []SeatInput{{URN: urn, Session: "k", Host: "sol", Name: "Heart Beat", LastRegisteredAt: t0.Add(-age)}}}
+		return Build(in, qq).Agents[0]
+	}
+	cases := []struct {
+		age   time.Duration
+		want  string
+		stale bool
+	}{
+		{0, StateAwake, false},
+		{10 * time.Minute, StateAwake, false},
+		{10*time.Minute + time.Nanosecond, StateSleeping, false},
+		{2 * time.Hour, StateSleeping, false},
+		{2*time.Hour + time.Nanosecond, StateStale, true},
+	}
+	for _, c := range cases {
+		r := state(c.age, nil)
+		if r.State != c.want || r.Stale != c.stale || r.Agent.Name != "Heart Beat" || r.Host != "sol" {
+			t.Errorf("age %v: %+v", c.age, r)
+		}
+		if r.LastActivityAt == nil || !r.LastActivityAt.Equal(t0.Add(-c.age)) {
+			t.Errorf("age %v last_activity_at: %+v", c.age, r.LastActivityAt)
+		}
+	}
+	// Configurable thresholds.
+	cfg := func(qq *Query) { qq.SeatAwakeAfter, qq.SeatStaleAfter = time.Minute, 5*time.Minute }
+	if r := state(2*time.Minute, cfg); r.State != StateSleeping {
+		t.Errorf("custom awake: %+v", r)
+	}
+	if r := state(6*time.Minute, cfg); r.State != StateStale || !r.Stale {
+		t.Errorf("custom stale: %+v", r)
+	}
+	// Name falls back to the URN tail without a display name.
+	in := Inputs{Now: t0, Seats: []SeatInput{{URN: urn, Session: "k", LastRegisteredAt: t0}}}
+	if r := Build(in, q(t, "", "", true, 0)).Agents[0]; r.Agent.Name != "hb" || r.Host != "" {
+		t.Errorf("fallback: %+v", r)
+	}
+}
+
+func TestKitSeatListedUntilSeatStaleThreshold(t *testing.T) {
+	urn := "msg://agent/agent-mux/listed"
+	seat := func(age time.Duration, secs int, include bool) Response {
+		in := Inputs{Now: t0, Seats: []SeatInput{{URN: urn, Session: "k", LastRegisteredAt: t0.Add(-age)}}}
+		return Build(in, q(t, "", "", include, secs))
+	}
+	// stale_after_seconds=60 no longer hides a 2-minute-old seat: it stays
+	// listed (sleeping) until max(stale_after_seconds, kit_seat_stale_after).
+	if got := seat(2*time.Minute, 60, false); got.Count != 1 || got.Agents[0].Stale || got.Agents[0].State != StateAwake {
+		t.Errorf("2m seat with 60s: %+v", got.Agents)
+	}
+	if got := seat(30*time.Minute, 60, false); got.Count != 1 || got.Agents[0].State != StateSleeping {
+		t.Errorf("30m seat listed as sleeping: %+v", got.Agents)
+	}
+	if got := seat(3*time.Hour, 60, false); got.Count != 0 {
+		t.Errorf("3h seat hidden by default: %+v", got.Agents)
+	}
+	// A longer explicit stale_after_seconds extends the listing.
+	if got := seat(3*time.Hour, 4*3600, false); got.Count != 1 {
+		t.Errorf("4h stale_after keeps 3h seat: %+v", got.Agents)
+	}
+}
+
+func TestKitSeatStateUsesWatcherEvidence(t *testing.T) {
+	urn := "msg://agent/agent-mux/watched"
+	in := Inputs{Now: t0, Seats: []SeatInput{{URN: urn, Session: "k", LastRegisteredAt: t0.Add(-5 * time.Hour)}},
+		Presence: map[string]Evidence{urn: {At: t0, Source: "watcher"}}}
+	r := Build(in, q(t, "", "", false, 0)).Agents[0]
+	if r.State != StateAwake || r.Stale {
+		t.Errorf("live watcher with old registration: state and stale must agree: %+v", r)
+	}
+	in.Presence = map[string]Evidence{urn: {At: t0.Add(-30 * time.Minute), Source: "watcher"}}
+	if r := Build(in, q(t, "", "", false, 0)).Agents[0]; r.State != StateSleeping || r.Stale {
+		t.Errorf("30m-old watcher: %+v", r)
 	}
 }

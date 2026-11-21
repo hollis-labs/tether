@@ -16,8 +16,8 @@ func (a *Adapter) registerAgentsLiveTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name: "tether_agents_live",
 		Description: "List every live agent in one read: Tether sessions (running/detached) and kit-booted seats (external kit-session registrations plus mail-watcher and runtime-binding presence). " +
-			"Rows carry agent {urn,name,ref}, kind (tether_session|kit_seat), host, state (awake|sleeping|unknown), raw_state (busy|idle when known), last_activity_at (null when never observed) and last_activity (summary), session_id/run_id, workstream_id, presence_at/presence_source and stale. " +
-			"stale=true when no presence evidence was seen within stale_after_seconds (default 600); stale rows are hidden unless include_stale=true. Unknown observations stay unknown/null. Read-only; same as GET /agents/live.",
+			"Rows carry agent {urn,name,ref}, kind (tether_session|kit_seat), host, state (awake|sleeping|unknown; kit seats also stale), raw_state (busy|idle when known), last_activity_at (null when never observed) and last_activity (summary), session_id/run_id, workstream_id, presence_at/presence_source and stale. " +
+			"Kit seats without a declared status derive state from their newest heartbeat (registration, watcher or binding): awake <=10m, sleeping <=2h, stale beyond (configurable: agents_live.kit_seat_awake_after / kit_seat_stale_after). stale=true when no presence evidence was seen within stale_after_seconds (default 600); for kit seats it is max(stale_after_seconds, kit_seat_stale_after), so seats stay listed until then. Stale rows are hidden unless include_stale=true. Unknown observations stay unknown/null. Read-only; same as GET /agents/live.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("host", "Only rows on this host (machine name; outposts use the worker label)", false),
 			gomcp.StringProp("kind", "tether_session or kit_seat", false),

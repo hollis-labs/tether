@@ -50,7 +50,7 @@ presence, rows with no presence last.
 | `kind` | `tether_session` or `kit_seat`. |
 | `agent_urn`, `name` | Catalog `urn` (else `msg://agent/agent-mux/<id>`) and logical agent id for sessions; registered `display_name` (else the URN's last segment) for seats. |
 | `host` | Omitted when unknown. Hub sessions use the daemon's hostname; outpost sessions the worker label; kit seats the registered `host`. |
-| `state` | `awake` (a busy/idle observation), `sleeping` (an explicit `paused`/`offline` declaration) or `unknown`. Never inferred from lifecycle or registration timestamps. |
+| `state` | `awake` (a busy/idle observation, or a kit seat heartbeat within 10m), `sleeping` (an explicit `paused`/`offline` declaration, or a kit seat heartbeat 10m-2h old), `stale` (kit seats only: heartbeat older than 2h) or `unknown`. Tether-session state is never inferred from lifecycle timestamps. |
 | `raw_state` | `busy` or `idle` when known; otherwise the session state (`running`/`detached`) or the seat's declared status. |
 | `last_activity_at` | `null` when none was observed. `last_activity_source` says where it came from. |
 | `last_activity` | One-line summary, only when known (the seat's declared status reason, or a registered `summary`). |
@@ -63,9 +63,13 @@ presence, rows with no presence last.
 - Tether session: the runtime's live state (processing → `awake`/`busy`, idle → `awake`/`idle`);
   `unknown` when the runtime is not registered or is stopping. `last_activity_at` is the session's observed
   activity (`session_runtime`), as in `tether_session_health`.
-- Kit seat: `state` comes from its declared status (`tether_status_set`): `working` → `awake`/`busy`,
-  `available` → `awake`/`idle`, `paused`/`offline` → `sleeping`; every other declared state, an expired declaration or none → `unknown`
+- Kit seat with a declared status (`tether_status_set`): `working` → `awake`/`busy`,
+  `available` → `awake`/`idle`, `paused`/`offline` → `sleeping`; every other declared state → `unknown`
   with `raw_state` kept. `last_activity_at` is that declaration's update time (`seat_status`).
+- Kit seat with no declaration (or an expired one): `state` comes from the heartbeat, the newest of
+  its registration, watcher and binding evidence: `awake` within `agents_live.kit_seat_awake_after`
+  (default 10m), `sleeping` up to `agents_live.kit_seat_stale_after` (default 2h), `stale` beyond.
+  `last_activity_at` is the last registration (`registration`). Name is the registered `display_name`.
 
 ## Freshness
 
@@ -82,6 +86,9 @@ presence, rows with no presence last.
 - `registration`: the kit seat's last registration. It is evidence only at the time it was
   made, so an old registration alone goes stale.
 
+For kit seats the threshold is `max(stale_after_seconds, kit_seat_stale_after)` (default 2h), so a
+sleeping seat stays listed until it is `stale`; an explicit longer `stale_after_seconds` still applies.
+
 An agent URN seen only through a watcher or binding appears as a `kit_seat` row with no
 session. A URN that already has session or seat rows contributes presence to them and
 adds no extra row. Terminal sessions are never listed.
@@ -94,6 +101,19 @@ outbound Registry registration is configured. Optional `host`, `display_name` an
 `summary` are local-only descriptive facts, never sent to the Registry. Re-registering
 refreshes `last_seen_at`; empty facts never erase known ones. Rows unseen for 7 days are
 pruned. Seats should re-register periodically (for example from a hook) to stay fresh.
+
+### Configuration
+
+In `global.yaml` (Go duration strings; empty or invalid use the defaults):
+
+```yaml
+agents_live:
+  kit_seat_awake_after: 10m   # heartbeat within this -> awake
+  kit_seat_stale_after: 2h    # heartbeat older than this -> stale; between -> sleeping
+```
+
+Seats heartbeat by re-running `tether correlation register --urn ... --session ...` (optionally
+with `--host`, `--display-name`, `--summary`, `--activity-summary`).
 
 ## Limitations
 

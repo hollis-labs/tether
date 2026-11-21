@@ -22,10 +22,14 @@ func (s *Service) RegisterExternalCorrelation(ctx context.Context, in api.Correl
 	} else if row != nil {
 		return api.CorrelationRegisterResponse{Reason: "tether_session"}, nil
 	}
+	summary := in.Summary
+	if in.ActivitySummary != "" {
+		summary = in.ActivitySummary
+	}
 	// Keep a local record so tether_agents_live can list the seat even when
 	// outbound Registry registration is disabled or queued out.
 	if err := s.Store.UpsertKitSeat(ctx, store.KitSeat{AgentURN: in.URN, Session: in.Session, RunID: in.RunID, TaskID: in.TaskID, WorkstreamID: in.WorkstreamID,
-		Host: in.Host, DisplayName: in.DisplayName, Summary: in.Summary, ProviderSessionID: in.ProviderSessionID}, time.Now()); err != nil {
+		Host: in.Host, DisplayName: in.DisplayName, Summary: summary, ProviderSessionID: in.ProviderSessionID}, time.Now()); err != nil {
 		return api.CorrelationRegisterResponse{}, err
 	}
 	cat := s.cat()
