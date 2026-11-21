@@ -1151,6 +1151,7 @@ func (s *Server) apiMounts() []apiMount {
 
 		{"/settings/mcp", s.Settings != nil},
 		{"/auth/context", true},
+		{api.RunTokenRevokePath, hasService},
 		{"/settings/onboarding", s.Settings != nil},
 		{"/settings/onboarding/", s.Settings != nil},
 

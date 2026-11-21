@@ -92,6 +92,12 @@ func TestShimLaunchProcess(t *testing.T) {
 		if err != nil {
 			os.Exit(15)
 		}
+		providerEnv, releaseProof, proofErr := runtoken.ProviderEnvironment(spec.Env)
+		if proofErr != nil {
+			panic("provider proof file setup failed")
+		}
+		defer releaseProof()
+		spec.Env = providerEnv
 		host, err := shim.Start(spec)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

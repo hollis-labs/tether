@@ -325,6 +325,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEnvironmentRoutes(router)
 	s.registerCatalogRoutes(router)
 	s.registerCatalogReloadRoutes(router)
+	s.registerRunTokenRoutes(router)
 
 	s.registerCatalogApplyRoutes(router)
 	s.registerChatRoutes(router)

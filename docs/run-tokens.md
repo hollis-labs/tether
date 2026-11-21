@@ -13,7 +13,10 @@ the Torque identifiers introduced by PR #631. Contract review: 27483 and 27553.
 Every local/worker launch additionally mints a fresh execution UUID into
 `TETHER_EXECUTION_RUN_ID`. A signed `TETHER_RUN_TOKEN` is minted only when the
 execution host supports nonpersistent handoff. Local support is probed; workers
-advertise `execution-run-token-v1` only when supported. Older/non-Linux workers
+advertise `execution-run-token-v1` and `execution-run-token-file-v1` only when
+supported. The hub requires the file feature before sending a signed proof by
+default. An older worker advertising only the environment feature receives no
+proof unless the launch explicitly sets `TETHER_RUN_TOKEN_ALLOW_ENV=1`. Older/non-Linux workers
 and unsupported local hosts retain legacy authenticated operation without a
 verified execution. Reserved provider/ambient token values are removed before
 launch; no token is sent to an incapable worker.
@@ -26,8 +29,12 @@ Torque identifier, identity flag, or durable writer provenance.
 `X-Run-Token` is separate from the Authorization bearer. The compact JWS header
 is exactly `{"alg":"EdDSA","typ":"tether-run+jwt"}`; claims are
 `{urn, run_id, session, task, workstream, parent, exp, jti, iss, aud}`.
-Issuer is `tether-launcher`, audience `tether-mcp-run`; expiry uses the normal
-session-token TTL. A shorter bearer lifetime still applies independently.
+Issuer is `tether-launcher`, audience `tether-mcp-run`; expiry uses the
+execution lifetime: at most six hours from issuance, shortened to the immutable
+launch plan’s lifecycle max duration plus five minutes when shorter. Duration
+starts when the execution proof is minted, not when a session was preassigned.
+Unbounded/long sessions need a fresh execution after this fixed proof expires;
+bearer refresh does not extend it. A shorter bearer lifetime applies independently.
 Optional task/workstream/parent stay empty when unknown. URN is the session's
 logical agent binding target, or its session principal address without an agent.
 Parent refers only to a parent execution UUID from verified launching context.
@@ -44,9 +51,18 @@ execution attribution.
 
 The run token is pinned to its MCP view, including jti. Adding, changing or
 removing it requires a fresh MCP session. Every HTTP request, method admission
-and monitor rechecks it. Expiry cancels retained calls/streams; existing bearer
+and monitor rechecks it. Expiry or revocation cancels retained calls/streams; existing bearer
 and session revocation still apply. Jti is correlation, not single-use replay
 prevention. Verification has no Registry/Tesseract calls.
+
+The verified operator on the local Unix socket can run
+`tether runtoken revoke <jti|run>` (POST `/auth/run-tokens/revoke`, body
+`{"target":"<exact identifier>"}`). The target matches either a token jti or
+`TETHER_EXECUTION_RUN_ID`, never Torque’s `TETHER_RUN_ID` or a team run id.
+Revocation is idempotent and permanent, retained in SQLite across daemon restarts.
+Every verification queries this denylist and fails closed if it cannot be read.
+A run target rejects any proof bearing that execution id, including another jti;
+a jti target leaves unrelated proofs alone. No token is stored by this endpoint.
 
 ## Enforced signing-key custody
 
@@ -66,14 +82,25 @@ Explicit key replacement invalidates outstanding signatures on re-admission and
 monitoring; there is no automatic rotation or token refresh. No live key or
 permission changes are performed by this task.
 
-## Runtime-only token handoff
+## Protected provider file and shim handoff
 
-The local shim placer and worker executor strip the raw token before writing
-`launch.json`. They put it into a sealed Linux memfd: anonymous kernel memory,
-not a filesystem credential/config file. Descriptors contain only a numeric
-`/proc/<launcher-pid>/fd/<fd>` reference and a fresh binding id. The shim entrypoint
+The launcher and worker executor convert the raw proof to a regular 0600 file
+inside a fresh private 0700 temporary directory before constructing the provider
+sandbox. The provider receives `TETHER_RUN_TOKEN_FILE`, not `TETHER_RUN_TOKEN`.
+Shell environment snapshots contain only the path. Sandbox access grants expose
+only this credential directory and preserve explicit deny/hide rules. The file
+stays alive through uncertain submission/caller cancellation and is removed once
+the execution is proven complete; a live shim can be reattached after controller
+restart. A crashed host can leave a private expired file; it never extends the
+signed expiry. Do not archive credential files with provider workspaces.
+
+Before writing `launch.json`, shim placement additionally binds the proof to a
+sealed Linux memfd: anonymous kernel memory. Descriptors contain the protected
+file path, a numeric `/proc/<launcher-pid>/fd/<fd>` reference and a fresh binding id,
+never proof contents. The shim entrypoint
 accepts only owned 0600, zero-link, sealed anonymous memory, checks the binding id
-and session, then restores the token into the provider's in-memory environment.
+and session, then validates the protected file against the handoff and removes
+the raw proof before starting the provider.
 The launcher retains the memfd until the shim is ready, then closes it. If submission may have succeeded but the caller cancels or readiness times out, an independent observer retains it until authenticated readiness, verified process absence, or verified retirement. Caller cancellation alone never revokes a submitted runtime’s first read. A launcher process death before that first read closes the memfd and fails closed; recovery requires a fresh launch, rather than persisting a replayable token. Markers
 are removed from the provider environment.
 
@@ -93,7 +120,12 @@ redirects. The stdio relay supports agy without its unsupported static header
 interpolation. Tests capture actual HTTP headers and actual shim/executor
 handoffs; they do not claim a full authenticated agy model run.
 
-Direct HTTP configs may use the spike-tested mappings: Claude
+Raw environment compatibility is opt-in: set
+`TETHER_RUN_TOKEN_ALLOW_ENV=1` in the launch environment for older consumers.
+Tether’s file-aware clients prefer the file and fail closed if a configured file
+is missing, unsafe or unreadable; they accept raw env only with that flag.
+The default file delivery requires a file-aware relay for direct HTTP provider
+configurations. With the explicit compatibility flag, the older mappings are: Claude
 `headers.X-Run-Token="${TETHER_RUN_TOKEN}"`, Codex
 `env_http_headers.X-Run-Token="TETHER_RUN_TOKEN"`, OpenCode 1.19.6
 `headers.X-Run-Token="{env:TETHER_RUN_TOKEN}"`. Pin the provider/config versions.

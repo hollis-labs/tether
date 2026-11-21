@@ -49,4 +49,5 @@ func init() {
 	rootCmd.AddCommand(workstreamsCmd)
 	rootCmd.AddCommand(catalogCmd)
 	rootCmd.AddCommand(newIdentityCommand())
+	rootCmd.AddCommand(newRunTokenCommand(localDeviceAdminClient))
 }

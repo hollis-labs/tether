@@ -61,6 +61,12 @@ func TestHostProcess(t *testing.T) {
 		if e != nil {
 			os.Exit(15)
 		}
+		providerEnv, releaseProof, proofErr := runtoken.ProviderEnvironment(spec.Env)
+		if proofErr != nil {
+			panic("provider proof file setup failed")
+		}
+		defer releaseProof()
+		spec.Env = providerEnv
 		h, e := shim.Start(spec)
 		if e != nil {
 			fmt.Fprintln(os.Stderr, "host refused")
@@ -79,7 +85,8 @@ func TestHostProcess(t *testing.T) {
 		os.Exit(7)
 	case "child", "run-token-child":
 		if os.Getenv("TETHER_TEST_SHIM") == "run-token-child" {
-			if os.Getenv(runtoken.TokenEnv) != testRuntimeRunToken || os.Getenv("TETHER_RUN_HANDOFF_PATH") != "" {
+			proof, proofErr := runtoken.ReadEnvironment()
+			if proofErr != nil || proof != testRuntimeRunToken || os.Getenv(runtoken.TokenEnv) != "" || os.Getenv("TETHER_RUN_HANDOFF_PATH") != "" {
 				os.Exit(31)
 			}
 			if os.WriteFile(filepath.Join(os.Getenv("HOME"), "run-token-ready"), []byte("ready"), 0600) != nil {
