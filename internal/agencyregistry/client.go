@@ -24,6 +24,8 @@ type Config struct {
 
 // Facts are immutable launch observations. Never include credentials or tokens.
 type Facts struct {
+	ExportReceiptID   string `json:"export_receipt_id,omitempty"`
+	ActivitySHA256    string `json:"activity_sha256,omitempty"`
 	URN               string `json:"urn"`
 	Session           string `json:"session"`
 	RunID             string `json:"run_id"`

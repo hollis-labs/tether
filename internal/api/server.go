@@ -61,6 +61,8 @@ type Deps struct {
 	EnvironmentStream *environmentstream.Server
 	Catalog           CatalogLoader
 	GroupStore        SessionGroupStore
+	// Correlations queues external kit registrations through the launcher.
+	Correlations CorrelationRegistrar
 	// Workstreams, when non-nil, enables the /workstreams endpoints and the
 	// per-session workstream sub-resource (S1, CW-20260912-0059).
 	Workstreams WorkstreamStore
@@ -210,6 +212,7 @@ type Server struct {
 	EnvironmentStream   *environmentstream.Server
 	Catalog             CatalogLoader
 	GroupStore          SessionGroupStore
+	Correlations        CorrelationRegistrar
 	Workstreams         WorkstreamStore
 	SessionRefs         SessionRefStore
 	Digests             DigestStore
@@ -281,6 +284,7 @@ func NewHandler(deps Deps) http.Handler {
 		EnvironmentStream:   deps.EnvironmentStream,
 		Catalog:             deps.Catalog,
 		GroupStore:          deps.GroupStore,
+		Correlations:        deps.Correlations,
 		Workstreams:         deps.Workstreams,
 		SessionRefs:         deps.SessionRefs,
 		Digests:             deps.Digests,
@@ -332,6 +336,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)
 	s.registerWorkstreamRoutes(router)
+	s.registerCorrelationRoutes(router)
 	s.registerMessageRoutes(router)
 	s.registerTypedMessageRoutes(router)
 	s.registerAddressAliasRoutes(router)

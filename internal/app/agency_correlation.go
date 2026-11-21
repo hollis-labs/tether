@@ -41,28 +41,7 @@ func (s *Service) queueLaunchCorrelation(ctx context.Context, row *store.Session
 		return
 	}
 	providerID := row.ProviderID
-	s.correlationMu.Lock()
-	if s.correlationClosed {
-		s.correlationMu.Unlock()
-		return
-	}
-	if s.correlationSlots == nil {
-		s.correlationSlots = make(chan struct{}, 32)
-		s.correlationContext, s.correlationCancel = context.WithCancel(context.Background())
-	}
-	select {
-	case s.correlationSlots <- struct{}{}:
-	default:
-		s.correlationMu.Unlock()
-		log.Print("Registry correlation dropped: capacity exhausted")
-		return
-	}
-	workCtx, slots := s.correlationContext, s.correlationSlots
-	s.correlationWG.Add(1)
-	s.correlationMu.Unlock()
-	go func() {
-		defer s.correlationWG.Done()
-		defer func() { <-slots }()
+	s.queueCorrelation(cfg, facts, "tether-launch:", func(facts *agencyregistry.Facts) {
 		if token != "" {
 			key, err := s.runTokens.Key(s.Store.RunSigningKeyPath())
 			if err == nil {
@@ -76,7 +55,38 @@ func (s *Service) queueLaunchCorrelation(ctx context.Context, row *store.Session
 				facts.ProviderSessionID = mapping.NativeSessionID.String
 			}
 		}
-		key := "tether-launch:" + facts.Session + ":" + facts.RunID
+	})
+}
+
+// queueCorrelation shares launch and external-hook bounds and shutdown custody.
+// prepare runs only in the background, before the immutable retry payload is sent.
+func (s *Service) queueCorrelation(cfg agencyregistry.Config, facts agencyregistry.Facts, prefix string, prepare func(*agencyregistry.Facts)) bool {
+	s.correlationMu.Lock()
+	if s.correlationClosed {
+		s.correlationMu.Unlock()
+		return false
+	}
+	if s.correlationSlots == nil {
+		s.correlationSlots = make(chan struct{}, 32)
+		s.correlationContext, s.correlationCancel = context.WithCancel(context.Background())
+	}
+	select {
+	case s.correlationSlots <- struct{}{}:
+	default:
+		s.correlationMu.Unlock()
+		log.Print("Registry correlation dropped: capacity exhausted")
+		return false
+	}
+	workCtx, slots := s.correlationContext, s.correlationSlots
+	s.correlationWG.Add(1)
+	s.correlationMu.Unlock()
+	go func() {
+		defer s.correlationWG.Done()
+		defer func() { <-slots }()
+		if prepare != nil {
+			prepare(&facts)
+		}
+		key := prefix + facts.Session + ":" + facts.RunID
 		for attempt := 0; attempt < 3; attempt++ {
 			attemptCtx, cancel := context.WithTimeout(workCtx, 2*time.Second)
 			retry, err := agencyregistry.Register(attemptCtx, cfg, key, facts)
@@ -100,6 +110,7 @@ func (s *Service) queueLaunchCorrelation(ctx context.Context, row *store.Session
 			}
 		}
 	}()
+	return true
 }
 
 func (s *Service) stopLaunchCorrelations() {
