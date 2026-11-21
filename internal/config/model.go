@@ -276,6 +276,18 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 	return ""
 }
 
+// OpsStatusConfig is daemon.ops_status (CW-20261121-0154).
+type OpsStatusConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// URL is the Ops service MCP endpoint; default http://127.0.0.1:8994/mcp.
+	URL string `yaml:"url,omitempty"`
+	// TokenFile holds the bearer the Ops service admits as an operator-token
+	// caller; default the daemon's operator token. Read on every post.
+	TokenFile string `yaml:"token_file,omitempty"`
+	// Actor is the stated X-Actor; default msg://service/tether/<hostname>.
+	Actor string `yaml:"actor,omitempty"`
+}
+
 // DaemonConfig controls the long-lived tetherd process. See ADR 0002 for the
 // scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 type DaemonConfig struct {
@@ -308,6 +320,10 @@ type DaemonConfig struct {
 	// ShutdownTimeout caps how long Shutdown waits for in-flight sessions to
 	// reach a terminal state. Go duration string; defaults to "10s".
 	ShutdownTimeout string `yaml:"shutdown_timeout"`
+	// OpsStatus posts session lifecycle (session_started, session_ended,
+	// session_lost) for task- or workstream-bound sessions to the Ops status
+	// stream (G3, CW-20261121-0154). Off unless enabled.
+	OpsStatus OpsStatusConfig `yaml:"ops_status,omitempty"`
 	// EventsRetention controls the hourly age-based sweep of events,
 	// proxy_events, ai_events, identity_audit and terminal a2a_tasks.
 	// Enabled by default for 90 days.

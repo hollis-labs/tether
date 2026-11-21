@@ -353,7 +353,7 @@ func RemoteScopeMiddleware(next http.Handler) http.Handler {
 		// A service JWT admitted by the identity middleware's closed route list is
 		// judged by its own scopes, and only for those exact routes; the marker
 		// is set nowhere else, so no other request reaches this branch.
-		if _, listed := identity.ServiceJWTScope(r.Method, r.URL.Path); listed && ok && identity.ServiceEventsRequest(r.Context()) && p.Kind == "service" {
+		if _, listed := identity.ServiceJWTScope(r.Method, r.URL.EscapedPath()); listed && ok && identity.ServiceEventsRequest(r.Context()) && p.Kind == "service" {
 			applyRouteScopes(w, r, next, true, false, func(scope string) bool { return identity.ScopeGranted(p.Scopes, scope) })
 			return
 		}

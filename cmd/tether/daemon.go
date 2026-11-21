@@ -333,6 +333,14 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		defer stopReport()
+		if cfg.OpsStatus.Enabled {
+			stopOps, err := startOpsStatus(ctx, svc, cfg.OpsStatus, filepath.Join(stateRoot, "run", "operator.token"))
+			if err != nil {
+				log.Printf("daemon: ops status emitter not started: %v", err)
+			} else {
+				defer stopOps()
+			}
+		}
 		var eventIngest api.EventIngestService
 		if cfg.EventIngest.Enabled {
 			ing, err := newEventIngest(svc, cfg.EventIngest)
@@ -1499,6 +1507,12 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 			Burst:               d.EventIngest.Burst,
 			FailedAuthPerSecond: d.EventIngest.FailedAuthPerSecond,
 			FailedAuthBurst:     d.EventIngest.FailedAuthBurst,
+		},
+		OpsStatus: daemon.OpsStatusSettings{
+			Enabled:   d.OpsStatus.Enabled,
+			URL:       d.OpsStatus.URL,
+			TokenFile: config.Expand(d.OpsStatus.TokenFile),
+			Actor:     d.OpsStatus.Actor,
 		},
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),
