@@ -1,0 +1,1 @@
+- CW-20261121-0081: Report missing expected catalog MCP origins and external gateway locations in gateway status; label every tether_registry_* tool as the agent/project directory, not the shared Registry.

@@ -31,6 +31,9 @@ type SchemaCoverage struct {
 // origins work and which do not (with the reason), lint totals by code, and one
 // line saying what "complete" means here. Lint detail is only on request.
 type StatusSummary struct {
+	ExpectedOrigins []string         `json:"expected_origins"`
+	MissingExpected []string         `json:"missing_expected"`
+	External        []ExternalOrigin `json:"external"`
 	Selection
 	Profile            string         `json:"profile,omitempty"`
 	Complete           bool           `json:"complete"`
@@ -62,6 +65,7 @@ const maxBriefError = 200
 // Summary condenses a full Status. It is a pure view: nothing is recomputed.
 func (st Status) Summary() StatusSummary {
 	out := StatusSummary{
+		ExpectedOrigins: st.ExpectedOrigins, MissingExpected: st.MissingExpected, External: st.External,
 		Selection: st.Selection, Profile: st.Profile, Complete: st.Complete,
 		CatalogedTools: st.CatalogedTools, EligibleTools: st.EligibleTools, AvailableTools: st.AvailableTools,
 		HiddenTools: st.HiddenTools, UnexaminedTools: st.UnexaminedTools, Exclusions: st.Exclusions,
@@ -104,9 +108,12 @@ func (st Status) Summary() StatusSummary {
 func explainStatus(s StatusSummary, degraded []string) string {
 	var parts []string
 	if s.Complete {
-		parts = append(parts, fmt.Sprintf("complete: all %d origins are connected and no tool names collide", len(s.Origins)))
+		parts = append(parts, fmt.Sprintf("complete: all expected origins are visible and connected; no tool names collide (%d visible origins)", len(s.Origins)))
 	} else {
 		var why []string
+		if len(s.MissingExpected) > 0 {
+			why = append(why, "missing expected origins: "+strings.Join(s.MissingExpected, ", "))
+		}
 		if len(s.UnavailableServers) > 0 {
 			why = append(why, fmt.Sprintf("%d origin(s) unavailable (%s): their tools are not in this inventory", len(s.UnavailableServers), strings.Join(s.UnavailableServers, ", ")))
 		}

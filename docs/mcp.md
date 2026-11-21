@@ -1,5 +1,51 @@
 # Tether — MCP Adapter
 
+## Directory versus shared Registry
+
+Every `tether_registry_*` tool is the **Tether agent/project DIRECTORY** for
+mail addresses, profiles and delivery bindings. It is **NOT the shared Registry**.
+For operational knowledge and Registry records, use `ops_registry_search` /
+`ops_registry_lookup` (including unverified drafts), or `registry_record_search`
+for the published view. Tool names are retained for compatibility.
+
+## Expected gateway origins
+
+`tether_gateway_status` reports `expected_origins`, `missing_expected`, and
+`external` in both its compact and full views. `complete` is false whenever an
+expected origin is absent, failed, degraded, hidden by a profile, or hidden by
+the caller's grant. A permanently failed expected service does not become
+complete merely because retrying stopped. Existing collision and in-progress
+origin checks still apply. Tool list/search completeness describes pagination
+and inventory stability; use gateway status to check catalog expectations.
+
+The catalog's `global.yaml` can set an explicit list:
+
+```yaml
+mcp:
+  expected_origins: [torque, tesseract, registry]
+```
+
+Omission defaults to every enabled catalog MCP server except `served_by:
+external` entries. An explicit `[]` expects none. An explicitly named origin
+stays expected even if its catalog entry is removed or disabled. Expectations
+are independent of the client's selected profile and grant; they report gaps
+without granting access or exposing hidden tool names.
+
+External servers are reported separately as `status: external`, with a public
+`served_at` location; they do not imply availability through Tether. For example:
+
+```yaml
+id: ops
+served_by: external
+served_at: "standalone gateway, http://127.0.0.1:18190/mcp"
+```
+
+`served_at` must contain only public routing guidance, never credentials or
+secret references. If omitted, status directs callers to the standalone gateway
+and service runbook. External origins are excluded from default expectations;
+an explicitly expected external origin remains missing from Tether's view.
+
+
 For short guides on connecting, discovery, grants, protection and budgets,
 start with [Use MCP through Tether](agents/mcp/README.md). This page is the full
 adapter and tool reference.
@@ -2352,7 +2398,8 @@ Use `served_by: external` for grant-only MCP origins owned by a separate gateway
 The default (field omitted) keeps Tether's built-in upstream behavior. Other
 values are rejected. External entries remain visible in the catalog and eligible
 for MCP grants; `enabled: false` still disables grants. Tether does not spawn,
-connect, resolve credentials, or report gateway health/status for these origins.
+connect or resolve credentials for these origins. Gateway status lists only their
+external ownership and public serving location; it does not probe their health.
 Their addition on catalog reload does not require a daemon restart. The external
 gateway owns their tools and health; granting one does not route its tools through
 Tether's built-in gateway.

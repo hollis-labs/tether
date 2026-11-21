@@ -5,6 +5,31 @@ granted upstream tool under its real name. Search exposes four tools:
 `tether_tool_search`, `tether_tool_list`, `tether_tool_call`, and
 `tether_gateway_status`.
 
+## Directory and shared Registry
+
+`tether_registry_*` tools describe the Tether agent/project **DIRECTORY**:
+mail addresses, profiles and delivery bindings. They are **NOT the shared
+Registry**. Use `ops_registry_search` / `ops_registry_lookup` for operations
+Registry discovery (including drafts), or `registry_record_search` for the
+published view. These names remain unchanged for compatibility.
+
+## Expected origins in gateway status
+
+Check `tether_gateway_status` for `missing_expected` and `external`, in either
+summary or full detail. Missing expected origins make status `complete: false`,
+even when absent because of a failed connection, a profile or the caller's
+grant. This is a diagnostic; it grants no access. By default expectations are
+every enabled, non-external catalog MCP server. The catalog's `global.yaml`
+can override them with `mcp.expected_origins: [torque, tesseract, registry]`;
+an explicit empty list expects none. Explicit expectations survive removal
+of an origin from the catalog.
+
+External origins appear separately with `status: external` and `served_at`
+routing guidance for the standalone gateway. They are not served by Tether;
+follow that location or the service runbook. Catalog authors can set the
+public `served_at` string on a `served_by: external` entry. Never put a
+credential or secret reference in that location.
+
 ## Pick the client surface
 
 Use flat when client permissions or hooks need to match individual tool names.

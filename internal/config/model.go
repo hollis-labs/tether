@@ -625,6 +625,7 @@ type Catalog struct {
 	// only, never upstream credentials.
 	MCPServerEnabled  map[string]bool
 	MCPServerExternal map[string]bool
+	MCPServerServedAt map[string]string
 	BootMCPGrants     map[string][]string
 	Global            Global
 	Projects          map[string]LaunchContext
