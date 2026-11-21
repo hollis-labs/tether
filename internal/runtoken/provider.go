@@ -10,7 +10,7 @@ import (
 )
 
 const FileEnv = "TETHER_RUN_TOKEN_FILE"
-const EnvFallback = "TETHER_RUN_TOKEN_ENV_FALLBACK"
+const EnvFallback = "TETHER_RUN_TOKEN_ALLOW_ENV"
 
 // ProviderEnvironment strips raw proof values from the provider environment.
 // Launchers call it before sandbox construction; shims call it after restoring

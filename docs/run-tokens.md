@@ -16,7 +16,7 @@ execution host supports nonpersistent handoff. Local support is probed; workers
 advertise `execution-run-token-v1` and `execution-run-token-file-v1` only when
 supported. The hub requires the file feature before sending a signed proof by
 default. An older worker advertising only the environment feature receives no
-proof unless the launch explicitly sets `TETHER_RUN_TOKEN_ENV_FALLBACK=1`. Older/non-Linux workers
+proof unless the launch explicitly sets `TETHER_RUN_TOKEN_ALLOW_ENV=1`. Older/non-Linux workers
 and unsupported local hosts retain legacy authenticated operation without a
 verified execution. Reserved provider/ambient token values are removed before
 launch; no token is sent to an incapable worker.
@@ -121,7 +121,7 @@ interpolation. Tests capture actual HTTP headers and actual shim/executor
 handoffs; they do not claim a full authenticated agy model run.
 
 Raw environment compatibility is opt-in: set
-`TETHER_RUN_TOKEN_ENV_FALLBACK=1` in the launch environment for older consumers.
+`TETHER_RUN_TOKEN_ALLOW_ENV=1` in the launch environment for older consumers.
 Tether’s file-aware clients prefer the file and fail closed if a configured file
 is missing, unsafe or unreadable; they accept raw env only with that flag.
 The default file delivery requires a file-aware relay for direct HTTP provider

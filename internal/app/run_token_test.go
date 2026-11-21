@@ -467,7 +467,7 @@ func TestRunProofUsesLifecycleDeadline(t *testing.T) {
 
 func TestLocalRunProofEnvironmentFallbackRequiresLaunchFlag(t *testing.T) {
 	svc, rt, id, _ := credentialLaunch(t)
-	if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=json_set(plan_json,'$.env.TETHER_RUN_TOKEN_ENV_FALLBACK','1') WHERE session_id=?`, id); err != nil {
+	if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=json_set(plan_json,'$.env.TETHER_RUN_TOKEN_ALLOW_ENV','1') WHERE session_id=?`, id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.LaunchSession(id); err != nil {
