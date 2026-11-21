@@ -154,6 +154,46 @@ func TestBoundServiceRemoteMail(t *testing.T) {
 			foreign := send(bound.URN, other.URN, issued.Token.Token, 201)
 			call("POST", "/messages/"+foreign.ID+"/read?as="+url.QueryEscape(other.URN), issued.Token.Token, "", 403)
 			call("POST", "/messages/"+foreign.ID+"/read?as="+url.QueryEscape(bound.URN), issued.Token.Token, "", 409)
+			// CW-20261121-0142: GET /messages/{id} allows fetching own inbound or
+			// outbound messages (to == bound or from == bound) and refuses another
+			// mailbox's message with 403.
+			otherAddr, err := messaging.ParseURN(other.URN)
+			if err != nil {
+				t.Fatal(err)
+			}
+			boundAddr, err := messaging.ParseURN(bound.URN)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inbound, err := db.MessagingStore().Send(t.Context(), messaging.Envelope{
+				Kind:    messaging.MsgKindNotice,
+				From:    otherAddr,
+				To:      boundAddr,
+				Payload: json.RawMessage(`{"body":"inbound-for-bound"}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherOnly, err := db.MessagingStore().Send(t.Context(), messaging.Envelope{
+				Kind:    messaging.MsgKindNotice,
+				From:    otherAddr,
+				To:      otherAddr,
+				Payload: json.RawMessage(`{"body":"private-to-other"}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ownID := range []string{sent.ID, inbound.ID, foreign.ID} {
+				rawGet := call("GET", "/messages/"+ownID+"?as="+url.QueryEscape(bound.URN), issued.Token.Token, "", 200)
+				var got messaging.Envelope
+				if err := json.Unmarshal(rawGet, &got); err != nil || got.ID != ownID {
+					t.Fatalf("GET /messages/%s decoded id=%q err=%v", ownID, got.ID, err)
+				}
+			}
+			// Another mailbox's message -> 403 (with either bound or foreign ?as=).
+			call("GET", "/messages/"+otherOnly.ID+"?as="+url.QueryEscape(bound.URN), issued.Token.Token, "", 403)
+			call("GET", "/messages/"+otherOnly.ID+"?as="+url.QueryEscape(other.URN), issued.Token.Token, "", 403)
+			call("GET", "/messages/"+sent.ID+"?as="+url.QueryEscape(bound.URN), legacy.Token.Token, "", 403)
 			// A mutable alias must not turn either the selector or a known message id
 			// into permission to read another stored recipient's mail.
 			if _, _, err := db.AddAddressAlias(t.Context(), bound.URN, other.URN, identity.OperatorID); err != nil {
@@ -177,21 +217,80 @@ func TestBoundServiceRemoteMail(t *testing.T) {
 					t.Fatal("alias expanded mailbox authority")
 				}
 			}
+			// Alias must not widen GET /messages/{id} to another mailbox's message either.
+			call("GET", "/messages/"+otherOnly.ID+"?as="+url.QueryEscape(bound.URN), issued.Token.Token, "", 403)
+			// Fetching own outbound message (from == bound, to == other) still works
+			// after the alias and must not mark other's receipt as read.
+			call("GET", "/messages/"+foreign.ID+"?as="+url.QueryEscape(bound.URN), issued.Token.Token, "", 200)
 			call("POST", "/messages/"+foreign.ID+"/read?as="+url.QueryEscape(bound.URN), issued.Token.Token, "", 409)
 			call("GET", listPath("msg://agent/agent-mux/bound"), issued.Token.Token, "", 403)
-			for _, path := range []string{listPath(bound.URN) + "&as=" + url.QueryEscape(other.URN), listPath(bound.URN) + "&to=" + url.QueryEscape(other.URN), listPath(bound.URN) + "&unknown=1", listPath(bound.URN) + "&limit=1&limit=2", "/messages/list?as=x&to=y", "/messages/list?as=x&to=x&bad=%zz", "/messages/list?as=x;to=x"} {
+			for _, path := range []string{
+				listPath(bound.URN) + "&as=" + url.QueryEscape(other.URN),
+				listPath(bound.URN) + "&to=" + url.QueryEscape(other.URN),
+				listPath(bound.URN) + "&unknown=1",
+				listPath(bound.URN) + "&limit=1&limit=2",
+				"/messages/list?as=x&to=y",
+				"/messages/list?as=x&to=x&bad=%zz",
+				"/messages/list?as=x;to=x",
+				"/messages/" + sent.ID,
+				"/messages/" + sent.ID + "/extra?as=" + url.QueryEscape(bound.URN),
+				"/messages/" + sent.ID + "?as=" + url.QueryEscape(bound.URN) + "&to=" + url.QueryEscape(bound.URN),
+				"/messages/inbox?as=" + url.QueryEscape(bound.URN),
+				"/registry/agent",
+				"/registry/agent/" + url.PathEscape(other.URN),
+				"/registry/agents",
+				"/registry/agents/",
+				"/registry/agents/" + url.PathEscape(other.URN) + "/extra",
+				"/registry/agents/" + url.PathEscape(other.URN) + "?full=true",
+				"/registry/projects/" + url.PathEscape(project.URN),
+			} {
 				call("GET", path, issued.Token.Token, "", 401)
 			}
 			for _, path := range []string{"/messages/post?as=" + bound.URN, "/messages/post/", "/messages/%70ost", "/messages/x/archive?as=" + bound.URN, "/messages/x/read/", "/messages/x%2Fy/read?as=" + bound.URN, "/messages/x/read?as=" + bound.URN + "&as=" + other.URN, "/messages/x/read?as=" + bound.URN + "&to=" + bound.URN} {
 				call("POST", path, issued.Token.Token, "{}", 401)
 			}
-			// Remote mailbox scope checks remain separate from address grants.
+			// CW-20261121-0142: registry agent read works with read scope (both Go
+			// url.PathEscape and %3A-escaped forms) and registry_read scope, while
+			// registry writes stay refused even for a registry-scoped service JWT.
+			for _, regPath := range []string{
+				"/registry/agents/" + url.PathEscape(other.URN),
+				"/registry/agents/" + strings.ReplaceAll(url.PathEscape(other.URN), ":", "%3A"),
+			} {
+				regRaw := call("GET", regPath, issued.Token.Token, "", 200)
+				var prof registry.Profile
+				if err := json.Unmarshal(regRaw, &prof); err != nil || prof.URN != other.URN || prof.DisplayName != "other" {
+					t.Fatalf("GET %s decoded=%+v err=%v", regPath, prof, err)
+				}
+			}
+			regReadOnly, _, err := is.IssueService(op, authissuer.ServiceRequest{App: "surface", Audience: "tether", Scopes: []string{"registry_read"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			call("GET", "/registry/agents/"+url.PathEscape(other.URN), regReadOnly.Token, "", 200)
+			regWriteSvc, _, err := is.IssueService(op, authissuer.ServiceRequest{App: "surface", Audience: "tether", Scopes: []string{"registry", "read"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range []struct{ method, path, body string }{
+				{"POST", "/registry/agents", `{"display_name":"nope"}`},
+				{"PATCH", "/registry/agents/" + url.PathEscape(other.URN), `{"title":"nope","last_updated_by":"svc"}`},
+				{"PUT", "/registry/agents/" + url.PathEscape(other.URN), `{}`},
+				{"DELETE", "/registry/agents/" + url.PathEscape(other.URN), ""},
+				{"POST", "/registry/agents/" + url.PathEscape(other.URN) + "/sync", "{}"},
+				{"POST", "/registry/agents/" + url.PathEscape(other.URN) + "/merge", `{"into":"` + bound.URN + `"}`},
+				{"POST", "/registry/agents/" + url.PathEscape(other.URN) + "/external-id", `{"substrate":"x","external_id":"y"}`},
+			} {
+				call(c.method, c.path, regWriteSvc.Token, c.body, 401)
+			}
+			// Remote mailbox and registry scope checks remain separate from address grants.
 			narrow, _, err := is.IssueService(op, authissuer.ServiceRequest{App: "surface", Audience: "tether", Scopes: []string{"messages"}, Addresses: []string{bound.URN}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			call("GET", listPath(bound.URN), narrow.Token, "", 403)
-			t.Log("PASS issuance 400 invalid/inactive/non-agent; JWT binding; typed+untyped verified; spoof observe/enforce; bound-only list/read with alias and selector attacks; legacy sender; scope and URL gates")
+			call("GET", "/messages/"+sent.ID+"?as="+url.QueryEscape(bound.URN), narrow.Token, "", 403)
+			call("GET", "/registry/agents/"+url.PathEscape(other.URN), narrow.Token, "", 403)
+			t.Log("PASS issuance 400 invalid/inactive/non-agent; JWT binding; typed+untyped verified; spoof observe/enforce; bound-only list/get/read with alias and selector attacks; registry agent read + write refusal; legacy sender; scope and URL gates")
 		})
 	}
 }

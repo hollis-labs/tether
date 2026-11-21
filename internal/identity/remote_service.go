@@ -15,8 +15,9 @@ import (
 
 // Remote service tokens (CW-20261019-0044, PR 3). The remote listener accepts
 // stored tth_ device credentials and, on a closed list of exact routes, an
-// issued service JWT on the send routes below and the two bound mailbox routes
-// (CW-20261118-0017). Mailbox grants are checked independently of sender mode.
+// issued service JWT on the send routes below, the bound mailbox routes
+// (CW-20261118-0017, CW-20261121-0142), and read-only registry agent lookups
+// (CW-20261121-0142). Mailbox grants are checked independently of sender mode.
 //
 // The two credential families never cross: a bearer is dispatched by format with
 // no fallthrough, a device credential never takes the JWT path, and a JWT on
@@ -39,40 +40,101 @@ var serviceJWTRoutes = map[string]string{
 	"/messages/post":   ScopeMessages,
 }
 
-// serviceRouteName returns the listed route equal to path (the map key, never the
-// request's own string), or "-" for a path off the list.
-func serviceRouteName(path string) string {
+// serviceRouteName returns the listed route equal to escapedPath (a fixed route
+// template, never the request's own string), or "-" for a path off the list.
+func serviceRouteName(escapedPath string) string {
 	for route := range serviceJWTRoutes {
-		if route == path {
+		if route == escapedPath {
 			return route
 		}
 	}
-	if path == "/messages/list" {
+	if escapedPath == "/messages/list" {
 		return "/messages/list"
 	}
-	if serviceReadPath.MatchString(path) {
+	if serviceReadPath.MatchString(escapedPath) {
 		return "/messages/{id}/read"
+	}
+	if isServiceMessageGetPath(escapedPath) {
+		return "/messages/{id}"
+	}
+	if isServiceRegistryAgentPath(escapedPath) {
+		return "/registry/agents/{urn}"
 	}
 	return "-"
 }
 
-// ServiceJWTScope returns the scope a service JWT needs for method and path, and
-// whether the route is on the closed list at all.
-func ServiceJWTScope(method, path string) (string, bool) {
-	if method == http.MethodGet && path == "/messages/list" {
-		return ScopeRead, true
+// ServiceJWTScope returns the scope a service JWT needs for method and escaped
+// path, and whether the route is on the closed list at all.
+func ServiceJWTScope(method, escapedPath string) (string, bool) {
+	if method == http.MethodGet {
+		switch {
+		case escapedPath == "/messages/list", isServiceMessageGetPath(escapedPath):
+			return ScopeRead, true
+		case isServiceRegistryAgentPath(escapedPath):
+			return ScopeRegistryRead, true
+		}
+		return "", false
 	}
-	if method == http.MethodPost && serviceReadPath.MatchString(path) {
+	if method == http.MethodPost && serviceReadPath.MatchString(escapedPath) {
 		return ScopeMessages, true
 	}
 	if method != ServiceJWTMethod {
 		return "", false
 	}
-	scope, ok := serviceJWTRoutes[path]
+	scope, ok := serviceJWTRoutes[escapedPath]
 	return scope, ok
 }
 
-var serviceReadPath = regexp.MustCompile(`^/messages/[A-Za-z0-9_-]+/read$`)
+var (
+	serviceReadPath       = regexp.MustCompile(`^/messages/[A-Za-z0-9_-]+/read$`)
+	serviceMessageGetPath = regexp.MustCompile(`^/messages/[A-Za-z0-9_-]+$`)
+	// serviceRegistryURNRe matches a canonical msg:// URN (2 or 3 path segments
+	// after msg://, e.g. msg://agent/agent-mux/agt_xxx or msg://user/chrispian)
+	// with no dot-segments, whitespace or control characters.
+	serviceRegistryURNRe = regexp.MustCompile(`^msg://[a-z][a-z0-9-]*(?:/[A-Za-z0-9][A-Za-z0-9._#:-]*){1,2}$`)
+)
+
+// reservedMessageSegments are static routes under /messages/ that must never
+// be admitted as GET /messages/{id}.
+var reservedMessageSegments = map[string]bool{
+	"list":            true,
+	"inbox":           true,
+	"watch":           true,
+	"subscribe":       true,
+	"notify":          true,
+	"request":         true,
+	"post":            true,
+	"aliases":         true,
+	"pending-replies": true,
+	"thread":          true,
+	"retention":       true,
+}
+
+func isServiceMessageGetPath(escapedPath string) bool {
+	if !serviceMessageGetPath.MatchString(escapedPath) {
+		return false
+	}
+	return !reservedMessageSegments[strings.TrimPrefix(escapedPath, "/messages/")]
+}
+
+// isServiceRegistryAgentPath reports whether escapedPath is an exact,
+// single-segment GET /registry/agents/{escaped-urn} path. The /registry/agents/
+// prefix must be literal, the trailing segment must contain no unescaped slash,
+// and it must be a canonical percent-encoding of a msg:// URN.
+func isServiceRegistryAgentPath(escapedPath string) bool {
+	seg, ok := strings.CutPrefix(escapedPath, "/registry/agents/")
+	if !ok || seg == "" || strings.Contains(seg, "/") {
+		return false
+	}
+	urn, err := url.PathUnescape(seg)
+	if err != nil || !serviceRegistryURNRe.MatchString(urn) {
+		return false
+	}
+	canon := url.PathEscape(urn)
+	return strings.EqualFold(seg, canon) ||
+		strings.EqualFold(seg, strings.ReplaceAll(canon, ":", "%3A")) ||
+		strings.EqualFold(seg, strings.ReplaceAll(canon, "%3A", ":"))
+}
 
 var servicePrincipalRe = regexp.MustCompile(`^msg://service/[a-z][a-z0-9-]{0,31}/[a-z][a-z0-9-]{0,31}$`)
 
@@ -178,7 +240,9 @@ func (l *AttemptLimiter) Refund() {
 // returns its JWT bearer if there is one (three dot-separated parts, not a tth_
 // credential).
 func serviceJWTRequest(r *http.Request) (string, bool) {
-	if _, listed := ServiceJWTScope(r.Method, r.URL.Path); !listed || r.URL.EscapedPath() != r.URL.Path ||
+	escaped := r.URL.EscapedPath()
+	if _, listed := ServiceJWTScope(r.Method, escaped); !listed ||
+		(!isServiceRegistryAgentPath(escaped) && escaped != r.URL.Path) ||
 		!serviceJWTQuery(r) || r.URL.ForceQuery || r.URL.Fragment != "" || r.URL.Opaque != "" {
 		return "", false
 	}
@@ -199,10 +263,12 @@ func serviceJWTRequest(r *http.Request) (string, bool) {
 
 // serviceMailboxRequest is deliberately narrower than all mailbox operations.
 func serviceMailboxRequest(r *http.Request) bool {
-	return r.Method == http.MethodGet && r.URL.Path == "/messages/list" || r.Method == http.MethodPost && serviceReadPath.MatchString(r.URL.Path)
+	escaped := r.URL.EscapedPath()
+	return r.Method == http.MethodGet && (escaped == "/messages/list" || isServiceMessageGetPath(escaped)) ||
+		r.Method == http.MethodPost && serviceReadPath.MatchString(escaped)
 }
 
-// Queries are allowed only on the two mailbox routes, with one unambiguous
+// Queries are allowed only on the bound mailbox routes, with one unambiguous
 // value per documented selector. No unknown keys or duplicate selectors.
 func serviceJWTQuery(r *http.Request) bool {
 	if !serviceMailboxRequest(r) {
@@ -212,8 +278,9 @@ func serviceJWTQuery(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
+	isList := r.Method == http.MethodGet && r.URL.EscapedPath() == "/messages/list"
 	allowed := map[string]bool{"as": true}
-	if r.Method == http.MethodGet {
+	if isList {
 		for _, key := range []string{"to", "kind", "thread_id", "include_archived", "unread_only", "limit", "offset"} {
 			allowed[key] = true
 		}
@@ -224,13 +291,14 @@ func serviceJWTQuery(r *http.Request) bool {
 			return false
 		}
 	}
-	return q.Get("as") != "" && (r.Method != http.MethodGet || q.Get("to") == q.Get("as"))
+	return q.Get("as") != "" && (!isList || q.Get("to") == q.Get("as"))
 }
 
-// handleServiceJWT authenticates a service JWT for POST /events. It writes the
+// handle authenticates a service JWT for the closed route list. It writes the
 // refusal itself, or calls next with the verified principal.
 func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string, record func(context.Context, Observation) error, next http.Handler) {
-	need, _ := ServiceJWTScope(r.Method, r.URL.Path)
+	escaped := r.URL.EscapedPath()
+	need, _ := ServiceJWTScope(r.Method, escaped)
 	obs := Observation{At: time.Now().UTC(), Mode: Enforce, Method: r.Method, Route: r.URL.Path, Authentication: "invalid"}
 	// One unit is reserved before the expensive verification and kept only if the
 	// attempt is a refused credential (401). Everything else gives it back, on
@@ -302,7 +370,7 @@ func (c *ServiceJWT) handle(w http.ResponseWriter, r *http.Request, token string
 	if r.Method == http.MethodGet {
 		method = http.MethodGet
 	}
-	log.Printf("identity: remote service JWT accepted sub=%s jti=%.8s route=%s %s scope=%s", p.ID, p.TokenID, method, serviceRouteName(r.URL.Path), need)
+	log.Printf("identity: remote service JWT accepted sub=%s jti=%.8s route=%s %s scope=%s", p.ID, p.TokenID, method, serviceRouteName(escaped), need)
 	if record != nil {
 		obs.Event = "service_jwt_accepted"
 		_ = record(r.Context(), obs)
