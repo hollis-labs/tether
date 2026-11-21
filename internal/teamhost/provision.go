@@ -16,12 +16,13 @@ type intent struct {
 	member                   *teams.Member
 	parentSession, tombstone string
 	cleaned                  bool
+	observationOnly          bool
 }
 
 func loadIntent(ctx context.Context, q rowReader, key string) (intent, error) {
 	var out intent
 	var req, enrollment, member []byte
-	err := q.QueryRowContext(ctx, `SELECT request,enrollment,member,parent_session,tombstone,cleaned FROM team_host_intents WHERE intent_key=?`, key).Scan(&req, &enrollment, &member, &out.parentSession, &out.tombstone, &out.cleaned)
+	err := q.QueryRowContext(ctx, `SELECT request,enrollment,member,parent_session,tombstone,cleaned,observation_only FROM team_host_intents WHERE intent_key=?`, key).Scan(&req, &enrollment, &member, &out.parentSession, &out.tombstone, &out.cleaned, &out.observationOnly)
 	if err != nil {
 		return out, notFound(err)
 	}
@@ -412,13 +413,13 @@ func (h *Host) end(ctx context.Context, m teams.Member, mode string) error {
 			if current.tombstone != "" && current.tombstone != mode {
 				return teams.ErrConflict
 			}
-			_, err = conn.ExecContext(ctx, `UPDATE team_host_intents SET tombstone=? WHERE intent_key=?`, mode, req.IdempotencyKey)
+			_, err = conn.ExecContext(ctx, `UPDATE team_host_intents SET tombstone=?,observation_only=MAX(observation_only,?) WHERE intent_key=?`, mode, DissolutionRecovery(ctx), req.IdempotencyKey)
 			return err
 		}
 		if !errors.Is(err, teams.ErrNotFound) {
 			return err
 		}
-		_, err = conn.ExecContext(ctx, `INSERT INTO team_host_intents(intent_key,request,tombstone) VALUES(?,?,?)`, req.IdempotencyKey, payload, mode)
+		_, err = conn.ExecContext(ctx, `INSERT INTO team_host_intents(intent_key,request,tombstone,observation_only) VALUES(?,?,?,?)`, req.IdempotencyKey, payload, mode, DissolutionRecovery(ctx))
 		return err
 	})
 	if err != nil {
@@ -427,6 +428,13 @@ func (h *Host) end(ctx context.Context, m teams.Member, mode string) error {
 	return h.clean(ctx, req.IdempotencyKey, mode)
 }
 func (h *Host) clean(ctx context.Context, key, mode string) error {
+	current, err := loadIntent(ctx, h.db, key)
+	if err != nil {
+		return err
+	}
+	if current.observationOnly {
+		ctx = WithDissolutionRecovery(ctx)
+	}
 	// An adopted member's session, binding and registration are not ours.
 	adopted, err := h.isAdopted(ctx, key)
 	if err != nil {

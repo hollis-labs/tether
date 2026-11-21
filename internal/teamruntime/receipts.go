@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/hollis-labs/libs/mesh/core/teams"
+	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/teamstore"
 )
 
@@ -27,6 +28,8 @@ type receipt struct {
 	nonce, acquired  string
 	bindingSecret    string
 	bindingEnded     bool
+	observationOnly  bool
+	observedSequence int64
 }
 
 // The daemon is the runtime writer. Locks serialize keyed port effects across
@@ -46,7 +49,7 @@ func (r receipts) lock(kind, key string) func() {
 }
 func (r receipts) read(ctx context.Context, kind, key string) (receipt, error) {
 	var v receipt
-	err := r.db.QueryRowContext(ctx, `SELECT request,payload,state,ended,binding_ended,nonce,acquired_urn,binding_secret FROM team_port_intents WHERE port_kind=? AND intent_key=?`, kind, key).Scan(&v.request, &v.payload, &v.state, &v.ended, &v.bindingEnded, &v.nonce, &v.acquired, &v.bindingSecret)
+	err := r.db.QueryRowContext(ctx, `SELECT request,payload,state,ended,binding_ended,nonce,acquired_urn,binding_secret,observation_only,observed_sequence FROM team_port_intents WHERE port_kind=? AND intent_key=?`, kind, key).Scan(&v.request, &v.payload, &v.state, &v.ended, &v.bindingEnded, &v.nonce, &v.acquired, &v.bindingSecret, &v.observationOnly, &v.observedSequence)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = teams.ErrNotFound
 	}
@@ -126,7 +129,7 @@ func (r receipts) end(ctx context.Context, kind, key, mode string, binding bool)
 			_, err := conn.ExecContext(ctx, `UPDATE team_port_intents SET binding_ended=1 WHERE port_kind=? AND intent_key=?`, kind, key)
 			return err
 		}
-		_, err := conn.ExecContext(ctx, `UPDATE team_port_intents SET ended=CASE WHEN ended='retire' THEN ended ELSE ? END WHERE port_kind=? AND intent_key=?`, mode, kind, key)
+		_, err := conn.ExecContext(ctx, `UPDATE team_port_intents SET ended=CASE WHEN ended='retire' THEN ended ELSE ? END,observation_only=MAX(observation_only,CASE WHEN port_kind='session' THEN MAX(?,COALESCE((SELECT observation_only FROM team_host_intents WHERE intent_key=?),0)) ELSE 0 END) WHERE port_kind=? AND intent_key=?`, mode, teamhost.DissolutionRecovery(ctx), key, kind, key)
 		return err
 	})
 }

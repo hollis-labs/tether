@@ -334,3 +334,52 @@ func capTeamMaxDuration(plan *launch.Plan, d time.Duration) {
 	merged := launchprofile.MergeLifecycle(plan.Lifecycle, &launchprofile.LifecyclePolicy{MaxDuration: &v})
 	plan.Lifecycle = merged
 }
+
+// TeamSessionRecoveryReady confirms an observed end without issuing Stop.
+// A live execution, launch admission, unconfirmed remote placement or retained shim keeps
+// its own authority even when a stale row claims to be terminal.
+func (s *Service) TeamSessionRecoveryReady(ctx context.Context, id string) (bool, error) {
+	s.launchMu.Lock()
+	defer s.launchMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if gate := s.launches[id]; gate != nil && gate.refs > 0 {
+		return false, nil
+	}
+	row, err := s.Store.GetSession(id)
+	if err != nil {
+		return false, err
+	}
+	if row.PID.Int64 != 0 || !session.State(row.State).Terminal() || s.sessionHeldLive(id, "") || s.sessionHeldLive(id, row.WorkerID) {
+		return false, nil
+	}
+	if row.WorkerID != "" {
+		exitSequence, custodySequence, err := session.WorkerExitEvidence(ctx, s.Store.DB(), id, row.WorkerID)
+		if err != nil || exitSequence == 0 {
+			return false, err
+		}
+		complete, connected := false, false
+		if s.Workers != nil {
+			inventory, known, online := s.Workers.Inventory(row.WorkerID)
+			complete, connected = known, online
+			if online {
+				if _, held := inventory[id]; held && inventory[id] != "exited" {
+					return false, nil
+				}
+			}
+		}
+		if connected && !complete {
+			return false, nil
+		}
+		if custodySequence > exitSequence && (!connected || !complete) {
+			return false, nil
+		}
+	}
+	if _, err = s.Store.SessionShim(ctx, id); err == nil {
+		return false, nil
+	} else if !errors.Is(err, store.ErrSessionShimNotFound) {
+		return false, err
+	}
+	return true, nil
+}

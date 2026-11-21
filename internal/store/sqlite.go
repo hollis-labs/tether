@@ -462,7 +462,8 @@ func (s *Store) SweepStaleSessions(now string, spare func(StaleSession) bool) (s
 		}
 		res, err := s.db.Exec(
 			`UPDATE sessions SET state='failed', exit_code=-1, ended_at=?, updated_at=?
-			 WHERE id=? AND state IN ('launching', 'running')`,
+			 WHERE id=? AND state IN ('launching', 'running')
+ AND NOT (exit_code IS NOT NULL AND COALESCE(ended_at,'')<>'')`,
 			now, now, r.ID,
 		)
 		if err != nil {

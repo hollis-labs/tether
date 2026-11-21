@@ -23,10 +23,13 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/teamstore"
 	"github.com/hollis-labs/tether/internal/teamsvc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -620,6 +623,89 @@ func TestDaemonTeamsAdoptionPolicyBuilds(t *testing.T) {
 			defer closeOps()
 			if ops == nil {
 				t.Fatal("no service built")
+			}
+		})
+	}
+}
+
+func TestDaemonTeamsStartupReconcilesCompletedTeardown(t *testing.T) {
+	// Keep the periodic tick out of this assertion: build must do this itself.
+	t.Setenv("TETHER_TEAMS_LOOP_INTERVAL", "1h")
+	enabled := true
+	f := newDaemonTeamFixture(t, &enabled)
+	db := f.svc.Store.DB()
+	_, err := db.Exec(`INSERT INTO team_runs(run_id,session_group_id,team_id,team_version,payload,created_at) VALUES('old-run','old-group','old-team',1,'{"id":"old-run","team_id":"old-team","team_version":1,"status":"working","result":"retained"}','now')`)
+	teamRequire(t, err)
+	_, err = db.Exec(`INSERT INTO team_rosters(run_id,version,payload) VALUES('old-run',1,'{"run_id":"old-run","version":1,"members":[{"id":"owner","status":"released"}]}')`)
+	teamRequire(t, err)
+	_, err = db.Exec(`INSERT INTO team_host_routing(run_id,install_key,payload,channel,removed) VALUES('old-run','old-key','{}','old-channel',1)`)
+	teamRequire(t, err)
+	_, closeTeams, err := buildDaemonTeams(f.svc, f.cfg)
+	teamRequire(t, err)
+	defer closeTeams()
+	var status, result string
+	teamRequire(t, db.QueryRow(`SELECT json_extract(payload,'$.status'),json_extract(payload,'$.result') FROM team_runs WHERE run_id='old-run'`).Scan(&status, &result))
+	if status != "dissolved" || result != "retained" {
+		t.Fatalf("status=%q result=%q", status, result)
+	}
+}
+
+func TestDaemonTeamsStartupReconcilesInterruptedMixedRoster(t *testing.T) {
+	t.Setenv("TETHER_TEAMS_LOOP_INTERVAL", "1h")
+	for _, state := range []string{"failed", "running", "launching", "remote-completed"} {
+		t.Run(state, func(t *testing.T) {
+			enabled := true
+			f := newDaemonTeamFixture(t, &enabled)
+			f.seed(t, daemonTeamCaller, mesh.ActorService)
+			db := f.svc.Store.DB()
+			storage, err := teamstore.New(db, teamstore.Options{})
+			teamRequire(t, err)
+			req := teams.ProvisionRequest{IdempotencyKey: "reviewer-intent", RunID: "retained", MemberID: "reviewer", Slot: daemonTeamDefinition().Slots[0]}
+			member := teams.Member{ID: "reviewer", Slot: "reviewer", Actor: "msg://agent/fixture/reviewer", Kind: mesh.ActorAgent, SessionID: "reviewer-session", Resolution: teams.Fresh, Status: "stopping", Intent: &req}
+			teamRequire(t, f.svc.Store.CreateSessionKeyed(store.SessionRow{ID: member.SessionID, State: state}, &launch.Plan{}, &store.SessionIdempotency{PrincipalID: store.IdempotencyPrincipalTeam, Key: "team-port:reviewer-nonce", Operation: store.IdempotencyOpCreate, RequestDigest: "fixture"}))
+			if state == "remote-completed" {
+				_, err = db.Exec(`UPDATE sessions SET state='completed',worker_id='remote-worker',pid=0,exit_code=NULL,ended_at='2026-11-20T19:45:36Z' WHERE id=?`, member.SessionID)
+				teamRequire(t, err)
+				_, _, err = f.svc.Store.InsertEvent(events.ScopeSession, member.SessionID, events.KindSessionStateChanged, `{"from":"killed","to":"completed","exit_code":null,"reason":"worker_exit","worker_id":"remote-worker"}`)
+				teamRequire(t, err)
+			}
+			raw := func(v any) []byte { b, err := json.Marshal(v); teamRequire(t, err); return b }
+			acquired := member
+			acquired.Status = "active"
+			_, err = db.Exec(`INSERT INTO team_host_intents(intent_key,request,member) VALUES(?,?,?)`, req.IdempotencyKey, raw(req), raw(acquired))
+			teamRequire(t, err)
+			_, err = db.Exec(`INSERT INTO team_host_bindings(actor,intent_key) VALUES(?,?)`, member.Actor, req.IdempotencyKey)
+			teamRequire(t, err)
+			_, err = db.Exec(`INSERT INTO team_port_intents(port_kind,intent_key,nonce,state,payload,request) VALUES('session',?,'reviewer-nonce','done',?,?)`, req.IdempotencyKey, raw(member.SessionID), raw(teamhost.SessionRequest{IntentKey: req.IdempotencyKey, Actor: member.Actor, Provision: req}))
+			teamRequire(t, err)
+			_, err = db.Exec(`INSERT INTO team_port_intents(port_kind,intent_key,nonce,state,acquired_urn,request) VALUES('enrollment',?,'enrollment-nonce','done',?,?)`, req.IdempotencyKey, member.Actor, raw(teamhost.EnrollmentRequest{IntentKey: req.IdempotencyKey, Provision: req}))
+			teamRequire(t, err)
+			teamRequire(t, storage.Mutate(context.Background(), "retained", func(r *teams.Roster) error {
+				r.Members = []teams.Member{{ID: "coordinator", Slot: "coordinator", Actor: daemonTeamCaller, Kind: mesh.ActorService, Governance: teams.Owner, Status: "releasing"}, {ID: "orchestrator", Slot: "orchestrator", Status: "stopped"}, {ID: "worker", Slot: "worker", Status: "stopped"}, member}
+				return nil
+			}))
+			_, err = db.Exec(`INSERT INTO team_host_routing(run_id,install_key,payload,channel,removed) VALUES('retained','mixed-routing','{}','mixed-channel',0)`)
+			teamRequire(t, err)
+			_, closeTeams, err := buildDaemonTeams(f.svc, f.cfg)
+			teamRequire(t, err)
+			defer closeTeams()
+			run, err := storage.GetRun(context.Background(), "retained")
+			teamRequire(t, err)
+			want := "working"
+			if state == "failed" || state == "remote-completed" {
+				want = "dissolved"
+			}
+			if string(run.Run.Status) != want {
+				t.Fatalf("state=%s run=%s", state, run.Run.Status)
+			}
+			roster, err := storage.Snapshot(context.Background(), "retained")
+			teamRequire(t, err)
+			if state == "failed" || state == "remote-completed" {
+				if roster.Members[0].Status != "released" || roster.Members[3].Status != "stopped" {
+					t.Fatalf("unfinished roster: %+v", roster)
+				}
+			} else if roster.Members[3].Status != "stopping" {
+				t.Fatal("live transition terminalized")
 			}
 		})
 	}

@@ -14,6 +14,7 @@ import (
 type ReaperSession struct {
 	SessionRow
 	PIDStartedAt string
+	HasShim      bool
 	LastActivity time.Time
 	StartedAt    time.Time
 }
@@ -28,14 +29,14 @@ var reaperActivityKinds = []string{"session.activity", "session.turn_output", "s
 // ReaperCandidates lists hub-local sessions the reaper may act on, without touching the events table.
 // Start and activity times are loaded lazily with ReaperTimes, only for sessions that are actually examined.
 func (s *Store) ReaperCandidates(ctx context.Context) ([]ReaperSession, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(pid_started_at,'') FROM sessions WHERE worker_id='' AND state IN ('launching','running','detached') ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(pid_started_at,''),EXISTS(SELECT 1 FROM session_shims WHERE session_id=sessions.id) FROM sessions WHERE worker_id='' AND state IN ('launching','running','detached') ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
 	var ids []ReaperSession
 	for rows.Next() {
 		var r ReaperSession
-		if err = rows.Scan(&r.ID, &r.PIDStartedAt); err != nil {
+		if err = rows.Scan(&r.ID, &r.PIDStartedAt, &r.HasShim); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}

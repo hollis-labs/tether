@@ -110,6 +110,13 @@ func (s *Service) abortFormation(ctx context.Context, runID string) error {
 // idempotent and safe to run concurrently with the team verbs; a run that
 // fails to end is retried on the next pass.
 func (s *Service) ReapRuns(ctx context.Context, limit int) error {
+	if recovery, ok := s.deps.Runs.(interface {
+		ReconcileDissolvedRuns(context.Context, int) error
+	}); ok {
+		if err := recovery.ReconcileDissolvedRuns(ctx, limit); err != nil {
+			return err
+		}
+	}
 	if s.deps.Deadlines == nil {
 		return nil
 	}
@@ -259,4 +266,78 @@ func (s *Service) addMemberLimits(ctx context.Context, t teams.Team, actor teams
 	grants := append([]teams.Grant(nil), t.Authority.Grants...)
 	t.Authority.Grants = append(grants, teams.Grant{FromActor: actor.Actor, Verb: teams.MaySpawn, ToSlot: req.Slot})
 	return t, limits, actor.Limits, nil
+}
+
+// recoverDissolved permits a retained owner/admin to repeat teardown with a
+// fresh key after restart. It grants no new live effects to ended members;
+// the host must atomically prove teardown complete before repairing the run.
+func (s *Service) recoverDissolved(ctx context.Context, runID string, p Principal) (bool, error) {
+	roster, err := s.dissolveRoster(ctx, runID)
+	if err != nil {
+		return false, err
+	}
+	authorized := false
+	for _, m := range roster.Members {
+		if m.Actor == p.ID && m.Kind == p.Kind && (m.Governance == teams.Owner || m.Governance == teams.Admin) {
+			authorized = true
+			break
+		}
+	}
+	if !authorized {
+		return false, nil
+	}
+	run, err := s.deps.Runs.GetRun(ctx, runID)
+	if err != nil {
+		return false, err
+	}
+	t, err := s.deps.Definitions.GetDefinition(ctx, run.TeamID, run.TeamVersion)
+	if err != nil {
+		return false, err
+	}
+	if t.Authority.Mode != teams.Strict {
+		return false, ErrDenied
+	}
+	if runEnded(run.Status) {
+		return true, nil
+	}
+	if recovery, ok := s.deps.Runs.(interface {
+		ReconcileDissolvedRun(context.Context, string) (bool, error)
+	}); ok {
+		return recovery.ReconcileDissolvedRun(ctx, runID)
+	}
+	return false, nil
+}
+
+// A missing current roster does not remove historical administrative identity,
+// but history is exposed for dissolve only after durable teardown proof.
+func (s *Service) dissolveRoster(ctx context.Context, id string) (teams.Roster, error) {
+	roster, err := s.deps.Roster.Snapshot(ctx, id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return roster, err
+	}
+	if err == nil && len(roster.Members) > 0 {
+		return roster, nil
+	}
+	if recovery, ok := s.deps.Roster.(interface {
+		DissolvedRoster(context.Context, string) (teams.Roster, error)
+	}); ok {
+		return recovery.DissolvedRoster(ctx, id)
+	}
+	if err != nil {
+		return roster, err
+	}
+	return roster, nil
+}
+
+func (s *Service) dissolveMembership(ctx context.Context, id string, p Principal) error {
+	roster, err := s.dissolveRoster(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, m := range roster.Members {
+		if m.Actor == p.ID && m.Kind == p.Kind {
+			return nil
+		}
+	}
+	return ErrNotFound
 }

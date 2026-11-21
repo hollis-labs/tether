@@ -1,6 +1,7 @@
 package teamruntime
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -21,7 +22,8 @@ func TestServiceFormationAndDissolveUseRealAdaptersAndLeaveExternalOwnerAlone(t 
 	check(t, err)
 	host, err := teamhost.New(db.DB(), s, teamhost.Ports{Enroller: e, Sessions: sessions, Messenger: messages, Channels: Channels{}}, teamhost.Options{ActorTrust: map[mesh.URN]teamhost.TrustTier{"msg://service/local/owner": teamhost.TrustTrusted}, TrustTiers: map[mesh.DefinitionRef]teamhost.TrustTier{pin: teamhost.TrustTrusted}})
 	check(t, err)
-	service, err := teamsvc.New(teamsvc.Deps{Ceilings: ceilings{}, Principals: Principals{Mode: identity.Enforce, Sessions: e}, Runs: host, Calls: host, Definitions: s, Roster: s, Ledger: s, Signals: s, Provisioner: host, Workflows: host, Triggers: host, Sender: host, Routing: host, Trust: host, Approvals: host, Clock: host, IDs: host, Defaults: teamsvc.ConservativePolicy().Limits})
+	deps := teamsvc.Deps{Ceilings: ceilings{}, Principals: Principals{Mode: identity.Enforce, Sessions: e}, Runs: host, Calls: host, Definitions: s, Roster: s, Ledger: s, Signals: s, Provisioner: host, Workflows: host, Triggers: host, Sender: host, Routing: host, Trust: host, Approvals: host, Clock: host, IDs: host, Defaults: teamsvc.ConservativePolicy().Limits}
+	service, err := teamsvc.New(deps)
 	check(t, err)
 	team := teams.Team{ID: "formation", Name: "Formation", Version: 1, Slots: []teams.Slot{
 		{Name: "owner", Definition: pin, Resolution: teams.Fresh, Activation: teams.Singleton, Min: 0, Max: 1},
@@ -71,4 +73,48 @@ func TestServiceFormationAndDissolveUseRealAdaptersAndLeaveExternalOwnerAlone(t 
 	if profile.Status == "active" {
 		t.Fatal("fresh worker enrollment survived dissolve")
 	}
+	// A fresh key after completed dissolution must succeed for the retained owner.
+	_, err = service.Dissolve(owner, teamsvc.RunRequest{Key: "end-again", RunID: result.Run.ID})
+	check(t, err)
+	// Reproduce the old interrupted status write after routing and roster ended.
+	_, err = db.DB().Exec(`UPDATE team_runs SET payload=json_set(payload,'$.status','working','$.result','kept') WHERE run_id=?`, result.Run.ID)
+	check(t, err)
+	_, err = service.Dissolve(owner, teamsvc.RunRequest{Key: "recover-ended", RunID: result.Run.ID})
+	check(t, err)
+	recovered, err := host.GetRun(ctx, result.Run.ID)
+	check(t, err)
+	if recovered.Status != "dissolved" {
+		t.Fatalf("stale run not repaired: %+v", recovered)
+	}
+	// Periodic lifecycle reconciliation also works without an open deadline row.
+	_, err = db.DB().Exec(`UPDATE team_runs SET payload=json_set(payload,'$.status','working') WHERE run_id=?`, result.Run.ID)
+	check(t, err)
+	check(t, service.ReapRuns(ctx, 50))
+	recovered, err = host.GetRun(ctx, result.Run.ID)
+	check(t, err)
+	if recovered.Status != "dissolved" {
+		t.Fatalf("periodic run recovery: %+v", recovered)
+	}
+	// Recovery after restart must not depend on the mutable current roster row.
+	_, err = db.DB().Exec(`DELETE FROM team_rosters WHERE run_id=?`, result.Run.ID)
+	check(t, err)
+	_, err = db.DB().Exec(`UPDATE team_runs SET payload=json_set(payload,'$.status','working') WHERE run_id=?`, result.Run.ID)
+	check(t, err)
+	service, err = teamsvc.New(deps) // New service, durable receipts/roster history as after restart.
+	check(t, err)
+	for _, key := range []string{"missing-roster-recovery", "missing-roster-repeat"} {
+		_, err = service.Dissolve(owner, teamsvc.RunRequest{Key: key, RunID: result.Run.ID})
+		check(t, err)
+	}
+	recovered, err = host.GetRun(ctx, result.Run.ID)
+	check(t, err)
+	if recovered.Status != "dissolved" {
+		t.Fatalf("missing roster recovery: %+v", recovered)
+	}
+	stranger := identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "msg://service/local/stranger", Kind: "service"})
+	_, err = service.Dissolve(stranger, teamsvc.RunRequest{Key: "stranger", RunID: result.Run.ID})
+	if !errors.Is(err, teamsvc.ErrNotFound) {
+		t.Fatalf("stranger recovered run: %v", err)
+	}
+
 }

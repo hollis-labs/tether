@@ -197,7 +197,36 @@ func (s *Sessions) cleanup(ctx context.Context, key string) error {
 	if record == nil {
 		return s.cleaned(ctx, "session", key)
 	}
-	if err = s.service.StopTeamSession(ctx, record.SessionID); err != nil {
+	if receipt.observationOnly || teamhost.DissolutionRecovery(ctx) {
+		var sequence int64
+		if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM events WHERE session_id=?`, record.SessionID).Scan(&sequence); err != nil {
+			return err
+		}
+		ready, ok := s.service.(interface {
+			TeamSessionRecoveryReady(context.Context, string) (bool, error)
+		})
+		if !ok {
+			return teamhost.ErrSessionUnavailable
+		}
+		ended, err := ready.TeamSessionRecoveryReady(ctx, record.SessionID)
+		if err != nil {
+			return err
+		}
+		if !ended {
+			return teamhost.ErrSessionUnavailable
+		}
+		return s.store.WithTransaction(ctx, func(c *sql.Conn) error {
+			var unchanged bool
+			if err := c.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND state IN ('completed','failed','killed') AND COALESCE(pid,0)=0) AND NOT EXISTS(SELECT 1 FROM events WHERE session_id=? AND id>?)`, record.SessionID, record.SessionID, sequence).Scan(&unchanged); err != nil {
+				return err
+			}
+			if !unchanged {
+				return teamhost.ErrSessionUnavailable
+			}
+			_, err := c.ExecContext(ctx, `UPDATE team_port_intents SET state='cleaned',observed_sequence=? WHERE port_kind='session' AND intent_key=? AND observation_only=1 AND ended='stop'`, sequence, key)
+			return err
+		})
+	} else if err = s.service.StopTeamSession(ctx, record.SessionID); err != nil {
 		return err
 	}
 	return s.cleaned(ctx, "session", key)
@@ -208,4 +237,17 @@ func classifySession(err error) error {
 		return fmt.Errorf("%w: %w: %w", teams.ErrProvisionFailed, teamhost.ErrPermanent, err)
 	}
 	return err
+}
+
+// CanRecoverStop is an observation only. The host independently verifies the
+// keyed acquisition receipts before invoking cleanup, and storage rechecks the
+// terminal outcome and completed receipts at the final commit.
+func (s *Sessions) CanRecoverStop(ctx context.Context, m teams.Member) (bool, error) {
+	ready, ok := s.service.(interface {
+		TeamSessionRecoveryReady(context.Context, string) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return ready.TeamSessionRecoveryReady(ctx, m.SessionID)
 }
