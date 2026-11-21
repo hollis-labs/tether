@@ -1791,6 +1791,10 @@ the cap can briefly exceed it.
 
 MCP: `tether_execution_status` (read-only). CLI: `tether execution status|pause|resume|cap`.
 
+### `GET /agents/live`
+
+Read-only list of live agents (Tether sessions and kit seats) with host, busy/idle state, last activity and a stale flag. Filters `host`, `kind`, `include_stale`, `stale_after_seconds`, `limit`. MCP: `tether_agents_live`. Schema, provenance and limitations: [agents-live.md](../agents-live.md).
+
 ### `GET /events/stream`
 
 SSE stream of bus events. Replays history (via `since_seq`) then switches

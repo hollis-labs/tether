@@ -107,6 +107,11 @@ func (s *Server) handleMessagesWatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if to.Kind == messaging.KindAgent && s.Presence != nil && (asRecipient || s.isDeliveryRecipient(r, to.URN())) {
+		// Only a real recipient watch is presence evidence (agents live); an
+		// operator inspecting the mailbox without as_recipient is not the agent.
+		defer s.Presence.Watch(to.URN())()
+	}
 	var f store.ListFilter
 	if ks := q.Get("kind"); ks != "" {
 		for _, k := range strings.Split(ks, ",") {

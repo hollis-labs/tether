@@ -34,6 +34,7 @@ import (
 //	  sed -E 's/.*"(\/[^"]*)"/\1/' | sort -u
 var apiTopLevelPaths = []string{
 	"/correlation/register",
+	"/agents/live",
 	"/ai/audit", "/ai/budgets", "/ai/chat", "/ai/chat/stream", "/ai/decide", "/ai/embeddings",
 	"/ai/models", "/ai/providers", "/ai/routes", "/ai/routes/explain",
 	"/ai/routes/preview", "/ai/usage",

@@ -26,6 +26,11 @@ type CorrelationRegisterRequest struct {
 	ExportReceiptID   string `json:"export_receipt_id,omitempty"`
 	ActivitySHA256    string `json:"activity_sha256,omitempty"`
 	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	// Host, DisplayName and Summary are descriptive and local only (shown by
+	// tether_agents_live); they are never sent to the Registry.
+	Host        string `json:"host,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Summary     string `json:"summary,omitempty"`
 }
 
 type CorrelationRegisterResponse struct {
@@ -42,7 +47,7 @@ func (in CorrelationRegisterRequest) Validate() error {
 	if !strings.HasPrefix(in.URN, "msg://agent/") || strings.TrimPrefix(in.URN, "msg://agent/") == "" || in.Session == "" {
 		return errors.New("agent urn and session required")
 	}
-	for _, v := range []string{in.URN, in.Session, in.RunID, in.TaskID, in.WorkstreamID, in.ManifestDigest, in.ExportReceiptID, in.ActivitySHA256, in.ProviderSessionID} {
+	for _, v := range []string{in.URN, in.Session, in.RunID, in.TaskID, in.WorkstreamID, in.ManifestDigest, in.ExportReceiptID, in.ActivitySHA256, in.ProviderSessionID, in.Host, in.DisplayName, in.Summary} {
 		if len(v) > 2048 || strings.TrimSpace(v) != v || strings.ContainsAny(v, "\x00\r\n\t") {
 			return errors.New("invalid correlation fact")
 		}

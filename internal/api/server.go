@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/hollis-labs/libs/llm/core/modelsdev"
+	"github.com/hollis-labs/tether/internal/agentlive"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
@@ -63,6 +64,9 @@ type Deps struct {
 	GroupStore        SessionGroupStore
 	// Correlations queues external kit registrations through the launcher.
 	Correlations CorrelationRegistrar
+	// Presence tracks open mail-watch streams for GET /agents/live; NewServer
+	// creates one when none is supplied.
+	Presence *agentlive.Tracker
 	// Workstreams, when non-nil, enables the /workstreams endpoints and the
 	// per-session workstream sub-resource (S1, CW-20260912-0059).
 	Workstreams WorkstreamStore
@@ -213,6 +217,7 @@ type Server struct {
 	Catalog             CatalogLoader
 	GroupStore          SessionGroupStore
 	Correlations        CorrelationRegistrar
+	Presence            *agentlive.Tracker
 	Workstreams         WorkstreamStore
 	SessionRefs         SessionRefStore
 	Digests             DigestStore
@@ -264,6 +269,10 @@ func NewHandler(deps Deps) http.Handler {
 	if err != nil {
 		slog.Warn("initialize session ref rejection counter", "error", err)
 	}
+	presence := deps.Presence
+	if presence == nil {
+		presence = agentlive.NewTracker()
+	}
 	s := &Server{
 		Requests:            deps.Requests,
 		refSourceAssertions: refAssertions,
@@ -285,6 +294,7 @@ func NewHandler(deps Deps) http.Handler {
 		Catalog:             deps.Catalog,
 		GroupStore:          deps.GroupStore,
 		Correlations:        deps.Correlations,
+		Presence:            presence,
 		Workstreams:         deps.Workstreams,
 		SessionRefs:         deps.SessionRefs,
 		Digests:             deps.Digests,
@@ -338,6 +348,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerTeamRoutes(router)
 	s.registerWorkstreamRoutes(router)
 	s.registerCorrelationRoutes(router)
+	s.registerAgentsLiveRoutes(router)
 	s.registerMessageRoutes(router)
 	s.registerTypedMessageRoutes(router)
 	s.registerAddressAliasRoutes(router)

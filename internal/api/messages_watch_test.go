@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +15,8 @@ import (
 
 	"github.com/hollis-labs/libs/mesh/core/messaging"
 
+	"github.com/hollis-labs/tether/internal/agentlive"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -252,5 +256,60 @@ func TestHandleMessagesWatch_RejectsPost(t *testing.T) {
 	r.Body.Close()
 	if r.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("POST status = %d, want 405", r.StatusCode)
+	}
+}
+
+// Only a real recipient watch is presence evidence; an operator inspecting a
+// mailbox without as_recipient is not the agent (CW-20261121-0114).
+func TestHandleMessagesWatch_PresenceOnlyForRecipientWatch(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "presence.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	tracker := agentlive.NewTracker()
+	h := NewHandler(Deps{MessageStore: db.MessagingStore(), Presence: tracker})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, Kind: "operator", ID: identity.OperatorID, Scopes: []string{"*"}})))
+	}))
+	t.Cleanup(srv.Close)
+	alice := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "alice"}
+	far := time.Now().Add(time.Hour)
+	active := func() (agentlive.Evidence, bool) {
+		ev, ok := tracker.Snapshot(far, 24*time.Hour)[alice.URN()]
+		return ev, ok && ev.At.Equal(far)
+	}
+
+	ch, stop := watchOpen(t, srv.URL, watchQuery(alice, ""))
+	if f := nextFrame(t, ch); f.event != "synchronized" {
+		t.Fatalf("frame %+v", f)
+	}
+	if _, ok := tracker.Snapshot(far, 24*time.Hour)[alice.URN()]; ok {
+		t.Fatal("operator watch without as_recipient recorded presence")
+	}
+	stop()
+
+	q := watchQuery(alice, "")
+	q.Set("as_recipient", "true")
+	ch, stop = watchOpen(t, srv.URL, q)
+	if f := nextFrame(t, ch); f.event != "synchronized" {
+		t.Fatalf("frame %+v", f)
+	}
+	if ev, ok := active(); !ok || ev.Source != "watcher" {
+		t.Fatalf("recipient watch must record live presence: %+v", ev)
+	}
+	stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := active(); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("presence not released on disconnect")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := tracker.Snapshot(far, 24*time.Hour)[alice.URN()]; !ok {
+		t.Fatal("disconnect time should remain as decaying evidence")
 	}
 }

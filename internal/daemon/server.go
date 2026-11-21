@@ -1085,6 +1085,7 @@ func (s *Server) apiMounts() []apiMount {
 		// subtree would leave the collection reachable solely via ServeMux's
 		// redirect.
 		{"/correlation/register", s.Correlations != nil},
+		{"/agents/live", hasService},
 		{"/workstreams", s.Workstreams != nil},
 		{"/workstreams/", s.Workstreams != nil},
 
