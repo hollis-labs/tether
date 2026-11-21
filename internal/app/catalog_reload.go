@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/skills"
 )
 
 // catalogState guards the swappable catalog. A *config.Catalog is never
@@ -54,6 +55,9 @@ func (s *Service) ReloadCatalog(ctx context.Context) (*config.ReloadReport, erro
 	}
 	if err := fresh.Validate(); err != nil {
 		return nil, fmt.Errorf("reload refused, catalog invalid (nothing changed): %w", err)
+	}
+	if err := skills.ValidateCatalog(s.CatalogRoot, fresh); err != nil {
+		return nil, fmt.Errorf("reload refused, catalog skills invalid (nothing changed): %w", err)
 	}
 	attestation, err := s.checkOperatorAttestation(context.Background(), fresh)
 	if err != nil {

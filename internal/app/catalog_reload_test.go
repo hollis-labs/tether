@@ -215,3 +215,31 @@ func TestReloadCatalogExternalMCPNeedsNoRestart(t *testing.T) {
 		t.Fatal("external to built-in requires restart")
 	}
 }
+
+func TestReloadCatalogRefusesInvalidSkillsWithoutSwapping(t *testing.T) {
+	for _, tc := range []struct{ name, skill, agent, want string }{
+		{name: "unused missing id", skill: "---\nname: Broken\n---\n", want: "missing required field id"},
+		{name: "referenced malformed", skill: "---\nid: [\n---\n", agent: "id: skill-worker\nskills: [broken]\n", want: "parse frontmatter"},
+		{name: "missing reference", agent: "id: skill-worker\nskills: [absent]\n", want: "references missing skill"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			svc, root := reloadService(t)
+			before := svc.CurrentCatalog()
+			generation := svc.CatalogGeneration()
+			if tc.skill != "" {
+				writeCat(t, root, "skills/broken.md", tc.skill)
+			}
+			if tc.agent != "" {
+				writeCat(t, root, "agents/skill-worker.yaml", tc.agent)
+			}
+			_, err := svc.ReloadCatalog(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "nothing changed") {
+				t.Fatalf("reload error = %v", err)
+			}
+			if svc.CurrentCatalog() != before || svc.CatalogGeneration() != generation {
+				t.Fatal("refused reload changed the live catalog or generation")
+			}
+		})
+	}
+}
