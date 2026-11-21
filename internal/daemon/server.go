@@ -34,6 +34,14 @@ const tetherVersion = "0.2.0"
 // Config bundles the resolved daemon runtime parameters. Callers are
 // expected to have already run path expansion (config.Expand) on
 // ListenAddr and PIDFile.
+// OpsStatusSettings is the resolved daemon.ops_status configuration.
+type OpsStatusSettings struct {
+	Enabled   bool
+	URL       string
+	TokenFile string
+	Actor     string
+}
+
 type Config struct {
 	RemoteListener RemoteListenerConfig
 	Modules        *environment.Profile
@@ -52,7 +60,9 @@ type Config struct {
 	// for its own app's service token at once, anything else only records it (202).
 	ServiceTokenRequest string
 	// EventIngest is the POST /events configuration.
-	EventIngest     EventIngestSettings
+	EventIngest EventIngestSettings
+	// OpsStatus is daemon.ops_status (CW-20261121-0154). Off unless Enabled.
+	OpsStatus       OpsStatusSettings
 	ListenAddr      string
 	PIDFile         string
 	ShutdownTimeout time.Duration
