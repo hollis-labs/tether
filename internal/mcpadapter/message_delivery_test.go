@@ -17,7 +17,7 @@ import (
 )
 
 func TestMCPRecipientListAndGetRecordDelivery(t *testing.T) {
-	for _, tool := range []string{"tether_message_list", "tether_message_get"} {
+	for _, tool := range []string{"tether_message_list", "tether_message_get", "tether_message_watch"} {
 		for _, recipient := range []bool{true, false} {
 			t.Run(tool+map[bool]string{true: "/recipient", false: "/operator"}[recipient], func(t *testing.T) {
 				db, err := store.Open(filepath.Join(t.TempDir(), "mail.db"))
@@ -53,7 +53,7 @@ func TestMCPRecipientListAndGetRecordDelivery(t *testing.T) {
 				a := NewWithDaemon(&app.Service{}, client.New("tcp:"+strings.TrimPrefix(srv.URL, "http://"), client.WithToken(token)), "test", []string{"read"})
 				a.SessionID = "s-worker"
 
-				res := callAnyTool(t, a, tool, map[string]any{"message_id": env.ID, "as": to.URN(), "to": to.URN(), "unread_only": true})
+				res := callAnyTool(t, a, tool, map[string]any{"message_id": env.ID, "as": to.URN(), "to": to.URN(), "unread_only": true, "after_seq": float64(0), "as_recipient": tool == "tether_message_watch" && !recipient})
 				if res.IsError {
 					t.Fatal(textOf(res))
 				}
@@ -61,7 +61,7 @@ func TestMCPRecipientListAndGetRecordDelivery(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if (got.DeliveredAt != nil) != recipient {
+				if (got.DeliveredAt != nil) != (recipient || tool == "tether_message_watch") {
 					t.Fatalf("delivery=%v recipient=%v", got.DeliveredAt, recipient)
 				}
 			})

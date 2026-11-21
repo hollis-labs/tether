@@ -26,6 +26,9 @@ func TestMailboxWatchResumesWithoutDuplicates(t *testing.T) {
 		afters = append(afters, r.URL.Query().Get("after_seq"))
 		n := len(afters)
 		mu.Unlock()
+		if r.URL.Query().Get("as_recipient") != "true" {
+			t.Error("recipient declaration missing on reconnect")
+		}
 		if r.URL.Path != "/messages/watch" || r.URL.Query().Get("as") != "msg://agent/t/alice" {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -46,6 +49,9 @@ func TestMailboxWatchResumesWithoutDuplicates(t *testing.T) {
 
 	catalogDir := writeEventsTestCatalog(t, strings.TrimPrefix(srv.URL, "http://"))
 	oldCatalog, oldJSON, oldBackoff := catalogPath, mailboxJSONFlag, mailboxWatchBackoff
+	oldAsRecipient := mailboxAsRecipient
+	mailboxAsRecipient = true
+	t.Cleanup(func() { mailboxAsRecipient = oldAsRecipient })
 	catalogPath, mailboxJSONFlag, mailboxWatchBackoff = catalogDir, true, 5*time.Millisecond
 	t.Cleanup(func() { catalogPath, mailboxJSONFlag, mailboxWatchBackoff = oldCatalog, oldJSON, oldBackoff })
 

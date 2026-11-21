@@ -2363,6 +2363,7 @@ RFC 8030 Web Push vocabulary.
 | `/messages/notify` | `POST` | Store an envelope, count unread messages for `to`, and wake a live recipient session when resolvable. |
 | `/messages/{id}` | `GET` | Fetch one message. |
 | `/messages/inbox?to=<urn>` | `GET` | Agent pull model. Destructive: returned messages are marked delivered. With `as_session=<id>` naming a live session that is the recipient itself (the session address, or a session of the recipient actor), they are also consumed, settling their deliveries. Any other caller gets the listing only. |
+| `/messages/watch?to=<urn>&as=<urn>` | `GET` | Resumable SSE mailbox watch; optional `as_recipient=true` declares operator handoff to the live recipient. |
 | `/messages/list?to=<urn>` | `GET` | Operator/UI model. Non-destructive; supports `unread_only`, `include_archived`, `limit`, `offset`. |
 | `/messages/{id}/read?as=<urn>` | `POST` | Mark read. |
 | `/messages/{id}/archive?as=<urn>` | `POST` | Archive for recipient. |
@@ -2421,6 +2422,23 @@ go-tether-client mirrors these as `WakeReason*` constants.
 
 A wake that was attempted and failed is reported in `wake_error` instead,
 which carries the error's text (for example, submitting the turn failed).
+
+### Recipient declaration on mailbox watches
+
+`GET /messages/watch?to=<urn>&as=<urn>&as_recipient=true` lets the authenticated
+operator credential declare that this stream hands mail to the live recipient.
+It records an `operator_declared_watch` identity audit entry and stamps delivery
+only after successful message writes/flushes, emitting `message.delivered` with
+`path=operator-declared-watch`. Replays neither restamp nor duplicate the event;
+read and consumed state do not change. Without the query option operator
+inspection is unchanged. A nonoperator declaration for another recipient is
+forbidden, including operator-issued scoped tokens; an authenticated recipient
+retains ordinary watch semantics. Invalid boolean values return 400.
+
+The CLI exposes `tether mailbox watch <urn> --as-recipient`; the MCP
+`tether_message_watch` tool accepts `as_recipient` and returns replay through a
+synchronized cursor. See [Mailbox subscriptions](../messaging.md#subscriptions)
+for cursor and live-watcher usage.
 
 ### Replies to routed messages
 

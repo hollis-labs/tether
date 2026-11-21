@@ -74,8 +74,9 @@ var clientMethodWrites = map[string]bool{
 	"MessageInboxAsSession": true,
 
 	// Writes.
-	"MessageGet":  true, // recipient handoff stamps delivered_at
-	"MessageList": true, // recipient handoff stamps delivered_at
+	"MessageGet":   true, // recipient handoff stamps delivered_at
+	"MessageList":  true,
+	"MailboxWatch": true, // recipient handoff stamps delivered_at
 	// POST /messages/{id}/{read,archive,unarchive}; all three mutate the
 	// recipient's view of the message. Unlike inbox, the verb is honest.
 	"MessageMarkRead":  true,
