@@ -1,0 +1,1 @@
+- CW-20261120-0179: Catalog validate and reload now parse every discovered skill with the launcher parser and reject missing agent skill references with repair guidance.

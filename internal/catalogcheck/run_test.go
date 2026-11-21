@@ -101,3 +101,31 @@ func TestEntityOf(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRejectsInvalidSkills(t *testing.T) {
+	for _, tc := range []struct{ name, body, agent, want string }{
+		{name: "missing id", body: "---\nname: Broken\n---\n", want: "missing required field id"},
+		{name: "invalid referenced skill", body: "---\nid: [\n---\n", agent: "id: worker\nskills: [broken]\n", want: "parse frontmatter"},
+		{name: "missing referenced skill", agent: "id: worker\nskills: [absent]\n", want: "references missing skill"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			root := exampleCatalog(t)
+			if tc.body != "" {
+				if err := os.WriteFile(filepath.Join(root, "skills/broken.md"), []byte(tc.body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.agent != "" {
+				if err := os.WriteFile(filepath.Join(root, "agents/worker.yaml"), []byte(tc.agent), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rep := Run(root)
+			failures := find(rep, StatusFail)
+			if rep.OK || len(failures) == 0 || failures[0].Name != "catalog-skills" || !strings.Contains(failures[0].Message, tc.want) || !strings.Contains(failures[0].Remedy, "docs/skill-format.md") {
+				t.Fatalf("report = %+v", rep)
+			}
+		})
+	}
+}

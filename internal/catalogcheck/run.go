@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/skills"
 )
 
 // LoadAndValidate loads the catalog at root and runs the validation `tether
@@ -20,6 +21,9 @@ func LoadAndValidate(root string) (*config.Catalog, Result) {
 	}
 	if err := cat.Validate(); err != nil {
 		return nil, Fail("catalog-valid", fmt.Sprintf("validation failed: %v", err), "check your catalog YAML files or run: tether init --force")
+	}
+	if err := skills.ValidateCatalog(root, cat); err != nil {
+		return nil, Fail("catalog-skills", err.Error(), "fix the named skill file or agent skills reference; see docs/skill-format.md")
 	}
 	return cat, OK("catalog-present", root)
 }

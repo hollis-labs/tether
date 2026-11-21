@@ -50,3 +50,16 @@ The `skills.WriteSkillFile(w, Skill)` helper emits the canonical frontmatter+bod
 - ADR 0033 — Two-Tier Agent Config (skills section #9)
 - `internal/skills/skills.go` — implementation
 - `examples/catalog/skills/refactor-go.md` — seed fixture
+
+## Catalog validation
+
+`tether catalog validate` (including proposed file bundles) and catalog reload
+parse every `.md` skill in the launcher's system, user and project discovery
+layers using the same parser as launch. Unused and shadowed skills are checked
+as well. Every agent's `skills` entry must name an existing, parseable skill.
+A refused reload keeps the previous catalog and generation.
+
+For `skill: missing required field id`, add `id: <skill-id>` inside the opening
+YAML frontmatter, as shown above. For malformed YAML or delimiters, fix the named
+file. For a missing reference, add `skills/<skill-id>.md` in a discovery layer or
+remove the entry from the agent's `skills` list, then validate and reload again.
