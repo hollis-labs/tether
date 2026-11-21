@@ -19,6 +19,7 @@ func (a *Adapter) registerTools(s *gomcp.Server) {
 	a.registerCatalogApplyTools(s)
 	a.registerSkillTools(s)
 	a.registerSessionTools(s)
+	a.registerAgentsLiveTools(s)
 	a.registerLogicalAgentTools(s)
 	a.registerMessageTools(s)
 	a.registerTypedMessageTools(s)

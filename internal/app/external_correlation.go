@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/hollis-labs/tether/internal/agencyregistry"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/store"
@@ -11,7 +13,7 @@ import (
 // RegisterExternalCorrelation queues kit-seat facts without creating a local
 // Tether session or minting a Registry id. Provider session is the stable run
 // key when the external launcher has no distinct execution-run identifier.
-func (s *Service) RegisterExternalCorrelation(_ context.Context, in api.CorrelationRegisterRequest) (api.CorrelationRegisterResponse, error) {
+func (s *Service) RegisterExternalCorrelation(ctx context.Context, in api.CorrelationRegisterRequest) (api.CorrelationRegisterResponse, error) {
 	if err := in.Validate(); err != nil {
 		return api.CorrelationRegisterResponse{}, err
 	}
@@ -19,6 +21,12 @@ func (s *Service) RegisterExternalCorrelation(_ context.Context, in api.Correlat
 		return api.CorrelationRegisterResponse{}, err
 	} else if row != nil {
 		return api.CorrelationRegisterResponse{Reason: "tether_session"}, nil
+	}
+	// Keep a local record so tether_agents_live can list the seat even when
+	// outbound Registry registration is disabled or queued out.
+	if err := s.Store.UpsertKitSeat(ctx, store.KitSeat{AgentURN: in.URN, Session: in.Session, RunID: in.RunID, TaskID: in.TaskID, WorkstreamID: in.WorkstreamID,
+		Host: in.Host, DisplayName: in.DisplayName, Summary: in.Summary, ProviderSessionID: in.ProviderSessionID}, time.Now()); err != nil {
+		return api.CorrelationRegisterResponse{}, err
 	}
 	cat := s.cat()
 	if cat == nil || cat.Global.AgencyRegistry.URL == "" {

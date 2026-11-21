@@ -107,6 +107,10 @@ func (s *Server) handleMessagesWatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if to.Kind == messaging.KindAgent && s.Presence != nil {
+		// An open watch stream is presence evidence for the agent (agents live).
+		defer s.Presence.Watch(to.URN())()
+	}
 	var f store.ListFilter
 	if ks := q.Get("kind"); ks != "" {
 		for _, k := range strings.Split(ks, ",") {
