@@ -1084,7 +1084,7 @@ func (s *Server) apiMounts() []apiMount {
 		// as the subtree covering /{id} and /{id}/refs. Registering only the
 		// subtree would leave the collection reachable solely via ServeMux's
 		// redirect.
-		{"POST /correlation/register", s.Correlations != nil},
+		{"/correlation/register", s.Correlations != nil},
 		{"/workstreams", s.Workstreams != nil},
 		{"/workstreams/", s.Workstreams != nil},
 
