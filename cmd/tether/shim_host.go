@@ -31,6 +31,12 @@ func shimHostCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		providerEnv, releaseRunToken, err := runtoken.ProviderEnvironment(spec.Env)
+		if err != nil {
+			return err
+		}
+		defer releaseRunToken()
+		spec.Env = providerEnv
 		host, err := shim.Start(spec)
 		if err != nil {
 			return fmt.Errorf("shim host start refused")

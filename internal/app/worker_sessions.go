@@ -262,7 +262,8 @@ func (s *Service) launchWorkerSession(ctx context.Context, row *store.SessionRow
 		_ = s.Store.UpdateSessionState(row.ID, "failed", 0, &exit)
 		return nil, fmt.Errorf("extract_refs requires a worker session credential")
 	}
-	supported := s.Workers != nil && s.Workers.Supports(row.WorkerID, workerwire.FeatureExecutionRunToken)
+	supported := s.Workers != nil && (s.Workers.Supports(row.WorkerID, workerwire.FeatureRunTokenFile) ||
+		p.Env[runtoken.EnvFallback] == "1" && s.Workers.Supports(row.WorkerID, workerwire.FeatureExecutionRunToken))
 	runEnv, err := s.mintRunEnvironmentFor(ctx, row, supported)
 	if err != nil {
 		undoIdentity()
