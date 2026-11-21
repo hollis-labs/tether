@@ -59,6 +59,24 @@ func TestAgentsLiveMergesSessionsAndKitSeats(t *testing.T) {
 	}
 	rel()
 
+	// kind=kit_seat must not resurface a watching session agent as a presence-only seat.
+	sessURN := "msg://agent/agent-mux/agent"
+	relS := watch.Watch(sessURN)
+	kq, _ := agentlive.ParseQuery("", agentlive.KindKitSeat, true, 0, 0, "")
+	gotK, err := svc.AgentsLive(ctx, kq, watch)
+	relS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range gotK.Agents {
+		if r.Agent.URN == sessURN {
+			t.Errorf("session agent leaked as kit_seat: %+v", r)
+		}
+	}
+	if gotK.Count != 1 {
+		t.Errorf("kit_seat filter: %+v", gotK.Agents)
+	}
+
 	// Default filters hide the stale session; kind=kit_seat skips session reads.
 	def, _ := agentlive.ParseQuery("", "", false, 0, 0, "")
 	if got, _ := svc.AgentsLive(ctx, def, nil); got.Count != 1 || got.Agents[0].Kind != agentlive.KindKitSeat {

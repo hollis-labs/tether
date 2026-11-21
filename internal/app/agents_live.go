@@ -51,7 +51,9 @@ func (s *Service) AgentsLive(ctx context.Context, q agentlive.Query, watch *agen
 		return &agentlive.Declared{State: string(d.State), Reason: d.Reason, Ref: d.Ref, UpdatedAt: d.UpdatedAt}
 	}
 
-	if q.Kind != agentlive.KindKitSeat {
+	// Always gathered, whatever the kind filter: the session URNs are what keep
+	// a watching session agent from reappearing as a presence-only kit seat.
+	{
 		for _, state := range []string{"running", "detached"} {
 			rows, err := s.Store.ListSessions(store.ListSessionsOptions{State: state, Limit: agentlive.MaxLimit})
 			if err != nil {
