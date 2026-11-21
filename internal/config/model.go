@@ -264,8 +264,6 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 	return ""
 }
 
-// DaemonConfig controls the long-lived tetherd process. See ADR 0002 for the
-// scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 // OpsStatusConfig is daemon.ops_status (CW-20261121-0154).
 type OpsStatusConfig struct {
 	Enabled bool `yaml:"enabled,omitempty"`
@@ -278,6 +276,8 @@ type OpsStatusConfig struct {
 	Actor string `yaml:"actor,omitempty"`
 }
 
+// DaemonConfig controls the long-lived tetherd process. See ADR 0002 for the
+// scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 type DaemonConfig struct {
 	// EventStageMode is selected at startup; empty means shadow.
 	EventStageMode string `yaml:"event_stage_mode,omitempty"`

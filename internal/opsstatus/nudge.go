@@ -69,6 +69,7 @@ func (n *Nudger) Start(parent context.Context) {
 	n.done = make(chan struct{})
 	go func() {
 		defer close(n.done)
+		defer cancel()
 		t := time.NewTicker(n.interval)
 		defer t.Stop()
 		for {

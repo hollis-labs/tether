@@ -31,9 +31,6 @@ import (
 // tetherVersion labels daemon.started events. Bumped per release.
 const tetherVersion = "0.2.0"
 
-// Config bundles the resolved daemon runtime parameters. Callers are
-// expected to have already run path expansion (config.Expand) on
-// ListenAddr and PIDFile.
 // OpsStatusSettings is the resolved daemon.ops_status configuration.
 type OpsStatusSettings struct {
 	Enabled   bool
@@ -42,6 +39,9 @@ type OpsStatusSettings struct {
 	Actor     string
 }
 
+// Config bundles the resolved daemon runtime parameters. Callers are
+// expected to have already run path expansion (config.Expand) on
+// ListenAddr and PIDFile.
 type Config struct {
 	RemoteListener RemoteListenerConfig
 	Modules        *environment.Profile

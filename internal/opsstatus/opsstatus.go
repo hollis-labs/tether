@@ -143,6 +143,7 @@ func (e *Emitter) Start(parent context.Context) error {
 	ready := make(chan struct{})
 	go func() {
 		defer close(e.done)
+		defer cancel()
 		events.Follow(ctx, e.bus, filter, events.FollowOptions{Name: "opsstatus", Ready: func() { close(ready) }}, func(ev events.Event) {
 			e.handle(ctx, ev)
 		})
