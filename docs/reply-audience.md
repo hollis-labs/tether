@@ -101,6 +101,21 @@ is proven, including when the audience is `unknown` only because the sender clas
 carry `input_triage`: the mail-triage class (`human`, `action`, `fyi`, `read`; see
 `docs/mail-triage.md`) of the mail that woke the seat, under the same rule.
 
+## Expected seat behaviour
+
+A seat's turn output is prose for whoever reads the turn; it is not where
+Chrispian looks for what needs him. Every mailbox wake ends with the rule
+(CW-20261114-0127): if you need a decision or approval from Chrispian, send it
+as its own typed message (`tether_message_post` to `@chrispian`,
+`kind=question`, `decision` or `approval_request`, `attention=human`; the `ask`
+skill), never inside your reply. These typed asks feed Tachyon's Needs-you
+and the pending-approval workflow; a question asked in a reply's text is
+invisible to both.
+
+The API also supports `kind=request` for work with a concrete `deliverable`.
+Use the question, decision or approval-request kinds above when Chrispian must
+answer or approve something; request support does not replace those kinds.
+
 ## Privacy and retention
 
 - **Sender URNs never leave the hub database.** They are stored in `turn_inputs` only;
